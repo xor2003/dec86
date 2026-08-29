@@ -4252,15 +4252,23 @@ def _attach_callsite_summaries_8616(project: StructuredAstValue, codegen: Struct
         callsite_addrs = _all_function_callsite_addrs_8616(project, function)
         if not callsite_addrs:
             return False
-        target_inventory = CallsiteTargetInventory8616.collect(function)
         previous_summary_inventory = _callsite_summary_inventory_8616(codegen)
+        target_inventory: CallsiteTargetInventory8616 | None = None
         summary_inventory: dict[int, CallsiteSummary8616] = {}
         for callsite_addr in callsite_addrs:
-            summary = summarize_x86_16_callsite(
-                function,
-                callsite_addr,
-                target_inventory=target_inventory,
+            summary = (
+                previous_summary_inventory.get(callsite_addr)
+                if not names_changed
+                else None
             )
+            if summary is None:
+                if target_inventory is None:
+                    target_inventory = CallsiteTargetInventory8616.collect(function)
+                summary = summarize_x86_16_callsite(
+                    function,
+                    callsite_addr,
+                    target_inventory=target_inventory,
+                )
             if summary is not None:
                 previous_summary = previous_summary_inventory.get(callsite_addr)
                 if previous_summary is not None:

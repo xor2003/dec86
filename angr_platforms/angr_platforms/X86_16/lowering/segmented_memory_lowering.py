@@ -1886,7 +1886,11 @@ def apply_runtime_segment_lowering_8616(
         changed = True
     if _lower_binary_proven_pointer_argument_helpers_8616(typed_codegen):
         changed = True
-    if materialize_annotated_stack_prototype_8616(project, typed_codegen):
+    if materialize_annotated_stack_prototype_8616(
+        project,
+        typed_codegen,
+        fallback_to_positive_bp=False,
+    ):
         changed = True
     if materialize_positive_bp_arguments_8616(project, typed_codegen):
         changed = True

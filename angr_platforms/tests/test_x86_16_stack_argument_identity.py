@@ -190,7 +190,11 @@ def test_materialize_positive_bp_body_slot_replaces_guessed_zero_arg_interface()
         unified_local_vars={body_argument.variable: {(body_argument, scalar_type)}},
     )
 
-    assert materialize_annotated_stack_prototype_8616(project, codegen) is False
+    assert materialize_annotated_stack_prototype_8616(
+        project,
+        codegen,
+        fallback_to_positive_bp=False,
+    ) is False
     assert not hasattr(codegen, "_inertia_authoritative_zero_arg_prototype_8616")
     assert materialize_positive_bp_arguments_8616(project, codegen) is True
     assert unify_positive_bp_argument_identity_8616(codegen) is False

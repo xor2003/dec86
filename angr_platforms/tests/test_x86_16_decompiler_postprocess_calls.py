@@ -677,6 +677,8 @@ def test_attach_callsite_summaries_matches_unaddressed_calls_by_target_instead_o
     assert summarized_callsites == [0x4010, 0x4012]
     assert codegen._inertia_callsite_summaries[id(call_probe)].target_addr == 0x1001
     assert codegen._inertia_callsite_summaries[id(call_outp)].target_addr == 0x14A0
+    _attach_callsite_summaries_8616(project, codegen)
+    assert summarized_callsites == [0x4010, 0x4012]
 
 
 def test_conservative_call_arg_seed_uses_known_default_for_zero_arg_helper_summary():

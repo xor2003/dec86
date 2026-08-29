@@ -44,6 +44,14 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   seconds of callee argument evidence. A same-checkout profiled A/B reduced 60
   neighbor-call queries to 15 collectors, helper time from 0.762 to 0.108
   seconds, and wall from 43.586 to 42.785 seconds; both runs returned status 0.
+- Runtime segment orchestration now invokes positive-BP materialization once
+  per pass. On current CMP16, positive-BP work fell from 14 calls / 1.271
+  seconds to 8 calls / 0.739 seconds; runtime segment lowering fell from 4.591
+  to 3.199 seconds. Same-tree generated C remained byte-identical and both
+  validation gates passed.
+- Callsite attachment now reuses exact same-codegen summaries while call-name
+  metadata is stable. The second attachment replay removed 14 of 28 summary
+  rebuilds; missing summaries and name-changing passes retain binary recovery.
 - The 17,846-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is

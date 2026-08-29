@@ -1044,12 +1044,16 @@ def reconcile_callsite_interface_declarations_8616(project: object, codegen: obj
     return bool(publish_and_reconcile_callsite_interfaces_8616(project, codegen))
 
 
-def materialize_annotated_stack_prototype_8616(project: object, codegen: object) -> bool:
+def materialize_annotated_stack_prototype_8616(
+    project: object,
+    codegen: object,
+    *,
+    fallback_to_positive_bp: bool = True,
+) -> bool:
     """Materialize positive BP stack annotations as typed codegen arguments.
 
-    The input annotations are structured metadata produced before C emission.
-    This function only consumes positive stack slots, which represent near-call
-    x86-16 arguments after BP+2 return-address normalization.
+    Structured annotations take precedence. Without them, optionally replay
+    the binary positive-BP owner after stack-coordinate facts are available.
     The codegen, function, C AST, and prototype objects cross a dynamic
     third-party angr boundary; owned Inertia state is written via typed protocol
     casts.
@@ -1078,7 +1082,11 @@ def materialize_annotated_stack_prototype_8616(project: object, codegen: object)
         )
     entries = _positive_stack_specs_8616(func)
     if not entries:
-        return False
+        if not fallback_to_positive_bp:
+            return False
+        from .positive_bp_arguments import materialize_positive_bp_arguments_8616
+
+        return bool(materialize_positive_bp_arguments_8616(project, codegen))
     arch = cast(_ProjectArch8616, project).arch
     typed_func = cast(_PrototypeFunction8616, func)
     current_proto = typed_cfunc.functy or typed_func.prototype
