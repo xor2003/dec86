@@ -382,6 +382,35 @@ class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic fron
             return VexValue(self.lifter_instruction, self.lifter_instruction.mkconst(n, type_))
         return n
 
+    def get_direction_step(self, value_type: object = Type.int_16) -> RegisterValue:
+        """Return the architectural string-index step as ``+1`` or ``-1``."""
+        if self.lifter_instruction is None:
+            return -1 if self.flags & 0x0400 else 1
+        if self.vex_offsets is None:
+            raise ValueError("vex_offsets not initialized for lifting mode")
+        step = VexValue(
+            self.lifter_instruction,
+            self.lifter_instruction.rdreg(self.vex_offsets["d"], Type.int_32),
+        )
+        return cast(RegisterValue, step.cast_to(value_type))
+
+    def _sync_lifted_direction_step(self, flags_value: object) -> None:
+        """Synchronize the artificial VEX direction step after a FLAGS write."""
+        if self.lifter_instruction is None:
+            return
+        if self.vex_offsets is None:
+            raise ValueError("vex_offsets not initialized for lifting mode")
+        flags = (
+            self.constant(flags_value, Type.int_16)
+            if isinstance(flags_value, int)
+            else cast(VexValue, flags_value).cast_to(Type.int_16)
+        )
+        direction = cast(VexValue, (flags >> 10) & self.constant(1, Type.int_16)).cast_to(Type.int_1)
+        negative = cast(VexValue, self.constant(0xFFFFFFFF, Type.int_32))
+        positive = cast(VexValue, self.constant(1, Type.int_32))
+        step = self.lifter_instruction.irsb_c.ite(direction.rdt, negative.rdt, positive.rdt)
+        self.lifter_instruction._append_stmt(Put(step, self.vex_offsets["d"]))
+
     def get_sgreg(self, n: sgreg_t | VexValue) -> RegisterValue:
         """Return a segment register in concrete or VEX lifting mode."""
         if isinstance(n, VexValue):
@@ -481,11 +510,14 @@ class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic fron
                 if self.vex_offsets is None:
                     raise ValueError("vex_offsets not initialized for lifting mode")
                 offset = self.vex_offsets.get(name, 0)
+                flags_value = value if n in {reg16_t.FLAGS, reg32_t.EFLAGS} else None
                 if isinstance(value, int):
                     value = self.constant(value, TYPES[type(n)])
                 if isinstance(value, VexValue):
                     value = value.rdt
                 self.lifter_instruction._append_stmt(Put(cast(Any, value), offset))
+                if flags_value is not None:
+                    self._sync_lifted_direction_step(flags_value)
                 return
             # concrete mode
             if isinstance(value, int):

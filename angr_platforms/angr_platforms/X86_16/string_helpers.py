@@ -80,12 +80,28 @@ class StringInstruction(Protocol):
         """Return whether string indices use 32-bit registers."""
         ...
 
+    @property
+    def size(self) -> int:
+        """Return the encoded instruction size including prefixes."""
+        ...
+
 
 class _StringLifterInstruction(Protocol):
+    addr: int
     irsb_c: _StringIrsbCustomizer
 
     def jump(self, _condition: object, _target: object, _jumpkind: object) -> None:
         """Emit a VEX jump for the active string instruction."""
+        ...
+
+    def record_loop_counter_condition_8616(
+        self,
+        counter_name: str,
+        counter_size: int,
+        displacement: int,
+        instruction_size: int,
+    ) -> None:
+        """Publish an exact typed post-decrement counter continuation."""
         ...
 
 
@@ -96,6 +112,10 @@ class StringEmulator(Protocol):
 
     def is_direction(self) -> _CastableToRdt:
         """Return the current direction-flag expression."""
+        ...
+
+    def get_direction_step(self, value_type: object = Type.int_16) -> object:
+        """Return the normalized architectural string-index step."""
         ...
 
     def constant(self, value: int, ty: object) -> object:
@@ -153,12 +173,11 @@ def _rdt_or_self(value: object) -> object:
 
 def string_delta(emu: StringEmulator, width: int, value_type: str = Type.int_16) -> object:
     """Return a width-typed signed index delta implied by the direction flag."""
-    df = emu.is_direction()
-    mask = 0xFFFFFFFF if value_type == Type.int_32 else 0xFFFF
-    neg = cast(_RdtCarrier, emu.constant((-width) & mask, value_type))
-    pos = cast(_RdtCarrier, emu.constant(width, value_type))
-    expr = emu.lifter_instruction.irsb_c.ite(cast(_RdtCarrier, df.cast_to(Type.int_1)).rdt, neg.rdt, pos.rdt)
-    return emu._vv(expr)
+    step = cast(_AddSubValue, emu.get_direction_step(value_type))
+    if width == 1:
+        return step
+    doubled = cast(_AddSubValue, step + step)
+    return doubled if width == 2 else doubled + doubled
 
 
 def string_source_segment(instr: StringInstruction) -> sgreg_t:
@@ -188,9 +207,18 @@ def repeat_prefix_cond(emu: StringEmulator, instr: StringInstruction) -> _Castab
     counter_reg = reg32_t.ECX if instr.address_bits == 32 else reg16_t.CX
     counter_type = Type.int_32 if instr.address_bits == 32 else Type.int_16
     counter = cast(_AddSubValue, emu.get_gpreg(counter_reg))
+    zero = emu.constant(0, counter_type)
+    execute_operation = counter != zero
+    fallthrough = emu.constant(emu.lifter_instruction.addr + instr.size, Type.int_32)
+    if isinstance(execute_operation, bool):
+        if not execute_operation:
+            emu.lifter_instruction.jump(None, fallthrough, JumpKind.Boring)
+    else:
+        repeat_target = emu.constant(emu.lifter_instruction.addr, Type.int_32)
+        emu.lifter_instruction.jump(execute_operation, repeat_target, JumpKind.Boring)
     remaining = counter - emu.constant(1, counter_type)
     emu.set_gpreg(counter_reg, remaining)
-    return cast(_CastableToRdt | bool, remaining != emu.constant(0, counter_type))
+    return cast(_CastableToRdt | bool, remaining != zero)
 
 
 def repeat_jump(
@@ -210,37 +238,39 @@ def repeat_jump(
             cond = cast(_AndValue, cond) & emu.is_zero()
         elif kind == "repnz":
             cond = cast(_AndValue, cond) & (emu.is_zero() == emu.constant(0, Type.int_1))
+    else:
+        counter_name = "ecx" if instr.address_bits == 32 else "cx"
+        counter_size = 4 if instr.address_bits == 32 else 2
+        emu.lifter_instruction.record_loop_counter_condition_8616(
+            counter_name,
+            counter_size,
+            -instr.size,
+            instr.size,
+        )
+    repeat_target = emu.constant(emu.lifter_instruction.addr, Type.int_32)
     if isinstance(cond, bool):
         if not cond:
             return
-        ip_reg = reg32_t.EIP if instr.mode32 else reg16_t.IP
-        repeat_target = emu.get_gpreg(ip_reg)
-        emu.lifter_instruction.jump(None, _rdt_or_self(repeat_target), JumpKind.Boring)
-        emu.set_gpreg(ip_reg, repeat_target)
+        emu.lifter_instruction.jump(None, repeat_target, JumpKind.Boring)
         return
     cond_value = cond.rdt if _has_rdt(cond) else None
-    ip_reg = reg32_t.EIP if instr.mode32 else reg16_t.IP
-    repeat_target = emu.get_gpreg(ip_reg)
-    repeat_target_expr = _rdt_or_self(repeat_target)
 
     if isinstance(cond_value, bool):
         if not cond_value:
             return
-        emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
-        emu.set_gpreg(ip_reg, repeat_target)
+        emu.lifter_instruction.jump(None, repeat_target, JumpKind.Boring)
         return
 
-    emu.lifter_instruction.jump(cond, repeat_target_expr, JumpKind.Boring)
-    emu.set_gpreg(ip_reg, repeat_target)
+    emu.lifter_instruction.jump(cond, repeat_target, JumpKind.Boring)
 
 
 def string_advance_indices(emu: StringEmulator, width: int, *regs: object) -> object:
     """Advance each string index register according to direction flag and width."""
-    delta: object = string_delta(emu, width)
+    delta: object | None = None
     for reg in regs:
         delta = string_delta(emu, width, Type.int_32 if isinstance(reg, reg32_t) else Type.int_16)
         emu.set_gpreg(reg, cast(_AddSubValue, emu.get_gpreg(reg)) + delta)
-    return delta
+    return delta if delta is not None else string_delta(emu, width)
 
 
 def string_compare_values(lhs: object, rhs: object, update_flags: Callable[[object, object], object]) -> None:

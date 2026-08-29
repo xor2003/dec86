@@ -13,12 +13,17 @@ from angr_platforms.X86_16.string_helpers import (
 
 
 class _JumpRecorder:
-    def __init__(self):
+    def __init__(self, addr=0x110FF9):
+        self.addr = addr
         self.calls = []
+        self.counter_conditions = []
         self.irsb = type("_IRSB", (), {"next": None, "jumpkind": None})()
 
     def jump(self, *args, **kwargs):
         self.calls.append((args, kwargs))
+
+    def record_loop_counter_condition_8616(self, *args):
+        self.counter_conditions.append(args)
 
 
 class _IrsbC:
@@ -86,6 +91,9 @@ class _StringEmu:
     def is_direction(self):
         return _BoolExpr(self.direction)
 
+    def get_direction_step(self, _value_type=None):
+        return _Const(-1 if self.direction else 1)
+
     def _vv(self, expr):
         return _Const(expr)
 
@@ -124,12 +132,21 @@ class _Cond:
 
 
 class _Instr:
-    def __init__(self, pre_segment=None, pre_repeat=NONE, size=2, mode32=False, repeat_class=None):
+    def __init__(
+        self,
+        pre_segment=None,
+        pre_repeat=NONE,
+        size=2,
+        mode32=False,
+        repeat_class=None,
+        address_bits=16,
+    ):
         self.pre_segment = pre_segment
         self.pre_repeat = pre_repeat
         self.repeat_class = repeat_class if repeat_class is not None else ("repz" if pre_repeat == REPZ else "none")
         self.size = size
         self.mode32 = mode32
+        self.address_bits = address_bits
 
 
 def test_string_source_segment_defaults_to_ds_and_honors_overrides():
@@ -147,6 +164,17 @@ def test_repeat_prefix_cond_consumes_cx_for_repeated_string_ops():
     assert cond is True
 
 
+def test_repeat_prefix_cond_skips_operation_when_initial_count_is_zero():
+    emu = _StringEmu(cx=0)
+    instr = _Instr(pre_repeat=REPZ)
+
+    repeat_prefix_cond(emu, instr)
+
+    args, _kwargs = emu.lifter_instruction.calls[0]
+    assert args[0] is None
+    assert args[1] == 0x110FFB
+
+
 def test_repeat_kind_prefers_normalized_repeat_metadata():
     assert repeat_kind(_Instr(repeat_class="repnz")) == "repnz"
     assert repeat_kind(_Instr(pre_repeat=REPZ)) == "repz"
@@ -155,26 +183,25 @@ def test_repeat_kind_prefers_normalized_repeat_metadata():
 
 def test_repeat_jump_uses_repz_and_current_zero_flag():
     emu = _StringEmu(cx=4, zf=True)
-    emu.gpregs[reg16_t.IP] = 0x0100
     instr = _Instr(pre_repeat=REPZ)
 
     repeat_jump(emu, instr, _Cond(True))
 
     assert emu.lifter_instruction.calls
     args, _kwargs = emu.lifter_instruction.calls[0]
-    assert args[1] == 0x0100
+    assert args[1] == 0x110FF9
 
 
 def test_repeat_jump_ignores_zf_for_non_compare_string_ops():
     emu = _StringEmu(cx=4, zf=False)
-    emu.gpregs[reg16_t.IP] = 0x0100
     instr = _Instr(pre_repeat=REPZ)
 
     repeat_jump(emu, instr, _Cond(True))
 
     assert emu.lifter_instruction.calls
     args, _kwargs = emu.lifter_instruction.calls[0]
-    assert args[1] == 0x0100
+    assert args[1] == 0x110FF9
+    assert emu.lifter_instruction.counter_conditions == [("cx", 2, -2, 2)]
 
 
 def test_repeat_jump_can_be_zf_sensitive_for_compare_string_ops():
