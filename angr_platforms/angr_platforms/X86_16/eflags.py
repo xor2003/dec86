@@ -14,6 +14,7 @@ from pyvex.lifting.util.vex_helper import Type
 from .regs import reg16_t, reg32_t
 from .semantics.status_flag_contracts import (
     INCDEC_STATUS_FLAG_WRITES_8616,
+    SHIFT_COUNT_MANY_STATUS_FLAG_WRITES_8616,
     SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616,
     STATUS_FLAGS_8616,
     StatusFlag8616,
@@ -486,11 +487,16 @@ class Eflags:
 
     def update_eflags_shl(self, v: VexExpr, c: FlagValue) -> None:
         """Update arithmetic flags for a logical left shift."""
-        live_writes = self._live_status_flag_writes_8616(SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616)
-        if live_writes == StatusFlag8616.NONE:
-            return
         const_count = self._const_u8_value(c)
         masked_const_count = None if const_count is None else const_count & 0x1F
+        defined_writes = (
+            SHIFT_COUNT_MANY_STATUS_FLAG_WRITES_8616
+            if masked_const_count is not None and masked_const_count > 1
+            else SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616
+        )
+        live_writes = self._live_status_flag_writes_8616(defined_writes)
+        if live_writes == StatusFlag8616.NONE:
+            return
         if masked_const_count and masked_const_count <= v.width:
             flags = self.get_gpreg(reg16_t.FLAGS)
             count = self.constant(masked_const_count, Type.int_8)
@@ -625,10 +631,16 @@ class Eflags:
 
     def update_eflags_shr(self, v: VexExpr, c: FlagValue) -> None:
         """Update arithmetic flags for a logical right shift."""
-        live_writes = self._live_status_flag_writes_8616(SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616)
+        const_count = self._const_u8_value(c)
+        masked_const_count = None if const_count is None else const_count & 0x1F
+        defined_writes = (
+            SHIFT_COUNT_MANY_STATUS_FLAG_WRITES_8616
+            if masked_const_count is not None and masked_const_count > 1
+            else SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616
+        )
+        live_writes = self._live_status_flag_writes_8616(defined_writes)
         if live_writes == StatusFlag8616.NONE:
             return
-        const_count = self._const_u8_value(c)
         if const_count == 1:
             flags = self.get_gpreg(reg16_t.FLAGS)
             result = v >> self.constant(1, Type.int_8) if live_writes & ~(
@@ -694,10 +706,16 @@ class Eflags:
 
     def update_eflags_sar(self, v: VexExpr, c: FlagValue) -> None:
         """Update arithmetic flags for an arithmetic right shift."""
-        live_writes = self._live_status_flag_writes_8616(SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616)
+        const_count = self._const_u8_value(c)
+        masked_const_count = None if const_count is None else const_count & 0x1F
+        defined_writes = (
+            SHIFT_COUNT_MANY_STATUS_FLAG_WRITES_8616
+            if masked_const_count is not None and masked_const_count > 1
+            else SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616
+        )
+        live_writes = self._live_status_flag_writes_8616(defined_writes)
         if live_writes == StatusFlag8616.NONE:
             return
-        const_count = self._const_u8_value(c)
         if const_count == 1:
             flags = self.get_gpreg(reg16_t.FLAGS)
             result = v.sar(self.constant(1, Type.int_8)) if live_writes & ~(

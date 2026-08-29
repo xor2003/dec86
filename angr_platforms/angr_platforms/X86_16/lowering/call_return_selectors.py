@@ -27,6 +27,7 @@ from angr.sim_variable import SimRegisterVariable
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import CallsiteSummary8616
 from ..pipeline.errors import PipelineHardError
+from .register_local_declarations import register_typed_register_local_8616
 
 __all__ = [
     "CallReturnSelectorBindingResult8616",
@@ -52,6 +53,15 @@ class CallReturnSelectorBindingResult8616:
         return self.changed_count > 0
 
 
+@dataclass(frozen=True, slots=True)
+class _RegisterView8616:
+    """One physical register byte range exposed by structured codegen."""
+
+    expression: structured_c.CExpression
+    offset: int
+    size: int
+
+
 def _register_cvar_8616(node: object) -> structured_c.CVariable | None:
     """Return a register-backed C variable through harmless C casts."""
     current = node
@@ -64,19 +74,29 @@ def _register_cvar_8616(node: object) -> structured_c.CVariable | None:
     return current
 
 
-def _same_register_view_8616(
-    left: structured_c.CVariable,
-    right: structured_c.CVariable,
-) -> bool:
+def _register_view_8616(node: object) -> _RegisterView8616 | None:
+    """Return a register view across variable-backed and raw AIL surfaces."""
+    current = node
+    while isinstance(current, structured_c.CTypeCast):
+        current = current.expr
+    if isinstance(current, structured_c.CVariable):
+        variable = current.variable
+        if isinstance(variable, SimRegisterVariable):
+            return _RegisterView8616(current, variable.reg, variable.size)
+        return None
+    if isinstance(current, structured_c.CRegister):
+        # Dynamic boundary: CRegister retains angr's AIL Register expression.
+        register = current.reg
+        offset = getattr(register, "reg_offset", None)
+        size = getattr(register, "size", None)
+        if isinstance(offset, int) and isinstance(size, int) and size > 0:
+            return _RegisterView8616(current, offset, size)
+    return None
+
+
+def _same_register_view_8616(left: _RegisterView8616, right: _RegisterView8616) -> bool:
     """Return whether two C variables are the same physical register view."""
-    left_variable = left.variable
-    right_variable = right.variable
-    return (
-        isinstance(left_variable, SimRegisterVariable)
-        and isinstance(right_variable, SimRegisterVariable)
-        and left_variable.reg == right_variable.reg
-        and left_variable.size == right_variable.size
-    )
+    return left.offset == right.offset and left.size == right.size
 
 
 def _flatten_sequential_statements_8616(root: structured_c.CStatements) -> tuple[object, ...]:
@@ -92,12 +112,12 @@ def _flatten_sequential_statements_8616(root: structured_c.CStatements) -> tuple
 
 def _statement_writes_register_view_8616(
     statement: object,
-    register: structured_c.CVariable,
+    register: _RegisterView8616,
 ) -> bool:
     """Return whether a statement overwrites the candidate register view."""
     if not isinstance(statement, structured_c.CAssignment):
         return False
-    lhs = _register_cvar_8616(statement.lhs)
+    lhs = _register_view_8616(statement.lhs)
     return lhs is not None and _same_register_view_8616(lhs, register)
 
 
@@ -112,14 +132,14 @@ def _statement_contains_call_8616(statement: object) -> bool:
 def _selector_after_call_8616(
     statements: tuple[object, ...],
     call_index: int,
-    register: structured_c.CVariable,
-) -> structured_c.CVariable | None:
+    register: _RegisterView8616,
+) -> tuple[structured_c.CSwitchCase, _RegisterView8616] | None:
     """Find the first uninterrupted switch read of one call-return register."""
     for statement in statements[call_index + 1 :]:
         if isinstance(statement, structured_c.CSwitchCase):
-            selector = _register_cvar_8616(statement.switch)
+            selector = _register_view_8616(statement.switch)
             if selector is not None and _same_register_view_8616(selector, register):
-                return selector
+                return statement, selector
             return None
         if _statement_writes_register_view_8616(statement, register):
             return None
@@ -136,7 +156,7 @@ def _selector_after_call_8616(
 def _structured_return_variable_8616(
     summary: CallsiteSummary8616,
     register: structured_c.CVariable,
-    selector: structured_c.CVariable,
+    selector: _RegisterView8616,
     function_addr: int,
 ) -> SimRegisterVariable:
     """Reuse or build deterministic register-SSA identity from one exact callsite fact."""
@@ -147,7 +167,12 @@ def _structured_return_variable_8616(
         if isinstance(summary.return_register, str) and summary.return_register
         else variable.name
     )
-    for candidate in (variable, selector.variable):
+    selector_variable = (
+        selector.expression.variable
+        if isinstance(selector.expression, structured_c.CVariable)
+        else None
+    )
+    for candidate in (variable, selector_variable):
         if (
             isinstance(candidate, SimRegisterVariable)
             and candidate.reg == variable.reg
@@ -179,6 +204,27 @@ def _bind_cvar_identity_8616(
         cvar.unified_variable = variable
         changed = True
     return changed
+
+
+def _bind_switch_selector_identity_8616(
+    switch: structured_c.CSwitchCase,
+    selector: _RegisterView8616,
+    register: structured_c.CVariable,
+    variable: SimRegisterVariable,
+) -> bool:
+    """Bind or replace the switch selector with one call-return identity."""
+    if isinstance(selector.expression, structured_c.CVariable):
+        return _bind_cvar_identity_8616(selector.expression, variable)
+    raw_selector = selector.expression
+    tags = raw_selector.tags if isinstance(raw_selector, structured_c.CExpression) else None
+    switch.switch = structured_c.CVariable(
+        variable,
+        unified_variable=variable,
+        variable_type=register.variable_type,
+        codegen=register.codegen,
+        tags=tags,
+    )
+    return True
 
 
 def bind_call_return_switch_selectors_8616(
@@ -244,14 +290,29 @@ def bind_call_return_switch_selectors_8616(
                 failure_count += 1
                 continue
             normalized_fact_count += 1
-            selector = _selector_after_call_8616(statements, index, register)
-            if selector is None:
+            register_view = _register_view_8616(register)
+            selector_match = (
+                _selector_after_call_8616(statements, index, register_view)
+                if register_view is not None
+                else None
+            )
+            if selector_match is None:
                 failure_count += 1
                 continue
+            switch, selector = selector_match
             classified_fact_count += 1
             identity = _structured_return_variable_8616(summary, register, selector, function_addr)
             identity_changed = _bind_cvar_identity_8616(register, identity)
-            identity_changed = _bind_cvar_identity_8616(selector, identity) or identity_changed
+            identity_changed = (
+                _bind_switch_selector_identity_8616(
+                    switch,
+                    selector,
+                    register,
+                    identity,
+                )
+                or identity_changed
+            )
+            identity_changed = register_typed_register_local_8616(codegen, register) or identity_changed
             materialized_count += 1
             changed_count += int(identity_changed)
 

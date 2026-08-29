@@ -33,7 +33,7 @@ from angr_platforms.X86_16.decompiler_postprocess_jcc import (
     _DecodedCmpGuard8616,
     _ensure_c_expr_type_has_arch_8616,
     _rewrite_decoded_jcc_conditions_8616,
-    _sync_stack_arg_expr_name_from_prototype_8616,
+    _stack_slot_expr_8616,
     _translate_cmp_jcc_guard_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
@@ -51,6 +51,9 @@ from angr_platforms.X86_16.decompiler_structuring_stage import (
     _try_accept_structuring_validation_delta_from_evidence_8616,
 )
 from angr_platforms.X86_16.ir.condition_ir import JCC_TO_COND_8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from angr_platforms.X86_16.tail_validation_fingerprint import _expr_fingerprint
 
@@ -90,39 +93,44 @@ def _reg(project, name: str, codegen, *, var_name: str | None = None):
     return CVariable(SimRegisterVariable(reg_offset, reg_size, name=var_name or name), codegen=codegen)
 
 
-def test_stack_condition_name_uses_exact_typed_arg_not_ambiguous_normalized_alias():
+def test_stack_condition_lookup_uses_machine_bp_coordinate_without_renaming_shared_arg():
     codegen = _DummyCodegen()
     word = SimTypeShort(False).with_arch(codegen.project.arch)
-    prototype = SimTypeFunction((word, word), word, arg_names=("which", "value")).with_arch(codegen.project.arch)
-    which_var = SimStackVariable(4, 2, base="bp", name="arg_4")
-    value_var = SimStackVariable(6, 2, base="bp", name="arg_6")
-    which_arg = CVariable(which_var, variable_type=word, codegen=codegen)
-    value_arg = CVariable(value_var, variable_type=word, codegen=codegen)
+    prototype = SimTypeFunction((word, word), word, arg_names=("a", "b")).with_arch(codegen.project.arch)
+    a_var = SimStackVariable(2, 2, base="bp", name="a")
+    b_var = SimStackVariable(4, 2, base="bp", name="b")
+    a_arg = CVariable(a_var, variable_type=word, codegen=codegen)
+    b_arg = CVariable(b_var, variable_type=word, codegen=codegen)
     codegen.cfunc = SimpleNamespace(
         addr=0x4010,
-        arg_list=[which_arg, value_arg],
+        arg_list=[a_arg, b_arg],
         functy=prototype,
         prototype=prototype,
+        variables_in_use={a_var: a_arg, b_var: b_arg},
+        unified_local_vars={},
     )
-    metadata_function = SimpleNamespace(
-        prototype=prototype,
-        info={ANNOTATION_KEY: {"stack_vars": {2: {"name": "which"}, 4: {"name": "value"}}}},
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=a_var,
+        cvar=a_arg,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
     )
-    project = SimpleNamespace(
-        arch=codegen.project.arch,
-        kb=SimpleNamespace(
-            functions=SimpleNamespace(
-                function=lambda addr, create=False: metadata_function if addr == 0x4010 else None
-            )
-        ),
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=b_var,
+        cvar=b_arg,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
     )
-    expr_var = SimStackVariable(4, 2, base="bp", name="value")
-    expr = CVariable(expr_var, variable_type=word, codegen=codegen)
 
-    result = _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, 4, project=project)
+    result = _stack_slot_expr_8616(codegen, 4, 2, project=codegen.project)
 
-    assert result is expr
-    assert expr.variable.name == "which"
+    assert result is a_arg
+    assert a_var.name == "a"
+    assert b_var.name == "b"
 
 
 def test_condition_materialization_postprocess_fallbacks_refuse_after_structuring(monkeypatch):
@@ -523,7 +531,7 @@ def test_bp_operand_stack_expr_uses_offset_name_without_exact_prototype_slot():
 
     assert isinstance(expr, CVariable)
     assert expr is not wrong_offset_arg
-    assert expr.name == "arg_4"
+    assert expr.name == "stack_bp_p4_b2"
     assert isinstance(expr.variable, SimStackVariable)
     assert expr.variable.offset == 4
 
@@ -3395,7 +3403,7 @@ def test_translate_cmp_jcc_guard_decodes_32bit_call_return_stack_pair():
     assert isinstance(decoded.rhs.variable, SimStackVariable)
     assert decoded.rhs.variable.offset == -4
     assert decoded.rhs.variable.size == 4
-    assert decoded.rhs.variable.name == "goal"
+    assert decoded.rhs.variable.name == "stack_bp_m4_b4"
     assert decoded.consumed_branch_keys == ((0x5010, 0x5010), (0x5022, 0x5020))
     assert not _expr_contains_register(project, decoded.lhs, "dx")
     assert not _expr_contains_register(project, decoded.lhs, "ax")
@@ -3489,5 +3497,5 @@ def test_translate_cmp_jcc_guard_decodes_call_return_from_previous_linear_block(
     assert isinstance(decoded.rhs.variable, SimStackVariable)
     assert decoded.rhs.variable.offset == -4
     assert decoded.rhs.variable.size == 4
-    assert decoded.rhs.variable.name == "goal"
+    assert decoded.rhs.variable.name == "stack_bp_m4_b4"
     assert codegen._inertia_jcc_wide_call_return_pair_materialized_8616 == 1

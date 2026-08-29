@@ -2,12 +2,54 @@ from __future__ import annotations
 
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
+from inertia_decompiler.cli_function_discovery import _filter_noncode_labeled_entries
 from inertia_decompiler.library_function_classifier import (
     LibraryFunctionClass,
     classify_library_function_name,
     filter_code_labels_for_library_policy,
     is_library_like_function_name,
 )
+from inertia_decompiler.sidecar_metadata import _function_discovery_code_labels
+
+
+def test_function_discovery_prefers_declared_procedures_without_hiding_labels():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "main", 0x1010: "helper", 0x2000: "aMessage"},
+        function_entry_addrs=frozenset({0x1000, 0x1010}),
+        absolute_addrs=True,
+        source_format="ida_map+ida_lst+ida_idc",
+    )
+
+    assert metadata.code_labels[0x2000] == "aMessage"
+    assert _function_discovery_code_labels(metadata) == {0x1000: "main", 0x1010: "helper"}
+
+
+def test_declared_ida_procedure_is_not_dropped_by_library_name_policy():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "main", 0x1010: "strcpy"},
+        function_entry_addrs=frozenset({0x1000, 0x1010}),
+        absolute_addrs=True,
+        source_format="ida_map+ida_lst+ida_idc",
+    )
+
+    result = filter_code_labels_for_library_policy(metadata, metadata.code_labels)
+
+    assert result.labels == metadata.code_labels
+    assert result.decisions[0x1010] is LibraryFunctionClass.USER_SOURCE_PROC
+
+
+def test_declared_procedure_bypasses_unproven_label_byte_probe():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "declared_proc"},
+        function_entry_addrs=frozenset({0x1000}),
+    )
+
+    assert _filter_noncode_labeled_entries(object(), [(0x1000, "declared_proc")], metadata) == [
+        (0x1000, "declared_proc")
+    ]
 
 
 def test_cod_proc_labels_are_kept_while_map_runtime_labels_are_filtered():

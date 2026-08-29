@@ -93,6 +93,7 @@ def _imark(addr: int, delta: int = 0):
 def _block(addr: int, *stmts, next_expr=None, insns=()):
     return SimpleNamespace(
         addr=addr,
+        size=1,
         vex=SimpleNamespace(statements=stmts, next=next_expr),
         capstone=SimpleNamespace(insns=tuple(insns)),
     )

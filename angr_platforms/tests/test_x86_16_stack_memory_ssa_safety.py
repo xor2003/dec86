@@ -34,6 +34,8 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
 )
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
+    record_stack_variable_coordinate_projection_8616,
+    stack_variable_coordinate_registry_8616,
 )
 from angr_platforms.X86_16.widening.stack_memory_objects import (
     build_x86_16_stack_memory_object_widening_artifact,
@@ -122,6 +124,16 @@ def test_one_branch_sp_change_refuses_join_stack_materialization() -> None:
 
     source = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
     codegen = _Codegen(source)
+    existing_variable = SimStackVariable(-2, 1, base="bp", name="existing")
+    existing_cvar = SimpleNamespace(variable=existing_variable)
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=existing_variable,
+        cvar=existing_cvar,
+        bp_offset=-2,
+        entry_sp_offset=-2,
+        size=1,
+    )
     lowered = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
 
     assert function_ssa.predecessor_map[0x1030] == (0x1010, 0x1020)
@@ -141,6 +153,10 @@ def test_one_branch_sp_change_refuses_join_stack_materialization() -> None:
         is StackMemorySSALoweringRefusalKind8616.SOURCE_ALIAS_REFUSAL
     )
     assert codegen.cfunc.variables_in_use == {}
+    projection = stack_variable_coordinate_registry_8616(codegen).for_variable(
+        existing_variable
+    )
+    assert projection is not None and projection.cvar is existing_cvar
 
 
 def test_equal_offset_ds_and_ss_accesses_materialize_only_ss_owner() -> None:

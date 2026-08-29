@@ -24,6 +24,8 @@ from ..alias.domains import (
     register_view_for_name,
 )
 from ..caller_return_use_contracts import (
+    AxValueView8616,
+    ByteReturnExtensionKind8616,
     CallerReturnUseFact8616,
     CallerReturnUseVerdict8616,
     CallsiteReturnUseKind8616,
@@ -162,6 +164,72 @@ def _unique_conditions_8616(conditions: Sequence[ConditionIR]) -> tuple[Conditio
     return tuple(unique)
 
 
+def _proven_scalar_result_8616(
+    signedness: StorageTrialSignedness8616,
+    *,
+    condition: ConditionIR | None = None,
+    byte_extension_fact: CallerReturnUseFact8616 | None = None,
+) -> ReturnStorageTypeResult8616:
+    """Build one complete scalar return classification."""
+    return ReturnStorageTypeResult8616(
+        verdict=ReturnStorageTypeVerdict8616.PROVEN,
+        signedness=signedness,
+        value_class=StorageTrialValueClass8616.VALUE,
+        condition=condition,
+        byte_extension_fact=byte_extension_fact,
+        failure=None,
+        stats=StorageTrialStats8616(
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=1,
+            materialized_count=1,
+        ),
+    )
+
+
+def _classify_byte_extension_8616(
+    fact: CallerReturnUseFact8616,
+    output_storages: tuple[StorageIdentity8616, ...],
+) -> ReturnStorageTypeResult8616:
+    """Classify an exact AL result promoted to AX before its scalar use."""
+    if len(output_storages) != 1:
+        return _refused_result_8616(
+            ReturnStorageTypeFailure8616.SPLIT_OUTPUT_UNSUPPORTED,
+            normalized=True,
+        )
+    register_range = _register_range_8616(output_storages[0])
+    if (
+        register_range is None
+        or register_range.domain != AX
+        or register_range.width != 1
+        or register_range.view.bit_offset != 0
+        or fact.observed_value_view is not AxValueView8616.AX
+    ):
+        return _refused_result_8616(
+            ReturnStorageTypeFailure8616.OUTPUT_CARRIER_UNSUPPORTED,
+            normalized=True,
+        )
+    extension = fact.byte_extension
+    if extension is None:
+        return _refused_result_8616(
+            ReturnStorageTypeFailure8616.SIGNEDNESS_UNKNOWN,
+            normalized=True,
+        )
+    signedness = {
+        ByteReturnExtensionKind8616.SIGN_EXTEND_AL_TO_AX: StorageTrialSignedness8616.SIGNED,
+        ByteReturnExtensionKind8616.ZERO_EXTEND_AL_TO_AX: StorageTrialSignedness8616.UNSIGNED,
+    }.get(extension)
+    if signedness is None:
+        return _refused_result_8616(
+            ReturnStorageTypeFailure8616.SIGNEDNESS_UNKNOWN,
+            normalized=True,
+        )
+    return _proven_scalar_result_8616(
+        signedness,
+        byte_extension_fact=fact,
+    )
+
+
 def classify_return_storage_type_8616(
     fact: CallerReturnUseFact8616,
     output_storages: tuple[StorageIdentity8616, ...],
@@ -175,6 +243,11 @@ def classify_return_storage_type_8616(
             ReturnStorageTypeFailure8616.RETURN_NOT_OBSERVED,
             normalized=True,
         )
+    if (
+        fact.kind is CallsiteReturnUseKind8616.VALUE
+        and fact.byte_extension is not None
+    ):
+        return _classify_byte_extension_8616(fact, output_storages)
     if fact.kind is not CallsiteReturnUseKind8616.CONDITION:
         return _refused_result_8616(
             ReturnStorageTypeFailure8616.RETURN_USE_NOT_CONDITION,
@@ -227,20 +300,21 @@ def classify_return_storage_type_8616(
         )
     condition = matching[0]
     if condition.is_signed:
-        return ReturnStorageTypeResult8616(
-            verdict=ReturnStorageTypeVerdict8616.PROVEN,
-            signedness=StorageTrialSignedness8616.SIGNED,
-            value_class=StorageTrialValueClass8616.VALUE,
+        return _proven_scalar_result_8616(
+            StorageTrialSignedness8616.SIGNED,
             condition=condition,
-            failure=None,
-            stats=StorageTrialStats8616(
-                raw_fact_count=1,
-                normalized_fact_count=1,
-                classified_fact_count=1,
-                materialized_count=1,
-            ),
+        )
+    if register_range.width == 1 and condition.op in {"eq", "ne", "zero", "nonzero"}:
+        return _proven_scalar_result_8616(
+            StorageTrialSignedness8616.SIGN_INSENSITIVE,
+            condition=condition,
         )
     if condition.is_unsigned:
+        if register_range.width == 1:
+            return _proven_scalar_result_8616(
+                StorageTrialSignedness8616.UNSIGNED,
+                condition=condition,
+            )
         return _refused_result_8616(
             ReturnStorageTypeFailure8616.VALUE_CLASS_UNKNOWN,
             normalized=True,

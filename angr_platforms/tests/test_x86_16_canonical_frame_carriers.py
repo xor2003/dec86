@@ -332,3 +332,37 @@ def test_frame_register_carriers_refuse_ambiguous_same_instruction_definition() 
         resolution.failure_count,
     ) == (2, 2, 0, 0, 2)
     assert resolution.resolve(dirty(339, VirtualVariableCategory.TMP, 1)) is None
+
+
+def test_frame_register_carrier_candidate_is_not_classified_without_frame_proof() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), _inertia_c_target="portable-flat")
+    codegen = _Codegen(project)
+    sp_offset = project.arch.registers["sp"][0]
+    tags = Tags({"ins_addr": 0x1000, "vex_block_addr": 0x1000})
+    root = CStatements(
+        [
+            CAssignment(
+                CDirtyExpression(
+                    VirtualVariable(339, 339, 16, VirtualVariableCategory.TMP, oident=1),
+                    codegen=codegen,
+                ),
+                CDirtyExpression(
+                    VirtualVariable(23, 23, 16, VirtualVariableCategory.REGISTER, oident=sp_offset),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+                tags=tags,
+            )
+        ],
+        codegen=codegen,
+    )
+
+    resolution = collect_frame_register_carriers_8616(root, project, 0x1000).with_frame_proof(False)
+
+    assert (
+        resolution.raw_fact_count,
+        resolution.normalized_fact_count,
+        resolution.classified_fact_count,
+        resolution.materialized_count,
+        resolution.failure_count,
+    ) == (1, 1, 0, 0, 0)

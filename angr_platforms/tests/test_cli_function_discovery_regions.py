@@ -534,6 +534,44 @@ def test_recover_lst_function_keeps_callable_entry_for_rebased_return_use(monkey
     assert observed["caller_target_addrs"] == (0x1000,)
 
 
+def test_recover_lst_function_passes_only_declared_procedure_ranges_to_rebased_analysis(monkeypatch):
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "Func", 0x2000: "aMessage"},
+        code_ranges={0x1000: (0x1000, 0x1010), 0x2000: (0x2000, 0x2080)},
+        function_entry_addrs=frozenset({0x1000}),
+        absolute_addrs=True,
+    )
+    project = SimpleNamespace(entry=0, arch=SimpleNamespace(name="86_16"))
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        function_discovery,
+        "_derive_lst_exact_region_8616",
+        lambda *_args, **_kwargs: (0x1000, 0x1010),
+    )
+
+    def fake_rebased_recovery(_project, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(name="recovered")
+
+    monkeypatch.setattr(
+        function_discovery,
+        "_try_rebased_exact_region_recovery_8616",
+        fake_rebased_recovery,
+    )
+
+    function_discovery._recover_lst_function(
+        project,
+        metadata,
+        0x1000,
+        "Func",
+        timeout=1,
+        window=0x20,
+    )
+
+    assert observed["function_ranges"] == ((0x1000, 0x1010),)
+
+
 def test_recover_lst_function_keeps_label_alias_when_recovery_starts_after_padding(monkeypatch):
     metadata = LSTMetadata(
         data_labels={},

@@ -5,7 +5,13 @@ import inspect
 import textwrap
 from types import SimpleNamespace
 
+import pytest
 from angr_platforms.X86_16 import decompiler_structuring_stage as stage
+from angr_platforms.X86_16.structuring.pass_effects import (
+    StructuringLoweringReplayImpact8616,
+    structuring_lowering_replay_impact_after_changes_8616,
+    structuring_return_closure_requires_segment_replay_8616,
+)
 
 
 def test_direct_stack_ownership_observes_typed_conditions(monkeypatch) -> None:
@@ -81,6 +87,11 @@ def test_call_return_conditions_are_rebound_after_all_lowering(monkeypatch) -> N
         "materialize_loop_carried_terminal_return_8616",
         lambda *args, **kwargs: SimpleNamespace(changed=False),
     )
+    monkeypatch.setattr(
+        stage,
+        "finalize_typed_register_locals_8616",
+        lambda *args, **kwargs: SimpleNamespace(changed=False),
+    )
 
     events: list[str] = []
 
@@ -124,3 +135,99 @@ def test_shared_tail_ownership_closes_the_final_structuring_ast() -> None:
     assert span_lines["x86_16.structuring.final_selector_return_projection"] < final_shared_tail
     assert final_shared_tail < span_lines["x86_16.structuring.return_chain_integrity"]
     assert final_shared_tail < span_lines["x86_16.structuring.validation.after_fingerprint"]
+
+
+def test_post_regeneration_uses_one_full_lowering_replay() -> None:
+    """Do not duplicate direct and segmented lowering immediately before full replay."""
+    source = textwrap.dedent(inspect.getsource(stage._decompile_structuring_8616))
+    called_names = tuple(
+        node.func.id
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    )
+
+    assert called_names.count("_apply_structuring_direct_stack_materialization_8616") == 1
+    assert called_names.count("_prime_structuring_segment_global_semantics_8616") == 1
+    assert called_names.count("_replay_structuring_lowering_before_validation_8616") == 2
+
+
+def test_unobserved_return_declares_only_liveness_replay_impact() -> None:
+    """Replacing a pure return carrier cannot introduce stack/global address patterns."""
+    specs = {spec.name: spec for spec in stage._build_decompiler_structuring_passes()}
+
+    assert (
+        specs["_unobserved_return_lowering_8616"].lowering_replay_impact
+        is StructuringLoweringReplayImpact8616.RETURN_LIVENESS_ONLY
+    )
+    assert (
+        specs["_structuring_codegen_8616"].lowering_replay_impact
+        is StructuringLoweringReplayImpact8616.FULL_AST
+    )
+
+
+def test_late_ast_change_upgrades_return_liveness_to_full_replay() -> None:
+    """A later AST mutation must override a narrower pass-declared impact."""
+    impact = StructuringLoweringReplayImpact8616.RETURN_LIVENESS_ONLY
+
+    assert (
+        structuring_lowering_replay_impact_after_changes_8616(
+            impact,
+            return_liveness_changed=False,
+            full_ast_changes=(False, False),
+        )
+        is StructuringLoweringReplayImpact8616.RETURN_LIVENESS_ONLY
+    )
+    assert (
+        structuring_lowering_replay_impact_after_changes_8616(
+            impact,
+            return_liveness_changed=True,
+            full_ast_changes=(False, False),
+        )
+        is StructuringLoweringReplayImpact8616.RETURN_LIVENESS_ONLY
+    )
+    assert (
+        structuring_lowering_replay_impact_after_changes_8616(
+            impact,
+            return_liveness_changed=False,
+            full_ast_changes=(False, True),
+        )
+        is StructuringLoweringReplayImpact8616.FULL_AST
+    )
+
+
+def test_prebaseline_prime_does_not_invalidate_postprime_consumers() -> None:
+    """Priming is already closed before the Structuring validation baseline."""
+    assert (
+        structuring_lowering_replay_impact_after_changes_8616(
+            StructuringLoweringReplayImpact8616.NONE,
+            return_liveness_changed=False,
+            full_ast_changes=(),
+        )
+        is StructuringLoweringReplayImpact8616.NONE
+    )
+
+
+@pytest.mark.parametrize(
+    ("switch_changed", "terminal_changed", "shape_changed", "expected"),
+    (
+        (False, False, False, False),
+        (True, False, False, True),
+        (False, True, False, True),
+        (False, False, True, True),
+    ),
+)
+def test_return_closure_replays_segment_owner_only_after_mutation(
+    switch_changed: bool,
+    terminal_changed: bool,
+    shape_changed: bool,
+    expected: bool,
+) -> None:
+    """Stable return closure cannot invalidate segment/global lowering."""
+    assert (
+        structuring_return_closure_requires_segment_replay_8616(
+            switch_exit_changed=switch_changed,
+            terminal_call_return_changed=terminal_changed,
+            terminal_return_shape_changed=shape_changed,
+        )
+        is expected
+    )

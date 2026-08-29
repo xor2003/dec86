@@ -4,8 +4,13 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable, SimTemporaryVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering import terminal_return_expressions
+from angr_platforms.X86_16.lowering.terminal_return_render_projection import (
+    TerminalReturnRenderProjectionStatus8616,
+    project_terminal_return_renderability_8616,
+)
 
 
 class _Codegen:
@@ -13,6 +18,7 @@ class _Codegen:
         self.index = 0
         self.project = SimpleNamespace(arch=Arch86_16())
         self.cstyle_null_cmp = False
+        self.display_vvar_ids = False
 
     def next_idx(self, _name: str) -> int:
         self.index += 1
@@ -88,3 +94,62 @@ def test_unresolved_terminal_expression_keeps_codegen_depth_collapse() -> None:
 
     assert changed is False
     assert expression.collapsed is True
+
+
+def test_terminal_return_projection_exposes_lowered_wide_arithmetic() -> None:
+    """Clear stale collapse only after both wide operands are stack variables."""
+    codegen = _Codegen()
+    long_type = SimTypeShort(signed=True)
+    lhs = structured_c.CVariable(
+        SimStackVariable(2, 4, base="bp", name="a"),
+        variable_type=long_type,
+        codegen=codegen,
+    )
+    rhs = structured_c.CVariable(
+        SimStackVariable(6, 4, base="bp", name="b"),
+        variable_type=long_type,
+        codegen=codegen,
+    )
+    retval = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, collapsed=True)
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [structured_c.CReturn(retval, codegen=codegen)],
+            codegen=codegen,
+        )
+    )
+
+    result = project_terminal_return_renderability_8616(codegen)
+
+    assert result.status is TerminalReturnRenderProjectionStatus8616.MATERIALIZED
+    assert result.candidate_count == 1
+    assert result.materialized_expression_count == 1
+    assert result.uncollapsed_node_count == 1
+    assert result.refused_expression_count == 0
+    assert retval.collapsed is False
+    assert "".join(text for text, _node in retval.c_repr_chunks()) == "a + b"
+
+
+def test_terminal_return_projection_refuses_unresolved_carrier() -> None:
+    """Keep unresolved generated carriers hidden instead of exposing guessed C."""
+    codegen = _Codegen()
+    retval = structured_c.CVariable(
+        SimTemporaryVariable(7, 2),
+        variable_type=SimTypeShort(signed=False),
+        codegen=codegen,
+        collapsed=True,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [structured_c.CReturn(retval, codegen=codegen)],
+            codegen=codegen,
+        )
+    )
+
+    result = project_terminal_return_renderability_8616(codegen)
+
+    assert result.status is TerminalReturnRenderProjectionStatus8616.REFUSED
+    assert result.candidate_count == 1
+    assert result.materialized_expression_count == 0
+    assert result.uncollapsed_node_count == 0
+    assert result.refused_expression_count == 1
+    assert retval.collapsed is True

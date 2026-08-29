@@ -24,6 +24,7 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _attach_tail_validation_widened_carrier_provenance_8616,
     _deepcopy_cfunc_for_validation_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_binding import StackVariableBinding
 from angr_platforms.X86_16.lowering.structured_intrinsics import lower_structured_insert_call_8616
 from angr_platforms.X86_16.tail_validation_fingerprint import (
     _canonical_or_unresolved_stack_fingerprint_8616,
@@ -1337,6 +1338,17 @@ def test_stable_stack_dereference_matches_materialized_stack_local():
     # while the direct stack variable path emits `stack:-0x2`.
     assert "BP-0x2" in deref_fp or deref_fp == "stack:-0x2"
     assert ":-0x2" in mat_fp or "BP-0x2" in mat_fp
+
+
+def test_direct_byte_stack_access_keeps_width_inside_word_aligned_frame_slot():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    byte_var = SimStackVariable(-2, 1, base="bp", name="value")
+    byte_cvar = CVariable(byte_var, variable_type=SimTypeChar(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(variables_in_use={byte_var: byte_cvar})
+    codegen._inertia_stack_variable_bindings = (StackVariableBinding(-2, 2, var_name="value"),)
+
+    assert _location_fingerprint(byte_cvar, project) == "stack_slot:SS:BP-0x2:size1"
 
 
 def test_indexed_stack_carrier_matches_materialized_local_with_alias_map():

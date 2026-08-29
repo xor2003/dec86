@@ -54,3 +54,28 @@ def test_callee_saved_frame_pairs_keep_later_argument_push_outside_frame() -> No
     )
 
     assert pairs[0].instruction_addresses == frozenset((0x1010, 0x1020))
+
+
+def test_callee_saved_frame_pairs_accept_explicit_caller_saved_register_pair() -> None:
+    register_ax = 100
+    push_ax = SimpleNamespace(
+        address=0x1010,
+        id=X86_INS_PUSH,
+        operands=(SimpleNamespace(type=X86_OP_REG, reg=register_ax),),
+        reg_name=lambda value: "ax" if value == register_ax else "",
+    )
+    pop_ax = SimpleNamespace(
+        address=0x1020,
+        id=X86_INS_POP,
+        operands=(SimpleNamespace(type=X86_OP_REG, reg=register_ax),),
+        reg_name=lambda value: "ax" if value == register_ax else "",
+    )
+
+    pairs = callee_saved_frame_pairs_8616(
+        (push_ax, pop_ax, _instruction(0x1021, X86_INS_RET)),
+        frozenset(("ax",)),
+    )
+
+    assert [(pair.register_name, pair.push_addr, pair.pop_addr) for pair in pairs] == [
+        ("ax", 0x1010, 0x1020)
+    ]

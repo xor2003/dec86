@@ -18,6 +18,11 @@ from typing import cast
 from inertia_decompiler.cache_io import load_cache_json_path, store_cache_json_path
 from inertia_decompiler.cache_lock import cache_path_lock
 from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_8616
+from inertia_decompiler.cache_source_manifest import (
+    FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
+    INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
+    RecoveryCacheSourceScope8616,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -138,10 +143,7 @@ def _production_decompiler_source_files() -> tuple[Path, ...]:
         _ROOT / "angr_platforms" / "angr_platforms" / "X86_16",
     )
     discovered = {
-        path
-        for package_root in package_roots
-        for path in package_root.rglob("*.py")
-        if "__pycache__" not in path.parts
+        path for package_root in package_roots for path in package_root.rglob("*.py") if "__pycache__" not in path.parts
     }
     discovered.add(_ROOT / "decompile.py")
     return tuple(sorted(discovered))
@@ -192,9 +194,7 @@ def _cache_content_fingerprint(path: Path | None) -> dict[str, object] | None:
 
 def is_non_semantic_cache_environment_name(name: str) -> bool:
     """Return whether an Inertia variable controls transport or diagnostics only."""
-    return name in _CACHE_NON_SEMANTIC_ENVIRONMENT_NAMES or name.startswith(
-        _CACHE_NON_SEMANTIC_ENVIRONMENT_PREFIXES
-    )
+    return name in _CACHE_NON_SEMANTIC_ENVIRONMENT_NAMES or name.startswith(_CACHE_NON_SEMANTIC_ENVIRONMENT_PREFIXES)
 
 
 def _cache_runtime_environment() -> dict[str, str]:
@@ -202,8 +202,7 @@ def _cache_runtime_environment() -> dict[str, str]:
     return {
         name: value
         for name, value in sorted(os.environ.items())
-        if name.startswith("INERTIA_")
-        and not is_non_semantic_cache_environment_name(name)
+        if name.startswith("INERTIA_") and not is_non_semantic_cache_environment_name(name)
     }
 
 
@@ -339,6 +338,7 @@ def _recovery_cache_key(
     binary_path: Path | None,
     kind: str,
     extra: dict[str, object] | None = None,
+    source_scope: RecoveryCacheSourceScope8616 = RecoveryCacheSourceScope8616.FULL_DECOMPILATION,
 ) -> dict[str, object] | None:
     """Build recovery identity, excluding sidecar policy when no sidecar exists."""
     if not cache_runtime_contract_8616().allows_semantic_cache:
@@ -353,13 +353,19 @@ def _recovery_cache_key(
         environment.pop("INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616", None)
         if "ignore_local_sidecar_hints" in normalized_extra:
             normalized_extra["ignore_local_sidecar_hints"] = False
+    if source_scope is RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY:
+        source_files = FUNCTION_DISCOVERY_CACHE_SOURCE_FILES
+    elif source_scope is RecoveryCacheSourceScope8616.INDEXED_ALIAS_PROGRAM:
+        source_files = INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES
+    else:
+        source_files = RECOVERY_CACHE_SOURCE_FILES
     payload = {
         "schema": DECOMPILATION_CACHE_SCHEMA,
         "kind": kind,
         "binary": binary_fingerprint,
         "sidecars": sidecars,
         "environment": environment,
-        "components": _cache_source_digest(RECOVERY_CACHE_SOURCE_FILES),
+        "components": _cache_source_digest(source_files),
     }
     payload.update(normalized_extra)
     return payload

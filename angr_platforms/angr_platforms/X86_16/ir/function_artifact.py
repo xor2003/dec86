@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from .core import IRBlock, IRRefusal
 
 if TYPE_CHECKING:
+    from .function_condition_artifact import IRFunctionConditionArtifact8616
     from .logical_memory_contracts import IRLogicalMemoryArtifact8616
 
 
@@ -28,6 +29,7 @@ class IRFunctionArtifact:
     refusals: tuple[IRRefusal, ...] = ()
     summary: dict[str, object] = field(default_factory=dict)
     logical_memory: IRLogicalMemoryArtifact8616 | None = None
+    condition_evidence: IRFunctionConditionArtifact8616 | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this function-level typed IR artifact."""
@@ -37,6 +39,11 @@ class IRFunctionArtifact:
             "refusals": [item.to_dict() for item in self.refusals],
             "summary": dict(self.summary),
             "logical_memory": None if self.logical_memory is None else self.logical_memory.to_dict(),
+            "condition_evidence": (
+                None
+                if self.condition_evidence is None
+                else self.condition_evidence.to_dict()
+            ),
         }
 
 

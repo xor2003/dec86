@@ -39,6 +39,8 @@ from .interprocedural_storage_transaction import (
 from .interprocedural_storage_trial_collection import (
     collect_function_input_storage_trials_8616,
 )
+from .pointer_parameter_caller_targets import publish_pointer_parameter_caller_targets_8616
+from .pointer_parameter_outputs import publish_pointer_parameter_outputs_8616
 
 __all__ = [
     "FunctionStoragePublicationResult8616",
@@ -237,6 +239,12 @@ def collect_and_publish_function_storage_contract_8616(
             ),
         )
     function_addr, function = context
+    pointer_outputs = publish_pointer_parameter_outputs_8616(
+        project, function_addr, function=function
+    )
+    pointer_targets = publish_pointer_parameter_caller_targets_8616(
+        project, function_addr, function=function, outputs=pointer_outputs
+    )
     inputs = collect_function_input_storage_trials_8616(project, codegen, function_addr)
     if not inputs.complete:
         return _record_result_8616(
@@ -269,6 +277,7 @@ def collect_and_publish_function_storage_contract_8616(
         inputs,
         evidence,
         accepted_target_addrs=accepted_targets,
+        pointer_targets=pointer_targets,
     )
     if not returns.complete:
         return _record_result_8616(

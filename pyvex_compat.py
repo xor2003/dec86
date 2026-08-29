@@ -1,6 +1,8 @@
 """Runtime compatibility patches for local pyvex/angr execution.
 
 Layer: Frontend/runtime.
+Responsibility: adapt dynamic pyvex APIs without changing decoded instruction
+semantics or exposing instructions outside the requested lift boundary.
 """
 
 from __future__ import annotations
@@ -8,6 +10,8 @@ from __future__ import annotations
 import functools
 import logging
 import threading
+from collections.abc import Iterator, Sequence
+from typing import Any, cast, overload
 
 from inertia_decompiler.runtime_support import AnalysisTimeout
 
@@ -22,7 +26,7 @@ class _InstructionWindow:
 
     __slots__ = ("_end", "_seq", "_start")
 
-    def __init__(self, seq, start: int, end: int) -> None:  # noqa: ANN001
+    def __init__(self, seq: Sequence[object], start: int, end: int) -> None:
         self._seq = seq
         self._start = start
         self._end = end
@@ -37,7 +41,13 @@ class _InstructionWindow:
     def __len__(self) -> int:
         return self._end - self._start
 
-    def __getitem__(self, idx):  # noqa: ANN001, ANN204
+    @overload
+    def __getitem__(self, idx: int) -> object: ...
+
+    @overload
+    def __getitem__(self, idx: slice) -> list[object]: ...
+
+    def __getitem__(self, idx: int | slice) -> object | list[object]:
         length = self._end - self._start
         if isinstance(idx, slice):
             lo, hi, step = idx.indices(length)
@@ -48,12 +58,13 @@ class _InstructionWindow:
             raise IndexError(idx)
         return self._seq[self._start + idx]
 
-    def __iter__(self):  # noqa: ANN204
+    def __iter__(self) -> Iterator[object]:
         for i in range(self._start, self._end):
             yield self._seq[i]
 
 
-def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
+def apply_pyvex_runtime_compatibility() -> None:
+    """Install bounded, process-wide adapters for supported pyvex APIs."""
     global _APPLIED
     if _APPLIED:
         return
@@ -72,8 +83,8 @@ def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
             original_get_type_size = pyvex_const.get_type_size
 
             @functools.cache
-            def _inertia_cached_get_type_size(ty):  # noqa: ANN001, ANN202
-                return original_get_type_size(ty)
+            def _inertia_cached_get_type_size(ty: object) -> object:
+                return cast(object, original_get_type_size(ty))
 
             pyvex_const.get_type_size = _inertia_cached_get_type_size
 
@@ -81,8 +92,8 @@ def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
             original_get_type_spec_size = pyvex_const.get_type_spec_size
 
             @functools.cache
-            def _inertia_cached_get_type_spec_size(ty):  # noqa: ANN001, ANN202
-                return original_get_type_spec_size(ty)
+            def _inertia_cached_get_type_spec_size(ty: object) -> object:
+                return cast(object, original_get_type_spec_size(ty))
 
             pyvex_const.get_type_spec_size = _inertia_cached_get_type_spec_size
 
@@ -91,11 +102,11 @@ def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
             original_getattr = type_meta.__getattr__
             cache: dict[str, object] = {}
 
-            def _inertia_cached_type_getattr(self, name):  # noqa: ANN001, ANN202
+            def _inertia_cached_type_getattr(self: object, name: str) -> object:
                 cached = cache.get(name)
                 if cached is not None:
                     return cached
-                result = original_getattr(self, name)
+                result = cast(object, original_getattr(self, name))
                 if name.startswith("int_"):
                     cache[name] = result
                 return result
@@ -111,7 +122,8 @@ def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
             vex_int_class = lifter_helper.vex_int_class
             log = lifter_helper.log
 
-            def _inertia_safe_lift(self):  # noqa: ANN001, ANN202
+            def _inertia_safe_lift(self: Any) -> Any:  # noqa: ANN401 - dynamic pyvex monkeypatch boundary
+                """Lift the requested instruction prefix with bounded lookahead."""
                 debug_enabled = log.isEnabledFor(logging.DEBUG)
                 data = self.data
                 if isinstance(data, (bytes, bytearray, memoryview)):
@@ -131,13 +143,13 @@ def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
                 max_inst = self.max_inst
                 max_inst = len(instructions) if max_inst is None or max_inst <= 0 else min(max_inst, len(instructions))
                 past_window = _InstructionWindow(instructions, 0, 0)
-                future_window = _InstructionWindow(instructions, 1, len(instructions))
+                future_window = _InstructionWindow(instructions, 1, max_inst)
                 for i in range(max_inst):
                     instr = instructions[i]
                     if debug_enabled:
                         log.debug("Lifting instruction %s", instr.name)
                     past_window.reset(0, i)
-                    future_window.reset(i + 1, len(instructions))
+                    future_window.reset(i + 1, max_inst)
                     try:
                         instr(irsb_c, past_window, future_window)
                     except AnalysisTimeout:

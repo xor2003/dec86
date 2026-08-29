@@ -33,6 +33,7 @@ class CliArguments(argparse.Namespace):
     proc_kind: str
     timeout: int
     window: int
+    exact_region_end: int | None
     max_memory_mb: int
     max_functions: int
     include_library_functions: bool
@@ -161,6 +162,12 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         type=_parse_int,
         default=0x200,
         help="Bound CFG recovery to [addr, addr+window). Defaults to 0x200.",
+    )
+    parser.add_argument(
+        "--exact-region-end",
+        type=_parse_int,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-memory-mb",

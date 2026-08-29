@@ -28,6 +28,7 @@ from ..ir.segment_contract import (
     SegmentFunctionContract,
     SegmentInstructionStateFact,
 )
+from ..structured_tags import copy_structured_tags_8616
 from .segment_access_coverage import (
     segment_access_matches_query_8616,
     select_contiguous_segment_access_facts_8616,
@@ -226,10 +227,10 @@ def instruction_addrs_from_node_8616(node: object) -> frozenset[int]:
         """Collect exact tags from one dynamic AST or wrapped dirty owner."""
         dynamic_owner = cast(Any, owner)
         try:
-            tags = dynamic_owner.tags
+            tags = copy_structured_tags_8616(dynamic_owner.tags)
         except AttributeError:
             return
-        if not isinstance(tags, dict):
+        if tags is None:
             return
         for key in ("ins_addr", "inertia_relocated_from_ins_addr"):
             value = tags.get(key)

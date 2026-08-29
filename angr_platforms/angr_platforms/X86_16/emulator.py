@@ -51,6 +51,16 @@ class _LifterInstruction(Protocol):
         """Materialize a VEX temporary for an expression."""
         ...
 
+    def record_loop_counter_condition_8616(
+        self,
+        counter_name: str,
+        counter_size: int,
+        displacement: int,
+        instruction_size: int,
+    ) -> None:
+        """Publish the typed continuation condition for a plain LOOP."""
+        ...
+
 
 class _RuntimeHooks(Protocol):
     """Processor/DataAccess hooks supplied by the runtime inheritance stack."""

@@ -33,6 +33,9 @@ from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     recover_call_output_stack_object_facts_8616,
     select_wide_call_return_condition_chain_8616,
 )
+from angr_platforms.X86_16.lowering.condition_stack_operands import (
+    materialize_typed_condition_stack_operand_8616,
+)
 from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     record_stack_variable_coordinate_projection_8616,
@@ -224,6 +227,38 @@ def test_call_output_stack_fields_use_machine_bp_coordinate_registry():
     assert isinstance(result.expression.rhs.lhs, CVariableField)
     assert prune_materialized_call_output_stack_carriers_8616(codegen) == 2
     assert all(variable not in codegen.cfunc.variables_in_use for variable in carrier_variables)
+
+
+def test_call_output_stack_base_prefers_exact_projection_over_contained_subview():
+    codegen, condition, _carrier_variables = _fixture(
+        include_array_boundary=True,
+        materialized_call_argument=False,
+        entry_sp_bias=-2,
+    )
+    projected_owner = next(
+        variable
+        for variable in codegen.cfunc.variables_in_use
+        if isinstance(variable, SimStackVariable) and variable.name == "vc"
+    )
+    contained = SimStackVariable(
+        projected_owner.offset,
+        1,
+        base="bp",
+        name="vc_low_byte",
+        region=0x1000,
+    )
+    codegen.cfunc.variables_in_use[contained] = CVariable(
+        contained,
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    conditions = (_condition(-94, 0x103F), _condition(-98, 0x1048))
+
+    result = lower_call_output_stack_fields_in_condition_8616(codegen, condition, conditions)
+
+    assert result.stats.materialized_count == 2
+    assert len(result.facts) == 1
+    assert result.facts[0].base_variable is projected_owner
 
 
 def test_call_output_stack_fields_refuse_without_closed_aggregate_boundary():
@@ -486,10 +521,33 @@ def test_wide_call_return_condition_refuses_without_typed_callsite():
     assert result.consumed_callsite is None
 
 
+def test_wide_call_return_condition_consumes_typed_low_word_projection():
+    """Resolve a masked low-word view from its typed four-byte stack owner."""
+    codegen, expression, conditions, call, wide = _wide_condition_fixture()
+    projected_low = materialize_typed_condition_stack_operand_8616(
+        codegen,
+        base="bp",
+        offset=-4,
+        size=2,
+        storage_size=4,
+        name="goal",
+        signed=False,
+    )
+    assert projected_low is not None
+    expression.rhs.rhs.rhs = projected_low
+
+    result = lower_wide_call_return_condition_chain_8616(codegen, expression, conditions)
+
+    assert result.stats.materialized_count == 1
+    assert result.stats.failure_count == 0
+    assert result.expression.rhs is wide
+    assert result.consumed_call is call
+
+
 def test_wide_call_return_condition_uses_inventory_before_ast_summary_attachment():
     codegen, expression, conditions, call, _wide = _wide_condition_fixture()
     del codegen._inertia_callsite_summaries
-    call.tags = {"ins_addr": 0x1000}
+    call.tags = SimpleNamespace(get=lambda key: 0x1000 if key == "ins_addr" else None)
 
     result = lower_wide_call_return_condition_chain_8616(codegen, expression, conditions)
 

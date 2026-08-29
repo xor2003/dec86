@@ -33,6 +33,8 @@ from angr.sim_variable import SimStackVariable
 from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from .authoritative_function_prototypes import publish_codegen_function_prototype_8616
+from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +233,8 @@ class PointerSwapSpliceStats8616:
     statement_nonvariable_ins_addrs: tuple[tuple[int, ...], ...] = ()
     statement_stack_flows: tuple[tuple[int | None, tuple[int, ...]], ...] = ()
     stale_temp_assignment_count: int = 0
+    left_machine_bp_offset: int | None = None
+    right_machine_bp_offset: int | None = None
 
 
 def pointer_swap_validation_delta_is_precision_only_8616(
@@ -244,6 +248,9 @@ def pointer_swap_validation_delta_is_precision_only_8616(
         or stats.classified_fact_count != 1
         or stats.materialized_count != 1
         or stats.failure_count != 0
+        or stats.left_machine_bp_offset is None
+        or stats.right_machine_bp_offset is None
+        or stats.left_machine_bp_offset == stats.right_machine_bp_offset
     ):
         return False
     delta = validation.get("delta")
@@ -262,10 +269,19 @@ def pointer_swap_validation_delta_is_precision_only_8616(
     added_writes = tuple(str(item) for item in tuple(writes.get("added", ()) or ()))
     removed_writes = tuple(str(item) for item in tuple(writes.get("removed", ()) or ()))
     pointer_prefix = "deref:Add(Mul(reg:ds,const:16),stack_slot:SS:BP+"
+    expected_added_offsets = {
+        frozenset({stats.left_machine_bp_offset}),
+        frozenset({stats.right_machine_bp_offset}),
+    }
     return (
         len(added_writes) == 2
         and len(set(added_writes)) == 2
         and all(item.startswith(pointer_prefix) for item in added_writes)
+        and {
+            frozenset(_stack_offsets_in_validation_fingerprint_8616(item))
+            for item in added_writes
+        }
+        == expected_added_offsets
         and len(removed_writes) >= 2
         and all(item.startswith("deref:") and "stack_slot:SS:BP+" in item for item in removed_writes)
     )
@@ -344,6 +360,26 @@ def splice_proven_pointer_swap_statements_8616(
     stats.proven_ins_addrs = tuple(sorted(proven_ins_addrs))
     stats.required_write_ins_addrs = tuple(sorted(required_write_ins_addrs))
     typed_codegen = cast(_PointerSwapCodegenBoundary8616, codegen)
+    left_variable = left_expr.variable
+    right_variable = right_expr.variable
+    stats.left_machine_bp_offset = (
+        machine_bp_offset_for_stack_variable_8616(codegen, left_variable)
+        if isinstance(left_variable, SimStackVariable)
+        else None
+    )
+    stats.right_machine_bp_offset = (
+        machine_bp_offset_for_stack_variable_8616(codegen, right_variable)
+        if isinstance(right_variable, SimStackVariable)
+        else None
+    )
+    if (
+        stats.left_machine_bp_offset is None
+        or stats.right_machine_bp_offset is None
+        or stats.left_machine_bp_offset == stats.right_machine_bp_offset
+    ):
+        stats.failure_count = 1
+        typed_codegen._inertia_pointer_swap_splice_stats_8616 = stats
+        return False
     cfunc = typed_codegen.cfunc
     root = cfunc.statements
     statements = root.statements if isinstance(root, CStatements) else None
@@ -576,6 +612,7 @@ def materialize_pointer_memory_idioms_from_evidence_8616(
     for kind, materializer in attempts:
         if not materializer(project, codegen, insns, index_by_addr):
             continue
+        publish_codegen_function_prototype_8616(project, codegen)
         counted_loop_normalized = _normalize_materialized_counted_loop_8616(typed_codegen, kind)
         requires_counted_loop = kind in {
             PointerMemoryIdiomKind8616.BYTE_FILL_LOOP,

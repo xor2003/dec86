@@ -6,7 +6,7 @@ import archinfo
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_variable import SimRegisterVariable, SimTemporaryVariable
 from angr_platforms.X86_16.postprocess.optimization.dce import _dead_code_elimination_8616
 
 
@@ -48,6 +48,36 @@ def test_dce_deletes_unread_pure_angr_unary_carrier(unary_op: str) -> None:
     source = _variable(codegen, "flags_in", 36)
     result = _variable(codegen, "ir_flags_out", 38)
     rhs = structured_c.CUnaryOp(unary_op, source, codegen=codegen)
+    assignment = structured_c.CAssignment(result, rhs, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements([assignment], codegen=codegen),
+    )
+
+    assert _dead_code_elimination_8616(codegen) is True
+    assert codegen.cfunc.statements.statements == []
+    assert codegen.dce_deleted == 1
+
+
+def test_dce_deletes_unread_flag_equation_over_angr_temporaries() -> None:
+    codegen = _Codegen()
+    low = structured_c.CVariable(
+        SimTemporaryVariable(49, 16),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    high = structured_c.CVariable(
+        SimTemporaryVariable(60, 16),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    one = structured_c.CConstant(1, SimTypeShort(False), codegen=codegen)
+    two = structured_c.CConstant(2, SimTypeShort(False), codegen=codegen)
+    shifted = structured_c.CBinaryOp("Shl", low, one, codegen=codegen)
+    mixed = structured_c.CBinaryOp("Xor", shifted, high, codegen=codegen)
+    negated = structured_c.CUnaryOp("BitwiseNeg", mixed, codegen=codegen)
+    parity_bit = structured_c.CBinaryOp("And", negated, one, codegen=codegen)
+    rhs = structured_c.CBinaryOp("Shl", parity_bit, two, codegen=codegen)
+    result = _variable(codegen, "tmp_78", 38)
     assignment = structured_c.CAssignment(result, rhs, codegen=codegen)
     codegen.cfunc = SimpleNamespace(
         statements=structured_c.CStatements([assignment], codegen=codegen),

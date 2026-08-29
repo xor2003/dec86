@@ -5,6 +5,11 @@ import pytest
 
 import inertia_decompiler.cache as cache_module
 from inertia_decompiler.cache import DECOMPILATION_CACHE_SOURCE_FILES, _cache_file_fingerprint
+from inertia_decompiler.cache_source_manifest import (
+    FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
+    INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
+    RecoveryCacheSourceScope8616,
+)
 
 
 def test_decompilation_cache_surface_includes_tail_validation_layers():
@@ -41,6 +46,81 @@ def test_decompilation_cache_surface_includes_postprocess_optimization_layers():
     assert "decompiler_postprocess_typed_conditions.py" in names
     assert "decompiler_postprocess_utils.py" in names
     assert "segmented_memory_reasoning.py" in names
+
+
+def test_function_discovery_cache_surface_excludes_late_semantic_layers():
+    paths = {
+        path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+        for path in FUNCTION_DISCOVERY_CACHE_SOURCE_FILES
+    }
+    names = {Path(path).name for path in paths}
+
+    assert "cli_function_discovery.py" in names
+    assert "lift_86_16.py" in names
+    assert "angr_platforms/angr_platforms/X86_16/pipeline/errors.py" in paths
+    assert "angr_platforms/angr_platforms/X86_16/pipeline/contracts.py" in paths
+    assert "angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_query_index.py" not in paths
+    assert "tail_validation.py" not in names
+    assert "decompiler_postprocess_stage.py" not in names
+
+
+def test_indexed_alias_program_cache_surface_owns_alias_and_widening_only():
+    paths = {
+        path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+        for path in INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES
+    }
+
+    assert "inertia_decompiler/indexed_alias_program_context.py" in paths
+    assert "angr_platforms/angr_platforms/X86_16/alias/indexed_address_program.py" in paths
+    assert "angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py" in paths
+    assert "angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py" not in paths
+    assert "angr_platforms/angr_platforms/X86_16/lowering/register_local_declarations.py" not in paths
+    assert "angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_generation.py" not in paths
+    assert "angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_query_index.py" not in paths
+    assert "angr_platforms/angr_platforms/X86_16/tail_validation.py" not in paths
+    assert "angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py" not in paths
+
+
+def test_recovery_cache_key_uses_discovery_component_scope(monkeypatch, tmp_path: Path):
+    binary = tmp_path / "SORTD.EXE"
+    binary.write_bytes(b"MZ-discovery")
+    observed_sources: list[tuple[Path, ...]] = []
+
+    def record_sources(paths: tuple[Path, ...]) -> str:
+        observed_sources.append(paths)
+        return "component-digest"
+
+    monkeypatch.setattr(cache_module, "_cache_source_digest", record_sources)
+
+    key = cache_module._recovery_cache_key(
+        binary_path=binary,
+        kind="display_catalog_addrs",
+        source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
+    )
+
+    assert key is not None
+    assert observed_sources == [FUNCTION_DISCOVERY_CACHE_SOURCE_FILES]
+
+
+def test_recovery_cache_key_uses_indexed_alias_component_scope(monkeypatch, tmp_path: Path):
+    binary = tmp_path / "SORTD.EXE"
+    binary.write_bytes(b"MZ-indexed-alias")
+    observed_sources: list[tuple[Path, ...]] = []
+
+    def record_sources(paths: tuple[Path, ...]) -> str:
+        observed_sources.append(paths)
+        return "component-digest"
+
+    monkeypatch.setattr(cache_module, "_cache_source_digest", record_sources)
+
+    key = cache_module._recovery_cache_key(
+        binary_path=binary,
+        kind="indexed_global_object_layout",
+        source_scope=RecoveryCacheSourceScope8616.INDEXED_ALIAS_PROGRAM,
+    )
+
+    assert key is not None
+    assert observed_sources == [INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES]
 
 
 def test_binary_cache_fingerprint_changes_for_same_size_and_mtime_content(tmp_path: Path):

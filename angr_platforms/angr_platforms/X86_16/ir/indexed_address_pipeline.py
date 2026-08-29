@@ -18,6 +18,10 @@ from .indexed_address_contracts import IndexedAddressEvidence8616
 from .indexed_address_copy_contracts import IndexedAddressCopyEvidence8616
 from .indexed_address_copy_evidence import collect_indexed_address_copy_evidence_8616
 from .indexed_address_evidence import collect_indexed_address_evidence_8616
+from .indexed_address_range_candidates import (
+    collect_indexed_loop_ranges_from_ssa_8616,
+)
+from .indexed_address_range_contracts import IndexedLoopRangeEvidence8616
 from .ssa_function import SSAFunctionArtifact
 
 
@@ -27,6 +31,7 @@ class _CodegenBoundary8616(Protocol):
     _inertia_vex_ir_function_ssa: object
     _inertia_indexed_address_evidence_8616: IndexedAddressEvidence8616
     _inertia_indexed_address_copy_evidence_8616: IndexedAddressCopyEvidence8616
+    _inertia_indexed_loop_range_evidence_8616: IndexedLoopRangeEvidence8616
 
 
 def apply_x86_16_indexed_address_evidence_8616(
@@ -74,6 +79,16 @@ def apply_x86_16_indexed_address_evidence_8616(
                 layer="ir",
             )
         boundary._inertia_indexed_address_copy_evidence_8616 = copy_evidence
+    range_evidence = collect_indexed_loop_ranges_from_ssa_8616(
+        function_ssa,
+        existing,
+    )
+    if not range_evidence.closed:
+        raise PipelineHardError(
+            "indexed loop-range IR evidence has incomplete accounting",
+            layer="ir",
+        )
+    boundary._inertia_indexed_loop_range_evidence_8616 = range_evidence
     return False
 
 

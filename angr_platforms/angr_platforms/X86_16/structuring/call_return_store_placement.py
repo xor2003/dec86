@@ -19,9 +19,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
-from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from ..lowering.call_return_stack_bindings import (
+    call_return_stack_destination_matches_8616 as is_exact_call_return_stack_destination_8616,
+)
 from ..lowering.call_return_stack_stores import CallReturnStackStoreEvidence8616
 from ..structured_tags import copy_structured_tags_8616
 
@@ -43,29 +45,6 @@ __all__ = (
     "find_proven_call_result_bridge_8616",
     "is_exact_call_return_stack_destination_8616",
 )
-
-
-def _canonical_stack_offset_8616(offset: int) -> int:
-    """Normalize one 16-bit BP displacement to its signed identity."""
-    normalized = offset & 0xFFFF
-    return normalized - 0x10000 if normalized >= 0x8000 else normalized
-
-
-def is_exact_call_return_stack_destination_8616(
-    expression: object,
-    evidence: CallReturnStackStoreEvidence8616,
-) -> bool:
-    """Return whether a C variable is the exact proven return-store object."""
-    if not isinstance(expression, CVariable) or not isinstance(expression.variable, SimStackVariable):
-        return False
-    variable = expression.variable
-    return (
-        variable.base == "bp"
-        and isinstance(variable.offset, int)
-        and _canonical_stack_offset_8616(variable.offset)
-        == _canonical_stack_offset_8616(evidence.dst_offset)
-        and int(variable.size) == evidence.width
-    )
 
 
 def _sole_nested_statement_8616(statement: object) -> object | None:
@@ -145,6 +124,8 @@ def find_adjacent_assigned_call_store_8616(
     call_assignment: CAssignment,
     call: CFunctionCall,
     evidence: CallReturnStackStoreEvidence8616,
+    *,
+    codegen: object,
 ) -> CallReturnStorePlacement8616 | None:
     """Find a tagged call assignment followed by its exact proven store."""
     if (
@@ -165,7 +146,7 @@ def find_adjacent_assigned_call_store_8616(
             for node in _iter_c_nodes_deep_8616(root)
             if isinstance(node, CAssignment)
             and _assignment_ins_addr_8616(node) == evidence.store_ins_addr
-            and is_exact_call_return_stack_destination_8616(node.lhs, evidence)
+            and is_exact_call_return_stack_destination_8616(codegen, node.lhs, evidence)
         }.values()
     )
     if len(stores) != 1:
@@ -201,6 +182,8 @@ def find_proven_call_result_bridge_8616(
     root: object,
     call: CFunctionCall,
     evidence: CallReturnStackStoreEvidence8616,
+    *,
+    codegen: object,
 ) -> CallReturnStorePlacement8616 | None:
     """Find a unique call-carrier-to-stack-store chain from exact source tags."""
     if not isinstance(evidence.store_ins_addr, int):
@@ -223,7 +206,7 @@ def find_proven_call_result_bridge_8616(
         node
         for node in _iter_c_nodes_deep_8616(root)
         if isinstance(node, CAssignment)
-        and is_exact_call_return_stack_destination_8616(node.lhs, evidence)
+        and is_exact_call_return_stack_destination_8616(codegen, node.lhs, evidence)
         and _same_c_expression_8616(node.rhs, call_assignment.lhs)
         and (position := _assignment_source_position_8616(node)) is not None
         and position[0] == evidence.store_ins_addr
@@ -288,6 +271,8 @@ def find_adjacent_standalone_call_store_8616(
     root: object,
     call: CFunctionCall,
     evidence: CallReturnStackStoreEvidence8616,
+    *,
+    codegen: object,
 ) -> CallReturnStorePlacement8616 | None:
     """Find one unique adjacent call/store pair through singleton wrappers."""
     matches: dict[tuple[int, int], CallReturnStorePlacement8616] = {}
@@ -304,7 +289,7 @@ def find_adjacent_standalone_call_store_8616(
             if (
                 first is call
                 and isinstance(second, CAssignment)
-                and is_exact_call_return_stack_destination_8616(second.lhs, evidence)
+                and is_exact_call_return_stack_destination_8616(codegen, second.lhs, evidence)
             ):
                 matches[(id(container), index)] = CallReturnStorePlacement8616(container, index, second)
     return next(iter(matches.values())) if len(matches) == 1 else None

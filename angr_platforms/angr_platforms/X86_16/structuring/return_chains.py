@@ -1468,6 +1468,7 @@ def linear_terminal_ax_return_scan_8616(
     if not ordered_block_addrs:
         return TerminalAxScanResult8616()
     terminal_blocks = terminal_value_block_addrs_8616(ordered_block_addrs, load_block, branch_target_imm)
+    terminal_block_count = len(terminal_blocks) or int(len(ordered_block_addrs) == 1)
     if terminal_blocks:
         ordered_block_addrs = terminal_blocks
     raw_insns = 0
@@ -1498,20 +1499,20 @@ def linear_terminal_ax_return_scan_8616(
                     return TerminalAxScanResult8616(
                         raw_insns=raw_insns,
                         classified=classified,
-                        terminal_value_block_count=len(terminal_blocks),
+                        terminal_value_block_count=terminal_block_count,
                     )
                 expr = callbacks.combined_return_expr()
                 if expr is None:
                     return TerminalAxScanResult8616(
                         raw_insns=raw_insns,
                         classified=classified,
-                        terminal_value_block_count=len(terminal_blocks),
+                        terminal_value_block_count=terminal_block_count,
                     )
                 return TerminalAxScanResult8616(
                     expr=expr,
                     raw_insns=raw_insns,
                     classified=classified,
-                    terminal_value_block_count=len(terminal_blocks),
+                    terminal_value_block_count=terminal_block_count,
                 )
             if mnemonic in {"ret", "retf", "iret"}:
                 ret_count += 1
@@ -1519,27 +1520,27 @@ def linear_terminal_ax_return_scan_8616(
                     return TerminalAxScanResult8616(
                         raw_insns=raw_insns,
                         classified=classified,
-                        terminal_value_block_count=len(terminal_blocks),
+                        terminal_value_block_count=terminal_block_count,
                     )
                 return TerminalAxScanResult8616(
                     expr=callbacks.combined_return_expr(),
                     raw_insns=raw_insns,
                     classified=classified,
-                    terminal_value_block_count=len(terminal_blocks),
+                    terminal_value_block_count=terminal_block_count,
                 )
             action = callbacks.process_instruction(insn, terminal_ax_return_effect_8616(insn))
             if action.abort:
                 return TerminalAxScanResult8616(
                     raw_insns=raw_insns,
                     classified=classified,
-                    terminal_value_block_count=len(terminal_blocks),
+                    terminal_value_block_count=terminal_block_count,
                 )
             if action.classified:
                 classified += 1
     return TerminalAxScanResult8616(
         raw_insns=raw_insns,
         classified=classified,
-        terminal_value_block_count=len(terminal_blocks),
+        terminal_value_block_count=terminal_block_count,
     )
 
 
@@ -2565,17 +2566,23 @@ def selector_function_has_unsafe_effects_8616(
     for insn in inventory.instructions:
         # Dynamic third-party capstone boundary: instructions expose mnemonic/operands/address/size.
         mnemonic = str(getattr(insn, "mnemonic", "")).lower()
-        raw_operands = getattr(insn, "operands", ())
-        operands: tuple[object, ...] = tuple(raw_operands) if isinstance(raw_operands, (list, tuple)) else ()
+        capstone_insn = _capstone_attr_8616(insn, "insn", insn)
+        operands = _dynamic_object_tuple_8616(
+            _capstone_attr_8616(capstone_insn, "operands", ())
+        )
         if mnemonic in {"call", "lcall"}:
             target = callbacks.direct_call_target(insn)
             if target is None:
                 return True
             name, _callee = callbacks.callee_name_for_target(project, int(target))
             if not callbacks.target_is_stack_probe_helper(project, int(target), name):
-                prev_raw_operands = getattr(previous_insn, "operands", ()) if previous_insn is not None else ()
-                prev_operands: tuple[object, ...] = (
-                    tuple(prev_raw_operands) if isinstance(prev_raw_operands, (list, tuple)) else ()
+                previous_capstone_insn = (
+                    _capstone_attr_8616(previous_insn, "insn", previous_insn)
+                    if previous_insn is not None
+                    else None
+                )
+                prev_operands = _dynamic_object_tuple_8616(
+                    _capstone_attr_8616(previous_capstone_insn, "operands", ())
                 )
                 next_addr = int(getattr(insn, "address", 0) or 0) + int(getattr(insn, "size", 0) or 0)
                 stack_probe_rel0 = (
@@ -2699,9 +2706,14 @@ def materialize_cfg_selector_return_branches_8616(
         stats["refused"] += 1
         if debug:
             log.warning(
-                "[cfg-selector-return] refused unsafe-effects stats=%r allowed_call_addrs=%r",
+                "[cfg-selector-return] refused unsafe-effects stats=%r allowed_call_addrs=%r pair_slots=%r",
                 stats,
                 tuple(sorted(allowed_call_addrs)),
+                tuple(
+                    (_debug_cvar_slot_8616(cond.lhs), _debug_cvar_slot_8616(cond.rhs))
+                    for cond, _true_expr, _false_expr in pairs
+                    if isinstance(cond, CBinaryOp)
+                ),
             )
         return _refuse("unsafe-effects")
     statements: list[object] = []

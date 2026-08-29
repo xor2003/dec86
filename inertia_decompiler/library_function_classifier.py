@@ -220,7 +220,7 @@ def classify_sidecar_function_label(
     if metadata is None:
         return classify_library_function_name(name)
 
-    proc_addrs = metadata.cod_proc_kinds.keys()
+    proc_addrs = metadata.function_entry_addrs or metadata.cod_proc_kinds.keys()
     if addr in proc_addrs:
         return LibraryFunctionClass.USER_SOURCE_PROC
     if addr in metadata.signature_code_addrs:

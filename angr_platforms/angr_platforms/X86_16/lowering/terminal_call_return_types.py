@@ -9,14 +9,16 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Protocol, cast
 
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimType, SimTypeBottom, SimTypeFunction, SimTypeShort
 from archinfo import Arch
 
+from ..annotations import ANNOTATION_KEY
 from ..call_target_identity import resolve_x86_16_call_target_function_8616
 from ..callsite_summary import CallerReturnUseVerdict8616
 from ..semantics.branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
@@ -27,6 +29,7 @@ from ..semantics.terminal_call_paths import (
 )
 from ..semantics.terminal_return_storage import TerminalReturnStorage8616, terminal_return_storage_8616
 from ..simos_86_16 import SimCC8616MSCsmall
+from .authoritative_function_prototypes import publish_authoritative_function_prototype_8616
 from .return_type_evidence import proven_function_result_observation_8616
 
 __all__ = (
@@ -52,7 +55,9 @@ class _FunctionSurface8616(Protocol):
     addr: int
     prototype: object | None
     calling_convention: object | None
+    info: object
     is_prototype_guessed: bool
+    prototype_source: PrototypeSource
 
 
 class _SignedTypeSurface8616(Protocol):
@@ -173,6 +178,21 @@ def _return_type_key_8616(return_type: SimType) -> tuple[type[SimType], int | No
     return type(return_type), size if isinstance(size, int) else None, signed if isinstance(signed, bool) else None
 
 
+def _has_explicit_function_prototype_8616(function: _FunctionSurface8616) -> bool:
+    """Protect user/signature prototypes while allowing inferred contracts to improve."""
+    try:
+        source = function.prototype_source
+    except AttributeError:
+        return function.prototype is not None and not function.is_prototype_guessed
+    try:
+        info = function.info
+    except AttributeError:
+        info = None
+    annotations = info.get(ANNOTATION_KEY) if isinstance(info, Mapping) else None
+    annotated = annotations.get("prototype") if isinstance(annotations, Mapping) else None
+    return isinstance(annotated, SimTypeFunction) or source >= PrototypeSource.SIGNATURES
+
+
 def _scalar_callee_return_type_8616(
     project: object,
     target_addr: int,
@@ -286,7 +306,7 @@ def apply_terminal_call_return_type_evidence_8616(
     if project_surface.arch.name != "86_16":
         return TerminalCallReturnTypeResult8616(False, TerminalCallReturnTypeEvidence8616())
     existing = function_surface.prototype
-    if existing is not None and not function_surface.is_prototype_guessed:
+    if existing is not None and _has_explicit_function_prototype_8616(function_surface):
         return TerminalCallReturnTypeResult8616(False, TerminalCallReturnTypeEvidence8616())
     evidence = collect_terminal_call_return_type_evidence_8616(project, function)
     if evidence.classified_fact_count == 0 or evidence.return_type is None:
@@ -309,9 +329,15 @@ def apply_terminal_call_return_type_evidence_8616(
     new_key = _return_type_key_8616(evidence.return_type)
     changed = old_key != new_key or function_surface.is_prototype_guessed
     function_surface.prototype = rebuilt
-    function_surface.is_prototype_guessed = False
+    function_surface.prototype_source = PrototypeSource.CCA_DECOMPILER
     if function_surface.calling_convention is None:
         function_surface.calling_convention = SimCC8616MSCsmall(project_surface.arch)
+    publish_authoritative_function_prototype_8616(
+        project,
+        function_surface.addr,
+        rebuilt,
+        source=PrototypeSource.CCA_DECOMPILER,
+    )
     consumed = evidence.with_materialized_count(evidence.classified_fact_count)
     if consumed.classified_fact_count > 0 and consumed.materialized_count == 0:
         raise RuntimeError("terminal call return-type evidence was classified but not materialized")

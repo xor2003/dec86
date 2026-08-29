@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from angr_platforms.X86_16.alias.partial_register_address_break import (
+    PartialRegisterAddressBreakEvidence8616,
+)
 from angr_platforms.X86_16.callsite_summary import (
     CallsiteArgumentClass8616,
     CallsiteSummary8616,
@@ -240,6 +243,55 @@ def test_unknown_pointer_source_refuses_caller_frame_preservation() -> None:
 
     assert result.facts[0].failure is CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
     assert result.facts[0].effect.complete is False
+
+
+def test_partial_register_write_proves_unknown_value_does_not_escape_stack() -> None:
+    """Separate whole-word value uncertainty from stack-address provenance."""
+    evidence = PartialRegisterAddressBreakEvidence8616(
+        push_instruction_addr=0x1002,
+        definition_instruction_addr=0x1000,
+        carrier_register="ax",
+        written_register="al",
+        immediate=2,
+    )
+    summary = replace(
+        _summary(
+            arg_widths=(2,),
+            push_arg_sources=(None,),
+            cleanup=2,
+        ),
+        push_arg_instruction_addrs=(0x1002,),
+        push_arg_address_break_evidence=(evidence,),
+    )
+
+    result = materialize_call_stack_effects_8616(_artifact(), {0x1003: summary})
+
+    assert result.complete
+    assert result.facts[0].failure is None
+    assert result.facts[0].effect.preserved_ranges == (_slot(),)
+
+
+def test_partial_register_address_break_requires_matching_push_identity() -> None:
+    """Refuse evidence attached to a different physical PUSH."""
+    evidence = PartialRegisterAddressBreakEvidence8616(
+        push_instruction_addr=0x1001,
+        definition_instruction_addr=0x1000,
+        carrier_register="ax",
+        written_register="al",
+        immediate=2,
+    )
+    summary = replace(
+        _summary(arg_widths=(2,), push_arg_sources=(None,), cleanup=2),
+        push_arg_instruction_addrs=(0x1002,),
+        push_arg_address_break_evidence=(evidence,),
+    )
+
+    result = materialize_call_stack_effects_8616(_artifact(), {0x1003: summary})
+
+    assert (
+        result.facts[0].failure
+        is CallStackEffectFailure8616.ARGUMENT_ADDRESS_PROVENANCE_CONFLICT
+    )
 
 
 def test_exact_bp_address_escapes_only_its_tracked_range() -> None:

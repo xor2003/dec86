@@ -28,6 +28,17 @@ def test_selects_type_ratchet_tests_for_implementation_file():
     assert selected == ("angr_platforms/tests/test_check_changed_non_test_types.py",)
 
 
+def test_selects_positive_bp_argument_plan_tests() -> None:
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/lowering/positive_bp_argument_plan.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_positive_bp_argument_plan.py",
+        "angr_platforms/tests/test_x86_16_stack_argument_identity.py",
+    )
+
+
 def test_selects_ultra_quickc_fixture_tests_for_implementation_file():
     selected = test_ownership_manifest.select_tests_for_files(("scripts/import_ultra_quickc_fixtures.py",))
 
@@ -40,6 +51,12 @@ def test_selects_real_mode_linear_focused_tests_for_implementation_file():
     )
 
     assert selected == (
+        "angr_platforms/tests/test_x86_16_direct_stack_replay.py",
+        "angr_platforms/tests/test_x86_16_direct_stack_reload_idempotence.py",
+        "angr_platforms/tests/test_x86_16_linear_global_decomposition_cache.py",
+        "angr_platforms/tests/test_x86_16_postprocess_snapshot.py",
+        "angr_platforms/tests/test_x86_16_tail_validation.py::"
+        "test_postprocess_optimization_reuses_witness_without_hiding_mutation",
         "angr_platforms/tests/test_x86_16_consumed_push_lvalues.py",
         "angr_platforms/tests/test_x86_16_segment_access_coverage.py",
         "angr_platforms/tests/test_x86_16_segment_access_policy.py",
@@ -135,6 +152,12 @@ def test_selects_indexed_address_owner_for_ir_core():
         "test_identity_conflict_is_classified_on_exact_instruction_site",
         "angr_platforms/tests/test_x86_16_sortd_indexed_address_parity_inventory.py",
         "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
+        "angr_platforms/tests/test_x86_16_scalar_affine_trace.py",
+        "angr_platforms/tests/test_x86_16_indexed_address_range_candidates.py",
+        "angr_platforms/tests/test_x86_16_indexed_global_object_program_ranges.py",
+        "angr_platforms/tests/test_x86_16_indexed_global_object_ranges.py",
+        "angr_platforms/tests/test_x86_16_bounded_global_array_declarations.py",
+        "angr_platforms/tests/test_x86_16_sortd_indexed_loop_topology.py",
         "angr_platforms/tests/test_x86_16_alias_global_object_layout.py",
         "angr_platforms/tests/test_x86_16_ir_core.py",
         "angr_platforms/tests/test_x86_16_ir_ssa.py",
@@ -250,6 +273,7 @@ def test_selects_postprocess_callsite_argument_tests_for_implementation_file():
         "angr_platforms/tests/test_x86_16_jcc_instruction_reuse.py",
         "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
+        "angr_platforms/tests/test_x86_16_callsite_replay_safety.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
         "test_conservative_call_arg_seed_uses_known_default_for_zero_arg_helper_summary",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
@@ -269,9 +293,17 @@ def test_selects_cli_direct_fallback_focused_tests_for_legacy_cli_file():
     )
 
     assert selected == (
+        "angr_platforms/tests/test_architecture_import_attestation.py",
         "angr_platforms/tests/test_decompiler_architecture_check.py",
         "angr_platforms/tests/test_serial_clean_worker_cache.py",
         "angr_platforms/tests/test_segment_program_layout_reporting.py",
+        "angr_platforms/tests/test_project_callee_callsite_transport.py",
+        "angr_platforms/tests/test_serial_clean_worker_callsite_evidence.py",
+        "angr_platforms/tests/test_serial_clean_worker_global_source_evidence.py",
+        "angr_platforms/tests/test_x86_16_cli.py::"
+        "test_serial_clean_worker_evidence_protocol_round_trips_and_hydrates",
+        "angr_platforms/tests/test_x86_16_cli.py::"
+        "test_serial_clean_worker_evidence_protocol_refuses_unknown_schema",
         "angr_platforms/tests/test_direct_request_cache.py",
         "angr_platforms/tests/test_x86_16_cli.py::"
         "test_direct_addr_project_local_fallback_addr_uses_rebased_function_addr",
@@ -320,6 +352,7 @@ def test_selects_manifest_tests_for_absolute_path():
     assert selected == (
         "angr_platforms/tests/test_decompile_cod_dir_parallelism.py",
         "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_architecture_import_attestation.py",
     )
 
 
@@ -331,7 +364,10 @@ def test_selects_unique_tests_for_multiple_matching_files():
         )
     )
 
-    assert selected == ("angr_platforms/tests/test_decompiler_architecture_check.py",)
+    assert selected == (
+        "angr_platforms/tests/test_architecture_import_attestation.py",
+        "angr_platforms/tests/test_decompiler_architecture_check.py",
+    )
 
 
 def test_manifest_cli_prints_space_separated_pytest_targets(capsys):
@@ -343,7 +379,8 @@ def test_manifest_cli_prints_space_separated_pytest_targets(capsys):
         "angr_platforms/tests/test_check_sortd_sidecar_free.py "
         "angr_platforms/tests/test_test_pipeline.py "
         "angr_platforms/tests/test_decompile_cod_dir_parallelism.py "
-        "angr_platforms/tests/test_decompiler_architecture_check.py"
+        "angr_platforms/tests/test_decompiler_architecture_check.py "
+        "angr_platforms/tests/test_architecture_import_attestation.py"
     )
 
 

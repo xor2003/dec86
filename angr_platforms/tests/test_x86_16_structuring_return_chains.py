@@ -2011,7 +2011,11 @@ def test_structuring_materialize_complex_decrement_switch_return_chain_refuses_d
 def test_structuring_selector_function_has_unsafe_effects_flags_memory_write():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()
-    insn = SimpleNamespace(address=0x1000, mnemonic="mov", operands=(_mem_operand(4, -2, 2), _reg_operand(1)))
+    insn = SimpleNamespace(
+        address=0x1000,
+        mnemonic="mov",
+        insn=SimpleNamespace(operands=(_mem_operand(4, -2, 2), _reg_operand(1))),
+    )
     callbacks = SelectorUnsafeEffectsCallbacks8616(
         function_inventory=lambda _project, _codegen: _complete_instruction_inventory(insn),
         direct_call_target=lambda _insn: None,
@@ -2374,6 +2378,7 @@ def test_structuring_linear_terminal_ax_scan_returns_combined_expr_at_return():
     assert result.expr is terminal_expr
     assert result.raw_insns == 2
     assert result.classified == 1
+    assert result.terminal_value_block_count == 1
     assert processed == ["mov"]
 
 

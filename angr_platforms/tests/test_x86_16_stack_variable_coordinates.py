@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeFixedSizeArray, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
@@ -22,6 +22,9 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
     materialize_stack_cvar_at_offset_from_facts_8616,
 )
+from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
+    _existing_stack_cvars_by_offset_8616,
+)
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
     publish_selected_stack_cvar_projection_8616,
@@ -37,7 +40,7 @@ from angr_platforms.X86_16.lowering.stack_variable_display_names import (
 
 def test_stack_variable_coordinate_registry_keeps_bp_and_entry_sp_distinct() -> None:
     codegen = SimpleNamespace()
-    variable = SimStackVariable(-4, 2, base="bp", name="local_2")
+    variable = SimStackVariable(-4, 2, base="bp", name="local_2", ident="is_3")
     cvar = object()
 
     record_stack_variable_coordinate_projection_8616(
@@ -54,8 +57,168 @@ def test_stack_variable_coordinate_registry_keeps_bp_and_entry_sp_distinct() -> 
     projection = stack_variable_coordinate_registry_8616(codegen).for_variable(variable)
     assert projection is not None
     assert projection.entry_sp_offset == -4
-    cloned_variable = SimStackVariable(-4, 2, base="bp", name="local_2")
+    cloned_variable = SimStackVariable(-4, 2, base="bp", name="local_2", ident="is_3")
     assert machine_bp_offset_for_stack_variable_8616(codegen, cloned_variable) == -2
+
+
+def test_stack_variable_coordinate_registry_refuses_numeric_domain_collision() -> None:
+    codegen = SimpleNamespace()
+    projected = SimStackVariable(-4, 2, base="bp", name="total", ident="is_3")
+    raw_bp_variable = SimStackVariable(-4, 2, base="bp", name="index", ident="is_4")
+
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected,
+        cvar=object(),
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+    )
+
+    assert machine_bp_offset_for_stack_variable_8616(codegen, raw_bp_variable) == -4
+
+
+def test_selected_formal_publishes_proven_entry_sp_coordinate() -> None:
+    codegen = SimpleNamespace(
+        next_ident=lambda name: name,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+    )
+    formal = SimStackVariable(4, 2, base="bp", name="value", ident="arg_0")
+    cvar = structured_c.CVariable(formal, codegen=codegen)
+
+    projection = publish_selected_stack_cvar_projection_8616(
+        codegen,
+        cvar,
+        bp_offset=4,
+        size=2,
+        entry_sp_offset=2,
+    )
+
+    assert projection is not None
+    assert projection.entry_sp_offset == 2
+    body_clone = SimStackVariable(2, 2, base="bp", name="value", ident="arg_0")
+    assert machine_bp_offset_for_stack_variable_8616(codegen, body_clone) == 4
+
+
+def test_selected_formal_replaces_conflicting_stale_projection() -> None:
+    codegen = SimpleNamespace(
+        next_ident=lambda name: name,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+    )
+    stale = SimStackVariable(6, 2, base="bp", name="arg_6")
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=stale,
+        cvar=object(),
+        bp_offset=6,
+        entry_sp_offset=6,
+        size=2,
+    )
+    selected = SimStackVariable(4, 2, base="bp", name="arg_6", ident="arg_1")
+    cvar = structured_c.CVariable(selected, codegen=codegen)
+
+    projection = publish_selected_stack_cvar_projection_8616(
+        codegen,
+        cvar,
+        bp_offset=6,
+        size=2,
+        entry_sp_offset=4,
+    )
+
+    assert projection is not None
+    assert projection.variable is selected
+    assert projection.entry_sp_offset == 4
+    clone = SimStackVariable(4, 2, base="bp", name="arg_6", ident="arg_1")
+    assert machine_bp_offset_for_stack_variable_8616(codegen, clone) == 6
+
+
+def test_stack_prototype_indexes_existing_cvars_by_machine_bp_coordinate() -> None:
+    codegen = SimpleNamespace(
+        next_ident=lambda name: name,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+    )
+    body_variable = SimStackVariable(2, 2, base="bp", name="value", ident="arg_0")
+    body_cvar = structured_c.CVariable(body_variable, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(variables_in_use={body_variable: body_cvar}, arg_list=[])
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=body_variable,
+        cvar=body_cvar,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+
+    indexed = _existing_stack_cvars_by_offset_8616(codegen)
+
+    assert indexed == {4: body_cvar}
+
+
+def test_stack_prototype_indexes_canonical_values_not_stale_map_keys() -> None:
+    codegen = SimpleNamespace(
+        next_ident=lambda name: name,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+    )
+    first_variable = SimStackVariable(2, 2, base="bp", name="a", ident="arg_0")
+    first_cvar = structured_c.CVariable(first_variable, codegen=codegen)
+    second_variable = SimStackVariable(4, 2, base="bp", name="b", ident="arg_1")
+    second_cvar = structured_c.CVariable(second_variable, codegen=codegen)
+    first_key = SimStackVariable(2, 2, base="bp", name="stale_0")
+    second_key = SimStackVariable(4, 2, base="bp", name="stale_2")
+    codegen.cfunc = SimpleNamespace(
+        variables_in_use={first_key: first_cvar, second_key: second_cvar},
+        arg_list=[],
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=first_variable,
+        cvar=first_cvar,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=second_variable,
+        cvar=second_cvar,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+
+    indexed = _existing_stack_cvars_by_offset_8616(codegen)
+
+    assert indexed == {4: first_cvar, 6: second_cvar}
+
+
+def test_stack_variable_coordinate_registry_maps_named_snapshot_clone() -> None:
+    codegen = SimpleNamespace()
+    raw_bp_variable = SimStackVariable(-6, 2, base="bp", name="local_4")
+    projected = SimStackVariable(-4, 2, base="bp", name="local_2")
+    cloned_projection = SimStackVariable(-4, 2, base="bp", name="local_2", ident="")
+
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=raw_bp_variable,
+        cvar=object(),
+        bp_offset=-4,
+        entry_sp_offset=-6,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected,
+        cvar=object(),
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+    )
+
+    assert machine_bp_offset_for_stack_variable_8616(codegen, cloned_projection) == -2
 
 
 def test_stack_variable_coordinate_registry_preserves_legacy_unprojected_offset() -> None:
@@ -96,10 +259,12 @@ def test_projection_name_replay_wins_over_generated_frame_carrier() -> None:
     projected_cvar = structured_c.CVariable(projected, codegen=codegen)
     carrier = SimStackVariable(-2, 1, base="bp", name="local_2")
     carrier_cvar = structured_c.CVariable(carrier, codegen=codegen)
+    contained = SimStackVariable(-5, 1, base="bp", name="local_2")
+    contained_cvar = structured_c.CVariable(contained, codegen=codegen)
     projected_clone = SimStackVariable(-6, 2, base="bp", name="local_6")
     codegen.cfunc.statements = structured_c.CVariable(projected_clone, codegen=codegen)
     codegen.cfunc.variables_in_use.update(
-        {projected: projected_cvar, carrier: carrier_cvar}
+        {projected: projected_cvar, carrier: carrier_cvar, contained: contained_cvar}
     )
     record_stack_variable_coordinate_projection_8616(
         codegen,
@@ -116,6 +281,37 @@ def test_projection_name_replay_wins_over_generated_frame_carrier() -> None:
     assert projected.name == "local_2"
     assert projected_clone.name == "local_2"
     assert carrier.name == "stack_sp_m2_1"
+    assert contained.name == "stack_sp_m5_1"
+
+
+def test_projection_name_replay_uses_logical_aggregate_extent() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        cfunc=SimpleNamespace(variables_in_use={}, unified_local_vars={}),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    projected = SimStackVariable(-92, 2, base="bp", name="stack_sp_m5c_2")
+    projected_cvar = structured_c.CVariable(
+        projected,
+        variable_type=SimTypeFixedSizeArray(SimTypeShort(False), 43),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = projected_cvar
+    codegen.cfunc.variables_in_use[projected] = projected_cvar
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected,
+        cvar=projected_cvar,
+        bp_offset=-90,
+        entry_sp_offset=-92,
+        size=86,
+        display_name="local_5a",
+    )
+
+    assert reapply_stack_variable_projection_names_8616(codegen) is True
+    assert projected.name == "local_5a"
 
 
 def test_projected_word_reconciles_regenerated_byte_views() -> None:
@@ -284,6 +480,35 @@ def test_selected_projected_cvar_is_published_on_regenerated_codegen() -> None:
     assert projection is not None
     assert projection.entry_sp_offset == -4
     assert stack_cvar_for_machine_bp_range_8616(regenerated_codegen, -2, 2) is cvar
+
+
+def test_selected_cvar_preserves_existing_coordinate_projection() -> None:
+    codegen = SimpleNamespace()
+    projected = SimStackVariable(-8, 2, base="bp", name="j", ident="is_3")
+    selected = SimStackVariable(-6, 2, base="bp", name="j", ident="is_4")
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected,
+        cvar=object(),
+        bp_offset=-6,
+        entry_sp_offset=-8,
+        size=2,
+    )
+    selected_cvar = SimpleNamespace(variable=selected)
+
+    projection = publish_selected_stack_cvar_projection_8616(
+        codegen,
+        selected_cvar,
+        bp_offset=-6,
+        size=2,
+    )
+
+    assert projection is not None
+    assert projection.variable is projected
+    assert projection.entry_sp_offset == -8
+    assert projection.equivalent_variables == (selected,)
+    assert projection.cvar is selected_cvar
+    assert machine_bp_offset_for_stack_variable_8616(codegen, selected) == -6
 
 
 def test_stable_stack_access_prefers_exact_projection_over_legacy_raw_offset() -> None:

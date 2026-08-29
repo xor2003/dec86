@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from angr_platforms.X86_16 import decompiler_postprocess_stage as stage
 from angr_platforms.X86_16.postprocess.pass_transaction import (
     PostprocessMutationGeneration8616,
+    PostprocessMutationWitnessCache8616,
     PostprocessPassPreflightAction8616,
     PostprocessPassPreflightInput8616,
     PostprocessPassTransactionState8616,
@@ -134,6 +138,27 @@ def test_transaction_state_owns_baseline_cycle_and_accepted_change() -> None:
     )
 
 
+def test_completion_publishes_only_accepted_transaction_mutations() -> None:
+    """Close every stage path with one typed immutable consumer generation."""
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    state = PostprocessPassTransactionState8616(
+        baseline_summary=None,
+        known_cycle_path=None,
+    )
+
+    assert stage._postprocess_set_completion_state_8616(project, codegen, state) is False
+    assert codegen._inertia_postprocess_mutation_generation_8616 == (
+        PostprocessMutationGeneration8616(0, None)
+    )
+
+    state.accept_change("witnessed-change")
+    state.accept_change("validated-change")
+    assert stage._postprocess_set_completion_state_8616(project, codegen, state) is True
+    assert codegen._inertia_postprocess_mutation_generation_8616 == (
+        PostprocessMutationGeneration8616(2, "validated-change")
+    )
+
 
 def test_rejected_or_restored_state_does_not_advance_generation() -> None:
     """Keep rollback bookkeeping outside the accepted mutation generation."""
@@ -147,3 +172,27 @@ def test_rejected_or_restored_state_does_not_advance_generation() -> None:
     state.record_cycle_path(("root", "restored"))
 
     assert state.mutation_generation() == PostprocessMutationGeneration8616(0, None)
+
+
+def test_mutation_witness_reuses_only_until_explicit_invalidation() -> None:
+    cache = PostprocessMutationWitnessCache8616[str]()
+    builds = 0
+
+    def _build() -> str:
+        nonlocal builds
+        builds += 1
+        return f"generation-{builds}"
+
+    assert cache.current_or_build(_build) == "generation-1"
+    cache.record("generation-1-after")
+    assert cache.current_or_build(_build) == "generation-1-after"
+    cache.invalidate()
+    assert cache.current_or_build(_build) == "generation-2"
+
+    stats = cache.stats()
+    assert stats.closed
+    assert stats.lookup_count == 3
+    assert stats.rebuild_count == 2
+    assert stats.reuse_count == 1
+    assert stats.record_count == 1
+    assert stats.invalidation_count == 1

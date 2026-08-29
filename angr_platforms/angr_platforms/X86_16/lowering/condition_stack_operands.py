@@ -18,10 +18,15 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeChar, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
+from .condition_stack_projection_contracts import (
+    ConditionStackProjectionFact8616,
+    condition_stack_projection_tags_8616,
+)
 from .semantic_cast import CSemanticCast8616
 from .stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
     stack_cvar_for_machine_bp_range_8616,
+    stack_variable_coordinate_registry_8616,
 )
 
 
@@ -117,24 +122,35 @@ def _existing_stack_cvar(
     offset: int,
     size: int,
 ) -> structured_c.CVariable | None:
-    """Resolve an exact stack declaration from angr's structured surfaces."""
+    """Resolve an exact stack declaration by its canonical C variable value."""
     variables_in_use = _variables_in_use(cfunc)
     if isinstance(variables_in_use, dict):
-        for variable, cvar in variables_in_use.items():
-            if _matches_stack_storage(codegen, variable, base=base, offset=offset, size=size) and isinstance(
-                cvar, structured_c.CVariable
+        for cvar in variables_in_use.values():
+            if isinstance(cvar, structured_c.CVariable) and _matches_stack_storage(
+                codegen,
+                cvar.variable,
+                base=base,
+                offset=offset,
+                size=size,
             ):
                 return cvar
     unified_local_vars = _unified_local_vars(cfunc)
     if isinstance(unified_local_vars, dict):
-        for variable, entries in unified_local_vars.items():
-            if not _matches_stack_storage(codegen, variable, base=base, offset=offset, size=size):
-                continue
+        for entries in unified_local_vars.values():
             if not isinstance(entries, (list, set, tuple)):
                 continue
             for entry in entries:
-                if isinstance(entry, tuple) and entry and isinstance(entry[0], structured_c.CVariable):
-                    return entry[0]
+                if not (isinstance(entry, tuple) and entry):
+                    continue
+                cvar = entry[0]
+                if isinstance(cvar, structured_c.CVariable) and _matches_stack_storage(
+                    codegen,
+                    cvar.variable,
+                    base=base,
+                    offset=offset,
+                    size=size,
+                ):
+                    return cvar
     return None
 
 
@@ -193,16 +209,33 @@ def _wide_stack_word_projection(
     variable = declaration.variable
     if not isinstance(variable, SimStackVariable) or variable.size != 4:
         return None
-    shift = offset - variable.offset
+    owner_offset = (
+        machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if variable.base == "bp"
+        else variable.offset
+    )
+    if not isinstance(owner_offset, int):
+        return None
+    shift = offset - owner_offset
     if shift not in {0, 2}:
         return None
+    projection_tags = condition_stack_projection_tags_8616(
+        declaration.tags,
+        ConditionStackProjectionFact8616(
+            base=variable.base,
+            owner_offset=owner_offset,
+            owner_size=variable.size,
+            view_offset=offset,
+            view_size=2,
+        ),
+    )
     word_type = _condition_integer_type(codegen, 2, signed=signed)
     view = structured_c.CVariable(
         variable,
         unified_variable=declaration.unified_variable,
         variable_type=word_type if prefer_word_view else declaration.variable_type,
         codegen=codegen,
-        tags=dict(declaration.tags),
+        tags=projection_tags,
     )
     projected: structured_c.CExpression = view
     if prefer_word_view and shift == 0:
@@ -213,12 +246,14 @@ def _wide_stack_word_projection(
             projected,
             CConstant(16, word_type, codegen=codegen),
             codegen=codegen,
+            tags=projection_tags,
         )
     projected = CBinaryOp(
         "And",
         projected,
         CConstant(0xFFFF, word_type, codegen=codegen),
         codegen=codegen,
+        tags=projection_tags,
     )
     if signed:
         return CSemanticCast8616(
@@ -226,9 +261,78 @@ def _wide_stack_word_projection(
             word_type,
             projected,
             codegen=codegen,
-            tags=dict(declaration.tags),
+            tags=projection_tags,
         )
     return projected
+
+
+def _project_contained_stack_integer_view_8616(
+    codegen: object,
+    declaration: structured_c.CVariable,
+    *,
+    owner_bp_offset: int,
+    offset: int,
+    size: int,
+    signed: bool,
+    tags: Mapping[str, object] | None,
+) -> structured_c.CExpression | None:
+    """Project one proven integer subrange without declaring new storage."""
+    from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant
+
+    variable = declaration.variable
+    if not isinstance(variable, SimStackVariable) or not isinstance(variable.size, int):
+        return None
+    byte_delta = offset - owner_bp_offset
+    if byte_delta < 0 or byte_delta + size > variable.size:
+        return None
+    owner_type = declaration.variable_type or _condition_integer_type(
+        codegen,
+        variable.size,
+        signed=False,
+    )
+    target_type = _condition_integer_type(codegen, size, signed=signed)
+    projection_tags = condition_stack_projection_tags_8616(
+        tags or declaration.tags,
+        ConditionStackProjectionFact8616(
+            base=variable.base,
+            owner_offset=owner_bp_offset,
+            owner_size=variable.size,
+            view_offset=offset,
+            view_size=size,
+        ),
+    )
+    view: structured_c.CExpression = structured_c.CVariable(
+        variable,
+        unified_variable=declaration.unified_variable,
+        variable_type=owner_type,
+        codegen=codegen,
+        tags=projection_tags,
+    )
+    if byte_delta:
+        view = CBinaryOp(
+            "Shr",
+            view,
+            CConstant(byte_delta * 8, owner_type, codegen=codegen),
+            codegen=codegen,
+            tags=projection_tags,
+        )
+    if size < variable.size:
+        view = CBinaryOp(
+            "And",
+            view,
+            CConstant((1 << (size * 8)) - 1, owner_type, codegen=codegen),
+            codegen=codegen,
+            tags=projection_tags,
+        )
+    if signed:
+        return CSemanticCast8616(
+            owner_type,
+            target_type,
+            view,
+            codegen=codegen,
+            tags=projection_tags,
+        )
+    return view
 
 
 def materialize_typed_condition_stack_operand_8616(
@@ -312,6 +416,27 @@ def materialize_typed_condition_stack_operand_8616(
         projected = stack_cvar_for_machine_bp_range_8616(codegen, offset, size)
         if isinstance(projected, structured_c.CVariable):
             declaration = projected
+        else:
+            owner = stack_variable_coordinate_registry_8616(codegen).containing_bp_range(
+                offset,
+                size,
+            )
+            if (
+                owner is not None
+                and owner.size > size
+                and isinstance(owner.cvar, structured_c.CVariable)
+            ):
+                contained_view = _project_contained_stack_integer_view_8616(
+                    codegen,
+                    owner.cvar,
+                    owner_bp_offset=owner.bp_offset,
+                    offset=offset,
+                    size=size,
+                    signed=signed,
+                    tags=tags,
+                )
+                if contained_view is not None:
+                    return contained_view
     if declaration is None and cfunc is not None:
         declaration = _existing_stack_cvar(codegen, cfunc, base=base, offset=offset, size=size)
     if declaration is None and cfunc is not None and size == 2:

@@ -25,6 +25,11 @@ from angr_platforms.X86_16.analysis_helpers import (
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_stack_metadata import _callsite_materialization_complete_8616
 from angr_platforms.X86_16.callsite_summary import CallsitePushExprOp8616, CallsiteSummary8616
+from angr_platforms.X86_16.callsite_summary_program import (
+    ProgramCallsiteSummaryFact8616,
+    attach_program_callsite_summary_evidence_8616,
+    program_callsite_summary_evidence_from_facts_8616,
+)
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
     CallArgSemanticKind8616,
     CallsiteMaterializationDecision8616,
@@ -186,6 +191,7 @@ def test_callsite_materialization_stats_expose_standard_evidence_counters():
         "direct_push_override_recent_store_count": 0,
         "live_setup_definition_preserved_count": 0,
         "known_prototype_arg_mismatch_count": 0,
+        "no_live_summarized_call_refusal_count": 0,
     }
 
 
@@ -868,6 +874,51 @@ def test_attach_callsite_summaries_preserves_proven_logical_projection(monkeypat
 
     assert codegen._inertia_callsite_summary_inventory_8616[0x4012].logical_arg_widths == (2, 2, 2, 4)
     assert codegen._inertia_callsite_summaries[id(call)].logical_arg_widths == (2, 2, 2, 4)
+
+
+def test_attach_callsite_summaries_reuses_complete_program_evidence(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    call = CFunctionCall("load", None, [], tags={"ins_addr": 0x4012}, codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    function = SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x4012])
+    callee = SimpleNamespace(addr=0x1544, name="load")
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr, create=False: (
+                function if addr == 0x4010 else callee if addr == 0x1544 else None
+            )
+        )
+    )
+    summary = CallsiteSummary8616(
+        callsite_addr=0x4012,
+        target_addr=0x1544,
+        return_addr=0x4015,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register=None,
+        return_used=False,
+    )
+    attach_program_callsite_summary_evidence_8616(
+        project,
+        program_callsite_summary_evidence_from_facts_8616(
+            (ProgramCallsiteSummaryFact8616(0x4010, 0x4012, summary),)
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_calls,
+        "summarize_x86_16_callsite",
+        lambda *_args, **_kwargs: pytest.fail("complete program evidence was rebuilt"),
+    )
+
+    changed = _attach_callsite_summaries_8616(project, codegen)
+
+    assert changed is True
+    assert codegen._inertia_callsite_summary_inventory_8616 == {0x4012: summary}
+    assert codegen._inertia_callsite_summaries[id(call)] == summary
 
 
 def test_attach_callsite_summaries_retains_unrepresented_binary_callsite(monkeypatch):

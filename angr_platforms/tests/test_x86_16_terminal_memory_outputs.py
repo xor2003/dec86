@@ -164,7 +164,7 @@ def test_overlapping_direct_views_remain_separate_semantics_facts() -> None:
     }
 
 
-def test_indirect_same_space_store_refuses_direct_output() -> None:
+def test_indirect_same_space_store_does_not_erase_direct_output() -> None:
     artifact = _artifact(
         (_block(0x1000, _store(0x1000), _store(0x1001, base=("bx",))),),
         {0x1000: ()},
@@ -174,9 +174,9 @@ def test_indirect_same_space_store_refuses_direct_output() -> None:
         _project(**{"1000": "ret"}), artifact
     )
 
-    assert evidence.complete is False
-    assert evidence.facts == ()
-    assert evidence.failure is TerminalMemoryOutputFailure8616.ALIAS_CONFLICT
+    assert evidence.complete is True
+    assert evidence.failure is None
+    assert tuple(fact.key for fact in evidence.facts) == ((MemSpace.DS, 0x1234, 1),)
 
 
 def test_incomplete_cfg_and_non_return_terminal_refuse_atomically() -> None:

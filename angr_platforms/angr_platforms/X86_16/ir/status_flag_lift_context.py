@@ -56,6 +56,7 @@ class _ProjectBoundary8616(Protocol):
 
     arch: _ArchBoundary8616
     factory: _FactoryBoundary8616
+    _inertia_original_linear_delta: int
 
 
 class _FunctionBoundary8616(Protocol):
@@ -100,6 +101,7 @@ class StatusFlagLiftSession8616:
     candidates: tuple[StatusFlagLiftCandidate8616, ...]
     packed_preservation_addresses: frozenset[int] = frozenset()
     projection_failure_count: int = 0
+    original_linear_delta: int = 0
     stats: StatusFlagLivenessStats8616 = field(
         default_factory=lambda: StatusFlagLivenessStats8616(0, 0, 0, 0, 0)
     )
@@ -135,11 +137,15 @@ class StatusFlagLiftSession8616:
         written: StatusFlag8616,
     ) -> StatusFlag8616:
         """Consume one exact candidate and return its proven-dead bit subset."""
-        candidate = self._candidate_by_address.get(instruction_address)
+        candidate_address = instruction_address
+        candidate = self._candidate_by_address.get(candidate_address)
+        if candidate is None and self.original_linear_delta:
+            candidate_address = instruction_address + self.original_linear_delta
+            candidate = self._candidate_by_address.get(candidate_address)
         normalized_written = written & STATUS_FLAGS_8616
         if candidate is None or candidate.written != normalized_written:
             return StatusFlag8616.NONE
-        self._materialized_addresses.add(instruction_address)
+        self._materialized_addresses.add(candidate_address)
         return candidate.dead_writes
 
     def finalize(self) -> None:
@@ -239,6 +245,15 @@ def _clear_lift_cache_8616(project: object) -> bool:
     return True
 
 
+def _original_linear_delta_8616(project: object) -> int:
+    """Return the explicit slice-to-original address delta, or zero."""
+    try:
+        delta = cast(_ProjectBoundary8616, project)._inertia_original_linear_delta
+    except (AttributeError, TypeError, ValueError):
+        return 0
+    return delta if isinstance(delta, int) else 0
+
+
 def _publish_stats_8616(function: object, session: StatusFlagLiftSession8616) -> None:
     """Attach the typed publication result to angr function diagnostics."""
     try:
@@ -291,6 +306,7 @@ def active_status_flag_lift_context_8616(
         function_address,
         candidates,
         _packed_preservation_addresses_8616(projection),
+        original_linear_delta=_original_linear_delta_8616(project),
     )
     token = _active_session.set(session)
     completed = False

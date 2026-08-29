@@ -348,3 +348,45 @@ def test_split_return_with_shared_provenance_materializes_exact_pieces() -> None
     assert contract.outputs[0].width == 4
     assert contract.outputs[0].signedness is StorageTrialSignedness8616.SIGN_INSENSITIVE
     assert tuple(piece.register for piece in contract.outputs[0].pieces) == ("ax", "dx")
+
+
+def test_sign_insensitive_byte_use_joins_unsigned_extension_evidence() -> None:
+    function_addr = 0x7200
+    return_storage = _register_identity("al", 1)
+    callsites = tuple(
+        CallsiteStorageTrials8616(
+            caller_addr=caller_addr,
+            callee_addr=function_addr,
+            callsite_addr=callsite_addr,
+            returns=(
+                _trial(
+                    callee_addr=function_addr,
+                    caller_addr=caller_addr,
+                    callsite_addr=callsite_addr,
+                    role=StorageTrialRole8616.RETURN,
+                    logical_index=0,
+                    storage=return_storage,
+                    source_storage=return_storage,
+                    signedness=signedness,
+                ),
+            ),
+            stack_delta=0,
+        )
+        for caller_addr, callsite_addr, signedness in (
+            (0x7300, 0x7310, StorageTrialSignedness8616.UNSIGNED),
+            (0x7400, 0x7410, StorageTrialSignedness8616.SIGN_INSENSITIVE),
+        )
+    )
+    trials = FunctionStorageTrials8616(
+        function_addr=function_addr,
+        caller_census_complete=True,
+        expected_callsite_addrs=(0x7310, 0x7410),
+        callsites=callsites,
+    )
+
+    contract = resolve_program_storage_trials_8616((trials,)).contract_for(
+        function_addr
+    )
+
+    assert contract is not None
+    assert contract.outputs[0].signedness is StorageTrialSignedness8616.UNSIGNED

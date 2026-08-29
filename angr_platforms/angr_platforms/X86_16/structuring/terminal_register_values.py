@@ -16,10 +16,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CExpression, CReturn
+from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CExpression, CReturn, CVariable
 from angr.sim_type import SimTypeBottom, SimTypeShort
+from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
+from ..lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    stack_variable_coordinate_registry_8616,
+)
 
 __all__ = [
     "TerminalReturnValueMaterializationRefusal8616",
@@ -102,6 +107,8 @@ class TerminalReturnValueMaterializationResult8616:
     classified_fact_count: int
     materialized_count: int
     failure_count: int
+    replaced_return_value: CExpression | None = None
+    materialized_return_value: CExpression | None = None
 
     @property
     def accepted(self) -> bool:
@@ -176,6 +183,36 @@ def proven_terminal_value_extends_existing_8616(
     return False
 
 
+def _proven_terminal_stack_value_replaces_stale_carrier_8616(
+    codegen: object,
+    existing_value: object,
+    proven_value: CExpression,
+    return_widths: Sequence[int | None],
+) -> bool:
+    """Accept an exact projected stack owner over a narrower stale carrier."""
+    if not isinstance(existing_value, CVariable) or not isinstance(proven_value, CVariable):
+        return False
+    existing_variable = existing_value.variable
+    proven_variable = proven_value.variable
+    if not isinstance(existing_variable, SimStackVariable) or not isinstance(proven_variable, SimStackVariable):
+        return False
+    if existing_variable.base != "bp" or proven_variable.base != "bp":
+        return False
+    if not isinstance(existing_variable.size, int) or not isinstance(proven_variable.size, int):
+        return False
+    if existing_variable.size >= proven_variable.size:
+        return False
+    if not return_widths or any(width != proven_variable.size * 8 for width in return_widths):
+        return False
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    projection = registry.for_entry_sp_range(proven_variable.offset, proven_variable.size)
+    if projection is None or projection.size != proven_variable.size:
+        return False
+    existing_bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, existing_variable)
+    proven_bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, proven_variable)
+    return bool(existing_bp_offset == proven_bp_offset == projection.bp_offset)
+
+
 def materialize_proven_terminal_return_value_8616(
     return_nodes: Sequence[CReturn],
     proven_value: CExpression,
@@ -209,6 +246,7 @@ def materialize_proven_terminal_return_value_8616(
             1,
             0,
         )
+    replaced_return_value = return_node.retval if isinstance(return_node.retval, CExpression) else None
     return_node.retval = proven_value
     result = TerminalReturnValueMaterializationResult8616(
         TerminalReturnValueMaterializationStatus8616.MATERIALIZED,
@@ -219,6 +257,8 @@ def materialize_proven_terminal_return_value_8616(
         1,
         1,
         0,
+        replaced_return_value,
+        proven_value,
     )
     if result.classified_fact_count > 0 and result.materialized_count == 0:
         raise RuntimeError("terminal register return value was classified but not materialized")
@@ -295,10 +335,20 @@ def materialize_linear_terminal_return_value_8616(
             raw_fact_count=1,
             normalized_fact_count=1,
         )
-    if not expressions_equivalent(return_nodes[0].retval, proven_value) and not proven_terminal_value_extends_existing_8616(
-        return_nodes[0].retval,
-        proven_value,
-        expressions_equivalent,
+    existing_return_value = return_nodes[0].retval
+    if (
+        not expressions_equivalent(existing_return_value, proven_value)
+        and not proven_terminal_value_extends_existing_8616(
+            existing_return_value,
+            proven_value,
+            expressions_equivalent,
+        )
+        and not _proven_terminal_stack_value_replaces_stale_carrier_8616(
+            codegen,
+            existing_return_value,
+            proven_value,
+            return_widths,
+        )
     ):
         return _refused_result_8616(
             TerminalReturnValueMaterializationRefusal8616.PROVEN_VALUE_NOT_EXTENSION,

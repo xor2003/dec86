@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .core import IRInstr, IRValue, MemSpace
+from .core import IRFunctionArtifact, IRInstr, IRValue, MemSpace
 from .ssa_function import SSAFunctionArtifact
 
 type ScalarDefinitionKey8616 = tuple[str, str | None, int, int, int | None]
@@ -64,9 +64,9 @@ def scalar_definition_key_8616(value: IRValue) -> ScalarDefinitionKey8616:
 
 
 def build_scalar_definition_index_8616(
-    artifact: SSAFunctionArtifact,
+    artifact: IRFunctionArtifact | SSAFunctionArtifact,
 ) -> ScalarDefinitionIndex8616:
-    """Index every exact scalar definition without discarding conflicts."""
+    """Index exact typed-IR or SSA scalar definitions without hiding conflicts."""
     grouped: dict[ScalarDefinitionKey8616, list[ScalarDefinition8616]] = {}
     for block in artifact.blocks:
         for instr_index, instruction in enumerate(block.instrs):

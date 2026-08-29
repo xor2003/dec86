@@ -340,7 +340,10 @@ def _structured_call_target_addr_8616(call: CFunctionCall) -> int | None:
     return addr if isinstance(addr, int) else None
 
 
-def _stack_array_storage_8616(node: object) -> _StackArrayStorage8616 | None:
+def _stack_array_storage_8616(
+    codegen: object | None,
+    node: object,
+) -> _StackArrayStorage8616 | None:
     """Return bounded stack-array identity for one C expression."""
     node = _strip_casts_8616(node)
     if not isinstance(node, CVariable) or not isinstance(
@@ -368,8 +371,15 @@ def _stack_array_storage_8616(node: object) -> _StackArrayStorage8616 | None:
     object_width = element_width * node.type.length
     if variable.size not in {element_width, object_width}:
         return None
+    offset = (
+        machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if codegen is not None
+        else variable.offset
+    )
+    if not isinstance(offset, int):
+        return None
     return _StackArrayStorage8616(
-        offset=variable.offset,
+        offset=offset,
         width=object_width,
         element_width=element_width,
         element_count=node.type.length,
@@ -661,6 +671,7 @@ def _transparent_body_statements_8616(body: object) -> tuple[object, ...]:
 
 
 def _prefix_array_8616(
+    codegen: object | None,
     loop: CForLoop,
     descriptor: _AscendingLoop8616,
 ) -> _StackArrayStorage8616 | None:
@@ -682,13 +693,14 @@ def _prefix_array_8616(
         lhs = statement.lhs
         if not isinstance(lhs, CIndexedVariable):
             continue
-        array = _stack_array_storage_8616(lhs.variable)
+        array = _stack_array_storage_8616(codegen, lhs.variable)
         if array is not None and _scalar_storage_8616(lhs.index) == descriptor.induction:
             return array
     return None
 
 
 def _while_prefix_array_8616(
+    codegen: object | None,
     loop: CWhileLoop,
     descriptor: _AscendingLoop8616,
     guard_index: int,
@@ -717,7 +729,7 @@ def _while_prefix_array_8616(
         lhs = statement.lhs
         if not isinstance(lhs, CIndexedVariable):
             continue
-        array = _stack_array_storage_8616(lhs.variable)
+        array = _stack_array_storage_8616(codegen, lhs.variable)
         if array is not None and _scalar_storage_8616(lhs.index) == descriptor.induction:
             return array
     return None
@@ -997,7 +1009,7 @@ def collect_indexed_stack_read_proofs_8616(
                 continue
             if _constant_value_8616(node.index) is not None:
                 continue
-            array = _stack_array_storage_8616(node.variable)
+            array = _stack_array_storage_8616(codegen, node.variable)
             if array is None:
                 continue
             report.raw_fact_count += 1
@@ -1208,7 +1220,7 @@ def collect_indexed_stack_read_proofs_8616(
                         type(statement.lhs).__name__
                         if isinstance(statement, CAssignment)
                         else None,
-                        _stack_array_storage_8616(statement.lhs.variable)
+                        _stack_array_storage_8616(codegen, statement.lhs.variable)
                         if isinstance(statement, CAssignment)
                         and isinstance(statement.lhs, CIndexedVariable)
                         else None,
@@ -1257,7 +1269,7 @@ def collect_indexed_stack_read_proofs_8616(
             }
             for scalar in written_scalars:
                 _invalidate_scalar(outgoing, scalar)
-            prefix_array = _prefix_array_8616(node, descriptor)
+            prefix_array = _prefix_array_8616(codegen, node, descriptor)
             _debug(
                 "loop-prefix",
                 descriptor=descriptor,
@@ -1303,6 +1315,7 @@ def collect_indexed_stack_read_proofs_8616(
             for scalar in written_scalars:
                 _invalidate_scalar(outgoing, scalar)
             prefix_array = _while_prefix_array_8616(
+                codegen,
                 node,
                 descriptor,
                 guard_index,

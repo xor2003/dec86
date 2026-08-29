@@ -55,6 +55,11 @@ from ..compiler_helpers import (
     identify_x86_16_compiler_helper_at_8616,
     is_x86_16_registered_stack_probe_target_8616,
 )
+from .stack_frame_projection import entry_sp_offset_for_machine_bp_range_8616
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    record_stack_variable_coordinate_projection_8616,
+)
 
 __all__ = [
     "StackAggregateCallDecay8616",
@@ -907,10 +912,11 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
         """Record one current-codegen view in the proven frame partition."""
         if not isinstance(variable, SimStackVariable) or not isinstance(cvar, structured_c.CVariable):
             return
-        if variable.base != "bp" or variable.offset not in candidates_by_offset or id(cvar) in seen_candidates:
+        bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if variable.base != "bp" or bp_offset not in candidates_by_offset or id(cvar) in seen_candidates:
             return
         seen_candidates.add(id(cvar))
-        candidates_by_offset[variable.offset].append(cvar)
+        candidates_by_offset[bp_offset].append(cvar)
 
     for candidate_variable, candidate_cvar in variables_in_use.items():
         add_candidate(candidate_variable, candidate_cvar)
@@ -956,10 +962,15 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
             all_unified=True,
         )
 
+    entry_sp_offset = entry_sp_offset_for_machine_bp_range_8616(
+        codegen,
+        fact.base_offset,
+        fact.byte_size,
+    )
     changed = False
     if not aggregate_candidates:
         aggregate_variable = SimStackVariable(
-            fact.base_offset,
+            fact.base_offset if entry_sp_offset is None else entry_sp_offset,
             fact.byte_size,
             base="bp",
             name=f"local_{abs(fact.base_offset):x}",
@@ -981,7 +992,8 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
         if (
             isinstance(candidate_variable, SimStackVariable)
             and candidate_variable.base == "bp"
-            and candidate_variable.offset == fact.base_offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, candidate_variable)
+            == fact.base_offset
         ):
             persist_type(candidate_variable, array_type)
     for candidate_cvar in aggregate_candidates:
@@ -1012,7 +1024,11 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
         for unified_variable, entries in tuple(unified_local_vars.items()):
             if not isinstance(unified_variable, SimStackVariable):
                 continue
-            if unified_variable.base != "bp" or unified_variable.offset not in candidates_by_offset:
+            bp_offset = machine_bp_offset_for_stack_variable_8616(
+                codegen,
+                unified_variable,
+            )
+            if unified_variable.base != "bp" or bp_offset not in candidates_by_offset:
                 continue
             if isinstance(entries, set):
                 updated_entries: set[object] = set()
@@ -1026,7 +1042,7 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
                         continue
                     replacement_type = (
                         array_type
-                        if unified_variable.offset == fact.base_offset
+                        if bp_offset == fact.base_offset
                         else boundary_types.get(id(entry_cvar))
                     )
                     if replacement_type is None:
@@ -1042,6 +1058,17 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
                 unified_local_vars[unified_variable] = updated_entries
 
     cvar = current_tracked_cvar or aggregate_candidates[0]
+    aggregate_variable = cvar.variable
+    if isinstance(aggregate_variable, SimStackVariable) and entry_sp_offset is not None:
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=aggregate_variable,
+            cvar=cvar,
+            bp_offset=fact.base_offset,
+            entry_sp_offset=entry_sp_offset,
+            size=fact.byte_size,
+            display_name=aggregate_variable.name,
+        )
     typing.cast(Any, codegen)._inertia_stack_aggregate_cvars_8616 = {
         **tracked_cvars,
         fact.base_offset: cvar,
@@ -1097,7 +1124,8 @@ def _decay_stack_aggregate_call_arguments(
         if (
             not isinstance(variable, SimStackVariable)
             or variable.base != "bp"
-            or variable.offset != fact.base_offset
+            or machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            != fact.base_offset
             or not isinstance(aggregate_cvar, structured_c.CVariable)
             or not isinstance(aggregate_cvar.type, (SimTypeArray, SimTypeFixedSizeArray))
         ):
@@ -1266,7 +1294,12 @@ def prune_nonmemory_stack_aggregate_carriers_8616(
         if not isinstance(lhs, structured_c.CVariable):
             return False
         variable = lhs.variable
-        if not isinstance(variable, SimStackVariable) or variable.base != "bp" or variable.offset not in base_offsets:
+        if (
+            not isinstance(variable, SimStackVariable)
+            or variable.base != "bp"
+            or machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            not in base_offsets
+        ):
             return False
         raw_count += 1
         tags = getattr(statement, "tags", None)

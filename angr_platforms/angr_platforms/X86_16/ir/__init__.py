@@ -62,6 +62,14 @@ from .logical_memory_contracts import (
     IRMemoryExecutionSlice8616,
 )
 from .logical_memory_resolution import resolve_logical_memory_accesses_8616
+from .scalar_affine_contracts import (
+    ScalarAffineExpression8616,
+    ScalarAffineFailure8616,
+    ScalarAffineTerm8616,
+    ScalarAffineTrace8616,
+    ScalarAffineTraceStats8616,
+)
+from .scalar_affine_trace import trace_scalar_affine_expression_8616
 from .segment_contract import (
     SegmentAccessFact,
     SegmentAccessKind,
@@ -163,6 +171,11 @@ __all__ = [
     "SSAMemoryPhiNode8616",
     "SSAMemoryStats8616",
     "SSAPhiNode",
+    "ScalarAffineExpression8616",
+    "ScalarAffineFailure8616",
+    "ScalarAffineTerm8616",
+    "ScalarAffineTrace8616",
+    "ScalarAffineTraceStats8616",
     "SegmentAccessFact",
     "SegmentAccessKind",
     "SegmentFactVerdict",
@@ -188,4 +201,5 @@ __all__ = [
     "collect_indexed_address_copy_evidence_8616",
     "collect_indexed_address_evidence_8616",
     "resolve_logical_memory_accesses_8616",
+    "trace_scalar_affine_expression_8616",
 ]

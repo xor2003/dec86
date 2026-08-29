@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from types import SimpleNamespace
 from typing import Protocol, cast
 
+from ..frontend_function_boundary import exact_function_range_boundary_8616
 from .ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from .vex_import import build_x86_16_ir_function_artifact
 
@@ -155,12 +155,7 @@ def function_boundary_at_address_8616(
     if len(matching) != 1:
         return None
     start, end = matching[0]
-    return SimpleNamespace(
-        addr=start,
-        size=end - start,
-        block_addrs_set={start},
-        info={},
-    )
+    return cast(object | None, exact_function_range_boundary_8616(project, start, end))
 
 
 def registered_function_ssa_artifact_8616(

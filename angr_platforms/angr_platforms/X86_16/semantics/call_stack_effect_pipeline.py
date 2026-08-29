@@ -15,7 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from ..callsite_summary import build_callsite_summary_inventory_8616
+from ..callsite_summary_program import (
+    build_callsite_summary_inventory_with_program_evidence_8616,
+)
 from ..ir import IRFunctionArtifact
 from ..ir.function_ssa_registry import (
     FunctionSSAArtifactFailure8616,
@@ -115,8 +117,23 @@ class CallSemanticProjection8616:
 def semantic_function_ssa_artifact_at_address_8616(
     project: object,
     function_addr: int,
+    *,
+    function: object | None = None,
 ) -> FunctionSSAArtifactResolution8616:
-    """Build or return one exact Semantics-ready project SSA artifact."""
+    """Build or return Semantics-ready SSA for an exact supplied boundary."""
+    if function is not None:
+        try:
+            boundary_addr = cast(_CFunctionBoundary8616, function).addr
+        except AttributeError:
+            boundary_addr = None
+        if boundary_addr != function_addr:
+            return FunctionSSAArtifactResolution8616(
+                function_addr,
+                FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+                None,
+                FunctionSSAArtifactFailure8616.FUNCTION_BOUNDARY_CONFLICT,
+                None,
+            )
     registered = registered_function_ssa_artifact_8616(project, function_addr)
     if (
         registered.verdict is FunctionSSAArtifactVerdict8616.PROVEN
@@ -125,7 +142,8 @@ def semantic_function_ssa_artifact_at_address_8616(
         return registered
     if registered.failure is FunctionSSAArtifactFailure8616.ARTIFACT_CONFLICT:
         return registered
-    function = function_boundary_at_address_8616(project, function_addr)
+    if function is None:
+        function = function_boundary_at_address_8616(project, function_addr)
     if function is None:
         return FunctionSSAArtifactResolution8616(
             function_addr,
@@ -180,7 +198,11 @@ def build_semantic_function_ssa_8616(
         for instruction in block.instrs
         if instruction.op == "CALL" and instruction.addr is not None
     )
-    summaries = build_callsite_summary_inventory_8616(function, callsite_addrs)
+    summaries = build_callsite_summary_inventory_with_program_evidence_8616(
+        project,
+        function,
+        callsite_addrs,
+    )
     effects = materialize_call_stack_effects_8616(raw_ir, summaries)
     if not effects.stats.closed or (
         effects.stats.classified_fact_count > 0

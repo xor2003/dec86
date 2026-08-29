@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CFunctionCall, CTypeCast, CVariable
-from angr.sim_type import SimTypeLong, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16 import decompiler_postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -309,6 +309,54 @@ def test_callsite_finalize_enforces_structuring_identity_after_call_replay(monke
 
     assert changed is False
     assert events == ["stack", "calls", "interfaces", "occurrences"]
+
+
+def test_regeneration_finalizes_types_after_stack_name_normalization(monkeypatch) -> None:
+    """Cleanup cannot overwrite a proven return type immediately before C rendering."""
+    events: list[str] = []
+    cfunc = SimpleNamespace(functy=SimTypeFunction([], SimTypeChar(signed=True)))
+
+    def c_repr() -> str:
+        if cfunc.functy.returnty.signed is False:
+            return "unsigned char f(void)\n"
+        return "char f(void)\n"
+
+    cfunc.c_repr = c_repr
+    codegen = SimpleNamespace(
+        text="char f(void)\n",
+        cfunc=cfunc,
+        project=SimpleNamespace(arch=SimpleNamespace(name="86_16")),
+        _inertia_force_codegen_regeneration_8616=True,
+    )
+
+    def normalize(_codegen: object) -> None:
+        events.append("normalize")
+        cfunc.functy = SimTypeFunction([], SimTypeChar(signed=True))
+
+    def finalize(_codegen: object) -> bool:
+        events.append("finalize")
+        cfunc.functy = SimTypeFunction([], SimTypeChar(signed=False))
+        return True
+
+    monkeypatch.setattr(cli_decompilation, "repair_cfunctioncall_render_targets_8616", lambda _codegen: None)
+    monkeypatch.setattr(cli_decompilation, "_bind_codegen_render_variable_types_8616", lambda _codegen: None)
+    monkeypatch.setattr(cli_decompilation, "require_codegen_render_integrity_8616", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompiler_postprocess_stage,
+        "_normalize_stack_variable_identifiers_8616",
+        normalize,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_finalize_typed_call_interfaces_before_render_8616",
+        finalize,
+    )
+
+    text, regenerated = cli_decompilation._regenerate_codegen_text_safely(codegen, context="0x1000 f")
+
+    assert regenerated is True
+    assert text == "unsigned char f(void)\n"
+    assert events[-2:] == ["normalize", "finalize"]
 
 
 def test_typed_interface_finalize_replays_stack_widths_before_specialized_parameters(monkeypatch):

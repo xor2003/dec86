@@ -6,8 +6,9 @@ written on every entry-reachable return path while retaining all store sites.
 Consumes typed function SSA and structured instruction decoding. This module
 does not create Alias identities, choose C types, mutate prototypes, or render C.
 Indirect, indexed, or incompletely connected memory effects remain explicitly
-outside this direct-storage proof. Exact overlapping direct ranges remain
-separate Semantics facts; the Alias layer owns their storage relationship.
+outside this direct-storage proof and do not erase independently proven direct
+stores. Exact overlapping or possibly aliasing ranges remain separate Semantics
+facts; Alias and interprocedural Lowering own their storage relationships.
 Owns instruction effects, flags, branch meaning, and expression interpretation.
 Do not perform alias-state ownership, widening, lowering/materialization,
 structuring, rewrite, postprocess, or CLI/reporting work here.
@@ -56,11 +57,6 @@ def _direct_store_8616(
         return None
     key = (address.space, address.offset, address.size)
     return key, address, TerminalMemoryStoreSite8616(block_addr, instr_index, instruction.addr)
-
-
-def _ranges_overlap_8616(left: MemoryOutputKey8616, right: MemoryOutputKey8616) -> bool:
-    """Return whether two ranges overlap within one segmented address space."""
-    return left[0] is right[0] and left[1] < right[1] + right[2] and right[1] < left[1] + left[2]
 
 
 def _terminal_is_return_8616(project: object, block_addr: int) -> bool:
@@ -192,25 +188,6 @@ def _must_write_keys_8616(
     return frozenset.intersection(*terminal_sets), terminals, definite_terminals
 
 
-def _store_may_alias_candidates_8616(
-    instruction: IRInstr,
-    candidate_keys: tuple[MemoryOutputKey8616, ...],
-) -> bool:
-    """Return whether an unsupported STORE may overlap a direct candidate."""
-    address = instruction.args[0] if instruction.args else None
-    if not isinstance(address, IRAddress):
-        return True
-    if address.space is MemSpace.SS:
-        return False
-    same_space = tuple(key for key in candidate_keys if key[0] is address.space)
-    if not same_space:
-        return address.space not in {MemSpace.DS, MemSpace.ES}
-    if address.base or address.status is not AddressStatus.STABLE or address.size <= 0:
-        return True
-    store_key = (address.space, address.offset, address.size)
-    return any(_ranges_overlap_8616(store_key, candidate) for candidate in same_space)
-
-
 def collect_terminal_memory_output_evidence_8616(
     project: object,
     artifact: SSAFunctionArtifact,
@@ -234,19 +211,15 @@ def collect_terminal_memory_output_evidence_8616(
         return _refused_8616(artifact, failure, len(all_direct))
 
     grouped: dict[MemoryOutputKey8616, tuple[IRAddress, list[TerminalMemoryStoreSite8616]]] = {}
-    all_stores: list[tuple[int, int, IRInstr]] = []
-    direct_sites: set[tuple[int, int]] = set()
     for block in artifact.blocks:
         if block.addr not in reachable:
             continue
         for instr_index, instruction in enumerate(block.instrs):
             if instruction.op != "STORE":
                 continue
-            all_stores.append((block.addr, instr_index, instruction))
             direct = _direct_store_8616(block.addr, instr_index, instruction)
             if direct is None:
                 continue
-            direct_sites.add((block.addr, instr_index))
             key, address, site = direct
             stored = grouped.setdefault(key, (address, []))
             stored[1].append(site)
@@ -255,13 +228,6 @@ def collect_terminal_memory_output_evidence_8616(
             artifact.function_addr, (), None, TerminalMemoryOutputStats8616()
         )
     keys = tuple(sorted(grouped, key=lambda item: (item[0].value, item[1], item[2])))
-    for block_addr, instr_index, instruction in all_stores:
-        if (block_addr, instr_index) in direct_sites:
-            continue
-        if _store_may_alias_candidates_8616(instruction, keys):
-            return _refused_8616(
-                artifact, TerminalMemoryOutputFailure8616.ALIAS_CONFLICT, len(keys), len(keys)
-            )
     solved = _must_write_keys_8616(artifact, reachable, successors, frozenset(keys))
     if solved is None:
         return _refused_8616(

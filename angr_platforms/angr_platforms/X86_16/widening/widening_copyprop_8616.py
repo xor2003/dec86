@@ -86,8 +86,10 @@ class _WideningCopypropCodegen8616(Protocol):
     widening_copyprop_recursive_definitions_refused_8616: int
     widening_copyprop_typed_cast_definitions_refused_8616: int
     widening_copyprop_unknown_identity_refused_8616: int
+    widening_copyprop_width_mismatch_refused_8616: int
     _inertia_widening_call_push_definition_guard_8616: SemanticLaneState
     _inertia_widening_nontrivial_definition_guard_8616: SemanticLaneState
+    _inertia_widening_copy_width_guard_8616: SemanticLaneState
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,8 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
     typed_codegen._inertia_widening_nontrivial_definition_guard_8616 = (
         nontrivial_definition_guard
     )
+    copy_width_guard = SemanticLaneState(name="widening_copy_width_guard")
+    typed_codegen._inertia_widening_copy_width_guard_8616 = copy_width_guard
     try:
         typed_codegen.widening_copyprop_nested_replacements_8616  # noqa: B018
     except AttributeError:
@@ -198,6 +202,10 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
         typed_codegen.widening_copyprop_unknown_identity_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_unknown_identity_refused_8616 = 0
+    try:
+        typed_codegen.widening_copyprop_width_mismatch_refused_8616  # noqa: B018
+    except AttributeError:
+        typed_codegen.widening_copyprop_width_mismatch_refused_8616 = 0
 
     changed = False
     guarded_call_push_assignment_ids: set[int] = set()
@@ -300,6 +308,16 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                     int(typed_codegen.widening_copyprop_typed_cast_definitions_refused_8616 or 0) + 1
                 )
                 return None
+            if isinstance(lhs, structured_c.CVariable) and isinstance(rhs, structured_c.CVariable):
+                lhs_bits = _expression_bit_width(lhs)
+                rhs_bits = _expression_bit_width(rhs)
+                copy_width_guard.raw += 1
+                copy_width_guard.normalized += 1
+                copy_width_guard.classified += 1
+                copy_width_guard.materialized += 1
+                if lhs_bits is None or rhs_bits is None or lhs_bits != rhs_bits:
+                    typed_codegen.widening_copyprop_width_mismatch_refused_8616 += 1
+                    return None
             lhs_identity = describe_alias_storage(lhs).identity
             if (
                 isinstance(lhs_identity, tuple)
@@ -570,6 +588,15 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
 
                 continue
 
+            if isinstance(stmt, structured_c.CReturn) and stmt.retval is not None:
+                propagated_return = _propagate_expr(stmt.retval)
+                if propagated_return is not stmt.retval:
+                    stmt.retval = propagated_return
+                if _is_side_effecting(propagated_return):
+                    block_defs.clear()
+                    virtual_defs.clear()
+                continue
+
             if isinstance(stmt, (structured_c.CForLoop, structured_c.CWhileLoop, structured_c.CDoWhileLoop)):
                 # A loop header executes after loop-carried writes. Pre-loop copies
                 # are not invariants without a separate alias/liveness proof.
@@ -621,6 +648,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
         _walk_statements(cfunc)
     call_push_definition_guard.assert_closed_loop(layer="widening")
     nontrivial_definition_guard.assert_closed_loop(layer="widening")
+    copy_width_guard.assert_closed_loop(layer="widening")
     return changed
 
 

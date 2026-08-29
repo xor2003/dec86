@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
@@ -53,6 +53,7 @@ from .lowering.storage_identity_facts import (
     GlobalStorageIdentityFact8616,
     global_storage_identity_facts_8616,
 )
+from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -407,10 +408,14 @@ def _iter_container_cvariables_8616(value: object) -> Iterator[CVariable]:
             yield from _iter_container_cvariables_8616(item)
 
 
-def _root_cvariables_8616(root: object) -> tuple[CVariable, ...]:
+def _root_cvariables_8616(
+    root: object,
+    query_index: StructuredAstQueryIndex8616 | None = None,
+) -> tuple[CVariable, ...]:
     """Collect variables that are referenced by the actual final statement tree."""
+    nodes = query_index.nodes if query_index is not None else _iter_c_nodes_deep_8616(root)
     variables = [
-        node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CVariable)
+        node for node in nodes if isinstance(node, CVariable)
     ]
     unique: dict[int, CVariable] = {}
     for variable in variables:
@@ -628,12 +633,12 @@ def _struct_name_8616(struct_type: object) -> str:
 
 def _final_stack_field_projections_8616(
     codegen: object,
-    root: object,
+    nodes: Iterable[object],
     fact: StackAggregateFieldProjectionFact8616,
 ) -> tuple[_FinalStackFieldProjection8616, ...]:
     """Return final field projections assigned to the fact destination."""
     projections: set[_FinalStackFieldProjection8616] = set()
-    for node in _iter_c_nodes_deep_8616(root):
+    for node in nodes:
         if (
             not isinstance(node, CAssignment)
             or not isinstance(node.lhs, CVariable)
@@ -663,14 +668,18 @@ def _final_stack_field_projections_8616(
         )
         if source_storage is None or not isinstance(rhs.field.struct_type, SimStruct):
             continue
+        source_base = source_storage.base
+        source_offset = (
+            machine_bp_offset_for_stack_variable_8616(codegen, source_storage)
+            if source_base == "bp"
+            else source_storage.offset
+        )
+        if not isinstance(source_base, str) or not isinstance(source_offset, int):
+            continue
         projections.add(
             _FinalStackFieldProjection8616(
-                source_base=source_storage.base,
-                source_offset=(
-                    machine_bp_offset_for_stack_variable_8616(codegen, source_storage)
-                    if source_storage.base == "bp"
-                    else source_storage.offset
-                ),
+                source_base=source_base,
+                source_offset=source_offset,
                 field_offset=rhs.field.offset,
                 struct_name=_struct_name_8616(rhs.field.struct_type),
                 struct_type=rhs.field.struct_type,
@@ -809,12 +818,15 @@ def _final_stack_index_identity_8616(
         )
         if storage is None:
             return None
+        storage_base = storage.base
         storage_offset = (
             machine_bp_offset_for_stack_variable_8616(codegen, storage)
-            if storage.base == "bp"
+            if storage_base == "bp"
             else storage.offset
         )
-        return storage.base, storage_offset, 0
+        if not isinstance(storage_base, str) or not isinstance(storage_offset, int):
+            return None
+        return storage_base, storage_offset, 0
     if not isinstance(expression, CBinaryOp) or expression.op not in {"Add", "Sub"}:
         return None
     base = _final_stack_index_identity_8616(codegen, expression.lhs)
@@ -833,12 +845,12 @@ def _final_stack_index_identity_8616(
 
 def _final_indexed_global_stack_copies_8616(
     codegen: object,
-    root: object,
+    nodes: Iterable[object],
     fact: IndexedGlobalStackAggregateCopyFact8616,
 ) -> tuple[_FinalIndexedGlobalStackAggregateCopy8616, ...]:
     """Return final whole copies assigned to the exact fact destination."""
     copies: set[_FinalIndexedGlobalStackAggregateCopy8616] = set()
-    for node in _iter_c_nodes_deep_8616(root):
+    for node in nodes:
         if (
             not isinstance(node, CAssignment)
             or not isinstance(node.lhs, CVariable)
@@ -1004,6 +1016,7 @@ def _type_width_bytes_8616(type_value: object) -> int:
 
 
 def _stack_aggregate_candidate_shapes_8616(
+    codegen: object,
     variables: tuple[CVariable, ...],
     base_offset: int,
 ) -> tuple[tuple[int, int, int], ...]:
@@ -1015,7 +1028,8 @@ def _stack_aggregate_candidate_shapes_8616(
             for storage in _cvariable_storage_views_8616(variable)
             if isinstance(storage, SimStackVariable)
             and storage.base == "bp"
-            and storage.offset == base_offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, storage)
+            == base_offset
             and isinstance(storage.size, int)
             and storage.size > 0
         )
@@ -1049,8 +1063,12 @@ def _stack_aggregate_fact_is_valid_8616(
 def validate_storage_identities_8616(
     codegen: object,
     root: object,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> StorageIdentityValidationReport8616:
     """Compare typed global and stack-object facts with final C storage."""
+    if query_index is not None:
+        query_index.require_root(root)
     raw_global_facts = global_storage_identity_facts_8616(codegen)
     global_facts = _normalized_facts_8616(raw_global_facts)
     raw_stack_facts = stack_aggregate_object_facts_8616(codegen)
@@ -1064,7 +1082,9 @@ def validate_storage_identities_8616(
         raw_copy_facts,
     )
     named_global_facts = named_global_aggregate_type_facts_8616(codegen)
-    root_variables = _root_cvariables_8616(root)
+    query_index = query_index or StructuredAstQueryIndex8616.build(root)
+    nodes = query_index.nodes
+    root_variables = _root_cvariables_8616(root, query_index)
     declaration_variables = _declaration_cvariables_8616(
         codegen,
         root_variables,
@@ -1234,6 +1254,7 @@ def validate_storage_identities_8616(
             )
             continue
         actual_shapes = _stack_aggregate_candidate_shapes_8616(
+            codegen,
             root_variables,
             stack_fact.base_offset,
         )
@@ -1338,7 +1359,7 @@ def validate_storage_identities_8616(
                 )
             )
             continue
-        actual = _final_stack_field_projections_8616(codegen, root, field_fact)
+        actual = _final_stack_field_projections_8616(codegen, nodes, field_fact)
         if not actual:
             issues.append(
                 _stack_field_projection_issue_8616(
@@ -1463,7 +1484,7 @@ def validate_storage_identities_8616(
                 )
             )
             continue
-        copy_actual = _final_indexed_global_stack_copies_8616(codegen, root, copy_fact)
+        copy_actual = _final_indexed_global_stack_copies_8616(codegen, nodes, copy_fact)
         if not copy_actual:
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
@@ -1567,7 +1588,7 @@ def validate_storage_identities_8616(
             "named_global_facts=%r issues=%r counters=%r",
             copy_facts,
             tuple(
-                (fact, _final_indexed_global_stack_copies_8616(codegen, root, fact))
+                (fact, _final_indexed_global_stack_copies_8616(codegen, nodes, fact))
                 for fact in copy_facts
             ),
             named_global_facts,

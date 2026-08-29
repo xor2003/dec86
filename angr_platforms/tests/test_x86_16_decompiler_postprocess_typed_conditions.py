@@ -27,6 +27,9 @@ from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import (
 )
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.widening.segmented_load_identity import segmented_load_identity_8616
 
 
@@ -209,6 +212,66 @@ def test_build_c_condition_expr_preserves_signed_register_resolved_stack_operand
     assert expr.lhs.expr.variable is stack_arg.variable
     assert expr.lhs.dst_type.signed is True
     assert stack_arg.variable_type.signed is False
+
+
+def test_signed_register_stack_view_keeps_projected_argument_identity() -> None:
+    """Keep adjacent BP arguments distinct across entry-SP projection."""
+    project = _project()
+    codegen = _codegen([])
+    word_type = SimTypeShort(False)
+    left = CVariable(
+        SimStackVariable(2, 2, base="bp", name="a"),
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    right = CVariable(
+        SimStackVariable(4, 2, base="bp", name="b"),
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [left, right]
+    codegen.cfunc.variables_in_use = {
+        left.variable: left,
+        right.variable: right,
+    }
+    codegen.cfunc.unified_local_vars = {}
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=left.variable,
+        cvar=left,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=right.variable,
+        cvar=right,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+    codegen._inertia_typed_condition_register_exprs_by_ins_addr_8616 = {
+        (0x4010, "ax", 2): left,
+    }
+    condition = ConditionIR(
+        "sgt",
+        IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+        IRValue(MemSpace.REG, name="ax", size=2),
+        producer_insn=0x4012,
+        src_insn=0x4018,
+        block_addr=0x4000,
+    )
+
+    expression = _build_c_condition_expr(project, condition, codegen)
+
+    assert isinstance(expression, CBinaryOp)
+    assert isinstance(expression.lhs, CTypeCast)
+    assert isinstance(expression.lhs.expr, CVariable)
+    assert expression.lhs.expr.variable is right.variable
+    assert isinstance(expression.rhs, CTypeCast)
+    assert isinstance(expression.rhs.expr, CVariable)
+    assert expression.rhs.expr.variable is left.variable
 
 
 def test_apply_typed_condition_stack_arg_signedness_updates_only_signed_bp_args():

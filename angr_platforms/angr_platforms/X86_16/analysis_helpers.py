@@ -21,6 +21,7 @@ import claripy
 from angr import SimProcedure
 from angr.sim_type import SimTypeFunction
 
+from .frontend_function_instructions import collect_function_instruction_inventory_8616
 from .function_evidence_inventory import (
     FunctionEvidenceKind8616,
     collect_function_binary_evidence_8616,
@@ -85,6 +86,7 @@ __all__ = (
     "render_dos_int21_call",
     "render_interrupt_call",
     "resolve_direct_call_target_from_block",
+    "resolve_direct_call_target_from_instruction_8616",
     "resolve_direct_jump_target_from_block",
     "resolve_stored_near_call_target_from_function",
     "resolve_stored_near_jump_target_from_function",
@@ -1667,6 +1669,14 @@ def _resolve_direct_call_target_from_insn(project: object, insn: object) -> int 
     return None
 
 
+def resolve_direct_call_target_from_instruction_8616(
+    project: object,
+    instruction: object,
+) -> int | None:
+    """Recover a direct target from one exact decoded CALL instruction."""
+    return _resolve_direct_call_target_from_insn(project, instruction)
+
+
 def resolve_direct_call_target_from_block(project: object, block_addr: int) -> int | None:
     """Recover a direct call target from a block-end call or a callsite inside a block.
 
@@ -1676,7 +1686,7 @@ def resolve_direct_call_target_from_block(project: object, block_addr: int) -> i
     insn = _direct_call_insn_from_block(project, block_addr)
     if insn is None:
         return None
-    return _resolve_direct_call_target_from_insn(project, insn)
+    return resolve_direct_call_target_from_instruction_8616(project, insn)
 
 
 def _callsite_addr_decodes_to_direct_call_8616(project: object, callsite_addr: int) -> bool | None:
@@ -1824,16 +1834,28 @@ def patch_direct_call_sites(function: object) -> bool:
             return False
         sanitization = sanitize_direct_call_sites_8616(function)
         changed = sanitization.pruned_count > 0
-        for block_addr in _analysis_function_block_addrs_8616(function):
-            try:
-                block = _analysis_project_block_8616(project, block_addr)
-            except Exception:
-                continue
-            insns = _dynamic_analysis_tuple_attr_8616(
-                _dynamic_analysis_getattr_8616(block, "capstone", None), "insns"
-            )
-            if not insns:
-                continue
+        instruction_inventory = collect_function_instruction_inventory_8616(
+            project,
+            function_entry=_analysis_function_addr_8616(function),
+        )
+        instruction_groups: tuple[tuple[object, ...], ...]
+        if instruction_inventory.complete:
+            instruction_groups = (instruction_inventory.instructions,)
+        else:
+            fallback_groups: list[tuple[object, ...]] = []
+            for block_addr in _analysis_function_block_addrs_8616(function):
+                try:
+                    block = _analysis_project_block_8616(project, block_addr)
+                except Exception:
+                    continue
+                instructions = _dynamic_analysis_tuple_attr_8616(
+                    _dynamic_analysis_getattr_8616(block, "capstone", None),
+                    "insns",
+                )
+                if instructions:
+                    fallback_groups.append(instructions)
+            instruction_groups = tuple(fallback_groups)
+        for insns in instruction_groups:
             for insn in insns:
                 mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
                 if mnemonic not in {"call", "lcall"}:

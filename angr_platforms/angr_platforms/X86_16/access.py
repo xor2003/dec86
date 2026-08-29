@@ -342,13 +342,18 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
     ) -> tuple[object, ...]:
         """Record one typed operation and independently resolve wrapped bytes."""
         first = self._resolve_memory_operand(seg, addr, width_bits, mode)
+        stepped_addr = (
+            addr
+            if isinstance(addr, int) or first.address_bits == 16
+            else cast(VexValue, addr).cast_to(Type.int_32)
+        )
         return tuple(
             first.exec_linear
             if delta == 0
             else self._resolved_segment_operand(
                 seg,
                 advance_segment_offset_8616(
-                    addr,
+                    stepped_addr,
                     delta,
                     first.address_bits,
                     self.constant(delta, Type.int_32 if first.address_bits == 32 else Type.int_16),

@@ -6,6 +6,8 @@ one current structured-AST query index and return typed lookup verdicts.
 This module does not derive alias, type, stack, or other semantic evidence.
 Callers must discard the index when the owning AST generation is accepted as
 mutated; ambiguous identities are always refused.
+Owns runtime ordering, invariant checks, hard failures, and final emission gates.
+Do not recover semantic facts or perform IR, alias, widening, lowering/materialization, structuring, rewrite, postprocess, or CLI/reporting work here.
 """
 
 from __future__ import annotations

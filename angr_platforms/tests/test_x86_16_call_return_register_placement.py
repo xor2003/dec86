@@ -12,6 +12,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
+from angr_platforms.X86_16.structuring import call_return_register_placement as placement_module
+from angr_platforms.X86_16.structuring.call_return_register_index import (
+    build_call_return_register_index_8616,
+)
 from angr_platforms.X86_16.structuring.call_return_register_placement import (
     CallReturnRegisterPlacementVerdict8616,
     classify_call_return_register_placement_8616,
@@ -64,6 +68,25 @@ def test_bound_call_identity_is_not_conflicted_by_later_assignment_instruction()
     """Treat an assignment source instruction as placement, not call identity."""
     codegen = _codegen()
     assignment = _bound_call_assignment(codegen, ins_addr=CONDITION_PRODUCER)
+    branch = _branch(codegen)
+    root = CStatements([assignment, branch], codegen=codegen)
+
+    result = classify_call_return_register_placement_8616(
+        root,
+        branch,
+        callsite_addr=CALLSITE,
+        condition_producer_insn=CONDITION_PRODUCER,
+        register_slice=AX_SLICE,
+    )
+
+    assert result.verdict is CallReturnRegisterPlacementVerdict8616.EXACT
+    assert result.assignment is assignment
+
+
+def test_direct_call_instruction_assignment_proves_return_producer() -> None:
+    """Accept an adjacent direct AX call carrier tagged by its call instruction."""
+    codegen = _codegen()
+    assignment = _bound_call_assignment(codegen, ins_addr=CALLSITE)
     branch = _branch(codegen)
     root = CStatements([assignment, branch], codegen=codegen)
 
@@ -134,6 +157,52 @@ def test_consumes_adjacent_same_callsite_assignment_clone() -> None:
     branch = _branch(codegen)
     assignment_group = CStatements([producer, compare_clone], codegen=codegen)
     root = CStatements([assignment_group, branch], codegen=codegen)
+    assignment_index = build_call_return_register_index_8616(root)
+
+    result = classify_call_return_register_placement_8616(
+        root,
+        branch,
+        callsite_addr=CALLSITE,
+        condition_producer_insn=CONDITION_PRODUCER,
+        register_slice=AX_SLICE,
+        assignment_index=assignment_index,
+    )
+
+    assert result.verdict is CallReturnRegisterPlacementVerdict8616.EXACT
+    assert result.assignment is producer
+    assert tuple(item.assignment for item in result.redundant_assignments) == (compare_clone,)
+    assert assignment_index.bound_callsite_count(CALLSITE) == 2
+    assert consume_exact_call_return_register_placement_8616(result)
+    assert tuple(assignment_group.statements) == ()
+    assert not assignment_index.valid
+    after = classify_call_return_register_placement_8616(
+        root,
+        branch,
+        callsite_addr=CALLSITE,
+        condition_producer_insn=CONDITION_PRODUCER,
+        register_slice=AX_SLICE,
+        assignment_index=assignment_index,
+    )
+    assert after.verdict is CallReturnRegisterPlacementVerdict8616.MISSING
+
+
+def test_duplicate_placement_reuses_one_statement_position_snapshot(monkeypatch) -> None:
+    """Build adjacency positions once for one multi-candidate classification."""
+    codegen = _codegen()
+    producer = _bound_call_assignment(codegen, ins_addr=CONDITION_PRODUCER)
+    compare_clone = _bound_call_assignment(codegen, ins_addr=CONDITION_PRODUCER + 3)
+    branch = _branch(codegen)
+    assignment_group = CStatements([producer, compare_clone], codegen=codegen)
+    root = CStatements([assignment_group, branch], codegen=codegen)
+    original = placement_module._statement_positions_8616
+    calls = 0
+
+    def counted_positions(candidate_root: object):
+        nonlocal calls
+        calls += 1
+        return original(candidate_root)
+
+    monkeypatch.setattr(placement_module, "_statement_positions_8616", counted_positions)
 
     result = classify_call_return_register_placement_8616(
         root,
@@ -144,10 +213,7 @@ def test_consumes_adjacent_same_callsite_assignment_clone() -> None:
     )
 
     assert result.verdict is CallReturnRegisterPlacementVerdict8616.EXACT
-    assert result.assignment is producer
-    assert tuple(item.assignment for item in result.redundant_assignments) == (compare_clone,)
-    assert consume_exact_call_return_register_placement_8616(result)
-    assert tuple(assignment_group.statements) == ()
+    assert calls == 1
 
 
 def test_refuses_call_assignment_inside_condition_else_path() -> None:

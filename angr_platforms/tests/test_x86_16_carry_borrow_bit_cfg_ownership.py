@@ -80,6 +80,7 @@ def _arm(
     low_addr: int,
     high_addr: int,
     operand_base: int,
+    split_low_result: bool = False,
 ) -> tuple[structured_c.CStatements, structured_c.CVariable, structured_c.CVariable, structured_c.CAssignment]:
     """Build one exact SUB/borrow carrier and use in a branch arm."""
     lhs = _vvar(codegen, "ax", f"lhs_{operand_base}", operand_base)
@@ -89,9 +90,22 @@ def _arm(
     predicate = structured_c.CBinaryOp("CmpLT", lhs, rhs, codegen=codegen, tags=tags)
     low = structured_c.CAssignment(
         _vvar(codegen, "flags", "shared_flags_definition", 5),
-        structured_c.CBinaryOp("Or", arithmetic, predicate, codegen=codegen),
+        predicate if split_low_result else structured_c.CBinaryOp("Or", arithmetic, predicate, codegen=codegen),
         codegen=codegen,
         tags=tags,
+    )
+    low_statements = (
+        [
+            structured_c.CAssignment(
+                _vvar(codegen, "ax", f"low_{operand_base}", operand_base + 3),
+                arithmetic,
+                codegen=codegen,
+                tags=tags,
+            ),
+            low,
+        ]
+        if split_low_result
+        else [low]
     )
     carry = structured_c.CBinaryOp(
         "And",
@@ -105,7 +119,7 @@ def _arm(
         carry,
         codegen=codegen,
     )
-    return structured_c.CStatements([low, high], codegen=codegen), lhs, rhs, high
+    return structured_c.CStatements([*low_statements, high], codegen=codegen), lhs, rhs, high
 
 
 def _fact(block_addr: int, low_addr: int, high_addr: int) -> CarryBorrowBitLoweringFact8616:
@@ -168,6 +182,32 @@ def test_branch_owned_borrow_sites_do_not_cross_select_shared_flags_identity() -
     assert _same_c_expression_8616(high_b.rhs.rhs, rhs_b)
     assert high_a.rhs.tags["inertia_x86_16_carry_borrow_bit_lowering"] == fact_a
     assert high_b.rhs.tags["inertia_x86_16_carry_borrow_bit_lowering"] == fact_b
+
+
+def test_single_borrow_use_joins_sibling_low_arithmetic() -> None:
+    """Resolve one flags closure whose exact low subtraction is a sibling."""
+    codegen = _FakeCodegen()
+    root, lhs, rhs, high = _arm(
+        codegen,
+        block_addr=_ARM_A,
+        low_addr=_LOW_A,
+        high_addr=_HIGH_A,
+        operand_base=10,
+        split_low_result=True,
+    )
+    ownership = build_test_cfg_ownership_8616({_ARM_A: (_LOW_A, _HIGH_A)})
+
+    resolution = materialize_carry_borrow_bit_value_8616(
+        root,
+        cast(WideCarryBorrowValue8616, object()),
+        _fact(_ARM_A, _LOW_A, _HIGH_A),
+        ownership,
+    )
+
+    assert resolution.verdict is CarryBorrowBitLoweringVerdict8616.MATERIALIZED
+    assert isinstance(high.rhs, structured_c.CBinaryOp) and high.rhs.op == "CmpLT"
+    assert _same_c_expression_8616(high.rhs.lhs.expr, lhs)
+    assert _same_c_expression_8616(high.rhs.rhs.expr, rhs)
 
 
 def test_production_lowering_requires_prejoin_cfg_ownership() -> None:

@@ -157,6 +157,15 @@ def _loopback_after_move_8616(
     return None
 
 
+def direct_stack_move_has_loop_tail_edge_8616(
+    project: object,
+    function: object,
+    move_addr: int,
+) -> bool:
+    """Return whether CFG instructions prove this move owns a loopback tail."""
+    return _loopback_after_move_8616(project, function, move_addr) is not None
+
+
 def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
     """Collect exact instruction-origin tags from a structured subtree.
 
@@ -291,15 +300,17 @@ def place_direct_stack_move_loop_tail_assignment_8616(
     function: object,
     move_fact: DirectStackMoveFact8616,
     assignment: structured_c.CAssignment,
+    *,
+    branch_owned_addresses: frozenset[int] | None = None,
 ) -> bool:
     """Append one assignment to its unique CFG-proven structured loop body.
 
     Dynamic boundary: codegen exposes optional cfunc/statements fields.
     """
-    branch_owned = direct_stack_move_branch_owned_addresses_8616(
-        project,
-        codegen,
-        function,
+    branch_owned = (
+        branch_owned_addresses
+        if branch_owned_addresses is not None
+        else direct_stack_move_branch_owned_addresses_8616(project, codegen, function)
     )
     if move_fact.ins_addr in branch_owned:
         stats = DirectStackMoveLoopTailStats8616(
@@ -318,7 +329,7 @@ def place_direct_stack_move_loop_tail_assignment_8616(
     sites = _loop_tail_sites_8616(project, root, edge) if edge is not None and root is not None else ()
     locations = (
         tagged_assignment_locations_8616(project, codegen, root, move_fact)
-        if root is not None
+        if edge is not None and root is not None
         else ()
     )
     best_sites: tuple[_LoopTailSite8616, ...] = ()

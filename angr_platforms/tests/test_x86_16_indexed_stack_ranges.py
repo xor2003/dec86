@@ -552,6 +552,18 @@ def test_structuring_joins_cloned_stack_variables_across_codegen_regions() -> No
 def test_structuring_joins_machine_bp_facts_to_entry_sp_ast_offsets() -> None:
     root, random_read, high_read = _two_loop_fixture()
     codegen = root.codegen
+    array = random_read.variable
+    assert isinstance(array, CVariable)
+    array_variable = array.variable
+    assert isinstance(array_variable, SimStackVariable)
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=array_variable,
+        cvar=array,
+        bp_offset=-6,
+        entry_sp_offset=-8,
+        size=8,
+    )
     for cvar, bp_offset in ((random_read.index, -12), (high_read.index, -10)):
         assert isinstance(cvar, CVariable)
         variable = cvar.variable
@@ -589,6 +601,8 @@ def test_structuring_joins_machine_bp_facts_to_entry_sp_ast_offsets() -> None:
         id(high_read),
     }
     assert {proof.index_storage_offset for proof in report.proofs} == {-14, -12}
+    assert {proof.array_offset for proof in without_registry.proofs} == {-8}
+    assert {proof.array_offset for proof in report.proofs} == {-6}
 
 
 def test_structuring_proves_boolified_while_break_guard_prefix_reads() -> None:

@@ -15,9 +15,13 @@ from typing import Any, Protocol, cast
 
 from angr import ailment
 from angr.analyses.decompiler.clinic import Clinic
+from angr.analyses.decompiler.decompiler import Decompiler
 from angr.knowledge_plugins.functions.function import PrototypeSource
 
 from .callsite_summary import CallerReturnUseVerdict8616
+from .lowering.authoritative_function_prototypes import (
+    capture_authoritative_function_prototype_8616,
+)
 from .lowering.return_type_evidence import proven_function_result_observation_8616
 from .lowering.unused_void_return_types import (
     TerminalReturnValueEvidence8616,
@@ -62,6 +66,41 @@ class _ClinicSurface8616(Protocol):
     _ail_graph: _GraphSurface8616
     function: _FunctionSurface8616
     project: object
+
+
+class _DecompilerSurface8616(Protocol):
+    """Third-party decompiler field available before its constructor runs."""
+
+    project: object
+
+
+_DECOMPILER_INIT_PATCHED_8616 = False
+
+
+def _capture_strong_prototype_at_decompiler_entry_8616() -> None:
+    """Capture the caller-provided prototype before decompiler setup mutates it."""
+    global _DECOMPILER_INIT_PATCHED_8616
+    if _DECOMPILER_INIT_PATCHED_8616:
+        return
+    original = Decompiler.__init__
+
+    def _init_8616(
+        self: object,
+        function: object,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        """Publish the strong interface, then enter third-party Decompiler."""
+        decompiler = cast(_DecompilerSurface8616, self)
+        if not isinstance(function, (int, str)):
+            capture_authoritative_function_prototype_8616(
+                decompiler.project,
+                function,
+            )
+        cast(Any, original)(self, function, *args, **kwargs)
+
+    cast(Any, Decompiler).__init__ = _init_8616
+    _DECOMPILER_INIT_PATCHED_8616 = True
 
 
 def _preserve_strong_prototype_during_cc_recovery_8616() -> None:
@@ -148,6 +187,7 @@ def finalize_clinic_return_type_8616(
 
 def apply_x86_16_clinic_return_type_compatibility() -> None:
     """Install the post-prototype Clinic lowering adapter once."""
+    _capture_strong_prototype_at_decompiler_entry_8616()
     _preserve_strong_prototype_during_cc_recovery_8616()
     original = Clinic._make_function_prototype
     if original.__name__ == "_make_function_prototype_8616":
@@ -158,18 +198,26 @@ def apply_x86_16_clinic_return_type_compatibility() -> None:
         arg_list: list[object],
         variable_kb: object | None = None,
     ) -> None:
-        """Run Clinic prototype synthesis across supported angr call contracts."""
+        """Run Clinic synthesis without replacing an authoritative prototype."""
         clinic = cast(_ClinicSurface8616, self)
-        prototype_was_guessed = clinic.function.is_prototype_guessed
+        function = clinic.function
+        prototype_was_guessed = function.is_prototype_guessed
+        authoritative = capture_authoritative_function_prototype_8616(
+            clinic.project,
+            function,
+        )
         if variable_kb is None:
             cast(Any, original)(self, arg_list)
         else:
             cast(Any, original)(self, arg_list, variable_kb)
         finalize_clinic_return_type_8616(
             clinic.project,
-            clinic.function,
+            function,
             clinic._ail_graph,
             prototype_was_guessed=prototype_was_guessed,
         )
+        if authoritative is not None:
+            function.prototype = authoritative.prototype.copy()
+            function.prototype_source = authoritative.source
 
     cast(Any, Clinic)._make_function_prototype = _make_function_prototype_8616

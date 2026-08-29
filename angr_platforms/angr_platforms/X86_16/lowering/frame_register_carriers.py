@@ -73,13 +73,15 @@ class FrameRegisterCarrierResolution8616:
         matches = tuple(fact.register for fact in self.facts if fact.identity == identity)
         return matches[0] if len(matches) == 1 else None
 
-    def with_materialization(self, accepted: bool) -> FrameRegisterCarrierResolution8616:
-        """Close the census after the frame proof consumes or refuses facts."""
-        materialized = self.classified_fact_count if accepted else 0
+    def with_frame_proof(self, accepted: bool) -> FrameRegisterCarrierResolution8616:
+        """Classify and consume candidates only after canonical frame proof."""
+        classified = self.classified_fact_count if accepted else 0
+        materialized = classified
         return replace(
             self,
+            classified_fact_count=classified,
             materialized_count=materialized,
-            failure_count=self.failure_count + self.classified_fact_count - materialized,
+            failure_count=self.failure_count,
         )
 
 

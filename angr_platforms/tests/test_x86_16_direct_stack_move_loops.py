@@ -7,6 +7,8 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from angr_platforms.X86_16.structuring import direct_stack_move_loop_tail_replay as loop_tail_replay_module
+from angr_platforms.X86_16.structuring import direct_stack_move_loops as loop_module
 from angr_platforms.X86_16.structuring.direct_stack_move_loop_tail_replay import (
     materialize_direct_stack_move_loop_tail_ownership_8616,
 )
@@ -128,6 +130,65 @@ def test_refuses_non_tail_move_with_intervening_instruction_before_loopback() ->
 
     assert changed is False
     assert body.statements == [_tag(0x1010)]
+
+
+def test_non_loop_tail_refusal_skips_assignment_location_scan(monkeypatch) -> None:
+    root = SimpleNamespace(statements=[_tag(0x1010)])
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(statements=root))
+
+    monkeypatch.setattr(loop_module, "_loopback_after_move_8616", lambda *_args: None)
+
+    def fail_location_scan(*_args, **_kwargs):
+        raise AssertionError("non-loop-tail move scanned structured assignments")
+
+    monkeypatch.setattr(
+        loop_module,
+        "tagged_assignment_locations_8616",
+        fail_location_scan,
+    )
+
+    changed = place_direct_stack_move_loop_tail_assignment_8616(
+        SimpleNamespace(),
+        codegen,
+        SimpleNamespace(),
+        _fact(0x1030),
+        SimpleNamespace(tags={"ins_addr": 0x1030}),
+    )
+
+    assert changed is False
+    stats = codegen._inertia_direct_stack_move_loop_tail_placement_8616
+    assert stats.normalized_fact_count == 0
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+
+
+def test_non_loop_tail_replay_skips_assignment_location_scan(monkeypatch) -> None:
+    move_fact = _fact(0x1030)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(statements=SimpleNamespace(statements=[])),
+        _inertia_direct_stack_move_facts_8616=(move_fact,),
+    )
+
+    def fail_location_scan(*_args, **_kwargs):
+        raise AssertionError("non-loop-tail replay scanned structured assignments")
+
+    monkeypatch.setattr(
+        loop_tail_replay_module,
+        "tagged_assignment_locations_8616",
+        fail_location_scan,
+    )
+
+    changed = materialize_direct_stack_move_loop_tail_ownership_8616(
+        SimpleNamespace(),
+        codegen,
+        _function_with_intervening_instruction(0x1030, 0x1035, 0x1008),
+    )
+
+    assert changed is False
+    stats = codegen._inertia_direct_stack_move_loop_tail_replay_8616
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 0
+    assert stats.classified_fact_count == 0
 
 
 def test_replay_moves_regenerated_assignment_to_proven_loop_tail() -> None:

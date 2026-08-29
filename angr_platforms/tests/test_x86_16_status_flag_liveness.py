@@ -194,3 +194,17 @@ def test_full_lifter_keeps_observable_standalone_shift_flags() -> None:
     flags_offset = arch.get_register_offset("flags")
 
     assert any(isinstance(statement, Put) and statement.offset == flags_offset for statement in irsb.statements)
+
+
+def test_lifter_max_inst_excludes_decoded_suffix_from_flag_liveness() -> None:
+    """A decoded instruction outside the requested lift cannot kill live flags."""
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
+
+    # SHL AX, 1; XOR AX, AX. The XOR is present in the decode buffer but lies
+    # outside max_inst=1, so it cannot prove the SHL flag definition dead.
+    arch = Arch86_16()
+    irsb = pyvex.lift(bytes.fromhex("d1e0 31c0"), 0x1000, arch, max_inst=1, opt_level=0)
+    flags_offset = arch.get_register_offset("flags")
+
+    assert any(isinstance(statement, Put) and statement.offset == flags_offset for statement in irsb.statements)

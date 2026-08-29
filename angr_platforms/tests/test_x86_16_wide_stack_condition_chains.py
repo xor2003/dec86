@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from angr.analyses.decompiler.structured_codegen.c import CVariable
+from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.lowering.wide_stack_pair_evidence import (
+    materialize_proven_wide_stack_pair_variable_8616,
+)
 from angr_platforms.X86_16.structuring.wide_stack_condition_chains import (
     reachable_wide_stack_conditions_8616,
     recover_wide_stack_condition_chain_8616,
@@ -38,6 +43,86 @@ def _condition(
 
 def _adjacent(high: IRValue, low: IRValue) -> bool:
     return high.offset == low.offset + 2
+
+
+class _Codegen:
+    def __init__(self) -> None:
+        self._ident = 0
+        self._node_idx = 0
+
+    def next_ident(self, prefix: str) -> str:
+        self._ident += 1
+        return f"{prefix}_{self._ident}"
+
+    def next_node_idx(self) -> int:
+        self._node_idx += 1
+        return self._node_idx
+
+
+def _stack_expression(
+    codegen: _Codegen,
+    offset: int,
+    size: int,
+    *,
+    name: str,
+    region: int = 0x1000,
+) -> CVariable:
+    return CVariable(
+        SimStackVariable(offset, size, base="bp", name=name, region=region),
+        codegen=codegen,
+    )
+
+
+def test_materializes_proven_wide_stack_pair_as_four_byte_variable() -> None:
+    codegen = _Codegen()
+    low = _stack_expression(codegen, -4, 2, name="goal_lo")
+    high = _stack_expression(codegen, -2, 2, name="goal_hi")
+    display_candidate = _stack_expression(codegen, -4, 2, name="goal")
+
+    result = materialize_proven_wide_stack_pair_variable_8616(
+        codegen,
+        high,
+        low,
+        display_candidate,
+    )
+
+    assert result is not None
+    assert isinstance(result.variable, SimStackVariable)
+    assert result.variable.offset == -4
+    assert result.variable.size == 4
+    assert result.variable.name == "goal"
+    assert result.variable.region == 0x1000
+
+
+def test_wide_stack_pair_materialization_refuses_unproved_adjacency() -> None:
+    codegen = _Codegen()
+    low = _stack_expression(codegen, -4, 2, name="goal_lo", region=0x1000)
+    high = _stack_expression(codegen, -2, 2, name="goal_hi", region=0x2000)
+
+    result = materialize_proven_wide_stack_pair_variable_8616(
+        codegen,
+        high,
+        low,
+        low,
+    )
+
+    assert result is None
+
+
+def test_wide_stack_pair_materialization_refuses_wrong_candidate_offset() -> None:
+    codegen = _Codegen()
+    low = _stack_expression(codegen, -4, 2, name="goal_lo")
+    high = _stack_expression(codegen, -2, 2, name="goal_hi")
+    wrong_candidate = _stack_expression(codegen, -6, 2, name="other")
+
+    result = materialize_proven_wide_stack_pair_variable_8616(
+        codegen,
+        high,
+        low,
+        wrong_candidate,
+    )
+
+    assert result is None
 
 
 def test_wide_stack_condition_chain_recovers_signed_less_equal() -> None:

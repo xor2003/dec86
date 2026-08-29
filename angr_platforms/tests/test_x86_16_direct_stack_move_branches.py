@@ -14,6 +14,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
+from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimStackVariable
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
@@ -354,6 +355,11 @@ def test_lowering_uses_branch_service_when_generic_fallback_is_disabled(
     root.statements.remove(assignment)
     assignment.tags.clear()
     body.statements.insert(1, assignment)
+    assignment.lhs.variable.name = "local_4"
+    assignment.rhs.variable.name = "local_2"
+    word_type = SimTypeShort(False).with_arch(project.arch)
+    assignment.lhs.variable_type = word_type
+    assignment.rhs.variable_type = word_type
     codegen.cfunc.addr = 0x10B90
     codegen.cfunc.variables_in_use = {
         assignment.lhs.variable: assignment.lhs,
@@ -392,6 +398,9 @@ def test_lowering_uses_branch_service_when_generic_fallback_is_disabled(
         materialize_reloads=False,
     )
     assert len(codegen._inertia_direct_stack_move_evidence_8616) == 1
+    replay_stats = codegen._inertia_direct_stack_replay_state_8616.stats
+    assert replay_stats.changed_count == 0
+    assert replay_stats.stable_count == 1
     body.statements.remove(assignment)
 
     assert real_mode_linear.materialize_direct_stack_mov_instructions_8616(

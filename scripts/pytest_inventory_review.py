@@ -83,7 +83,7 @@ RETIRED_TEST_CONTRACTS: Final[Mapping[str, RetiredTestContract]] = MappingProxyT
             reason="pass-only placeholder superseded by executable natural-loop classification",
             replacements=(
                 "angr_platforms/tests/test_x86_16_structuring_cyclic.py::"
-                "TestNaturalLoopDetection::test_simple_single_back_edge_loop",
+                "test_structure_analysis_publishes_proven_topology_without_collapse",
             ),
         ),
         "angr_platforms/tests/test_x86_16_structuring_cyclic.py::"

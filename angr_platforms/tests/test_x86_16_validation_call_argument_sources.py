@@ -13,6 +13,7 @@ from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering.call_argument_stack_sources import containing_stack_cvariable_8616
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_alias_8616,
     record_stack_variable_coordinate_projection_8616,
 )
 from angr_platforms.X86_16.validation_calls import validate_call_argument_classes_8616
@@ -150,6 +151,12 @@ def test_call_argument_source_validation_uses_machine_bp_projection() -> None:
         bp_offset=-2,
         entry_sp_offset=-4,
         size=2,
+    )
+    record_stack_variable_coordinate_alias_8616(
+        codegen,
+        bp_offset=-2,
+        size=2,
+        variable=variable,
     )
 
     report = validate_call_argument_classes_8616(

@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from ..call_target_identity import x86_16_call_targets_equivalent_8616
 from ..caller_return_use_contracts import (
     CallerReturnUseFact8616,
     CallsiteReturnUseKind8616,
@@ -28,6 +29,7 @@ from ..semantics.terminal_return_passthrough import (
     TerminalReturnPassThroughEvidence8616,
     collect_terminal_return_passthrough_evidence_8616,
 )
+from .interprocedural_storage_caller_context import CallerSSAContext8616
 from .interprocedural_storage_contracts import StorageTrialStats8616
 from .interprocedural_storage_return_defs import call_candidates_at_address_8616
 from .interprocedural_storage_return_passthrough_contracts import (
@@ -110,6 +112,7 @@ def materialize_return_passthrough_trial_8616(
     callee_addr: int,
     fact: CallerReturnUseFact8616,
     accepted_target_addrs: tuple[int, ...],
+    caller_context: CallerSSAContext8616 | None = None,
 ) -> ReturnPassThroughTrialResult8616:
     """Join one proven recursive return path to its exact typed SSA CALL."""
     if (
@@ -119,19 +122,21 @@ def materialize_return_passthrough_trial_8616(
         return _refused_result_8616(
             ReturnPassThroughTrialFailure8616.RETURN_FACT_NOT_PASSTHROUGH,
         )
-    try:
-        caller_function = cast(_ProjectSurface8616, project).kb.functions.function(
-            addr=fact.caller_addr,
-            create=False,
-        )
-    except (AttributeError, KeyError, TypeError, ValueError):
-        caller_function = None
+    caller_project = project if caller_context is None else caller_context.evidence_project
+    caller_function = None if caller_context is None else caller_context.caller_function
+    if caller_function is None and caller_project is not None:
+        try:
+            caller_function = cast(_ProjectSurface8616, caller_project).kb.functions.function(
+                addr=fact.caller_addr, create=False
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            caller_function = None
     if caller_function is None:
         return _refused_result_8616(
             ReturnPassThroughTrialFailure8616.CALLER_FUNCTION_UNAVAILABLE,
         )
     semantic_evidence = collect_terminal_return_passthrough_evidence_8616(
-        project,
+        caller_project,
         caller_function,
         (fact.callsite_addr,),
     )
@@ -157,7 +162,9 @@ def materialize_return_passthrough_trial_8616(
             normalized=True,
         )
 
-    ssa = semantic_function_ssa_artifact_at_address_8616(project, fact.caller_addr)
+    ssa = semantic_function_ssa_artifact_at_address_8616(
+        caller_project, fact.caller_addr, function=caller_function
+    )
     artifact = ssa.artifact
     if artifact is None:
         return _refused_result_8616(
@@ -200,7 +207,14 @@ def materialize_return_passthrough_trial_8616(
             normalized=True,
         )
     targets = frozenset((callee_addr, *accepted_target_addrs))
-    if target.const not in targets or semantic_fact.target_addr != target.const:
+    target_matches = any(
+        x86_16_call_targets_equivalent_8616(caller_project, target.const, accepted)
+        for accepted in targets
+    )
+    semantic_target_matches = x86_16_call_targets_equivalent_8616(
+        caller_project, semantic_fact.target_addr, target.const
+    )
+    if not target_matches or not semantic_target_matches:
         return _refused_result_8616(
             ReturnPassThroughTrialFailure8616.CALL_TARGET_CONFLICT,
             semantic_evidence=semantic_evidence,

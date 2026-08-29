@@ -41,6 +41,10 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _decompiler_postprocess_passes_for_function,
     _is_exposed_nonvoid_stack_arg_scalar_return_delta_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_alias_8616,
+    record_stack_variable_coordinate_projection_8616,
+)
 
 
 class _DummyFunction:
@@ -509,6 +513,122 @@ def test_apply_annotations_deduplicates_stack_variable_names():
     assert stack_b.name == "s_2"
     assert codegen.cfunc.variables_in_use[stack_a].unified_variable.name == "s"
     assert codegen.cfunc.variables_in_use[stack_b].unified_variable.name == "s_2"
+
+
+def test_apply_annotations_names_projected_arguments_by_machine_bp_offset() -> None:
+    """Keep adjacent arguments distinct when angr stores entry-SP offsets."""
+
+    class _FakeCodegen:
+        def __init__(self) -> None:
+            self._idx = 0
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name: str) -> int:
+            self._idx += 1
+            return self._idx
+
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+
+        def next_ident(self, name: str) -> str:
+            return name
+
+    arch = Arch86_16()
+    word_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction(
+        [word_type, word_type],
+        word_type,
+        arg_names=("a", "b"),
+    ).with_arch(arch)
+    codegen = _FakeCodegen()
+    codegen.project = SimpleNamespace(arch=arch)
+    left_variable = SimStackVariable(2, 2, base="bp", name="arg_4", region=0x1000)
+    right_variable = SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000)
+    left = structured_c.CVariable(left_variable, variable_type=word_type, codegen=codegen)
+    right = structured_c.CVariable(right_variable, variable_type=word_type, codegen=codegen)
+    body_left_variable = SimStackVariable(2, 2, base="bp", name="arg_4", region=0x1000)
+    body_right_variable = SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000)
+    body_left = structured_c.CVariable(
+        body_left_variable,
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    body_right = structured_c.CVariable(
+        body_right_variable,
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    left_map_variable = SimStackVariable(2, 2, base="bp", name="arg_4", region=0x1000)
+    right_map_variable = SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000)
+    condition = structured_c.CBinaryOp("CmpGT", body_right, body_left, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements([condition], codegen=codegen),
+        variables_in_use={left_map_variable: left, right_map_variable: right},
+        unified_local_vars={},
+        arg_list=[left, right],
+        functy=prototype,
+        prototype=prototype,
+    )
+    function = SimpleNamespace(
+        prototype=prototype,
+        info={
+            "x86_16_annotations": {
+                "prototype": prototype,
+                "stack_vars": {
+                    2: {"name": "a"},
+                    4: {"name": "b"},
+                },
+            }
+        },
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: function if addr == 0x1000 else None,
+            )
+        ),
+    )
+    codegen.project = project
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=left_variable,
+        cvar=left,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=right_variable,
+        cvar=right,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+    assert record_stack_variable_coordinate_alias_8616(
+        codegen,
+        bp_offset=4,
+        size=2,
+        variable=body_left_variable,
+    ) is not None
+    assert record_stack_variable_coordinate_alias_8616(
+        codegen,
+        bp_offset=6,
+        size=2,
+        variable=body_right_variable,
+    ) is not None
+
+    assert postprocess._positive_stack_specs_are_normalized_for_codegen_8616(
+        function.info["x86_16_annotations"]["stack_vars"],
+        codegen,
+    ) is True
+    assert _apply_annotations_8616(project, codegen) is True
+    assert left_variable.name == "a"
+    assert right_variable.name == "b"
+    assert condition.lhs.variable is right_variable
+    assert condition.rhs.variable is left_variable
 
 
 def test_apply_annotations_keeps_structurally_equal_codegen_prototype_unchanged():

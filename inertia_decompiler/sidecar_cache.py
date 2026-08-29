@@ -37,7 +37,7 @@ _SOURCE_FORMAT_DROP_TOKENS = {
     "local_pat",
     "peer_exe",
 }
-_SIDECAR_METADATA_PARSER_CACHE_VERSION = 11
+_SIDECAR_METADATA_PARSER_CACHE_VERSION = 12
 
 type PayloadSequence = tuple[object, ...]
 type PayloadPairs = tuple[tuple[object, object], ...]
@@ -130,6 +130,7 @@ def _maybe_rebase_stale_absolute_metadata(metadata: LSTMetadata, project: _Proje
             code_ranges={
                 addr + shift: (start + shift, end + shift) for addr, (start, end) in metadata.code_ranges.items()
             },
+            function_entry_addrs=frozenset(addr + shift for addr in metadata.function_entry_addrs),
             signature_code_addrs=frozenset(addr + shift for addr in metadata.signature_code_addrs),
             absolute_addrs=True,
             source_format=metadata.source_format,
@@ -287,6 +288,7 @@ def _serialize_lst_metadata(metadata: LSTMetadata) -> dict[str, object]:
         "data_labels": sorted(metadata.data_labels.items()),
         "code_labels": sorted(metadata.code_labels.items()),
         "code_ranges": sorted((addr, start, end) for addr, (start, end) in metadata.code_ranges.items()),
+        "function_entry_addrs": sorted(metadata.function_entry_addrs),
         "signature_code_addrs": sorted(metadata.signature_code_addrs),
         "absolute_addrs": bool(metadata.absolute_addrs),
         "source_format": metadata.source_format,
@@ -424,6 +426,7 @@ def _deserialize_lst_metadata(payload: dict[str, object]) -> LSTMetadata | None:
             for addr, start, end in _payload_triples(payload, "code_ranges")
         }
         signature_code_addrs = frozenset(_payload_ints(payload, "signature_code_addrs"))
+        function_entry_addrs = frozenset(_payload_ints(payload, "function_entry_addrs"))
         cod_proc_kinds = {_coerce_cache_int(addr): str(kind) for addr, kind in _payload_pairs(payload, "cod_proc_kinds")}
         struct_names = tuple(str(name) for name in _payload_sequence(payload, "struct_names"))
         debug_source_files = tuple(str(name) for name in _payload_sequence(payload, "debug_source_files"))
@@ -445,6 +448,7 @@ def _deserialize_lst_metadata(payload: dict[str, object]) -> LSTMetadata | None:
             data_labels=data_labels,
             code_labels=code_labels,
             code_ranges=code_ranges,
+            function_entry_addrs=function_entry_addrs,
             signature_code_addrs=signature_code_addrs,
             absolute_addrs=bool(payload.get("absolute_addrs", False)),
             source_format=_normalize_source_format(str(payload.get("source_format", "sidecars"))),

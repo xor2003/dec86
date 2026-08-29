@@ -65,10 +65,12 @@ from .decompiler_postprocess_utils import (
     _structured_codegen_node_8616,
 )
 from .decompiler_return_compat import x86_16_msvc_x87_scalar_stack_args
+from .lowering.authoritative_function_prototypes import authoritative_function_prototype_8616
 from .lowering.return_type_evidence import (
     FunctionReturnClass8616,
     proven_function_return_class_8616,
 )
+from .lowering.stack_argument_identity import machine_bp_stack_identity_8616
 from .lowering.stack_c_ast_matching import _stack_variable_read_offsets_8616
 from .lowering.stack_lowering_from_facts import _stack_object_name
 from .lowering.stack_prototype_materialization import align_pointer_flags_to_stack_argument_widths_8616
@@ -79,6 +81,10 @@ from .lowering.stack_variable_binding import (
     select_stack_annotation_spec_8616,
     stack_binding_inherits_containing_name_8616,
 )
+from .lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+)
+from .lowering.stack_variable_display_names import publish_prototype_argument_projection_names_8616
 from .pipeline.contracts import SemanticLaneState
 
 
@@ -550,6 +556,7 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
 
 
 def _normalize_function_prototype_arg_names_8616(project: Any, codegen: Any) -> bool:
+    """Normalize generated argument names without losing stack coordinates."""
     if getattr(codegen, "cfunc", None) is None:
         return False
 
@@ -579,6 +586,7 @@ def _normalize_function_prototype_arg_names_8616(project: Any, codegen: Any) -> 
         arg_names=normalized,
         variadic=getattr(prototype, "variadic", False),
     ).with_arch(project.arch)
+    publish_prototype_argument_projection_names_8616(codegen, normalized)
     func.prototype = new_proto
     _set_codegen_prototype_8616(codegen, new_proto)
     return True
@@ -1039,7 +1047,7 @@ def _positive_stack_specs_are_normalized_for_codegen_8616(
     arg_offsets: set[int] = set()
     # Dynamic angr/codegen compatibility boundary.
     for cvar in tuple(getattr(cfunc, "arg_list", ()) or ()):
-        offset = _stack_offset_for_cvariable_8616(cvar)
+        offset = _machine_bp_offset_for_cvariable_8616(codegen, cvar)
         if isinstance(offset, int):
             arg_offsets.add(offset)
             known_offsets.add(offset)
@@ -1053,10 +1061,11 @@ def _positive_stack_specs_are_normalized_for_codegen_8616(
     variables_in_use = getattr(cfunc, "variables_in_use", None)
     if isinstance(variables_in_use, dict):
         for variable in variables_in_use:
-            # Dynamic angr/codegen compatibility boundary.
-            offset = getattr(variable, "offset", None)
-            if isinstance(variable, SimStackVariable) and isinstance(offset, int):
-                known_offsets.add(offset)
+            if not isinstance(variable, SimStackVariable):
+                continue
+            identity = machine_bp_stack_identity_8616(codegen, variable)
+            if identity is not None:
+                known_offsets.add(identity.offset)
     if known_offsets:
         direct_offsets = set(positive_offsets)
         shifted_offsets = {offset + 2 for offset in positive_offsets}
@@ -1071,7 +1080,7 @@ def _positive_stack_specs_are_normalized_for_codegen_8616(
 
 
 def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
-    """Consume typed stack-argument evidence without overriding an authoritative zero-argument contract."""
+    """Bridge legacy BP evidence only when typed Lowering owns no interface."""
 
     def _impl() -> bool:
         if getattr(codegen, "cfunc", None) is None:
@@ -1086,6 +1095,14 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
             return False
 
         if bool(getattr(codegen, "_inertia_authoritative_zero_arg_prototype_8616", False)):
+            return False
+
+        live_prototype = getattr(func, "prototype", None)
+        if isinstance(live_prototype, SimTypeFunction) and authoritative_function_prototype_8616(
+            project,
+            func,
+            argument_count=len(tuple(live_prototype.args or ())),
+        ) is not None:
             return False
 
         positive_bp_changed = _promote_positive_bp_stack_slots_to_args_8616(project, codegen)
@@ -2108,6 +2125,38 @@ def _stack_offset_for_cvariable_8616(cvar: object) -> int | None:
     return None
 
 
+def _machine_bp_offset_for_cvariable_8616(
+    codegen: object,
+    cvar: object,
+) -> int | None:
+    """Return one structured variable's canonical machine-BP offset."""
+    if not isinstance(cvar, CVariable):
+        return None
+    for variable in (cvar.variable, cvar.unified_variable):
+        if not isinstance(variable, SimStackVariable):
+            continue
+        offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if isinstance(offset, int):
+            return offset
+    return None
+
+
+def _machine_bp_stack_binding_identity_8616(
+    codegen: object,
+    variable: SimStackVariable,
+    cvar: object,
+) -> _StackSlotIdentity | None:
+    """Prefer a declaration map's canonical C-variable identity over its key."""
+    if isinstance(cvar, CVariable) and isinstance(
+        cvar.variable,
+        SimStackVariable,
+    ):
+        identity = machine_bp_stack_identity_8616(codegen, cvar.variable)
+        if identity is not None:
+            return identity
+    return machine_bp_stack_identity_8616(codegen, variable)
+
+
 def _pointer_arg_offsets_for_codegen_8616(codegen: SimpleNamespace) -> dict[int, CVariable]:
     offsets: dict[int, CVariable] = {}
     cfunc = codegen.cfunc
@@ -3119,9 +3168,22 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             arg_names=getattr(prototype, "arg_names", None),
             variadic=getattr(prototype, "variadic", False),
         ).with_arch(project.arch)
+        try:
+            codegen_prototype = codegen.cfunc.functy
+        except AttributeError:
+            codegen_prototype = None
+        if isinstance(codegen_prototype, SimTypeFunction):
+            codegen_prototype = codegen_prototype.__class__(
+                list(codegen_prototype.args or ()),
+                new_returnty,
+                arg_names=codegen_prototype.arg_names,
+                variadic=codegen_prototype.variadic,
+            ).with_arch(project.arch)
+        else:
+            codegen_prototype = new_proto
+        _set_codegen_prototype_8616(codegen, codegen_prototype)
         cast(Any, func).prototype = new_proto
         cast(Any, func).is_prototype_guessed = False
-        _set_codegen_prototype_8616(codegen, new_proto)
         return True
 
     return _impl()
@@ -3377,7 +3439,10 @@ def _prevalidated_positive_stack_annotations_complete_8616(
 
 
 def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
+    """Apply annotation names while preserving authoritative typed interfaces."""
+
     def _impl() -> bool:
+        """Run the annotation bridge across the dynamic angr codegen surface."""
         if getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -3394,8 +3459,16 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
         # Dynamic angr/codegen compatibility boundary.
         annotations = func.info.get(ANNOTATION_KEY) if isinstance(getattr(func, "info", None), Mapping) else None
         annotated_prototype = annotations.get("prototype") if isinstance(annotations, Mapping) else None
+        argument_count = len(tuple(getattr(codegen.cfunc, "arg_list", ()) or ()))
+        authoritative_prototype = authoritative_function_prototype_8616(
+            project,
+            func,
+            argument_count=argument_count,
+        )
         structured_prototype = (
-            annotated_prototype
+            authoritative_prototype
+            if authoritative_prototype is not None
+            else annotated_prototype
             if isinstance(annotated_prototype, SimTypeFunction)
             else getattr(func, "prototype", None)
         )
@@ -3463,7 +3536,9 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
         for arg in getattr(codegen.cfunc, "arg_list", ()) or ():
             arg_variable = getattr(arg, "variable", None)
             if isinstance(arg_variable, SimStackVariable):
-                arg_slot_identities.add(_stack_slot_identity_for_variable(arg_variable))
+                arg_slot_identities.add(
+                    machine_bp_stack_identity_8616(codegen, arg_variable)
+                )
         helper_arg_names = list(getattr(getattr(func, "prototype", None), "arg_names", ()) or ())
         helper_arg_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
         helper_arg_name_by_offset: dict[int, str] = {
@@ -3488,7 +3563,11 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
         def _stack_candidate_score(
             variable: SimStackVariable, cvar: Any, *, exact: bool
         ) -> tuple[int, int, int, int, int]:
-            identity = _stack_slot_identity_for_variable(variable)
+            identity = _machine_bp_stack_binding_identity_8616(
+                codegen,
+                variable,
+                cvar,
+            )
             if identity is None:
                 return (-1, -1, -1, -1, -1)
             variable_name = getattr(variable, "name", None)
@@ -3507,15 +3586,19 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
             size = getattr(variable, "size", None)
             size_rank = -size if isinstance(size, int) else 0
             exact_rank = 1 if exact else 0
-            return (exact_rank, is_arg_slot, has_preferred_name, size_rank, -getattr(variable, "offset", 0))
+            return (exact_rank, is_arg_slot, has_preferred_name, size_rank, -identity.offset)
 
         for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if isinstance(variable, SimStackVariable):
-                offset = variable.offset
-                if not isinstance(offset, int):
+                identity = _machine_bp_stack_binding_identity_8616(
+                    codegen,
+                    variable,
+                    cvar,
+                )
+                if identity is None:
                     continue
                 score = _stack_candidate_score(variable, cvar, exact=True)
-                exact_stack_candidates.setdefault(offset, []).append((score, cvar))
+                exact_stack_candidates.setdefault(identity.offset, []).append((score, cvar))
 
         for offset, candidates in exact_stack_candidates.items():
             _best_score, best_cvar = max(candidates, key=lambda item: item[0])
@@ -3531,13 +3614,20 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
         )
         annotation_stack_bindings = tuple(
             StackVariableBinding(
-                bp_offset=variable.offset,
+                bp_offset=identity.offset,
                 size=variable.size,
                 var_name=variable.name,
             )
-            for variable in codegen.cfunc.variables_in_use
+            for variable, cvar in codegen.cfunc.variables_in_use.items()
             if isinstance(variable, SimStackVariable)
-            and isinstance(variable.offset, int)
+            and (
+                identity := _machine_bp_stack_binding_identity_8616(
+                    codegen,
+                    variable,
+                    cvar,
+                )
+            )
+            is not None
             and isinstance(variable.size, int)
             and variable.size > 0
         )
@@ -3613,9 +3703,16 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
             for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
                 if not isinstance(variable, SimStackVariable):
                     continue
-                base_offset = variable.offset
+                identity = _machine_bp_stack_binding_identity_8616(
+                    codegen,
+                    variable,
+                    cvar,
+                )
+                if identity is None:
+                    continue
+                base_offset = identity.offset
                 size = variable.size
-                if not isinstance(base_offset, int) or not isinstance(size, int):
+                if not isinstance(size, int):
                     continue
                 if base_offset <= offset < base_offset + size:  # noqa: SIM102
                     if best_size is None or size < best_size:
@@ -3689,13 +3786,20 @@ def _rename_stack_variables_from_specs_8616(
         variables_in_use = cfunc.variables_in_use
         stack_bindings = tuple(
             StackVariableBinding(
-                bp_offset=variable.offset,
+                bp_offset=identity.offset,
                 size=variable.size,
                 var_name=variable.name,
             )
-            for variable in variables_in_use
+            for variable, cvar in variables_in_use.items()
             if isinstance(variable, SimStackVariable)
-            and isinstance(variable.offset, int)
+            and (
+                identity := _machine_bp_stack_binding_identity_8616(
+                    codegen,
+                    variable,
+                    cvar,
+                )
+            )
+            is not None
             and isinstance(variable.size, int)
             and variable.size > 0
         )
@@ -3711,8 +3815,18 @@ def _rename_stack_variables_from_specs_8616(
             used_stack_names.add(candidate)
             return candidate
 
-        def spec_name_for(variable: SimStackVariable) -> tuple[str | None, object | None]:
-            offset = variable.offset
+        def spec_name_for(
+            variable: SimStackVariable,
+            cvar: CVariable,
+        ) -> tuple[str | None, object | None]:
+            identity = _machine_bp_stack_binding_identity_8616(
+                codegen,
+                variable,
+                cvar,
+            )
+            if identity is None:
+                return None, None
+            offset = identity.offset
             candidate_offsets: tuple[int, ...]
             if offset > 0:
                 candidate_offsets = (offset - 2, offset) if positive_specs_are_normalized else (offset,)
@@ -3751,29 +3865,36 @@ def _rename_stack_variables_from_specs_8616(
         changed = False
         stack_items = sorted(
             [
-                (variable, cvar)
+                (identity, variable, cvar)
                 for variable, cvar in variables_in_use.items()
                 if isinstance(variable, SimStackVariable)
-                and isinstance(variable.offset, int)
+                and (
+                    identity := _machine_bp_stack_binding_identity_8616(
+                        codegen,
+                        variable,
+                        cvar,
+                    )
+                )
+                is not None
                 and isinstance(variable.size, int)
                 and isinstance(cvar, CVariable)
             ],
             key=lambda item: (
                 0 if item[0].offset > 0 else 1,
                 abs(item[0].offset),
-                item[0].size,
-                item[0].name or "",
+                item[1].size,
+                item[1].name or "",
             ),
         )
-        for variable, cvar in stack_items:
-            name, vartype = spec_name_for(variable)
+        for identity, variable, cvar in stack_items:
+            offset = identity.offset
+            name, vartype = spec_name_for(variable, cvar)
             if name is None:
                 current = variable.name
                 if current and not current.startswith(("arg_", "s_", "v")):
                     name = current
             current_name = variable.name
             if isinstance(current_name, str) and current_name and current_name == name:
-                offset = variable.offset
                 owner_offset = name_owner_offsets.get(current_name)
                 if current_name not in used_stack_names or owner_offset == offset:
                     used_stack_names.add(current_name)
@@ -3787,7 +3908,6 @@ def _rename_stack_variables_from_specs_8616(
                     continue
             if isinstance(name, str) and name in used_stack_names:
                 owner_offset = name_owner_offsets.get(name)
-                offset = variable.offset
                 if owner_offset != offset:
                     name = unique_stack_name(name)
                     if name is not None:
@@ -3795,7 +3915,7 @@ def _rename_stack_variables_from_specs_8616(
             else:
                 name = unique_stack_name(name if isinstance(name, str) else None)
                 if name is not None:
-                    name_owner_offsets[name] = variable.offset
+                    name_owner_offsets[name] = offset
             if name is not None:
                 target = cvar.unified_variable or cvar.variable
                 if target is not None and target.name != name:
@@ -3819,7 +3939,10 @@ def _sync_arg_list_from_annotations_8616(
     resolve_stack_cvar: Callable[[int], object],
     promote_near_pointers: bool,
 ) -> bool:
+    """Synchronize annotated argument names without weakening owned types."""
+
     def _impl() -> bool:
+        """Run the compatibility sync against dynamic C-AST arguments."""
         raw_arg_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
         specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen)
         arg_offsets = [offset + 2 if specs_are_normalized else offset for offset in raw_arg_offsets]
@@ -3828,13 +3951,23 @@ def _sync_arg_list_from_annotations_8616(
         if not arg_offsets:
             return False
         known_positive_stack_offsets = {
-            offset
+            identity.offset
             # Dynamic angr/codegen compatibility boundary.
-            for variable in getattr(codegen.cfunc, "variables_in_use", {})
+            for variable, cvar in getattr(
+                codegen.cfunc,
+                "variables_in_use",
+                {},
+            ).items()
             if isinstance(variable, SimStackVariable)
-            # Dynamic angr/codegen compatibility boundary.
-            for offset in (getattr(variable, "offset", None),)
-            if isinstance(offset, int) and offset > 0
+            if (
+                identity := _machine_bp_stack_binding_identity_8616(
+                    codegen,
+                    variable,
+                    cvar,
+                )
+            )
+            is not None
+            and identity.offset > 0
         }
         inferred_arg_widths = _annotation_arg_widths_from_stack_layout_8616(
             arg_offsets=arg_offsets,
@@ -3896,6 +4029,48 @@ def _sync_arg_list_from_annotations_8616(
             return False
         existing_args = list(getattr(codegen.cfunc, "arg_list", ()) or ())
         target_arg_count = len(resolved_args)
+        project = getattr(codegen, "project", None)
+        authoritative_prototype = (
+            authoritative_function_prototype_8616(
+                project,
+                func,
+                argument_count=target_arg_count,
+            )
+            if project is not None
+            else None
+        )
+        if authoritative_prototype is not None:
+            authoritative_names = tuple(authoritative_prototype.arg_names or ())
+            desired_names = [
+                resolved_names[index]
+                if index < len(resolved_names) and resolved_names[index]
+                else authoritative_names[index]
+                if index < len(authoritative_names)
+                else None
+                for index in range(target_arg_count)
+            ]
+            normalized_names = _normalize_arg_names_8616(desired_names, target_arg_count)
+            interface_changed = len(existing_args) != target_arg_count or any(
+                existing is not resolved
+                for existing, resolved in zip(existing_args, resolved_args, strict=False)
+            )
+            if interface_changed:
+                codegen.cfunc.arg_list = resolved_args
+            current_names = tuple(getattr(current_proto, "arg_names", ()) or ())
+            if current_names != tuple(normalized_names):
+                named_prototype = SimTypeFunction(
+                    list(authoritative_prototype.args or ()),
+                    authoritative_prototype.returnty,
+                    arg_names=normalized_names,
+                    variadic=authoritative_prototype.variadic,
+                )
+                arch = getattr(project, "arch", None)
+                if arch is not None:
+                    named_prototype = named_prototype.with_arch(arch)
+                cast(Any, func).prototype = named_prototype
+                _set_codegen_prototype_8616(codegen, named_prototype)
+                interface_changed = True
+            return name_changed or interface_changed
         new_args: list[Any] = list(getattr(current_proto, "args", ()) or ())
         if len(new_args) < target_arg_count:
             new_args.extend(
@@ -3907,7 +4082,6 @@ def _sync_arg_list_from_annotations_8616(
         pointer_promoted = False
         scalar_materialized = False
         pointer_type = _pointer_type_for_codegen_8616(codegen)
-        project = getattr(codegen, "project", None)
         _, source_pointer_flags, _, _ = _collect_stack_promotion_inputs_8616(func)
         if not source_pointer_flags and project is not None:
             source_pointer_flags = _prototype_pointer_flags_for_codegen_function_8616(
@@ -3929,8 +4103,16 @@ def _sync_arg_list_from_annotations_8616(
         for index, resolved_arg in enumerate(resolved_args):
             variable = getattr(resolved_arg, "variable", None)
             inferred_width = inferred_arg_widths.get(arg_offsets[index], 2) if index < len(arg_offsets) else 2
-            variable_offset = getattr(variable, "offset", None)
-            scalar_type = x87_scalar_arg_types.get(variable_offset) if isinstance(variable_offset, int) else None
+            variable_identity = (
+                machine_bp_stack_identity_8616(codegen, variable)
+                if isinstance(variable, SimStackVariable)
+                else None
+            )
+            scalar_type = (
+                x87_scalar_arg_types.get(variable_identity.offset)
+                if variable_identity is not None
+                else None
+            )
             if scalar_type is not None:
                 scalar_materialized |= _apply_stack_arg_cvar_type_8616(codegen, resolved_arg, scalar_type)
                 if index < len(new_args) and new_args[index] != scalar_type:
@@ -4081,13 +4263,17 @@ def _prune_unused_stack_slots_covered_by_annotation_args_8616(
     # Dynamic angr/codegen compatibility boundary.
     variables_in_use = getattr(cfunc, "variables_in_use", None)
     if isinstance(variables_in_use, dict):
-        for variable in tuple(variables_in_use):
+        for variable, cvar in tuple(variables_in_use.items()):
             if not isinstance(variable, SimStackVariable):
                 continue
             if id(variable) in body_variable_ids:
                 continue
-            # Dynamic angr/codegen compatibility boundary.
-            if variable.offset in covered_offsets:
+            identity = _machine_bp_stack_binding_identity_8616(
+                codegen,
+                variable,
+                cvar,
+            )
+            if identity is not None and identity.offset in covered_offsets:
                 del variables_in_use[variable]
                 changed = True
     # Dynamic angr/codegen compatibility boundary.
@@ -4098,8 +4284,8 @@ def _prune_unused_stack_slots_covered_by_annotation_args_8616(
                 continue
             if id(variable) in body_variable_ids:
                 continue
-            # Dynamic angr/codegen compatibility boundary.
-            if variable.offset in covered_offsets:
+            identity = machine_bp_stack_identity_8616(codegen, variable)
+            if identity is not None and identity.offset in covered_offsets:
                 del unified[variable]
                 changed = True
     return changed
@@ -4125,16 +4311,19 @@ def _apply_annotation_rewrites_8616(
             variable = cvar.variable
             if not isinstance(variable, SimStackVariable):
                 continue
-            identity = _stack_slot_identity_for_variable(variable)
+            identity = machine_bp_stack_identity_8616(codegen, variable)
             if identity is not None:
                 preferred_stack_cvars_by_identity[identity] = cvar
-            offset = variable.offset
-            if isinstance(offset, int) and offset > 0:
-                generated_arg_cvars_by_name[f"arg_{offset}"] = cvar
+                if identity.offset > 0:
+                    generated_arg_cvars_by_name[f"arg_{identity.offset}"] = cvar
         for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if not isinstance(variable, SimStackVariable):
                 continue
-            identity = _stack_slot_identity_for_variable(variable)
+            identity = _machine_bp_stack_binding_identity_8616(
+                codegen,
+                variable,
+                cvar,
+            )
             if identity is None:
                 continue
             current_best = preferred_stack_cvars_by_identity.get(identity)
@@ -4165,7 +4354,7 @@ def _apply_annotation_rewrites_8616(
             variable = node.variable
             if not isinstance(variable, SimStackVariable):
                 return node
-            identity = _stack_slot_identity_for_variable(variable)
+            identity = machine_bp_stack_identity_8616(codegen, variable)
             if identity is None:
                 return node
             preferred = preferred_stack_cvars_by_identity.get(identity)

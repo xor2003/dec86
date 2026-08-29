@@ -23,11 +23,13 @@ from angr.sim_variable import SimStackVariable
 from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from .authoritative_function_prototypes import publish_codegen_function_prototype_8616
 from .condition_argument_type_facts import (
     StackArgumentSignedness8616,
     collect_condition_argument_type_facts_8616,
     record_wide_condition_argument_type_evidence_8616,
 )
+from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 __all__ = [
     "ConditionArgumentTypeResult8616",
@@ -133,24 +135,27 @@ def _scalar_type_8616(
     return type_.with_arch(arch)
 
 
-def _argument_cvars_8616(cfunc: _CFunctionSurface8616) -> tuple[CVariable, ...]:
+def _argument_cvars_8616(
+    codegen: object,
+    cfunc: _CFunctionSurface8616,
+) -> tuple[CVariable, ...]:
     """Return canonical positive-BP argument variables in emitted order."""
     try:
         args = tuple(cfunc.arg_list or ())
     except AttributeError:
         return ()
-    return tuple(
-        arg
-        for arg in args
-        if isinstance(arg, CVariable)
-        and isinstance(arg.variable, SimStackVariable)
-        and arg.variable.base == "bp"
-        and isinstance(arg.variable.offset, int)
-        and arg.variable.offset >= 4
-    )
+    arguments: list[CVariable] = []
+    for arg in args:
+        if not isinstance(arg, CVariable) or not isinstance(arg.variable, SimStackVariable):
+            continue
+        bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, arg.variable)
+        if arg.variable.base == "bp" and isinstance(bp_offset, int) and bp_offset >= 4:
+            arguments.append(arg)
+    return tuple(arguments)
 
 
 def _set_argument_surface_type_8616(
+    codegen: object,
     cfunc: _CFunctionSurface8616,
     offset: int,
     width: int,
@@ -172,7 +177,10 @@ def _set_argument_surface_type_8616(
             variable = node.variable
             if not isinstance(variable, SimStackVariable) or variable.base != "bp":
                 continue
-            if variable.offset != offset or _scalar_width_8616(node.variable_type) != width:
+            if (
+                machine_bp_offset_for_stack_variable_8616(codegen, variable) != offset
+                or _scalar_width_8616(node.variable_type) != width
+            ):
                 continue
             if node.variable_type != type_:
                 node.variable_type = type_
@@ -198,11 +206,14 @@ def apply_condition_argument_types_8616(
     facts = fact_result.facts
     raw_count = fact_result.raw_fact_count
     failures = fact_result.failure_count
-    arguments = _argument_cvars_8616(cfunc)
+    arguments = _argument_cvars_8616(codegen, cfunc)
     desired: dict[int, tuple[int, StackArgumentSignedness8616]] = {}
     for argument in arguments:
         variable = cast(SimStackVariable, argument.variable)
-        base = cast(int, variable.offset)
+        base = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if not isinstance(base, int):
+            failures += 1
+            continue
         width = _scalar_width_8616(argument.variable_type)
         matches = {
             fact.signedness
@@ -235,7 +246,10 @@ def apply_condition_argument_types_8616(
     materialized = 0
     for index, argument in enumerate(arguments):
         variable = cast(SimStackVariable, argument.variable)
-        base = cast(int, variable.offset)
+        base = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if not isinstance(base, int):
+            failures += 1
+            continue
         requested = desired.get(base)
         if requested is None or index >= len(new_args):
             continue
@@ -244,7 +258,7 @@ def apply_condition_argument_types_8616(
         if type_ is None:
             failures += 1
             continue
-        _set_argument_surface_type_8616(cfunc, base, width, type_)
+        _set_argument_surface_type_8616(codegen, cfunc, base, width, type_)
         argument.variable_type = type_
         new_args[index] = type_
         changed_offsets.append(base)
@@ -260,6 +274,7 @@ def apply_condition_argument_types_8616(
         cfunc.functy = rebuilt
         if function is not None:
             function.prototype = rebuilt
+        publish_codegen_function_prototype_8616(project, codegen)
     result = ConditionArgumentTypeResult8616(
         changed,
         tuple(sorted(changed_offsets)),

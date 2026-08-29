@@ -8,6 +8,9 @@ from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.structuring.stored_call_result_assignments import (
     StoredCallResultAssignmentRefusalReason8616,
     StoredCallResultAssignmentVerdict8616,
@@ -152,3 +155,35 @@ def test_refuses_when_exact_stack_destination_has_no_owned_variable() -> None:
     assert result.refusals[0].reason is (
         StoredCallResultAssignmentRefusalReason8616.DESTINATION_VARIABLE_MISSING
     )
+
+
+def test_materializes_projected_entry_sp_variable_for_machine_bp_destination() -> None:
+    codegen = _AstCodegen()
+    projected_variable = SimStackVariable(4, 2, base="bp", name="value")
+    value = structured_c.CVariable(
+        projected_variable,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call = _indirect_call(codegen, value, 0x100E)
+    statement = structured_c.CExpressionStatement(call, codegen=codegen)
+    root = structured_c.CStatements([statement], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x100E, 0x1014)}
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected_variable,
+        cvar=value,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+
+    result = materialize_stored_call_result_assignments_8616(codegen)
+
+    assert result.verdict is StoredCallResultAssignmentVerdict8616.MATERIALIZED
+    assignment = root.statements[0]
+    assert isinstance(assignment, structured_c.CAssignment)
+    assert assignment.rhs is call
+    assert isinstance(assignment.lhs.variable, SimStackVariable)
+    assert assignment.lhs.variable.offset == 4

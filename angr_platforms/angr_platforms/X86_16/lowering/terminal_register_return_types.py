@@ -24,6 +24,11 @@ from ..annotations import ANNOTATION_KEY
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import CallerReturnUseVerdict8616
 from ..semantics.terminal_return_storage import TerminalReturnStorage8616, terminal_return_storage_8616
+from .caller_observed_byte_return_types import (
+    CallerObservedByteReturnTypeResult8616,
+    apply_caller_observed_byte_return_type_8616,
+    materialize_caller_observed_byte_return_type_8616,
+)
 from .return_type_evidence import proven_function_result_observation_8616
 from .unused_void_return_types import materialize_unused_caller_void_codegen_type_8616
 
@@ -156,6 +161,28 @@ def _refinable_generated_word_return_8616(type_: object) -> bool:
     return isinstance(type_, (SimTypeChar, SimTypeInt, SimTypeShort))
 
 
+def _terminal_result_from_byte_8616(
+    byte_result: CallerObservedByteReturnTypeResult8616,
+) -> TerminalRegisterReturnTypeResult8616:
+    """Project byte evidence counters into the terminal-register result."""
+    evidence = byte_result.evidence
+    stats = evidence.stats if evidence is not None else None
+    return TerminalRegisterReturnTypeResult8616(
+        byte_result.changed,
+        TerminalRegisterReturnTypeStats8616(
+            raw_fact_count=stats.raw_fact_count if stats is not None else 0,
+            normalized_fact_count=stats.normalized_fact_count if stats is not None else 0,
+            classified_fact_count=stats.classified_fact_count if stats is not None else 0,
+            materialized_count=stats.materialized_count if stats is not None else 0,
+            failure_count=(
+                stats.failure_count
+                if stats is not None
+                else int(byte_result.failure is not None)
+            ),
+        ),
+    )
+
+
 def apply_terminal_register_return_type_evidence_8616(
     project: object,
     function: object,
@@ -172,18 +199,27 @@ def apply_terminal_register_return_type_evidence_8616(
             _has_explicit_prototype_8616(function_surface),
             function_surface.is_prototype_guessed,
         )
+    explicit_prototype = _has_explicit_prototype_8616(function_surface)
     if (
         project_surface.arch.name != "86_16"
-        or _has_explicit_prototype_8616(function_surface)
-        or not function_surface.is_prototype_guessed
-        or (
-            prototype is not None
-            and (not isinstance(prototype, SimTypeFunction) or not isinstance(prototype.returnty, SimTypeBottom))
-        )
+        or explicit_prototype
     ):
         return TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
 
     storage = terminal_return_storage_8616(project, function)
+    byte_result = apply_caller_observed_byte_return_type_8616(
+        project,
+        function,
+        storage,
+        explicit_prototype=explicit_prototype,
+    )
+    if byte_result.applicable:
+        return _terminal_result_from_byte_8616(byte_result)
+    if prototype is not None and (
+        not isinstance(prototype, SimTypeFunction)
+        or not isinstance(prototype.returnty, SimTypeBottom)
+    ):
+        return TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
     caller_use = proven_function_result_observation_8616(
         project,
         function_surface.addr,
@@ -272,6 +308,17 @@ def materialize_terminal_register_return_type_8616(
     storage = terminal_return_storage_8616(project, function)
     if os.environ.get("INERTIA_DEBUG_TERMINAL_RETURN_TYPES") == "1":
         _LOGGER.warning("terminal return storage: addr=%#x storage=%s", cfunc.addr, storage)
+    byte_result = materialize_caller_observed_byte_return_type_8616(
+        project,
+        codegen,
+        function,
+        storage,
+        explicit_prototype=False,
+    )
+    if byte_result.applicable:
+        result = _terminal_result_from_byte_8616(byte_result)
+        codegen_surface._inertia_terminal_register_return_type_result_8616 = result
+        return result
     if storage is not TerminalReturnStorage8616.AX:
         result = TerminalRegisterReturnTypeResult8616(
             False, TerminalRegisterReturnTypeStats8616(1, int(storage is not None), 0, 0, 0)

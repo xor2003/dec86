@@ -29,6 +29,10 @@ if TYPE_CHECKING:
         LogicalStackMemoryAliasAccess8616,
         LogicalStackMemoryAliasRefusal8616,
     )
+    from .logical_stack_storage_identity import (
+        LogicalStackStorageIdentity8616,
+        LogicalStackStorageIdentityRefusal8616,
+    )
 
 
 class StackMemoryAliasFactKind8616(StrEnum):
@@ -206,6 +210,9 @@ class StackMemorySSAAliasArtifact8616:
     logical_accesses: tuple[LogicalStackMemoryAliasAccess8616, ...] = ()
     logical_refusals: tuple[LogicalStackMemoryAliasRefusal8616, ...] = ()
     logical_stats: StackMemoryAliasStats8616 = StackMemoryAliasStats8616()
+    logical_storage_identities: tuple[LogicalStackStorageIdentity8616, ...] = ()
+    logical_storage_refusals: tuple[LogicalStackStorageIdentityRefusal8616, ...] = ()
+    logical_storage_stats: StackMemoryAliasStats8616 = StackMemoryAliasStats8616()
 
     def __post_init__(self) -> None:
         """Reject artifacts whose function identity disagrees with their source."""
@@ -222,9 +229,25 @@ class StackMemorySSAAliasArtifact8616:
         )
 
     @property
+    def logical_storage_complete(self) -> bool:
+        """Return whether unversioned logical storage identity closes."""
+        return (
+            self.logical_storage_stats.complete
+            and len(self.logical_storage_identities)
+            == self.logical_storage_stats.materialized_count
+            and len(self.logical_storage_refusals)
+            == self.logical_storage_stats.failure_count
+        )
+
+    @property
     def complete(self) -> bool:
         """Return whether upstream and Alias evidence accounting both close."""
-        return self.upstream_complete and self.stats.complete and self.logical_complete
+        return (
+            self.upstream_complete
+            and self.stats.complete
+            and self.logical_complete
+            and self.logical_storage_complete
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -243,6 +266,14 @@ class StackMemorySSAAliasArtifact8616:
             "logical_refusals": [refusal.to_dict() for refusal in self.logical_refusals],
             "logical_stats": self.logical_stats.to_dict(),
             "logical_complete": self.logical_complete,
+            "logical_storage_identities": [
+                identity.to_dict() for identity in self.logical_storage_identities
+            ],
+            "logical_storage_refusals": [
+                refusal.to_dict() for refusal in self.logical_storage_refusals
+            ],
+            "logical_storage_stats": self.logical_storage_stats.to_dict(),
+            "logical_storage_complete": self.logical_storage_complete,
             "complete": self.complete,
         }
 

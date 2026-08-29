@@ -177,8 +177,22 @@ def _stack_address_offsets_8616(
     """Classify all exact caller-frame addresses passed by physical PUSH provenance."""
     if len(summary.push_arg_sources) != summary.arg_count:
         return (), CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+    address_breaks = summary.push_arg_address_break_evidence
+    if address_breaks and len(address_breaks) != summary.arg_count:
+        return (), CallStackEffectFailure8616.ARGUMENT_ADDRESS_PROVENANCE_CONFLICT
     offsets: list[int] = []
-    for source in summary.push_arg_sources:
+    for index, source in enumerate(summary.push_arg_sources):
+        address_break = address_breaks[index] if address_breaks else None
+        if source is None and address_break is not None:
+            if not address_break.complete or (
+                len(summary.push_arg_instruction_addrs) != summary.arg_count
+                or address_break.push_instruction_addr
+                != summary.push_arg_instruction_addrs[index]
+            ):
+                return (), CallStackEffectFailure8616.ARGUMENT_ADDRESS_PROVENANCE_CONFLICT
+            continue
+        if address_break is not None:
+            return (), CallStackEffectFailure8616.ARGUMENT_ADDRESS_PROVENANCE_CONFLICT
         offset, failure = _stack_address_offset_8616(source)
         if failure is not None:
             return (), failure
@@ -332,7 +346,7 @@ def materialize_call_stack_effects_8616(
         materialized_count=len(facts),
         failure_count=failure_count,
     )
-    summary = {
+    artifact_summary = {
         **artifact.summary,
         "call_stack_effect_raw_fact_count": stats.raw_fact_count,
         "call_stack_effect_normalized_fact_count": stats.normalized_fact_count,
@@ -341,7 +355,7 @@ def materialize_call_stack_effects_8616(
         "call_stack_effect_failure_count": stats.failure_count,
     }
     return CallStackEffectArtifact8616(
-        replace(artifact, blocks=tuple(rewritten_blocks), summary=summary),
+        replace(artifact, blocks=tuple(rewritten_blocks), summary=artifact_summary),
         tuple(facts),
         stats,
     )

@@ -51,3 +51,28 @@ def test_summary_inventory_collects_call_targets_once(monkeypatch) -> None:
     assert collect_calls == [function]
     assert list(summaries) == [0x4010, 0x4020]
     assert len({id(inventory) for inventory in observed_inventories}) == 1
+
+
+def test_inventory_recovers_direct_target_without_cfg_seed(monkeypatch) -> None:
+    instruction = SimpleNamespace(address=0x4010, mnemonic="call", size=3)
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(instruction,)))
+    project = SimpleNamespace(factory=SimpleNamespace(block=lambda _addr, **_kwargs: block))
+    function = SimpleNamespace(project=project)
+
+    monkeypatch.setattr(target_inventory_module, "collect_neighbor_call_targets", lambda _function: ())
+    monkeypatch.setattr(
+        target_inventory_module,
+        "resolve_direct_call_target_from_block",
+        lambda _project, _callsite_addr: 0x5000,
+    )
+
+    inventory = CallsiteTargetInventory8616.collect(function, (0x4010,))
+
+    assert inventory.seeds == (
+        CallTargetSeed(
+            0x4010,
+            0x5000,
+            0x4013,
+            CallTargetKind8616.DIRECT_NEAR_CALL,
+        ),
+    )

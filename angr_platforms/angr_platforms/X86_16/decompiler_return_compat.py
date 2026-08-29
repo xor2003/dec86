@@ -1267,8 +1267,11 @@ def _make_c_stack_value_8616(
     size: int,
     variable_type: SimType,
 ) -> CVariable:
+    """Return one stack value without weakening an existing typed variable."""
     existing = _existing_stack_cvar_for_bp_disp_8616(codegen, bp_disp)
-    if existing is not None and getattr(existing, "type", None) is not None:
+    if existing is not None and (
+        existing.variable_type is not None or getattr(existing, "type", None) is not None
+    ):
         return existing
     project = getattr(codegen, "project", None)
     arch = getattr(project, "arch", None)

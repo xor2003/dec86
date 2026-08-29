@@ -17,12 +17,19 @@ from ..callsite_summary import (
     CallsitePushSourceKind8616,
     CallsiteSummary8616,
 )
+from .call_argument_arity_ownership import (
+    CallsiteZeroArgumentDecision8616,
+    CallsiteZeroArgumentOwnership8616,
+    classify_callsite_zero_argument_ownership_8616,
+)
 from .call_argument_state import ProtectedCallArgument8616, ProtectedCallArgumentStore8616
 
 __all__ = [
     "CallerStackObject8616",
     "CallsiteArgumentShapeDecision8616",
     "CallsiteArgumentShapeReconciliation8616",
+    "CallsiteZeroArgumentDecision8616",
+    "CallsiteZeroArgumentOwnership8616",
     "LogicalArgumentShapeEvidence8616",
     "LogicalArgumentShapeEvidenceSource8616",
     "ProtectedCallArgument8616",
@@ -30,6 +37,7 @@ __all__ = [
     "accounted_target_prototype_shape_evidence_8616",
     "accounted_variadic_target_shape_evidence_8616",
     "carry_forward_logical_call_argument_shape_8616",
+    "classify_callsite_zero_argument_ownership_8616",
     "exact_call_return_pair_shape_evidence_8616",
     "exact_caller_stack_object_for_word_pair_8616",
     "exact_caller_stack_object_shape_evidence_8616",

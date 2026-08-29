@@ -40,6 +40,7 @@ from .ir.condition_ir import (
     normalize_condition_fingerprint_string_8616,
 )
 from .ir.core import IRValue, MemSpace
+from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .validation_condition_precision import condition_precision_evidence_8616
 
 __all__ = [
@@ -142,11 +143,17 @@ def _node_tags_8616(node: object) -> Mapping[str, object]:
     return tags if isinstance(tags, Mapping) else {}
 
 
-def _materialized_conditions_8616(root: object) -> tuple[tuple[int, object], ...]:
+def _materialized_conditions_8616(
+    root: object,
+    query_index: StructuredAstQueryIndex8616 | None = None,
+) -> tuple[tuple[int, object], ...]:
     """Return unique final conditions explicitly owned by Structuring."""
+    if query_index is not None:
+        query_index.require_root(root)
     found: list[tuple[int, object]] = []
     seen: set[int] = set()
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
+    nodes = query_index.nodes if query_index is not None else _iter_c_nodes_deep_8616(root)
+    for node in nodes:
         candidates: tuple[object, ...] = ()
         if isinstance(node, CIfBreak):
             candidates = (node.condition,)
@@ -298,12 +305,13 @@ def validate_materialized_branch_conditions_8616(
     codegen: object,
     root: object,
     *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
     condition_fingerprint: Callable[[object], str],
     condition_ir_fingerprint: Callable[[ConditionIR], str | None],
     condition_fingerprint_normalizer: Callable[[str], str] | None = None,
 ) -> BranchConditionValidationReport8616:
     """Validate each Structuring-tagged predicate against one exact typed fact."""
-    surfaces = _materialized_conditions_8616(root)
+    surfaces = _materialized_conditions_8616(root, query_index)
     surfaces_by_jcc: dict[int, list[object]] = {}
     for jcc_addr, condition in surfaces:
         surfaces_by_jcc.setdefault(jcc_addr, []).append(condition)

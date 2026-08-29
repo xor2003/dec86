@@ -14,9 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ..caller_return_use_contracts import CallerReturnUseFact8616
 from ..ir import AddressStatus, IRAddress, IRValue, MemSpace, SegmentOrigin
 from ..ir.condition_ir import ConditionIR
+from ..ir.logical_memory_register_transfer_contracts import LogicalMemoryRegisterTransferKind8616
 from ..ir.ssa_function import SSAIncomingValue
+from ..widening.stack_word_register_transfers import StackWordRegisterTransfer8616
 from .interprocedural_storage_contracts import (
     StorageIdentity8616,
     StorageTrialSignedness8616,
@@ -76,6 +79,7 @@ class ReturnStorageTypeFailure8616(StrEnum):
     POINTER_CFG_CYCLE = "pointer_cfg_cycle"
     POINTER_CFG_JOIN_CONFLICT = "pointer_cfg_join_conflict"
     POINTER_PHI_CONFLICT = "pointer_phi_conflict"
+    POINTER_STACK_EVIDENCE_INCOMPLETE = "pointer_stack_evidence_incomplete"
     SPLIT_OUTPUT_DEFINITION_CONFLICT = "split_output_definition_conflict"
     SPLIT_CONDITION_NOT_FOUND = "split_condition_not_found"
     SPLIT_CONDITION_CONFLICT = "split_condition_conflict"
@@ -192,10 +196,24 @@ class ReturnPointerUseEvidence8616:
     aliases: tuple[ReturnPointerAliasStep8616, ...]
     cfg_edges: tuple[ReturnPointerCfgEdge8616, ...] = ()
     phis: tuple[ReturnPointerPhiEvidence8616, ...] = ()
+    stack_transfers: tuple[StackWordRegisterTransfer8616, ...] = ()
 
     @property
     def complete(self) -> bool:
         """Return whether the output reaches one stable single-base address."""
+        stack_reload_proven = any(
+            transfer.source.kind is LogicalMemoryRegisterTransferKind8616.RELOAD
+            and transfer.source.register.name == self.carrier_register
+            and any(
+                prior.source.kind is LogicalMemoryRegisterTransferKind8616.SPILL
+                and prior.storage_version == transfer.storage_version
+                for prior in self.stack_transfers[:index]
+            )
+            for index, transfer in enumerate(self.stack_transfers)
+        )
+        register_alias_proven = any(
+            step.target.name == self.carrier_register for step in self.aliases
+        )
         return (
             self.caller_addr >= 0
             and self.callsite_addr >= 0
@@ -206,11 +224,12 @@ class ReturnPointerUseEvidence8616:
             and self.address.space in {MemSpace.DS, MemSpace.ES, MemSpace.SS}
             and self.address.base == (self.carrier_register,)
             and self.address.size > 0
-            and bool(self.aliases)
+            and bool(self.aliases or self.stack_transfers)
             and all(step.complete for step in self.aliases)
-            and any(step.target.name == self.carrier_register for step in self.aliases)
+            and (register_alias_proven or stack_reload_proven)
             and all(edge.complete for edge in self.cfg_edges)
             and all(phi.complete for phi in self.phis)
+            and all(transfer.complete for transfer in self.stack_transfers)
         )
 
 
@@ -291,6 +310,7 @@ class ReturnStorageTypeResult8616:
     stats: StorageTrialStats8616
     pointer_use: ReturnPointerUseEvidence8616 | None = None
     split_condition_use: ReturnSplitConditionUseEvidence8616 | None = None
+    byte_extension_fact: CallerReturnUseFact8616 | None = None
 
     @property
     def complete(self) -> bool:
@@ -299,6 +319,7 @@ class ReturnStorageTypeResult8616:
             int(self.condition is not None)
             + int(self.pointer_use is not None)
             + int(self.split_condition_use is not None)
+            + int(self.byte_extension_fact is not None)
         )
         return (
             self.verdict is ReturnStorageTypeVerdict8616.PROVEN
@@ -309,6 +330,13 @@ class ReturnStorageTypeResult8616:
             and (
                 self.split_condition_use is None
                 or self.split_condition_use.complete
+            )
+            and (
+                self.byte_extension_fact is None
+                or (
+                    self.byte_extension_fact.classified
+                    and self.byte_extension_fact.byte_extension is not None
+                )
             )
             and self.failure is None
             and self.stats.complete

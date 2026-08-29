@@ -89,6 +89,42 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
     assert project._inertia_decompiler_stage == "structuring:condition_materialization:provenance"
 
 
+def test_condition_chains_materialize_before_loop_conditions(monkeypatch):
+    calls = []
+    project = _Project()
+    codegen = _Codegen()
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements([], codegen=codegen),
+    )
+    codegen._inertia_typed_conditions = ()
+
+    monkeypatch.setattr(
+        condition_materialization._legacy_typed_conditions,
+        "_apply_typed_conditions_to_codegen_8616",
+        lambda _project, _codegen: False,
+    )
+    monkeypatch.setattr(
+        condition_materialization._legacy_jcc,
+        "_rewrite_decoded_jcc_conditions_8616",
+        lambda _project, _codegen: False,
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "materialize_structuring_condition_chains_8616",
+        lambda _project, _codegen: calls.append("chains") or False,
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "materialize_typed_loop_continuation_conditions_8616",
+        lambda *_args: calls.append("loops")
+        or condition_materialization.LoopConditionMaterializationStats8616(),
+    )
+
+    condition_materialization.materialize_structuring_conditions_8616(project, codegen)
+
+    assert calls == ["chains", "loops"]
+
+
 def test_structuring_condition_materialization_bool_entrypoint(monkeypatch):
     monkeypatch.setattr(
         condition_materialization._legacy_typed_conditions,
@@ -564,6 +600,19 @@ def test_structuring_condition_chain_collapses_cfg_proven_assignment_diamond(mon
     assert branch.else_node.statements == [false_assignment]
     assert all(not isinstance(node, CGoto) for node in condition_materialization._iter_c_nodes_deep_8616(branch))
     assert codegen._inertia_structuring_condition_chain_stats_8616.materialized_count == 1
+    assert codegen._inertia_structuring_condition_chain_stats_8616.failure_count == 0
+    replay_facts = codegen._inertia_structuring_condition_replay_facts_8616
+    assert len(replay_facts) == 1
+    assert replay_facts[0].true_target == 0x1030
+    assert replay_facts[0].false_target == 0x1040
+
+    changed_again = condition_materialization.materialize_structuring_condition_chains_8616(
+        project,
+        codegen,
+    )
+
+    assert changed_again is False
+    assert branch.condition_and_nodes[0][0] is replacement
     assert codegen._inertia_structuring_condition_chain_stats_8616.failure_count == 0
 
 

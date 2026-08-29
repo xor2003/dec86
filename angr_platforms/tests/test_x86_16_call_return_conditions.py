@@ -26,6 +26,9 @@ from angr_platforms.X86_16.callsite_summary import (
 from angr_platforms.X86_16.decompiler_postprocess_calls import _callsite_materialization_signature_8616
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.structuring.call_return_conditions import (
     materialize_call_return_conditions_8616,
 )
@@ -121,6 +124,25 @@ def _stored_surface() -> tuple[SimpleNamespace, SimpleNamespace, CAssignment, CI
         variables_in_use={},
         unified_local_vars={},
         sort_local_vars=lambda: None,
+    )
+    identity_variable = SimStackVariable(-2, 2, base="bp", name="err")
+    identity_cvar = CVariable(
+        identity_variable,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use[identity_variable] = identity_cvar
+    codegen.cfunc.unified_local_vars[identity_variable] = {
+        (identity_cvar, identity_cvar.variable_type)
+    }
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=identity_variable,
+        cvar=identity_cvar,
+        bp_offset=-2,
+        entry_sp_offset=-2,
+        size=2,
+        display_name="err",
     )
     codegen._inertia_callsite_summary_inventory_8616 = {summary.callsite_addr: summary}
     return project, codegen, assignment, branch, returned
@@ -331,6 +353,36 @@ def test_materializes_value_return_store_before_exact_condition() -> None:
     call = assignment.rhs
     assert structured_callsite_addr_8616(call) == 0x100A3
     assert codegen._inertia_callsite_summaries[id(call)].return_store_destination == ("bp", -2)
+
+
+def test_materializes_value_return_store_through_entry_sp_projection() -> None:
+    """Reuse the exact BP-2 object represented by angr at entry-SP-4."""
+    project, codegen, assignment, branch, returned = _stored_surface()
+    projected = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="err"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use[projected.variable] = projected
+    codegen.cfunc.unified_local_vars[projected.variable] = {
+        (projected, projected.variable_type)
+    }
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected.variable,
+        cvar=projected,
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+        display_name="err",
+    )
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    assert assignment.lhs is projected
+    assert branch.condition_and_nodes[0][0].lhs is projected
+    assert returned.retval is projected
+    assert projected.variable.offset == -4
 
 
 def test_binds_adjacent_dirty_call_assignment_to_proven_return_store() -> None:

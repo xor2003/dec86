@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import Enum
 from typing import Any, Protocol, cast
 
@@ -19,6 +20,7 @@ __all__ = [
     "DecodedBlockRequest8616",
     "DecodedBlockStatus8616",
     "InstructionReachabilityEvidence8616",
+    "collect_decoded_block_evidence_8616",
     "collect_instruction_reachability_8616",
     "decoded_block_instructions_8616",
     "x86_16_block_successors_from_capstone_8616",
@@ -112,6 +114,7 @@ class DecodedBlockEvidence8616:
     request: DecodedBlockRequest8616
     status: DecodedBlockStatus8616
     instructions: tuple[Any, ...]
+    block: object | None
     failure_type: type[Exception] | None
     failure_message: str | None
 
@@ -134,11 +137,13 @@ class InstructionReachabilityEvidence8616:
     reachable_block_addrs: tuple[int, ...]
     reachable_instruction_addrs: tuple[int, ...]
     unresolved_block_addrs: tuple[int, ...]
+    successor_edges: tuple[tuple[int, int], ...]
     raw_fact_count: int
     normalized_fact_count: int
     classified_fact_count: int
     materialized_count: int
     failure_count: int
+    blocks: tuple[object, ...] = dataclass_field(default=(), compare=False, repr=False)
 
     @property
     def complete(self) -> bool:
@@ -168,18 +173,18 @@ def _reachability_cache_8616(
     return cache
 
 
-def decoded_block_instructions_8616(
+def collect_decoded_block_evidence_8616(
     project: object,
     address: int,
     *,
     num_inst: int | None = None,
     opt_level: int = 0,
-) -> tuple[Any, ...]:
-    """Decode one exact block request once within an immutable project request.
+) -> DecodedBlockEvidence8616:
+    """Collect one exact block decode within an immutable project request.
 
-    The cache retains only third-party Capstone instruction evidence. It does
-    not store mutable C AST, semantic state, aliases, prototypes, or validation
-    results. Failed decode requests are deliberately not cached.
+    The cache retains only the third-party block and Capstone instruction
+    evidence. It does not store mutable C AST, semantic state, aliases,
+    prototypes, or validation results.
     """
     boundary = cast(_ProjectBoundary8616, project)
     request = DecodedBlockRequest8616(int(address), num_inst, int(opt_level))
@@ -191,7 +196,7 @@ def decoded_block_instructions_8616(
     cached = inventories.get(request)
     if cached is not None:
         if cached.status is DecodedBlockStatus8616.DECODED:
-            return cached.instructions
+            return cached
         _raise_cached_decode_failure_8616(cached)
     try:
         if num_inst is None:
@@ -203,6 +208,7 @@ def decoded_block_instructions_8616(
             request=request,
             status=DecodedBlockStatus8616.REFUSED,
             instructions=(),
+            block=None,
             failure_type=type(exc),
             failure_message=str(exc),
         )
@@ -212,11 +218,28 @@ def decoded_block_instructions_8616(
         request=request,
         status=DecodedBlockStatus8616.DECODED,
         instructions=cast(tuple[Any, ...], instructions),
+        block=block,
         failure_type=None,
         failure_message=None,
     )
     inventories[request] = evidence
-    return evidence.instructions
+    return evidence
+
+
+def decoded_block_instructions_8616(
+    project: object,
+    address: int,
+    *,
+    num_inst: int | None = None,
+    opt_level: int = 0,
+) -> tuple[Any, ...]:
+    """Return instructions from one exact typed frontend decode request."""
+    return collect_decoded_block_evidence_8616(
+        project,
+        address,
+        num_inst=num_inst,
+        opt_level=opt_level,
+    ).instructions
 
 
 def _direct_target_8616(instruction: _InstructionBoundary8616) -> int | None:
@@ -287,9 +310,8 @@ def collect_instruction_reachability_8616(
 ) -> InstructionReachabilityEvidence8616:
     """Traverse binary-proven successors inside one bounded loaded image."""
     if not (region_start <= entry < region_end):
-        return InstructionReachabilityEvidence8616((), (), (), 0, 0, 0, 0, 0)
+        return InstructionReachabilityEvidence8616((), (), (), (), 0, 0, 0, 0, 0)
 
-    boundary = cast(_ProjectBoundary8616, project)
     cache = _reachability_cache_8616(project)
     cache_key = (entry, region_start, region_end)
     cached = cache.get(cache_key)
@@ -298,33 +320,46 @@ def collect_instruction_reachability_8616(
     queue: deque[int] = deque((entry,))
     visited: set[int] = set()
     reachable_instructions: set[int] = set()
+    reachable_blocks: dict[int, object] = {}
     unresolved: set[int] = set()
+    successor_edges: set[tuple[int, int]] = set()
     while queue:
         block_addr = queue.popleft()
         if block_addr in visited or not (region_start <= block_addr < region_end):
             continue
         visited.add(block_addr)
         try:
-            block = boundary.factory.block(block_addr, opt_level=0)
-            instructions = tuple(block.capstone.insns)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+            decoded = collect_decoded_block_evidence_8616(
+                project,
+                block_addr,
+                opt_level=0,
+            )
+        except Exception:  # angr exposes several backend-specific decode failures.
             unresolved.add(block_addr)
             continue
-        if not instructions or block.size <= 0:
+        block = decoded.block
+        if block is None:
             unresolved.add(block_addr)
             continue
+        block_boundary = cast(_BlockBoundary8616, block)
+        instructions = decoded.instructions
+        if not instructions or block_boundary.size <= 0:
+            unresolved.add(block_addr)
+            continue
+        reachable_blocks[block_addr] = block
         reachable_instructions.update(
             instruction.address
             for instruction in instructions
             if region_start <= instruction.address < region_end
         )
         successors, successor_unresolved = x86_16_block_successors_from_capstone_8616(
-            block,
+            block_boundary,
             region_start,
             region_end,
         )
         if successor_unresolved:
             unresolved.add(block_addr)
+        successor_edges.update((block_addr, successor) for successor in successors)
         for successor in sorted(successors):
             if successor not in visited:
                 queue.append(successor)
@@ -335,11 +370,13 @@ def collect_instruction_reachability_8616(
         reachable_block_addrs=tuple(sorted(visited)),
         reachable_instruction_addrs=tuple(sorted(reachable_instructions)),
         unresolved_block_addrs=tuple(sorted(unresolved)),
+        successor_edges=tuple(sorted(successor_edges)),
         raw_fact_count=classified_count,
         normalized_fact_count=classified_count,
         classified_fact_count=classified_count,
         materialized_count=classified_count - failure_count,
         failure_count=failure_count,
+        blocks=tuple(reachable_blocks[address] for address in sorted(reachable_blocks)),
     )
     cache[cache_key] = evidence
     return evidence

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import angr
 import keystone as ks
+import pyvex
 from angr import options as o
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import (
@@ -113,6 +114,15 @@ def test_simple_je_near_targets_branch_destination():
     assert [statement.dst.value for statement in block.vex.statements if isinstance(statement, VexExit)] == [0x1004]
 
 
+def test_loop_uses_direct_linear_backedge_above_first_64k():
+    """LOOP must expose its static DOS-image backedge without a runtime IP read."""
+    irsb = pyvex.lift(bytes.fromhex("e2fd"), 0x1107C, Arch86_16(), max_inst=1, opt_level=0)
+
+    assert isinstance(irsb.next, VexConst)
+    assert irsb.next.con.value == 0x1107B
+    assert "GET:I16(ip)" not in irsb._pp_str()
+
+
 def test_bound_16bit_addressing_lifts():
     code = b"\x67\x62\x07"  # bound ax, [bx]
     project = angr.load_shellcode(
@@ -137,7 +147,7 @@ def test_enter_local_stack_smoke():
     dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
     assert dec.codegen is not None
     assert " = 1;" in dec.codegen.text
-    assert "return local_2;" in dec.codegen.text
+    assert "return 1;" in dec.codegen.text
     assert "return Load(" not in dec.codegen.text
     assert "*((char **)(ir_0 * 16 + (unsigned int)&s_2)) = &s_0;" not in dec.codegen.text
 
@@ -623,15 +633,7 @@ def test_compiler_conditional_decomp_simplifies_bool_ite():
 
     assert dec.codegen is not None
     assert "? 0 : 1" not in dec.codegen.text
-    assert any(
-        condition in dec.codegen.text
-        for condition in (
-            "if (arg > 2)",
-            "if ((short)arg > 2)",
-            "if (arg <= 2)",
-            "if ((short)arg <= 2)",
-        )
-    )
+    assert "if (arg > 2)\n        return 0;\n    return 1;" in dec.codegen.text
     assert dec.codegen.text.count("return 0;") == 1
     assert dec.codegen.text.count("return 1;") == 1
     assert "return 0;" in dec.codegen.text

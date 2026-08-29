@@ -13,12 +13,15 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
     StorageSlotContract8616,
     StorageTrial8616,
     StorageTrialFailureKind8616,
     StorageTrialRole8616,
+    StorageTrialSignedness8616,
 )
 
 __all__ = ["join_storage_slot_contracts_8616", "ordered_storage_trials_8616"]
@@ -28,6 +31,28 @@ _SlotJoinResult8616 = tuple[
     StorageTrialFailureKind8616 | None,
 ]
 _StoragePiecesKey8616 = tuple[tuple[object, ...], ...]
+
+
+def _joined_signedness_8616(
+    values: set[StorageTrialSignedness8616],
+) -> StorageTrialSignedness8616 | None:
+    """Join sign-insensitive observations with one informative class."""
+    if not values or StorageTrialSignedness8616.UNKNOWN in values:
+        return None
+    if StorageTrialSignedness8616.NOT_APPLICABLE in values:
+        return (
+            StorageTrialSignedness8616.NOT_APPLICABLE
+            if values == {StorageTrialSignedness8616.NOT_APPLICABLE}
+            else None
+        )
+    informative = values - {StorageTrialSignedness8616.SIGN_INSENSITIVE}
+    if len(informative) > 1:
+        return None
+    return (
+        next(iter(informative))
+        if informative
+        else StorageTrialSignedness8616.SIGN_INSENSITIVE
+    )
 
 
 def ordered_storage_trials_8616(
@@ -76,8 +101,8 @@ def _slot_from_pieces_8616(
         provenances = {item.provenance for item in pieces}
         if len(provenances) != 1 or None in provenances:
             return None, StorageTrialFailureKind8616.SPLIT_PROVENANCE_CONFLICT
-    signedness = {item.signedness for item in pieces}
-    if len(signedness) != 1:
+    signedness = _joined_signedness_8616({item.signedness for item in pieces})
+    if signedness is None:
         return None, StorageTrialFailureKind8616.SIGNEDNESS_CONFLICT
     value_classes = {item.value_class for item in pieces}
     if len(value_classes) != 1:
@@ -87,7 +112,7 @@ def _slot_from_pieces_8616(
             role=role,
             logical_index=pieces[0].logical_index,
             pieces=tuple(item.storage for item in pieces),
-            signedness=pieces[0].signedness,
+            signedness=signedness,
             value_class=pieces[0].value_class,
         ),
         None,
@@ -139,18 +164,22 @@ def _uniform_slot_contracts_8616(
         if slots is None:
             return None, failure
         site_contracts.append(slots)
-    reference = site_contracts[0]
+    joined = list(site_contracts[0])
     for current in site_contracts[1:]:
-        if len(current) != len(reference):
+        if len(current) != len(joined):
             return None, StorageTrialFailureKind8616.ARGUMENT_ORDER_CONFLICT
-        for left, right in zip(reference, current, strict=True):
+        for index, (left, right) in enumerate(zip(joined, current, strict=True)):
             if _pieces_key_8616(left) != _pieces_key_8616(right):
                 return None, StorageTrialFailureKind8616.STORAGE_CONFLICT
-            if left.signedness is not right.signedness:
+            signedness = _joined_signedness_8616(
+                {left.signedness, right.signedness}
+            )
+            if signedness is None:
                 return None, StorageTrialFailureKind8616.SIGNEDNESS_CONFLICT
             if left.value_class is not right.value_class:
                 return None, StorageTrialFailureKind8616.VALUE_CLASS_CONFLICT
-    return reference, None
+            joined[index] = replace(left, signedness=signedness)
+    return tuple(joined), None
 
 
 def join_storage_slot_contracts_8616(

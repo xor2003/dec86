@@ -204,6 +204,65 @@ def _instruction_fallthrough_8616(insn: object) -> int | None:
     return address + size
 
 
+def _instruction_address_8616(insn: object) -> int | None:
+    """Return one decoded instruction address across the Capstone boundary."""
+    address = getattr(_inner_instruction_8616(insn), "address", None)
+    return address if isinstance(address, int) else None
+
+
+def _explicit_restore_sites_8616(project: object, block_addrs: frozenset[int]) -> frozenset[int]:
+    """Return exact reverse-epilogue POP sites paired with entry register saves."""
+    decoded: dict[int, object] = {}
+    for block_addr in sorted(block_addrs):
+        try:
+            instructions = decoded_block_instructions_8616(cast(Any, project), block_addr, opt_level=0)
+        except (KeyError, SimEngineError, SimTranslationError, ValueError):
+            return frozenset()
+        for instruction in instructions:
+            address = _instruction_address_8616(instruction)
+            if isinstance(address, int):
+                decoded.setdefault(address, instruction)
+    ordered = tuple(decoded[address] for address in sorted(decoded))
+    terminal_index = next(
+        (
+            index
+            for index, instruction in enumerate(ordered)
+            if str(getattr(_inner_instruction_8616(instruction), "mnemonic", "") or "").lower()
+            in {"ret", "retf", "iret"}
+        ),
+        None,
+    )
+    if terminal_index is None:
+        return frozenset()
+
+    entry_saves: list[str] = []
+    for instruction in ordered:
+        inner = _inner_instruction_8616(instruction)
+        if str(getattr(inner, "mnemonic", "") or "").lower() != "push":
+            break
+        operands = tuple(getattr(inner, "operands", ()) or ())
+        if len(operands) != 1 or int(getattr(operands[0], "type", -1)) != 1:
+            break
+        entry_saves.append(_register_name_8616(instruction, int(getattr(operands[0], "reg", 0) or 0)))
+
+    restores: list[tuple[str, int]] = []
+    for instruction in reversed(ordered[:terminal_index]):
+        inner = _inner_instruction_8616(instruction)
+        mnemonic = str(getattr(inner, "mnemonic", "") or "").lower()
+        if mnemonic != "pop":
+            break
+        operands = tuple(getattr(inner, "operands", ()) or ())
+        address = _instruction_address_8616(instruction)
+        if len(operands) != 1 or int(getattr(operands[0], "type", -1)) != 1 or address is None:
+            break
+        restores.append(
+            (_register_name_8616(instruction, int(getattr(operands[0], "reg", 0) or 0)), address)
+        )
+    if tuple(name for name, _address in restores) != tuple(entry_saves):
+        return frozenset()
+    return frozenset(address for _name, address in restores)
+
+
 def collect_terminal_ax_return_evidence_8616(
     project: object,
     function: object,
@@ -223,6 +282,7 @@ def collect_terminal_ax_return_evidence_8616(
     if not isinstance(entry_addr, int) or entry_addr not in block_addrs:
         return TerminalAxReturnEvidence8616(frozenset(), 1, 0, 0, 0, 1)
     project_dynamic = cast(Any, project)
+    explicit_restore_sites = _explicit_restore_sites_8616(project, block_addrs)
     terminal_states: set[TerminalReturnStorageState8616] = set()
     raw_fact_count = 0
     normalized_fact_count = 0
@@ -278,6 +338,15 @@ def collect_terminal_ax_return_evidence_8616(
                 call_output_lanes = TerminalAxReturnLane8616.WORD
             else:
                 written_register = _written_register_8616(insn, effect.dst_reg)
+                instruction_addr = _instruction_address_8616(insn)
+                if instruction_addr in explicit_restore_sites:
+                    if written_register in {"ax", "al", "ah"}:
+                        lanes = TerminalAxReturnLane8616.NONE
+                        call_output_lanes = TerminalAxReturnLane8616.NONE
+                        dx_ax_pair_proven = False
+                    elif written_register == "dx":
+                        dx_ax_pair_proven = False
+                    continue
                 if written_register in {"ax", "al", "ah"}:
                     written = _written_lane_8616(insn, effect.dst_reg)
                     lanes = written if written == TerminalAxReturnLane8616.WORD else lanes | written

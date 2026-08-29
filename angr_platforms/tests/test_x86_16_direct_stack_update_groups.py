@@ -19,6 +19,9 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     _has_existing_stack_update_assignment_8616,
     materialize_direct_stack_incdec_instructions_8616,
 )
+from angr_platforms.X86_16.pipeline.structured_ast_query_index import (
+    StructuredAstQueryIndex8616,
+)
 from capstone.x86_const import X86_INS_INC, X86_OP_MEM, X86_REG_BP, X86_REG_INVALID
 
 
@@ -121,7 +124,32 @@ def test_existing_stack_update_indexes_rendered_owners_once(monkeypatch) -> None
         one,
         expected_semantic_count=20,
     )
-    assert traversal_count == 2
+    assert traversal_count == 1
+
+
+def test_existing_stack_update_reuses_request_index(monkeypatch) -> None:
+    """A shared immutable request index must eliminate repeated root walks."""
+    project, root, fact, cvar, one = _stack_increment_fixture(count=20)
+    query_index = StructuredAstQueryIndex8616.build(root)
+
+    def _unexpected_walk(_node):
+        raise AssertionError("existing-update query ignored its request index")
+
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_iter_structured_c_nodes_8616",
+        _unexpected_walk,
+    )
+
+    assert _has_existing_stack_update_assignment_8616(
+        root,
+        project,
+        fact,
+        cvar,
+        one,
+        expected_semantic_count=20,
+        query_index=query_index,
+    )
 
 
 def _materialize_existing_iterator_with_conflict(

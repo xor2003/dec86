@@ -3,8 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: represent direct-stack replay inputs, policy, stable state, and
 closed execution accounting without inspecting or mutating third-party ASTs.
-Consumes typed Lowering facts and neutral structured-AST generation tokens.
-Do not recover semantics from assembly, rendered C, source, or sidecars.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

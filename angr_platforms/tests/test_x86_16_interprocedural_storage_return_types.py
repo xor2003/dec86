@@ -7,8 +7,11 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
+import pytest
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.caller_return_use_contracts import (
+    AxValueView8616,
+    ByteReturnExtensionKind8616,
     CallerReturnUseFact8616,
     CallerReturnUseVerdict8616,
     CallsiteReturnUseKind8616,
@@ -69,6 +72,7 @@ def _fact(
     *,
     witness: int = 0x1003,
     kind: CallsiteReturnUseKind8616 = CallsiteReturnUseKind8616.CONDITION,
+    extension: ByteReturnExtensionKind8616 | None = None,
 ) -> CallerReturnUseFact8616:
     return CallerReturnUseFact8616(
         caller_addr=0x1000,
@@ -76,6 +80,9 @@ def _fact(
         verdict=CallerReturnUseVerdict8616.USED,
         kind=kind,
         witness_instruction_addr=witness,
+        byte_extension=extension,
+        byte_extension_instruction_addr=(0x1002 if extension is not None else None),
+        observed_value_view=(AxValueView8616.AX if extension is not None else None),
     )
 
 
@@ -128,6 +135,54 @@ def test_signed_byte_condition_proves_exact_al_return_view() -> None:
 
     assert result.complete
     assert result.signedness is StorageTrialSignedness8616.SIGNED
+    assert result.value_class is StorageTrialValueClass8616.VALUE
+
+
+@pytest.mark.parametrize(
+    ("extension", "signedness"),
+    (
+        (
+            ByteReturnExtensionKind8616.ZERO_EXTEND_AL_TO_AX,
+            StorageTrialSignedness8616.UNSIGNED,
+        ),
+        (
+            ByteReturnExtensionKind8616.SIGN_EXTEND_AL_TO_AX,
+            StorageTrialSignedness8616.SIGNED,
+        ),
+    ),
+)
+def test_byte_extension_proves_scalar_al_return_type(
+    extension: ByteReturnExtensionKind8616,
+    signedness: StorageTrialSignedness8616,
+) -> None:
+    result = classify_return_storage_type_8616(
+        _fact(kind=CallsiteReturnUseKind8616.VALUE, extension=extension),
+        (_register("al", 1),),
+        (),
+    )
+
+    assert result.complete
+    assert result.signedness is signedness
+    assert result.value_class is StorageTrialValueClass8616.VALUE
+
+
+def test_byte_equality_proves_sign_insensitive_scalar_value() -> None:
+    condition = ConditionIR(
+        op="ne",
+        lhs=IRValue(space=MemSpace.REG, name="al", offset=0, size=1),
+        rhs=IRValue(space=MemSpace.CONST, const=13, size=1),
+        width_bits=8,
+        producer_insn=0x1003,
+    )
+
+    result = classify_return_storage_type_8616(
+        _fact(),
+        (_register("al", 1),),
+        (condition,),
+    )
+
+    assert result.complete
+    assert result.signedness is StorageTrialSignedness8616.SIGN_INSENSITIVE
     assert result.value_class is StorageTrialValueClass8616.VALUE
 
 

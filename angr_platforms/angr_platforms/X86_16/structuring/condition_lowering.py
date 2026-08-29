@@ -30,6 +30,7 @@ from ..ir.core import (
 from ..lowering.condition_stack_operands import materialize_typed_condition_stack_operand_8616
 from ..lowering.stack_variable_binding import StackVariableBinding, stable_stack_binding_tags_8616
 from ..widening.segmented_load_identity import segmented_load_identity_8616
+from .condition_stack_views import materialize_condition_stack_declaration_view_8616
 from .indexed_condition_values import materialize_indexed_segmented_condition_value_8616
 
 if TYPE_CHECKING:
@@ -42,6 +43,7 @@ __all__ = [
     "condition_segment_access_tags_8616",
     "lower_ir_value_to_c_expr_8616",
     "lower_typed_condition_to_c_expr_8616",
+    "materialize_condition_stack_declaration_view_8616",
     "materialize_indexed_segmented_condition_value_8616",
     "materialize_typed_condition_stack_operand_8616",
     "stable_stack_condition_binding_tags_8616",
@@ -213,12 +215,19 @@ def _ir_value_to_cvar_8616(
         return _make_c_constant_8616(int(value.const or 0), codegen)
 
     if value.space == MemSpace.REG:
+        register_name = value.name if isinstance(value.name, str) else None
+        function_region = getattr(getattr(codegen, "cfunc", None), "addr", None)
         if resolve_register_name:
             reg_offset, reg_size = _register_offset_size_for_value_8616(value, project)
-            var = SimRegisterVariable(reg_offset, reg_size, name=value.name)
         else:
             reg_offset, reg_size = int(value.offset), int(value.size or 2)
-            var = SimRegisterVariable(reg_offset, reg_size)
+        var = SimRegisterVariable(
+            reg_offset,
+            reg_size,
+            ident=f"inertia-register-{register_name}" if register_name else None,
+            region=function_region if isinstance(function_region, int) else None,
+            name=register_name,
+        )
         return CVariable(variable=var, codegen=codegen)
 
     if value.space == MemSpace.SS:

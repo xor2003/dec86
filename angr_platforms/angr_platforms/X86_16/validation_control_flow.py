@@ -37,8 +37,10 @@ from .ir.condition_ir import (
     normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_fingerprint_string_8616,
 )
+from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .structuring.loop_break_jcc import LoopBranchGuardFact8616
 from .validation.canonicalize import EquivalenceResult, equivalent_expr_8616
+from .validation.control_flow_ast_index import ControlFlowAstIndex8616
 from .validation_branch_conditions import BranchConditionIssue8616
 from .validation_control_flow_obligations import ControlFlowObligationIssue8616
 
@@ -191,13 +193,6 @@ def _ast_tags_8616(node: object) -> Mapping[str, object]:
     return tags if isinstance(tags, Mapping) else {}
 
 
-def _condition_jcc_addr_8616(condition: object) -> int | None:
-    """Return the exact binary JCC identity from one final C condition."""
-    tags = _ast_tags_8616(condition)
-    jcc_addr = tags.get("ins_addr")
-    return jcc_addr if isinstance(jcc_addr, int) else None
-
-
 def _node_ins_addr_8616(node: object) -> int | None:
     """Return one C AST node's exact instruction anchor when available."""
     ins_addr = _ast_tags_8616(node).get("ins_addr")
@@ -224,95 +219,19 @@ def _break_guard_condition_8616(node: object) -> object | None:
     return None
 
 
-def _root_contains_node_8616(root: object, target: object) -> bool:
-    """Return whether an AST subtree contains one node by identity."""
-    return root is target or any(
-        node is target for node in _iter_c_nodes_deep_8616(root)
-    )
-
-
-def _root_contains_ins_addr_8616(root: object, target_addr: int) -> bool:
-    """Return whether an AST subtree carries one exact instruction address."""
-    return any(
-        _ast_tags_8616(node).get("ins_addr") == target_addr
-        for node in (root, *_iter_c_nodes_deep_8616(root))
-    )
-
-
-def _loop_nodes_8616(
-    root: object,
-) -> tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...]:
-    """Return final structured loops without relying on rendered C."""
-    loops: list[CForLoop | CWhileLoop | CDoWhileLoop] = []
-    seen: set[int] = set()
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        if not isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop)):
-            continue
-        marker = id(node)
-        if marker in seen:
-            continue
-        seen.add(marker)
-        loops.append(node)
-    return tuple(loops)
-
-
-def _loop_bodies_8616(root: object) -> tuple[object, ...]:
-    """Return final structured loop bodies without relying on rendered C."""
-    return tuple(loop.body for loop in _loop_nodes_8616(root))
-
-
-def _tagged_conditions_for_key_8616(
-    root: object,
-    jcc_addr: int,
-) -> tuple[object, ...]:
-    """Return final branch conditions carrying one exact JCC identity."""
-    conditions: list[object] = []
-    seen: set[int] = set()
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        candidates: tuple[object, ...] = ()
-        if isinstance(node, CIfBreak):
-            candidates = (node.condition,)
-        elif isinstance(node, CIfElse):
-            candidates = tuple(
-                condition for condition, _body in node.condition_and_nodes
-            )
-        elif isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop)):
-            candidates = (node.condition,)
-        for condition in candidates:
-            marker = id(condition)
-            if (
-                marker in seen
-                or _condition_jcc_addr_8616(condition) != jcc_addr
-            ):
-                continue
-            seen.add(marker)
-            conditions.append(condition)
-    return tuple(conditions)
-
-
-def _loop_guards_for_key_8616(
-    root: object,
-    jcc_addr: int,
-) -> tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...]:
-    """Return final loop nodes whose header carries one exact JCC identity."""
-    return tuple(
-        loop
-        for loop in _loop_nodes_8616(root)
-        if _condition_jcc_addr_8616(loop.condition) == jcc_addr
-    )
-
-
 def _loop_guards_for_fact_8616(
-    root: object,
+    ast_index: ControlFlowAstIndex8616,
     fact: LoopBranchGuardFact8616,
 ) -> tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...]:
     """Select tagged loop headers by exact target evidence when available."""
-    tagged = _loop_guards_for_key_8616(root, fact.jcc_addr)
+    tagged: tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...] = (
+        ast_index.loop_guards(fact.jcc_addr)
+    )
     target_matched = tuple(
         loop
         for loop in tagged
-        if _root_contains_ins_addr_8616(loop.body, fact.body_target)
-        and not _root_contains_ins_addr_8616(
+        if ast_index.subtree_contains_instruction(loop.body, fact.body_target)
+        and not ast_index.subtree_contains_instruction(
             loop.body,
             fact.false_target,
         )
@@ -324,30 +243,8 @@ def _loop_guards_for_fact_8616(
     return tuple(
         loop
         for loop in tagged
-        if _loop_matches_branch_region_8616(loop, fact)
+        if _loop_matches_branch_region_8616(ast_index, loop, fact)
     )
-
-
-def _break_guards_for_key_8616(
-    root: object,
-    jcc_addr: int,
-) -> tuple[object, ...]:
-    """Return final break-guard nodes carrying one exact JCC identity."""
-    guards: list[object] = []
-    seen: set[int] = set()
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        condition = _break_guard_condition_8616(node)
-        if (
-            condition is None
-            or _condition_jcc_addr_8616(condition) != jcc_addr
-        ):
-            continue
-        marker = id(node)
-        if marker in seen:
-            continue
-        seen.add(marker)
-        guards.append(node)
-    return tuple(guards)
 
 
 def _loop_branch_fact_is_valid_8616(fact: LoopBranchGuardFact8616) -> bool:
@@ -419,13 +316,14 @@ def _condition_fingerprint_matches_8616(
 
 
 def _loop_matches_branch_region_8616(
+    ast_index: ControlFlowAstIndex8616,
     loop: CForLoop | CWhileLoop | CDoWhileLoop,
     fact: LoopBranchGuardFact8616,
 ) -> bool:
     """Join one loop to the proven JCC region without guessing lost tags."""
-    if _root_contains_ins_addr_8616(loop.body, fact.false_target):
+    if ast_index.subtree_contains_instruction(loop.body, fact.false_target):
         return False
-    if _root_contains_ins_addr_8616(loop.body, fact.body_target):
+    if ast_index.subtree_contains_instruction(loop.body, fact.body_target):
         return True
     header_anchors = (
         _node_ins_addr_8616(loop),
@@ -439,7 +337,7 @@ def _loop_matches_branch_region_8616(
 
 
 def _semantic_loop_branch_guards_8616(
-    root: object,
+    ast_index: ControlFlowAstIndex8616,
     fact: LoopBranchGuardFact8616,
     condition_fingerprint: Callable[[object], str],
     condition_ir_fingerprint: Callable[[ConditionIR], str | None] | None,
@@ -459,8 +357,8 @@ def _semantic_loop_branch_guards_8616(
         guard_fingerprint = inverted
     guards: list[object] = []
     seen: set[int] = set()
-    for loop in _loop_nodes_8616(root):
-        if not _loop_matches_branch_region_8616(loop, fact):
+    for loop in ast_index.loops:
+        if not _loop_matches_branch_region_8616(ast_index, loop, fact):
             continue
         if _condition_fingerprint_matches_8616(
             loop.condition,
@@ -470,7 +368,7 @@ def _semantic_loop_branch_guards_8616(
         ):
             guards.append(loop)
             seen.add(id(loop))
-        for node in (loop.body, *_iter_c_nodes_deep_8616(loop.body)):
+        for node in ast_index.subtree_nodes(loop.body):
             guard_condition = _break_guard_condition_8616(node)
             if (
                 guard_condition is None
@@ -508,6 +406,7 @@ def _loop_branch_issue_8616(
 def validate_structured_control_flow_8616(
     root: object,
     *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
     loop_branch_facts: tuple[LoopBranchGuardFact8616, ...] = (),
     condition_fingerprint: Callable[[object], str] | None = None,
     condition_ir_fingerprint: Callable[[ConditionIR], str | None] | None = None,
@@ -529,9 +428,10 @@ def validate_structured_control_flow_8616(
     classified_fact_count = 0
     materialized_count = 0
     issues: list[ControlFlowValidationIssue8616] = []
+    ast_index = ControlFlowAstIndex8616.build(root, root_index=query_index)
     sequences = (
         node
-        for node in _iter_c_nodes_deep_8616(root)
+        for node in ast_index.nodes
         if isinstance(node, CStatements)
     )
     for sequence_index, sequence in enumerate(sequences):
@@ -594,7 +494,7 @@ def validate_structured_control_flow_8616(
             )
         )
 
-    loop_bodies = _loop_bodies_8616(root)
+    loop_bodies = tuple(loop.body for loop in ast_index.loops)
     for fact in normalized_loop_branch_facts:
         key = fact.jcc_addr
         if key in conflicted_keys:
@@ -608,13 +508,13 @@ def validate_structured_control_flow_8616(
                 )
             )
             continue
-        tagged_conditions = _tagged_conditions_for_key_8616(root, key)
-        break_guards = _break_guards_for_key_8616(root, key)
-        loop_guards = _loop_guards_for_fact_8616(root, fact)
+        tagged_conditions = ast_index.tagged_conditions(key)
+        break_guards = ast_index.break_guards(key)
+        loop_guards = _loop_guards_for_fact_8616(ast_index, fact)
         if not tagged_conditions:
             semantic_guards = (
                 _semantic_loop_branch_guards_8616(
-                    root,
+                    ast_index,
                     fact,
                     condition_fingerprint,
                     condition_ir_fingerprint,
@@ -646,7 +546,7 @@ def validate_structured_control_flow_8616(
             guard
             for guard in break_guards
             if any(
-                _root_contains_node_8616(body, guard)
+                ast_index.subtree_contains_node(body, guard)
                 for body in loop_bodies
             )
         )
@@ -691,18 +591,9 @@ def validate_structured_control_flow_8616(
             tuple(
                 (
                     fact,
-                    _tagged_conditions_for_key_8616(
-                        root,
-                        fact.jcc_addr,
-                    ),
-                    _break_guards_for_key_8616(
-                        root,
-                        fact.jcc_addr,
-                    ),
-                    _loop_guards_for_key_8616(
-                        root,
-                        fact.jcc_addr,
-                    ),
+                    ast_index.tagged_conditions(fact.jcc_addr),
+                    ast_index.break_guards(fact.jcc_addr),
+                    ast_index.loop_guards(fact.jcc_addr),
                 )
                 for fact in normalized_loop_branch_facts
             ),
@@ -710,7 +601,7 @@ def validate_structured_control_flow_8616(
                 (
                     fact,
                     _semantic_loop_branch_guards_8616(
-                        root,
+                        ast_index,
                         fact,
                         condition_fingerprint,
                         condition_ir_fingerprint,
@@ -733,11 +624,11 @@ def validate_structured_control_flow_8616(
                     tuple(
                         (
                             fact.jcc_addr,
-                            _root_contains_ins_addr_8616(
+                            ast_index.subtree_contains_instruction(
                                 loop.body,
                                 fact.body_target,
                             ),
-                            _root_contains_ins_addr_8616(
+                            ast_index.subtree_contains_instruction(
                                 loop.body,
                                 fact.false_target,
                             ),
@@ -745,7 +636,7 @@ def validate_structured_control_flow_8616(
                         for fact in normalized_loop_branch_facts
                     ),
                 )
-                for loop in _loop_nodes_8616(root)
+                for loop in ast_index.loops
             ),
             tuple(issue.token() for issue in issues),
             raw_fact_count,
@@ -753,6 +644,8 @@ def validate_structured_control_flow_8616(
             classified_fact_count,
             materialized_count,
         )
+    if not ast_index.stats().is_closed:
+        raise RuntimeError("control-flow AST index query accounting is not closed")
     return ControlFlowValidationReport8616(
         raw_fact_count=raw_fact_count,
         normalized_fact_count=normalized_fact_count,

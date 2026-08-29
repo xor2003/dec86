@@ -13,7 +13,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ..ir import IRInstr
+from ..ir import (
+    AddressStatus,
+    IRAddress,
+    IRInstr,
+    IRValue,
+    MemSpace,
+    ScalarAffineExpression8616,
+    SegmentOrigin,
+)
 from ..ir.ssa import SSABlock
 from .interprocedural_storage_contracts import (
     StorageReachingDefinition8616,
@@ -25,8 +33,10 @@ __all__ = [
     "CallArgumentDefinitionResolution8616",
     "CallArgumentDefinitionStats8616",
     "CallArgumentDefinitionVerdict8616",
+    "LogicalPushValue8616",
     "PhysicalCallArgument8616",
     "PhysicalCallArgumentPiece8616",
+    "PhysicalPushStoreSlice8616",
     "SSAInstructionSite8616",
 ]
 
@@ -51,6 +61,14 @@ class CallArgumentDefinitionFailure8616(StrEnum):
     SOURCE_WIDTH_CONFLICT = "source_width_conflict"
     SOURCE_DEFINITION_NOT_FOUND = "source_definition_not_found"
     SOURCE_DEFINITION_CONFLICT = "source_definition_conflict"
+    EXPRESSION_SHAPE_CONFLICT = "expression_shape_conflict"
+    EXPRESSION_OPERATION_UNSUPPORTED = "expression_operation_unsupported"
+    EXPRESSION_DEFINITION_NOT_FOUND = "expression_definition_not_found"
+    EXPRESSION_DEFINITION_CONFLICT = "expression_definition_conflict"
+    EXPRESSION_SOURCE_MISMATCH = "expression_source_mismatch"
+    EXPRESSION_WIDTH_CONFLICT = "expression_width_conflict"
+    EXPRESSION_CONTROL_FLOW_UNPROVEN = "expression_control_flow_unproven"
+    EXPRESSION_FLAGS_UNPROVEN = "expression_flags_unproven"
     UNMODELED_CALL_OUTPUT = "unmodeled_call_output"
     UNSUPPORTED_SOURCE_KIND = "unsupported_source_kind"
 
@@ -86,6 +104,7 @@ class CallArgumentDefinitionResolution8616:
     use: StorageUseEvidence8616 | None
     failure: CallArgumentDefinitionFailure8616 | None
     stats: CallArgumentDefinitionStats8616
+    affine_expression: ScalarAffineExpression8616 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +114,53 @@ class SSAInstructionSite8616:
     block: SSABlock
     instr_index: int
     instr: IRInstr
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalPushStoreSlice8616:
+    """One exact outgoing stack-store slice of a logical pushed value."""
+
+    site: SSAInstructionSite8616
+    address: IRAddress
+    value: IRValue
+    source_offset: int
+
+    @property
+    def complete(self) -> bool:
+        """Return whether this slice retains exact stack and value identity."""
+        return bool(
+            self.source_offset >= 0
+            and self.address.space is MemSpace.SS
+            and self.address.base == ("sp",)
+            and self.address.size == self.value.size > 0
+            and self.address.status is AddressStatus.STABLE
+            and self.address.segment_origin is SegmentOrigin.PROVEN
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalPushValue8616:
+    """One reconstructed logical value and all physical outgoing slices."""
+
+    root: IRValue
+    width: int
+    slices: tuple[PhysicalPushStoreSlice8616, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every byte belongs to one exact logical root."""
+        return bool(
+            self.width > 0
+            and self.root.size == self.width
+            and self.slices
+            and all(item.complete for item in self.slices)
+            and sum(item.address.size for item in self.slices) == self.width
+            and tuple(item.source_offset for item in self.slices)
+            == tuple(
+                sum(previous.address.size for previous in self.slices[:index])
+                for index in range(len(self.slices))
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -95,7 +95,7 @@ class GlobalObjectProgramRequirementEvidence8616:
         return self.verdict is GlobalObjectProgramRequirementVerdict8616.REQUIRED
 
 
-_CALL_TARGET_KINDS_8616 = frozenset(
+GLOBAL_OBJECT_PROGRAM_CALL_TARGET_KINDS_8616: frozenset[CallTargetKind8616] = frozenset(
     {
         CallTargetKind8616.CFG_RESOLVED_CALL,
         CallTargetKind8616.DIRECT_NEAR_CALL,
@@ -204,7 +204,7 @@ def collect_global_object_program_requirement_8616(
     call_targets = tuple(
         target
         for target in collect_neighbor_call_targets(function)
-        if target.kind in _CALL_TARGET_KINDS_8616
+        if target.kind in GLOBAL_OBJECT_PROGRAM_CALL_TARGET_KINDS_8616
     )
     summaries = tuple(
         build_callsite_summary_inventory_8616(
@@ -234,6 +234,7 @@ def collect_global_object_program_requirement_8616(
 
 
 __all__ = [
+    "GLOBAL_OBJECT_PROGRAM_CALL_TARGET_KINDS_8616",
     "GlobalObjectProgramRequirementEvidence8616",
     "GlobalObjectProgramRequirementReason8616",
     "GlobalObjectProgramRequirementVerdict8616",

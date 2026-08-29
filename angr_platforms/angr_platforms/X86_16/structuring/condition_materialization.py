@@ -117,7 +117,11 @@ from .single_branch_return_orientation import (
     classify_direct_or_one_hop_target_orientation_8616,
     classify_single_branch_return_orientation_8616,
 )
-from .tagged_subtree_projection import collect_structured_subtree_entry_tags_8616
+from .tagged_subtree_projection import (
+    StructuredSubtreeEntryTagQuerySession8616,
+    StructuredSubtreeEntryTagQueryStats8616,
+    collect_structured_subtree_entry_tags_8616,
+)
 from .total_return_suffixes import (
     TotalReturnSuffixPruneStats8616,
     prune_unreachable_total_return_suffixes_8616,
@@ -179,6 +183,7 @@ class _ConditionMaterializationCodegen8616(Protocol):
     _inertia_total_return_suffix_prune_stats_8616: TotalReturnSuffixPruneStats8616
     _inertia_wide_call_return_guard_collapse_stats_8616: WideCallReturnGuardCollapseStats8616
     _inertia_call_execution_frame_carrier_stats_8616: CallExecutionFrameCarrierStats8616
+    _inertia_structured_subtree_entry_tag_query_stats_8616: StructuredSubtreeEntryTagQueryStats8616
     _inertia_typed_conditions: object
     cfunc: object
 
@@ -236,6 +241,14 @@ class _ConditionMaterializationTaggedNode8616(Protocol):
     """Dynamic angr C-AST tag dictionary."""
 
     tags: dict[str, object]
+
+
+class _StructuredSubtreeEntryTagsBoundary8616(Protocol):
+    """Typed boundary for immutable subtree-entry tag projections."""
+
+    first_instruction_addr: int | None
+    block_addrs: tuple[int, ...]
+    first_block_addr: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,17 +383,31 @@ def condition_chain_successors_8616(project: object, codegen: object) -> dict[in
 
 def _first_tagged_ins_addr_8616(node: object) -> int | None:
     """Return the first binary instruction tag in one structured C subtree."""
-    return collect_structured_subtree_entry_tags_8616(node).first_instruction_addr
+    return cast(
+        _StructuredSubtreeEntryTagsBoundary8616,
+        collect_structured_subtree_entry_tags_8616(node),
+    ).first_instruction_addr
 
 
-def _tagged_block_addrs_8616(node: object) -> tuple[int, ...]:
+def _tagged_block_addrs_8616(
+    node: object,
+    session: StructuredSubtreeEntryTagQuerySession8616 | None = None,
+) -> tuple[int, ...]:
     """Return every VEX block tag in one structured C subtree."""
-    return collect_structured_subtree_entry_tags_8616(node).block_addrs
+    if session is not None:
+        return cast(_StructuredSubtreeEntryTagsBoundary8616, session.current(node)).block_addrs
+    return cast(
+        _StructuredSubtreeEntryTagsBoundary8616,
+        collect_structured_subtree_entry_tags_8616(node),
+    ).block_addrs
 
 
 def _first_tagged_block_addr_8616(node: object) -> int | None:
     """Return the first VEX block tag in one structured C subtree."""
-    return collect_structured_subtree_entry_tags_8616(node).first_block_addr
+    return cast(
+        _StructuredSubtreeEntryTagsBoundary8616,
+        collect_structured_subtree_entry_tags_8616(node),
+    ).first_block_addr
 
 
 def _first_tagged_cfg_target_8616(node: object) -> int | None:
@@ -390,7 +417,10 @@ def _first_tagged_cfg_target_8616(node: object) -> int | None:
     start with a later instruction in the same VEX block, which is not a valid
     successor key and can make a terminal branch look disconnected.
     """
-    entry_tags = collect_structured_subtree_entry_tags_8616(node)
+    entry_tags = cast(
+        _StructuredSubtreeEntryTagsBoundary8616,
+        collect_structured_subtree_entry_tags_8616(node),
+    )
     return entry_tags.first_block_addr or entry_tags.first_instruction_addr
 
 
@@ -1467,6 +1497,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
     failure_count = 0
     preserved_side_effect_count = 0
     changed = False
+    tag_session = StructuredSubtreeEntryTagQuerySession8616(root)
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CIfElse):
             continue
@@ -1494,8 +1525,8 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 ):
                     replay_evidence = classify_cfg_binary_arm_orientation_8616(
                         semantic_root_fact,
-                        _tagged_block_addrs_8616(semantic_body),
-                        _tagged_block_addrs_8616(node.else_node),
+                        _tagged_block_addrs_8616(semantic_body, tag_session),
+                        _tagged_block_addrs_8616(node.else_node, tag_session),
                         successors,
                     )
                     if replay_evidence.is_complementary:
@@ -1621,6 +1652,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                         node.condition_and_nodes = list(
                             owned_arms.condition_and_nodes
                         )
+                        tag_session.record_mutation()
                         changed = True
                         _debug_condition_chain_8616(
                             "multi-arm-owner-materialized",
@@ -1704,6 +1736,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                         )
                     node.condition_and_nodes = list(multi_arm.condition_and_nodes)
                     node.else_node = multi_arm.else_node
+                    tag_session.record_mutation()
                     metadata_codegen._inertia_multi_arm_return_chain_materialized_8616 = True
                     metadata_codegen._inertia_multi_arm_return_expressions_8616 = (
                         multi_arm.return_expressions
@@ -1776,6 +1809,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             )
             node.condition_and_nodes = [(replacement, first_body)]
             prune_materialized_call_output_stack_carriers_8616(codegen)
+            tag_session.record_mutation()
             materialized_count += 1
             changed = True
             _debug_condition_chain_8616(
@@ -1929,6 +1963,12 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             record_condition_precision_evidence_8616(
                 project, codegen, cast(CExpression, condition), assignment_diamond.condition
             )
+            record_condition_replay_fact_8616(
+                codegen,
+                root_fact,
+                assignment_diamond.true_target,
+                assignment_diamond.false_target,
+            )
             true_body: CStatement = CStatements(
                 [assignment_diamond.true_assignment],
                 codegen=codegen,
@@ -1945,6 +1985,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 codegen=codegen,
             )
             prune_materialized_call_output_stack_carriers_8616(codegen)
+            tag_session.record_mutation()
             materialized_count += 1
             changed = True
             _debug_condition_chain_8616(
@@ -1982,17 +2023,52 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                     )
             marker = "inertia_structuring_single_branch_materialized_8616"
         else:
+            assignment_replay_required = (
+                tags.get("inertia_structuring_assignment_diamond_materialized_8616") is True
+            )
+            replay = select_condition_replay_fact_8616(
+                root_fact,
+                condition_replay_facts_8616(codegen),
+            )
+            if assignment_replay_required and replay is None:
+                _debug_condition_chain_8616(
+                    "assignment-diamond-replay-fact-refused",
+                    fact_block=root_fact.block_addr,
+                    fact_src=root_fact.src_insn,
+                )
+                failure_count += 1
+                continue
             arm_orientation = classify_cfg_binary_arm_orientation_8616(
                 root_fact,
-                _tagged_block_addrs_8616(body),
-                _tagged_block_addrs_8616(node.else_node),
+                _tagged_block_addrs_8616(body, tag_session),
+                _tagged_block_addrs_8616(node.else_node, tag_session),
                 successors,
             )
             true_orientation = arm_orientation.true_arm
             false_orientation = arm_orientation.false_arm
             true_polarity = arm_orientation.true_polarity
-            replacement = None
-            if arm_orientation.is_complementary:
+            replacement = (
+                _materialize_cfg_condition_chain_expr_8616(
+                    project,
+                    codegen,
+                    root_fact,
+                    conditions_by_block,
+                    successors,
+                    replay.true_target,
+                    replay.false_target,
+                )
+                if replay is not None
+                else None
+            )
+            if assignment_replay_required and replacement is None:
+                _debug_condition_chain_8616(
+                    "assignment-diamond-replay-materialization-refused",
+                    fact_block=root_fact.block_addr,
+                    fact_src=root_fact.src_insn,
+                )
+                failure_count += 1
+                continue
+            if replacement is None and arm_orientation.is_complementary:
                 materialized = materialize_condition_ir_expression_8616(project, codegen, root_fact)
                 if materialized is not None:
                     replacement = materialized if true_polarity else invert_structured_condition_8616(
@@ -2076,6 +2152,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         node.condition_and_nodes = [(replacement, body)]
         if prune_call_output_carriers:
             prune_materialized_call_output_stack_carriers_8616(codegen)
+        tag_session.record_mutation()
         materialized_count += 1
         changed = True
         _debug_condition_chain_8616(
@@ -2117,6 +2194,9 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         preserved_side_effect_count=preserved_side_effect_count,
     )
     metadata_codegen._inertia_structuring_condition_chain_stats_8616 = stats
+    metadata_codegen._inertia_structured_subtree_entry_tag_query_stats_8616 = (
+        tag_session.stats()
+    )
     _debug_condition_chain_8616("stats", stats=stats)
     if stats.classified_fact_count > 0 and stats.materialized_count == 0:
         raise PipelineHardError("classified structuring condition chain was not materialized")
@@ -2149,6 +2229,8 @@ def materialize_structuring_conditions_8616(
         if isinstance(raw_typed_conditions, (list, tuple))
         else ()
     )
+    stage_project._inertia_decompiler_stage = "structuring:condition_materialization:chains"
+    chains_changed = materialize_structuring_condition_chains_8616(project, codegen)
     stage_project._inertia_decompiler_stage = "structuring:condition_materialization:loops"
     loop_stats = materialize_typed_loop_continuation_conditions_8616(
         root,
@@ -2161,8 +2243,6 @@ def materialize_structuring_conditions_8616(
     _debug_condition_chain_8616("typed-loops", stats=loop_stats)
     if loop_stats.classified_fact_count > 0 and loop_stats.materialized_count == 0:
         raise PipelineHardError("classified typed loop condition was not materialized")
-    stage_project._inertia_decompiler_stage = "structuring:condition_materialization:chains"
-    chains_changed = materialize_structuring_condition_chains_8616(project, codegen)
     stage_project._inertia_decompiler_stage = "structuring:condition_materialization:provenance"
     provenance_stats = replay_codegen_structured_condition_segment_provenance_8616(codegen)
     _debug_condition_chain_8616(

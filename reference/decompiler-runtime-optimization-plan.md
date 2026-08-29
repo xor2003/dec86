@@ -35,24 +35,171 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   runtime segment lowering is 1.39 seconds. The latter spends about 0.75 seconds
   in positive-BP argument materialization, including 0.713 seconds on the first
   all-caller argument-width census. Late stable replays total under one second.
-- The first indexed replay spends 2.40 seconds collecting project-wide global
-  object source evidence. The artifact is cached only inside one project, so
-  each isolated function worker rebuilds the same all-caller evidence.
+- Complete pointer/global-source and direct-caller callsite evidence now crosses
+  both project and clean-worker boundaries. On sidecar-free CMP16, worker callee
+  census time fell from 1.023 to 0.002 seconds with zero range rescans; the
+  previously measured 2.40-second global-source worker rebuild is also absent.
 - An opt-in clean-worker cProfile of the six-function CMP16 sweep attributes
   17.64 of 33.95 profiled seconds in its slowest worker to Structuring
   validation priming, including 5.79 seconds of callsite-summary work and 2.09
   seconds of callee argument evidence. A same-checkout profiled A/B reduced 60
   neighbor-call queries to 15 collectors, helper time from 0.762 to 0.108
   seconds, and wall from 43.586 to 42.785 seconds; both runs returned status 0.
-- Runtime segment orchestration now invokes positive-BP materialization once
-  per pass. On current CMP16, positive-BP work fell from 14 calls / 1.271
-  seconds to 8 calls / 0.739 seconds; runtime segment lowering fell from 4.591
-  to 3.199 seconds. Same-tree generated C remained byte-identical and both
-  validation gates passed.
-- Callsite attachment now reuses exact same-codegen summaries while call-name
-  metadata is stable. The second attachment replay removed 14 of 28 summary
-  rebuilds; missing summaries and name-changing passes retain binary recovery.
-- The 17,846-line `decompiler_postprocess_stage.py` remains a development,
+- The accepted caller-census transport profile emits byte-identical C at
+  `8392efb49c84361d0e0a64f34ed7dc7415d0a98a9714e4145e8d54d8b2f57850`,
+  reports `validation=passed` and clean whole-tail validation, and uses 277,140
+  KiB RSS. One-function profiled wall remains within noise (41.66 versus 41.57
+  seconds) because collection moved once to the parent; multi-worker sweeps no
+  longer repeat that CPU cost per function.
+- Caller-indexed typed summaries now cross the same project/worker boundary.
+  On the accepted CMP16 profile, callsite inventory rebuilding fell from 2.80
+  to 0.35 seconds, declaration reconciliation from 3.54 to 1.53 seconds, and
+  the Structuring validation prime from 15.46 to 13.52 seconds (12.5%). A
+  mutation-invalidated Structuring call-return index then reduced call-return
+  condition materialization from 1.32 to 0.41 seconds, placement classification
+  from 0.78 to 0.04 seconds, and exact bound-call counting from 0.47 to 0.004
+  seconds. The combined validation prime is 13.04 seconds, 15.6% below the
+  original 15.46-second profile; the shared deep iterator fell from 3.61 to
+  2.85 seconds. The C
+  hash remains `8392efb49c84361d0e0a64f34ed7dc7415d0a98a9714e4145e8d54d8b2f57850`;
+  focused and whole-tail validation pass.
+- Consecutive stable optimization passes now reuse the prior pass's exact
+  after-state witness as the next before-state witness. On the accepted CMP16
+  profile, optimization-owned tail-validation input builds fell from 14 to 8,
+  total builds from 17 to 11, cumulative witness cost from 2.22 to 1.27
+  seconds, and postprocess time from 2.71 to 1.57 seconds. A typed closed
+  counter and an integration test prove one rebuild plus one reuse while a
+  later falsely stable mutation is still detected, validated, rejected, and
+  rolled back. Generated C remains byte-identical and both validation gates
+  pass.
+- Interprocedural input-storage collection now closes physical and type-class
+  evidence before constructing caller SSA. On CMP16, all three logical inputs
+  are typed `signedness_unknown` refusals, so the previously wasted caller-SSA
+  build disappears. Refused-callsite collection fell from 1.53 to 0.001
+  seconds, interface reconciliation from 1.65 to 0.12 seconds, and Structuring
+  validation priming from 12.58 to 11.26 seconds (10.5%). The preflight owns
+  closed raw/normalized/classified/materialized/failure accounting; generated
+  C remains byte-identical and both validation gates pass.
+- Runtime segment lowering now rejects impossible Structured-C node kinds
+  before segmented-expression matching. The accepted CMP16 trace observed
+  8,869 address probes with no matches and 82 read matches, all rooted at
+  dereference unary nodes. Matcher prefiltering reduced runtime segment
+  lowering from 3.015 to 2.835 seconds, the segment/global Structuring prime
+  from 1.754 to 1.616 seconds, validation priming from 11.257 to 10.843
+  seconds, and `_decompile_8616` from 19.676 to 19.097 seconds. Generated C is
+  byte-identical at the accepted hash and both validation gates pass.
+- Direct-global call-return recovery now obtains its typed Capstone projection
+  from the request-owned immutable function-evidence inventory. Across the
+  accepted CMP16 collector cohort, repeated ordered decode and instruction-view
+  construction fell from about 0.235 to 0.090 seconds (62%); a focused test
+  proves repeated reads build the projection once, while the inventory's
+  existing binary-surface tests retain mutation invalidation. The concurrent
+  whole-process profile was load-contaminated, so no end-to-end wall claim is
+  made from that run. Generated C and both validation gates remain unchanged.
+- The legacy JCC consumer now retains the frontend's typed function-instruction
+  inventory instead of discarding its closed completeness result. When that
+  inventory contains the exact queried instruction, the bounded byte-by-byte
+  rescue is unnecessary; incomplete or missing-address evidence still takes
+  the existing fallback. On accepted CMP16, linear rescans fell from 91 calls
+  and 0.452 seconds to zero, call-return recovery from 0.572 to 0.080 seconds
+  (86%), and decoded-JCC rewrite from 0.794 to 0.464 seconds (42%). Focused
+  tests prove both the complete-evidence skip and incomplete-evidence rescue.
+  Generated C is byte-identical at the accepted hash and both validation gates
+  pass. Concurrent load contaminated whole-process timing, so no end-to-end
+  wall claim is made from this run.
+- Bounded instruction reachability now consumes the exact decoded-block
+  inventory instead of bypassing it through a fresh `factory.block` lift. The
+  typed inventory retains the immutable third-party block projection needed by
+  reachability while remaining free of C AST, alias, type, and validation
+  state. On CMP16, 174 of 314 reachability requests reused an existing block;
+  combined decoded-block misses fell from 664 to 490 (26%), and the owned
+  reachability cohort fell from 2.730 to 2.533 seconds despite heavier load.
+  A two-entry/shared-tail test proves cross-census reuse. Generated C remains
+  byte-identical and both validation gates pass; overlapping decompiler runs
+  make whole-process wall and RSS unsuitable for an acceptance claim.
+- Tail-validation input normalization now uses one request-local, cycle-aware
+  atom builder. Repeated acyclic evidence subgraphs reuse their exact atom;
+  any ancestor cycle marks the containing projection non-cacheable, and no
+  atom survives into a later top-level generation request. On accepted CMP16,
+  dynamic atom calls fell 60%, tail-validation input generation from 1.982 to
+  0.685 seconds (65%), optimization witnesses from 1.686 to 0.582 seconds
+  (65%), and postprocess from 2.318 to 1.281 seconds (45%). Generated C is
+  byte-identical at the accepted hash, both validation gates pass, wall is
+  41.76 seconds, and RSS is 327,116 KiB. Focused tests prove acyclic reuse,
+  path-sensitive cycle preservation, and mutation visibility across requests.
+- Register-source recovery now retains only immutable decoded CFG inputs under
+  an exact block/predecessor generation, resolves each CALL target from the
+  already-decoded instruction once, and reuses frontend leaf-block decode
+  evidence. Semantic register and CALL effects are still recomputed on every
+  query. Lowering also consumes a complete registered IR condition artifact
+  before considering its exact-byte relift fallback. On accepted CMP16,
+  register-source recovery fell from 2.043 to 0.653 seconds (68%), condition
+  artifact collection from 2.191 to 0.788 seconds (64%), block transfer from
+  1.428 to 0.449 seconds (69%), and block-based direct-target recovery from
+  1,747 calls / 0.562 seconds to 67 calls / 0.084 seconds. The same 3,300
+  semantic transfers still execute, proving the optimization did not cache an
+  Alias verdict. Generated C remains byte-identical at the accepted hash,
+  focused and whole-tail validation pass, RSS is 328,120 KiB, and
+  `_decompile_8616` measured 19.293 seconds versus 22.941 seconds in the prior
+  profile. The latter comparison is diagnostic because the shared worktree
+  changed between profiles; the owned recovery cohort is the acceptance
+  evidence.
+- Callsite attachment now consumes the existing complete, caller-indexed
+  program summary artifact and invokes binary summarization only for exact
+  missing coordinates. Across accepted CMP16, attachment-owned
+  `summarize_x86_16_callsite` calls fell from 84 to 6 (93%); total summary
+  calls fell from 126 to 43, although that broader count also reflects
+  concurrent shared-tree changes. The six attachment requests fell from 1.661
+  to 0.785 seconds despite severe concurrent load, and thirteen
+  retained-evidence lookups cost 0.003 seconds. Focused tests prove both
+  complete-evidence reuse and
+  missing-coordinate fallback. Generated C remains byte-identical at the
+  accepted hash, both validation gates pass, and profiled RSS is 328,320 KiB.
+  The run was load-contaminated, so no whole-process wall claim is made.
+- Direct-call patching now consumes the complete typed frontend instruction
+  inventory and retains its block-by-block lift only for incomplete evidence.
+  Across the accepted CMP16 cohort, eleven `patch_direct_call_sites` calls fell
+  from 0.313 to 0.185 seconds (41%), while generated C remained byte-identical
+  at the accepted hash and both validation gates passed. Focused tests prove
+  complete-inventory reuse and the incomplete-inventory fallback. Concurrent
+  decompilers contaminated wall and RSS, so neither is used for acceptance.
+- The mandatory runtime layer-import guard now stores typed, content-addressed
+  verdicts per guarded file instead of treating every source edit as a reason
+  to parse all 507 guarded modules again. A cold fresh-process scan measured
+  19.43 seconds and 373,152 KiB RSS; a fresh process with one file verdict
+  invalidated measured 0.57 seconds and 35,272 KiB RSS, a 97% feedback-loop
+  reduction. Cached violations remain violations and still stop startup;
+  changes to checker code invalidate every stored verdict. Focused tests prove
+  one-file invalidation, violation retention, and checker-wide invalidation.
+- Structuring condition recovery now builds exact subtree entry-tag projections
+  bottom-up once per current AST generation and invalidates the full index at
+  every reported mutation. On accepted CMP16, 52 expensive subtree walks became
+  two complete index builds with no fallback; block-tag query time fell from
+  1.426 to 0.210 seconds (85%) and condition-chain materialization from 2.460
+  to 0.497 seconds (80%). The index has closed build/query accounting and a
+  cycle-safe exact fallback. Generated C remains byte-identical at the accepted
+  hash and both validation gates pass.
+- Runtime segment lowering now suppresses the annotation materializer's nested
+  positive-BP fallback because the orchestrator immediately invokes that same
+  lowering owner itself. On current CMP16, positive-BP materialization fell
+  from 14 calls / 1.271 seconds to 8 calls / 0.739 seconds (42% cumulative),
+  and runtime segment lowering fell from 4.591 to 3.199 seconds (30%). A
+  same-tree A/B emitted byte-identical C at
+  `d5330341b1caf48ab90d15dd2921fe0482b575fcc048af758356a17614e77b79`;
+  function and whole-tail validation pass. Profiled wall improved only from
+  31.46 to 30.86 seconds, so this is accepted as a local traversal reduction,
+  not a material end-to-end speedup.
+- Callsite attachment now reuses its exact same-codegen summary inventory when
+  call-name metadata did not change; name-changing passes and missing
+  coordinates still rebuild from binary evidence. On current CMP16, the second
+  attachment replay removed 14 of 28 attachment-owned summary calls. Attachment
+  time fell from 0.733 to 0.656 seconds despite a heavily load-contaminated
+  comparison run. Current-tree C remains byte-identical at
+  `d5330341b1caf48ab90d15dd2921fe0482b575fcc048af758356a17614e77b79`,
+  and function plus whole-tail validation pass. The remaining 54 summary calls are
+  owned by program-inventory construction, callee census, and range facts and
+  require scope analysis before consolidation.
+- The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
   inert, so mypyc remains the available native-compilation experiment.
@@ -63,10 +210,9 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P1 | Project-wide global-source and callee-arity evidence is rebuilt in every isolated worker | Adds about 3.1 seconds per affected function and repeats whole-program caller work | Whole-binary parallel runs duplicate the same immutable evidence in each process |
-| P1 | The first productive segment/global replay costs about 4.74 seconds | Large functions remain slow even with stable evidence caches | Indexed and runtime-segment owners dominate the remaining semantic replay time |
+| P1 | Structuring validation priming costs 14.25 seconds in the refreshed profiled run | Large functions remain slow even with transported caller evidence | Runtime segment lowering is down to 3.20 seconds, while condition, argument, and segment/global consumers still replay sequentially |
 | P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Alias/IR/Widening edits legitimately rebuild a roughly 30-second program artifact |
-| P1 | Stable semantic consumers still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
+| P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
@@ -87,65 +233,11 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 ## Ordered Work
 
-### 1. Persist Project-Wide Caller Evidence
+### 1. Publish Consumer-Specific Mutation Generations
 
-**Status:** in progress; source codec accepted, parent collection and dirty transport pending
-
-**Reason:** The first indexed replay spends 2.40 seconds rebuilding immutable
-global-source evidence, while the first runtime replay spends another 0.713
-seconds rebuilding callee arity/width evidence. Neither all-caller artifact
-crosses the persistent parent/worker boundary.
-
-**Work:**
-
-- Add typed codecs for complete global-source and callee arity/width evidence.
-- Extend the coherent project-evidence bundle so layouts, ranges, source facts,
-  and caller-interface facts share one schema and dependency identity.
-- Collect both artifacts once on the complete parent catalog and transport them
-  without reclassification into clean workers.
-- Include every evidence owner in the scoped cache digest and reject partial or
-  incoherent bundles.
-- Preserve closed raw/normalized/classified/materialized/failure accounting.
-
-**DoD:** A warm isolated worker performs zero transported all-caller rebuilds;
-the first indexed/runtime replays fall by at least 2.7 seconds; codec round trips
-are exact; stale, partial, and layout-mismatched records are refused; generated
-C, validation, determinism, and the 2 GB budget are unchanged.
-
-**Definition of Failure:** CLI reclassifies semantic facts; evidence can be
-paired with a different layout, caller census, or target; cache invalidation
-omits an owner; a missing artifact silently becomes empty evidence; output or
-validation changes; or measured worker time does not materially improve.
-
-### 2. Reduce the First Productive Segment/Global Replay
-
-**Status:** child attribution complete; blocked on Step 1 transport
-
-**Reason:** The first replay costs 4.74 seconds after stable cache reuse. Step 1
-owns 2.40 seconds of indexed work and 0.713 seconds of runtime caller census;
-remaining repeated runtime AST walks are the next measured owner.
-
-**Work:**
-
-- Reprofile after Step 1 and retain exact mutation/result accounting.
-- Reuse read-only AST query projections only inside one unchanged root
-  generation; invalidate immediately after mutation.
-- Avoid rerunning evidence collectors whose typed project artifact is already
-  attached and coherent.
-- Keep productive materialization and every refusal path unchanged.
-
-**DoD:** The first replay falls by at least 15%; at least one measured child
-owner materially improves; current C hash and both validation gates remain
-stable; focused equivalence/mutation tests and strict typing pass.
-
-**Definition of Failure:** A productive lowering is skipped; an AST index
-survives mutation; evidence is inferred from rendered text; closed accounting
-is weakened; only a microbenchmark improves; or output/validation changes.
-
-### 3. Publish Consumer-Specific Mutation Generations
-
-**Status:** in progress; exact direct-stack projection reuse accepted, but its
-caller still lacks a complete authoritative generation scope
+**Status:** in progress; exact direct-stack projection and immutable program
+callsite-summary reuse are accepted, but callers still lack a complete
+authoritative AST mutation generation scope
 
 **Reason:** Exact full-AST fingerprints can prove stability but cost seconds on
 productive Structuring rounds. Call order, object identity, and pass booleans
@@ -184,14 +276,20 @@ order, object identity, or an unverified `changed` result; a relevant mutation
 does not invalidate its consumer; generations are owned by CLI/Rewrite for
 earlier semantics; accounting does not close; or productive work is skipped.
 
-### 4. Bound Remaining C-AST Traversal
+### 2. Bound Remaining C-AST Traversal
 
-**Status:** pending after Steps 1-2 reprofile
+**Status:** in progress; mutation-invalidated call-return index, exact
+runtime-segment candidate dispatch, immutable direct-global instruction and
+register-source CFG projections, typed complete-instruction JCC and direct-call
+patch dispatch, bottom-up condition-subtree tag indexing, and shared exact
+frontend block decode reuse accepted; duplicate positive-BP fallback removed
+from runtime segment orchestration
 
-**Reason:** The deep iterator owns 23.440 seconds and child replacement owns
-9.558 seconds, but previous bounded cohorts reduced call counts without
-materially reducing aggregate iterator time. More generic indexing is not
-justified without a newly measured consumer.
+**Reason:** The accepted call-return index reduced the current benchmark's
+shared deep iterator from 3.61 to 2.85 seconds, but other traversal consumers
+remain. A previous broader profile attributed 23.440 seconds to deep iteration
+and 9.558 seconds to child replacement, so each next index still needs a newly
+measured consumer rather than a generic cache.
 
 **Work:**
 
@@ -214,13 +312,15 @@ receives cached nodes; semantic facts are inferred from C text or shape alone;
 only a microbenchmark improves; aggregate traversal time is flat; memory is
 unbounded; or ordering changes.
 
-### 5. Make Validation Transactions Dirty-Pass Driven
+### 3. Make Validation Transactions Dirty-Pass Driven
 
-**Status:** in progress
+**Status:** in progress; exact consecutive optimization witnesses reuse a
+transaction-local proven after-state, and each exact witness now memoizes only
+cycle-free shared evidence within its request
 
 **Reason:** Validation is authoritative, but a provably stable pass should not
 pay changed-pass regeneration, snapshot, cycle-scan, and tail-summary costs.
-This follows Step 3 because reliable mutation generations are the safety
+This follows Step 2 because reliable mutation generations are the safety
 boundary.
 
 **Work:**
@@ -229,6 +329,9 @@ boundary.
   orchestration owner.
 - Use authoritative mutation generations plus the independent mutation witness
   to detect a pass that falsely reports stability.
+- Retain the accepted transaction-local exact-witness cache: every optimization
+  pass still computes an after-state witness; reuse applies only to the next
+  before-state, and every reported or witnessed mutation invalidates it.
 - Delay expensive snapshots and summaries only where rollback safety permits.
 - Share unchanged-generation cycle and traversal results.
 - Preserve unconditional validation for reported or witnessed mutations.
@@ -243,9 +346,10 @@ restore metadata and AST together; declaration or typed-input changes are
 missed; validator strength is reduced; or saved work is not visible in a
 current profile.
 
-### 6. Split and Type the Postprocess Stage
+### 4. Split and Type the Postprocess Stage
 
-**Status:** in progress; secondary runtime priority
+**Status:** in progress; secondary runtime priority; tail-validation atom
+normalization extracted into a typed module below 350 lines
 
 **Reason:** The 17,846-line stage materially slows comprehension, review, type
 checking, and safe agent work. Extraction must improve ownership rather than
@@ -271,9 +375,9 @@ and validation remain unchanged.
 untyped owned contract; semantic recovery moves into Rewrite; the stage grows;
 public behavior exists only as implementation detail; or focused gates fail.
 
-### 7. Compile Only a Reprofiled Hotspot With mypyc
+### 5. Compile Only a Reprofiled Hotspot With mypyc
 
-**Status:** pending after Steps 1-6
+**Status:** pending after Steps 1-4
 
 **Reason:** Previous `c_ast_utils` and `vex_import` native experiments produced
 no repeatable runtime gain and increased memory or build cost. mypyc is useful
@@ -297,7 +401,7 @@ continues to pass.
 `Any` is hidden to satisfy mypyc; output or validation changes; build/startup
 cost consumes the gain; memory materially regresses; or timing is noise.
 
-### 8. Tune Outer Function Parallelism
+### 6. Tune Outer Function Parallelism
 
 **Status:** pending after single-function memory and time fall
 
@@ -324,7 +428,7 @@ failure, timeout, and fallback counts do not regress.
 improves because functions disappear or fall back; output order changes;
 timeouts increase; or worker overhead makes the default slower.
 
-### 9. Final Regression and Performance Ratchet
+### 7. Final Regression and Performance Ratchet
 
 **Status:** pending
 
@@ -349,6 +453,12 @@ validators are weakened; timing uses one warm run; output or validation
 regresses; or the ratchet is tighter than observed machine variance.
 
 ## Progress Rule
+
+Current estimated completion is 55%. Finishing the remaining acceptance work
+is estimated at 6-10 focused engineering days: 3-5 days for Steps 1-3, 1-2
+days for Step 4, and about one day each for Steps 5, 6, and 7. Re-estimate after
+each top-level DoD closes; shared-worktree changes can invalidate timing but do
+not change the acceptance criteria.
 
 Work on the first incomplete step unless a blocker is explicitly recorded.
 After every accepted change, update the relevant status and current evidence,

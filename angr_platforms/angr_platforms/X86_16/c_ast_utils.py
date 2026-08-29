@@ -481,15 +481,20 @@ def _replace_c_children_8616(
             continue
         seen.add(current_id)
 
+        child_attrs = frozenset(_structured_slot_names_8616(current))
         for attr in scalar_attrs:
+            if attr not in child_attrs:
+                continue
             if _process_scalar_attr(current, attr, node_stack):
                 changed = True
         for attr in list_attrs:
+            if attr not in child_attrs:
+                continue
             if _process_list_attr(current, attr, node_stack):
                 changed = True
-        if _process_condition_pairs(current, node_stack):
+        if "condition_and_nodes" in child_attrs and _process_condition_pairs(current, node_stack):
             changed = True
-        if _process_switch_cases(current, node_stack):
+        if "cases" in child_attrs and _process_switch_cases(current, node_stack):
             changed = True
 
     return changed
@@ -517,7 +522,10 @@ def _iter_c_nodes_deep_8616(node: object, seen: set[int] | None = None) -> Itera
                 value = getattr(current, attr)
             except Exception:
                 continue
-            node_stack.extend(_iter_c_node_children_8616(value, seen_values))
+            if _structured_codegen_node_8616(value):
+                node_stack.append(value)
+            elif isinstance(value, (dict, list, tuple, set)):
+                node_stack.extend(_iter_c_node_children_8616(value, seen_values))
 
 
 def _iter_c_node_occurrences_8616(

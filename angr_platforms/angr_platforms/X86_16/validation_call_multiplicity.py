@@ -24,7 +24,7 @@ from .c_ast_utils import (
     _structured_codegen_node_8616,
     _structured_slot_names_8616,
 )
-from .callsite_summary import CallsiteSummary8616
+from .callsite_summary import CallsiteSummary8616, callsite_summary_inventory_8616
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -140,14 +140,18 @@ class CallsiteMultiplicityValidationReport8616:
 
 def _required_targets_by_callsite_8616(codegen: object) -> dict[int, tuple[int, ...]]:
     """Return exact binary target evidence grouped by required callsite address."""
-    try:
-        raw_summaries = cast(_CodegenCallsiteSurface8616, codegen)._inertia_callsite_summaries
-    except AttributeError:
-        return {}
-    if not isinstance(raw_summaries, Mapping):
+    inventory = callsite_summary_inventory_8616(codegen)
+    if inventory:
+        raw_summary_source: object = inventory
+    else:
+        try:
+            raw_summary_source = cast(_CodegenCallsiteSurface8616, codegen)._inertia_callsite_summaries
+        except AttributeError:
+            return {}
+    if not isinstance(raw_summary_source, Mapping):
         return {}
     targets: defaultdict[int, set[int]] = defaultdict(set)
-    for summary in raw_summaries.values():
+    for summary in raw_summary_source.values():
         if (
             isinstance(summary, CallsiteSummary8616)
             and not summary.stack_probe_helper
@@ -163,10 +167,12 @@ def _required_targets_by_callsite_8616(codegen: object) -> dict[int, tuple[int, 
 def _callsite_addr_8616(call: CFunctionCall) -> int | None:
     """Return exact instruction identity retained on a third-party C call."""
     tags = call.tags
-    if not isinstance(tags, Mapping):
+    try:
+        get_tag = tags.get
+    except AttributeError:
         return None
     for key in ("ins_addr", "insn_addr", "stmt_addr", "addr"):
-        value = tags.get(key)
+        value = get_tag(key)
         if isinstance(value, int):
             return value
     return None

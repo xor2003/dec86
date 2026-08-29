@@ -17,6 +17,9 @@ from ..ir.ssa_function import SSAFunctionArtifact
 from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
 from .logical_stack_memory_projection import project_logical_stack_memory_alias_8616
+from .logical_stack_storage_identity import (
+    project_logical_stack_storage_identities_8616,
+)
 from .stack_memory_access_projection import (
     alias_stack_memory_storage_8616,
     project_stack_memory_access_8616,
@@ -129,6 +132,10 @@ def _incomplete_upstream_artifact_8616(
     )
     refusals = access_refusals + phi_refusals + overlap_refusals
     logical = project_logical_stack_memory_alias_8616(function_ssa, (), ())
+    logical_storage = project_logical_stack_storage_identities_8616(
+        function_ssa.function_addr,
+        function_ssa.logical_memory,
+    )
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
         source_ssa=function_ssa,
@@ -143,6 +150,9 @@ def _incomplete_upstream_artifact_8616(
         logical_accesses=logical.accesses,
         logical_refusals=logical.refusals,
         logical_stats=logical.stats,
+        logical_storage_identities=logical_storage.identities,
+        logical_storage_refusals=logical_storage.refusals,
+        logical_storage_stats=logical_storage.stats,
     )
 
 
@@ -273,6 +283,10 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         tuple(facts),
         tuple(composed_accesses),
     )
+    logical_storage = project_logical_stack_storage_identities_8616(
+        function_ssa.function_addr,
+        function_ssa.logical_memory,
+    )
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
         source_ssa=function_ssa,
@@ -286,6 +300,9 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         logical_accesses=logical.accesses,
         logical_refusals=logical.refusals,
         logical_stats=logical.stats,
+        logical_storage_identities=logical_storage.identities,
+        logical_storage_refusals=logical_storage.refusals,
+        logical_storage_stats=logical_storage.stats,
     )
 
 

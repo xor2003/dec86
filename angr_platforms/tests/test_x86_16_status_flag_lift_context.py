@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import io
+from types import SimpleNamespace
 from typing import Any
 
 import angr
 import pytest
+from angr.analyses.decompiler.clinic import Clinic
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.compat import apply_x86_16_compatibility
 from angr_platforms.X86_16.ir.status_flag_lift_context import (
     StatusFlagLiftArtifact8616,
+    StatusFlagLiftCandidate8616,
+    StatusFlagLiftSession8616,
     active_status_flag_lift_artifact_8616,
     active_status_flag_lift_context_8616,
 )
@@ -15,6 +20,7 @@ from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.semantics.status_flag_contracts import (
     INCDEC_STATUS_FLAG_WRITES_8616,
+    SHIFT_COUNT_MANY_STATUS_FLAG_WRITES_8616,
     SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616,
     STATUS_FLAGS_8616,
     StatusFlag8616,
@@ -216,3 +222,45 @@ def test_cfg_context_rejects_classified_but_unmaterialized_decisions() -> None:
     assert error.value.layer == "ir:status_flag_lift_context"
     assert error.value.details["classified_fact_count"] == 2
     assert error.value.details["materialized_count"] == 0
+
+
+def test_session_consumes_original_address_candidate_from_rebased_slice() -> None:
+    candidate = StatusFlagLiftCandidate8616(
+        instruction_address=0x1419B,
+        written=SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616,
+        dead_writes=SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616,
+    )
+    session = StatusFlagLiftSession8616(
+        function_address=0x14199,
+        candidates=(candidate,),
+        original_linear_delta=0x13199,
+    )
+
+    dead = session.dead_write_mask(0x1002, SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616)
+
+    assert dead == SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616
+    assert session.materialized_addresses == frozenset({0x1419B})
+    session.finalize()
+    assert session.stats.complete
+
+
+def test_clinic_fast_relift_does_not_bypass_custom_x86_16_lifter() -> None:
+    apply_x86_16_compatibility()
+    clinic = SimpleNamespace(project=SimpleNamespace(arch=SimpleNamespace(name="86_16")))
+
+    assert Clinic._convert_vex_fast(clinic, object()) is None
+
+
+def test_cfg_context_consumes_defined_multibit_shift_writes() -> None:
+    project, function = _project_function(
+        bytes.fromhex("c1ee04 c1ef04 7500 c3"),
+        function_starts=(0x1000,),
+    )
+
+    with active_status_flag_lift_context_8616(project, function) as session:
+        candidate = next(candidate for candidate in session.candidates if candidate.instruction_address == 0x1000)
+        assert candidate.written == SHIFT_COUNT_MANY_STATUS_FLAG_WRITES_8616
+        _flags_puts(project, 0x1000)
+        assert 0x1000 in session.materialized_addresses
+
+    assert session.stats.complete

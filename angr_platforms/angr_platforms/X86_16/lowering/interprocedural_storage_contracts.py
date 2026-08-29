@@ -19,6 +19,8 @@ from .interprocedural_storage_return_passthrough_contracts import ReturnPassThro
 if TYPE_CHECKING:
     from .interprocedural_memory_output_object_contracts import MemoryOutputObjectContract8616
     from .interprocedural_storage_live_out_contracts import MemoryLiveOutUseFact8616
+    from .pointer_parameter_caller_target_contracts import PointerParameterCallerTarget8616
+    from .pointer_parameter_memory_output_contracts import PointerParameterMemoryOutputObject8616
 
 __all__ = [
     "CallsiteStorageBinding8616",
@@ -263,6 +265,7 @@ class CallsiteStorageTrials8616:
     returns: tuple[StorageTrial8616, ...] = ()
     live_outs: tuple[StorageTrial8616, ...] = ()
     memory_effects: tuple[MemoryLiveOutUseFact8616, ...] = ()
+    pointer_effects: tuple[PointerParameterCallerTarget8616, ...] = ()
     return_passthroughs: tuple[ReturnPassThroughTrial8616, ...] = ()
     stack_delta: int | None = None
 
@@ -304,6 +307,7 @@ class CallsiteStorageBinding8616:
     stack_delta: int
     live_outs: tuple[StorageTrial8616, ...] = ()
     memory_effects: tuple[MemoryLiveOutUseFact8616, ...] = ()
+    pointer_effects: tuple[PointerParameterCallerTarget8616, ...] = ()
     return_passthroughs: tuple[ReturnPassThroughTrial8616, ...] = ()
 
 
@@ -317,6 +321,7 @@ class FunctionStorageContract8616:
     stack_delta: int
     callsites: tuple[CallsiteStorageBinding8616, ...]
     memory_outputs: tuple[MemoryOutputObjectContract8616, ...] = ()
+    pointer_memory_outputs: tuple[PointerParameterMemoryOutputObject8616, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

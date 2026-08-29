@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.rustylib.ailment import Tags
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.alias.stack_memory_ssa import (
@@ -95,7 +96,7 @@ def _projection(
     *,
     bp_offset: int = -2,
     high_operand: object | None = None,
-    tags: dict[str, object] | None = None,
+    tags: object | None = None,
 ) -> tuple[structured_c.CVariable, structured_c.CBinaryOp]:
     variable = SimStackVariable(-4, 2, base="bp", name="local_2")
     cvar = structured_c.CVariable(
@@ -134,7 +135,7 @@ def _projection(
 def test_stack_word_load_materializes_exact_alias_projection() -> None:
     source = _alias_artifact((0x1010, -2))
     codegen = _Codegen(source)
-    cvar, root = _projection(codegen, tags={"ins_addr": 0x1010})
+    cvar, root = _projection(codegen, tags=Tags({"ins_addr": 0x1010}))
 
     result = materialize_stack_word_load_recompositions_8616(codegen, root)
 
@@ -144,6 +145,36 @@ def test_stack_word_load_materializes_exact_alias_projection() -> None:
     assert result.artifact.stats.raw_fact_count == 1
     assert result.artifact.stats.materialized_count == 1
     assert result.artifact.refusals == ()
+
+
+def test_stack_word_load_uses_tagged_canonical_argument_projection() -> None:
+    codegen = _Codegen(_alias_artifact((0x1010, 4)))
+    owner_variable = SimStackVariable(2, 2, base="bp", name="lhs")
+    owner = structured_c.CVariable(owner_variable, codegen=codegen)
+    record_stack_variable_coordinate_projection_8616(
+        codegen, variable=owner_variable, cvar=owner,
+        bp_offset=4, entry_sp_offset=2, size=2,
+    )
+    low = structured_c.CUnaryOp(
+        "Dereference", structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen), codegen=codegen
+    )
+    high = structured_c.CUnaryOp(
+        "Dereference", structured_c.CConstant(0x101, SimTypeShort(False), codegen=codegen), codegen=codegen
+    )
+    root = structured_c.CBinaryOp(
+        "Or", low,
+        structured_c.CBinaryOp(
+            "Mul", high,
+            structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen, tags=Tags({"ins_addr": 0x1010}),
+    )
+
+    result = materialize_stack_word_load_recompositions_8616(codegen, root)
+
+    assert result.root is owner
+    assert result.changed and result.artifact.complete
 
 
 def test_stack_word_load_materializes_registered_byte_pair_projection() -> None:
@@ -225,6 +256,30 @@ def test_stack_word_load_materializes_argument_through_proven_frame_coordinate()
     assert result.artifact.complete is True
     assert variable.size == 2
     assert isinstance(cvar.variable_type, SimTypeChar)
+
+
+def test_stack_word_load_retains_same_owner_without_logical_identity() -> None:
+    codegen = _Codegen(_alias_artifact())
+    owner, _unused = _projection(codegen)
+    root = structured_c.CBinaryOp(
+        "Or",
+        owner,
+        structured_c.CBinaryOp(
+            "Mul",
+            owner,
+            structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    result = materialize_stack_word_load_recompositions_8616(codegen, root)
+
+    assert result.root is root
+    assert result.changed is False
+    assert result.artifact.refusals[0].kind is (
+        StackWordLoadRefusalKind8616.NO_INSTRUCTION_PROVENANCE
+    )
 
 
 @pytest.mark.parametrize(

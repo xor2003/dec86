@@ -105,7 +105,10 @@ def test_callsite_finalization_reapplies_stack_aggregate_facts_when_call_replay_
 
 def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay(monkeypatch) -> None:
     project = object()
-    codegen = SimpleNamespace(project=project)
+    codegen = SimpleNamespace(
+        project=project,
+        cfunc=SimpleNamespace(statements=object()),
+    )
     calls: list[str] = []
 
     def direct_stack(_codegen: object) -> bool:
@@ -148,6 +151,11 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
         "_replay_runtime_segment_lowering_after_regen_8616",
         lambda _codegen: calls.append("runtime") or True,
     )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "recover_structuring_canonical_for_loops_8616",
+        lambda _codegen: calls.append("canonical_for") or False,
+    )
 
     assert cli_decompilation._finalize_callsite_arguments_after_noncall_regen_8616(codegen) is True
     assert calls == [
@@ -159,6 +167,7 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
         "stack_address",
         "runtime",
         "indexed",
+        "canonical_for",
     ]
 
 
@@ -166,7 +175,10 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
     monkeypatch,
 ) -> None:
     project = object()
-    codegen = SimpleNamespace(project=project)
+    codegen = SimpleNamespace(
+        project=project,
+        cfunc=SimpleNamespace(statements=object()),
+    )
     calls: list[str] = []
 
     def widening(candidate_project: object, candidate_codegen: object) -> bool:
@@ -206,6 +218,11 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
     monkeypatch.setattr(cli_decompilation, "finalize_late_ast_cleanup_8616", cleanup)
     monkeypatch.setattr(
         cli_decompilation,
+        "recover_structuring_canonical_for_loops_8616",
+        lambda candidate_codegen: calls.append("canonical_for") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
         "_replay_indexed_segmented_global_lowering_after_regen_8616",
         lambda candidate_codegen: calls.append("indexed_global") or False,
     )
@@ -239,11 +256,13 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
         "structuring",
         "cleanup",
         "indexed_global",
+        "canonical_for",
         "simplify",
         "call_return_selector",
         "direct_stack",
         "runtime_segment",
         "shared_calls",
+        "canonical_for",
     ]
 
 

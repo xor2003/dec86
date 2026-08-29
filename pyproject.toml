@@ -149,6 +149,17 @@ exclude = [
     "angr_platforms/angr_platforms.egg-info/",
 ]
 
+[[tool.mypy.overrides]]
+module = [
+    "angr_platforms.angr_platforms.X86_16.lowering.linear_global_decomposition_cache",
+    "angr_platforms.angr_platforms.X86_16.pipeline.result_contracts",
+    "angr_platforms.angr_platforms.X86_16.postprocess.pass_validation_policy",
+    "angr_platforms.angr_platforms.X86_16.postprocess.rollback_snapshot_cache",
+    "angr_platforms.angr_platforms.X86_16.postprocess.validation_contracts",
+    "angr_platforms.angr_platforms.X86_16.validation.control_flow_ast_index",
+]
+follow_imports = "normal"
+
 [tool.pytest.ini_options]
 testpaths = [
     "angr_platforms/tests",

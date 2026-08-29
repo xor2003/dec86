@@ -17,6 +17,7 @@ from typing import Protocol, cast
 
 from ..ir.indexed_address_contracts import IndexedAddressEvidence8616, IndexedAddressFact8616
 from ..ir.indexed_address_copy_contracts import IndexedAddressCopyEvidence8616
+from ..ir.indexed_address_range_contracts import IndexedLoopRangeEvidence8616
 from ..pipeline.errors import PipelineHardError
 from .alias_model_impl import AliasFailure, AliasStorageFacts, alias_facts_for_ir_address_8616
 from .indexed_address_access_classification import classify_indexed_alias_accesses_8616
@@ -31,6 +32,8 @@ from .indexed_address_contracts import (
 )
 from .indexed_address_copy_contracts import IndexedAliasCopyEvidence8616
 from .indexed_address_copy_projection import project_indexed_address_copies_8616
+from .indexed_address_range_contracts import IndexedAliasLoopRangeEvidence8616
+from .indexed_address_range_projection import project_indexed_loop_ranges_to_alias_8616
 from .storage_fact_join import build_segmented_alias_range_8616
 
 
@@ -40,9 +43,11 @@ class _CodegenBoundary8616(Protocol):
     _inertia_vex_ir_function_ssa: object
     _inertia_indexed_address_evidence_8616: IndexedAddressEvidence8616
     _inertia_indexed_address_copy_evidence_8616: IndexedAddressCopyEvidence8616
+    _inertia_indexed_loop_range_evidence_8616: IndexedLoopRangeEvidence8616
     _inertia_indexed_address_alias_evidence_8616: IndexedAddressAliasEvidence8616
     _inertia_indexed_address_alias_access_evidence_8616: IndexedAliasAccessEvidence8616
     _inertia_indexed_address_alias_copy_evidence_8616: IndexedAliasCopyEvidence8616
+    _inertia_indexed_loop_range_alias_evidence_8616: IndexedAliasLoopRangeEvidence8616
 
 
 def _source_key_8616(fact: IndexedAddressFact8616) -> tuple[object, ...]:
@@ -202,6 +207,18 @@ def apply_x86_16_indexed_address_aliases_8616(
             layer="alias",
         )
     try:
+        range_source = boundary._inertia_indexed_loop_range_evidence_8616
+    except AttributeError as error:
+        raise PipelineHardError(
+            "indexed loop-range IR evidence is missing before Alias projection",
+            layer="alias",
+        ) from error
+    if not isinstance(range_source, IndexedLoopRangeEvidence8616):
+        raise PipelineHardError(
+            "indexed loop-range IR evidence has the wrong pipeline contract",
+            layer="alias",
+        )
+    try:
         existing = boundary._inertia_indexed_address_alias_evidence_8616
     except AttributeError:
         existing = None
@@ -221,6 +238,21 @@ def apply_x86_16_indexed_address_aliases_8616(
     ):
         access_evidence = classify_indexed_alias_accesses_8616(existing)
         boundary._inertia_indexed_address_alias_access_evidence_8616 = access_evidence
+    try:
+        range_evidence = boundary._inertia_indexed_loop_range_alias_evidence_8616
+    except AttributeError:
+        range_evidence = None
+    if not (
+        isinstance(range_evidence, IndexedAliasLoopRangeEvidence8616)
+        and range_evidence.source == range_source
+        and range_evidence.accesses == access_evidence
+    ):
+        boundary._inertia_indexed_loop_range_alias_evidence_8616 = (
+            project_indexed_loop_ranges_to_alias_8616(
+                range_source,
+                access_evidence,
+            )
+        )
     try:
         copy_evidence = boundary._inertia_indexed_address_alias_copy_evidence_8616
     except AttributeError:

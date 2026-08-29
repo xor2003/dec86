@@ -15,6 +15,13 @@ from angr_platforms.X86_16.lowering.global_object_source_codec import (
     global_object_source_evidence_from_record_8616,
     global_object_source_evidence_record_8616,
 )
+from angr_platforms.X86_16.widening.global_object_layout import (
+    GlobalObjectLayoutEvidence8616,
+)
+
+
+def _layout() -> GlobalObjectLayoutEvidence8616:
+    return GlobalObjectLayoutEvidence8616((), 0, 0, 0, 0)
 
 
 def _evidence() -> GlobalObjectSourceEvidence8616:
@@ -38,6 +45,7 @@ def _evidence() -> GlobalObjectSourceEvidence8616:
         materialized_count=0,
         failure_count=0,
         pointer_target_addrs=(0x107B8,),
+        layout_evidence=_layout(),
     )
 
 
@@ -103,7 +111,25 @@ def test_global_object_source_codec_refuses_untyped_identity_atom() -> None:
         materialized_count=0,
         failure_count=0,
         pointer_target_addrs=(fact.target_addr,),
+        layout_evidence=evidence.layout_evidence,
     )
 
     with pytest.raises(TypeError, match="unsupported atom"):
+        global_object_source_evidence_record_8616(invalid)
+
+
+def test_global_object_source_codec_rejects_missing_project_layout() -> None:
+    evidence = _evidence()
+    invalid = GlobalObjectSourceEvidence8616(
+        scope_addr=None,
+        source_facts=evidence.source_facts,
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=0,
+        failure_count=0,
+        pointer_target_addrs=evidence.pointer_target_addrs,
+    )
+
+    with pytest.raises(ValueError, match="layout dependency"):
         global_object_source_evidence_record_8616(invalid)

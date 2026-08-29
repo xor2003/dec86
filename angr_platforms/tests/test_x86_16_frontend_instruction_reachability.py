@@ -140,6 +140,60 @@ def test_frontend_reachability_reuses_exact_immutable_request() -> None:
     assert calls == 1
 
 
+def test_frontend_reachability_reuses_shared_tail_block_decode() -> None:
+    """Distinct entry censuses must share immutable overlapping block decodes."""
+    calls: list[int] = []
+
+    def instruction(address: int, mnemonic: str, target: int | None = None) -> object:
+        operands = (
+            (SimpleNamespace(type=2, imm=target),)
+            if isinstance(target, int)
+            else ()
+        )
+        return SimpleNamespace(
+            address=address,
+            size=2 if mnemonic == "jmp" else 1,
+            mnemonic=mnemonic,
+            insn=SimpleNamespace(operands=operands),
+        )
+
+    blocks = {
+        0x1000: instruction(0x1000, "jmp", 0x1020),
+        0x1010: instruction(0x1010, "jmp", 0x1020),
+        0x1020: instruction(0x1020, "ret"),
+    }
+
+    def decode_block(address: int, *, opt_level: int) -> object:
+        calls.append(address)
+        assert opt_level == 0
+        decoded = blocks[address]
+        return SimpleNamespace(
+            addr=address,
+            size=decoded.size,
+            capstone=SimpleNamespace(insns=(decoded,)),
+        )
+
+    project = SimpleNamespace(factory=SimpleNamespace(block=decode_block))
+
+    first = collect_instruction_reachability_8616(
+        project,
+        entry=0x1000,
+        region_start=0x1000,
+        region_end=0x1030,
+    )
+    second = collect_instruction_reachability_8616(
+        project,
+        entry=0x1010,
+        region_start=0x1000,
+        region_end=0x1030,
+    )
+
+    assert first.complete is second.complete is True
+    assert first.reachable_block_addrs == (0x1000, 0x1020)
+    assert second.reachable_block_addrs == (0x1010, 0x1020)
+    assert calls == [0x1000, 0x1020, 0x1010]
+
+
 def test_frontend_block_inventory_reuses_only_exact_decode_requests() -> None:
     calls: list[tuple[int, int | None, int]] = []
     instruction = SimpleNamespace(address=0x1000, size=1, mnemonic="nop")

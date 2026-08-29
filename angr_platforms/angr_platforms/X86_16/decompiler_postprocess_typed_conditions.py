@@ -76,6 +76,7 @@ from .structuring.condition_lowering import (
     attach_condition_segment_access_provenance_8616,
     condition_origin_tags_8616,
     condition_segment_access_tags_8616,
+    materialize_condition_stack_declaration_view_8616,
     materialize_indexed_segmented_condition_value_8616,
     materialize_typed_condition_stack_operand_8616,
     stable_stack_condition_binding_tags_8616,
@@ -126,11 +127,35 @@ def _iter_switch_case_bodies_8616(cases: object) -> tuple[object, ...]:
 
 def _build_reg_var(project: object, reg_name: str, codegen: object, size: int = 2) -> CVariable | None:
     """Build a CVariable for an x86-16 register by name."""
-    reg = _project_arch_8616(project).registers.get(reg_name.lower())
+    normalized_name = reg_name.lower()
+    reg = _project_arch_8616(project).registers.get(normalized_name)
     if reg is None:
         return None
     reg_offset, _ = reg
-    return CVariable(SimRegisterVariable(int(reg_offset), size, name=reg_name.lower()), codegen=codegen)
+    function_region = _dynamic_typed_condition_getattr_8616(
+        _dynamic_typed_condition_getattr_8616(codegen, "cfunc", None),
+        "addr",
+        None,
+    )
+    variable_type = {
+        1: SimTypeChar(False),
+        2: SimTypeShort(False),
+        4: SimTypeInt(False),
+    }.get(size)
+    if variable_type is None:
+        return None
+    variable_type = variable_type.with_arch(_project_arch_8616(project))
+    return CVariable(
+        SimRegisterVariable(
+            int(reg_offset),
+            size,
+            ident=f"inertia-register-{normalized_name}",
+            region=function_region if isinstance(function_region, int) else None,
+            name=normalized_name,
+        ),
+        variable_type=variable_type,
+        codegen=codegen,
+    )
 
 
 def _assignment_lhs_register_info_8616(project: object, lhs: object) -> tuple[int, int] | None:
@@ -293,21 +318,12 @@ def _clone_stack_expr_with_condition_signedness_8616(expr: object, cond: Conditi
     """Build a signed expression view when ConditionIR proves signed comparison."""
     if cond is None or not cond.is_signed or not isinstance(expr, CVariable):
         return expr
-    variable = _dynamic_typed_condition_getattr_8616(expr, "variable", None)
-    if not isinstance(variable, SimStackVariable):
-        return expr
-    size = int(_dynamic_typed_condition_getattr_8616(variable, "size", 0) or _type_size_bytes_8616(_dynamic_typed_condition_getattr_8616(expr, "variable_type", None)))
-    return materialize_typed_condition_stack_operand_8616(
+    projected = materialize_condition_stack_declaration_view_8616(
         codegen,
-        base=variable.base,
-        offset=variable.offset,
-        size=max(size, 1),
-        name=expr.name,
+        expr,
         signed=True,
-        prefer_signed_local_storage=True,
-        tags=dict(expr.tags),
-        preferred=expr,
     )
+    return projected if projected is not None else expr
 
 
 def _build_c_expr_for_operand(

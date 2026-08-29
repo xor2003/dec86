@@ -15,8 +15,14 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from ..lowering.real_mode_linear import DirectStackMoveFact8616
-from .direct_stack_move_loop_sites import tagged_assignment_locations_8616
-from .direct_stack_move_loops import place_direct_stack_move_loop_tail_assignment_8616
+from .direct_stack_move_loop_sites import (
+    DirectStackMoveAssignmentLocation8616,
+    tagged_assignment_locations_8616,
+)
+from .direct_stack_move_loops import (
+    direct_stack_move_has_loop_tail_edge_8616,
+    place_direct_stack_move_loop_tail_assignment_8616,
+)
 from .direct_stack_move_ownership import (
     direct_stack_move_branch_owned_addresses_8616,
 )
@@ -83,7 +89,14 @@ def materialize_direct_stack_move_loop_tail_ownership_8616(
         if fact.ins_addr in branch_owned:
             refused_branch_owner_count += 1
             continue
-        locations = (
+        if not direct_stack_move_has_loop_tail_edge_8616(
+            project,
+            function,
+            fact.ins_addr,
+        ):
+            continue
+        normalized_count += 1
+        locations: tuple[DirectStackMoveAssignmentLocation8616, ...] = (
             tagged_assignment_locations_8616(project, codegen, root, fact)
             if root is not None
             else ()
@@ -91,7 +104,6 @@ def materialize_direct_stack_move_loop_tail_ownership_8616(
         if len(locations) != 1:
             failure_count += int(len(locations) > 1)
             continue
-        normalized_count += 1
         location = locations[0]
         original_owner = location.statements
         original_index = location.index
@@ -101,6 +113,7 @@ def materialize_direct_stack_move_loop_tail_ownership_8616(
             function,
             fact,
             location.assignment,
+            branch_owned_addresses=branch_owned,
         ):
             continue
         classified_count += 1

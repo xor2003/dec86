@@ -62,6 +62,7 @@ from .decompiler_postprocess_utils import (
 from .lowering.segment_register_state import runtime_segment_name_for_variable_8616
 from .lowering.segmented_global_loads import IndexedSegmentedGlobalStoreEvidence8616
 from .lowering.stack_variable_binding import StackVariableBinding
+from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from .lowering.structured_intrinsics import lower_structured_insert_call_8616
 from .validation_aggregate_storage import aggregate_field_storage_8616
 
@@ -84,7 +85,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION: int = 35
+TAIL_VALIDATION_FINGERPRINT_VERSION: int = 36
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 500000
@@ -435,7 +436,7 @@ def _source_arg_location_fingerprint_8616(node: Any, project: Any) -> str | None
     variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)
     if not isinstance(variable, SimStackVariable) or _dynamic_tail_validation_getattr_8616(variable, "base", None) != "bp":
         return None
-    offset = _dynamic_tail_validation_getattr_8616(variable, "offset", None)
+    offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
     if not isinstance(offset, int) or offset <= 0:
         return None
     name = _dynamic_tail_validation_getattr_8616(node, "name", None) or _dynamic_tail_validation_getattr_8616(variable, "name", None)
@@ -1189,10 +1190,6 @@ def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen: Any, *
             variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)
             size = _dynamic_tail_validation_getattr_8616(variable, "size", None)
             if isinstance(variable, SimStackVariable) and _dynamic_tail_validation_getattr_8616(variable, "base", None) == "bp":
-                materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
-                materialized_size = materialized_local_map.get(offset, (None, None))[0]
-                if isinstance(materialized_size, int) and (not isinstance(size, int) or materialized_size > size):
-                    size = materialized_size
                 if offset > 0:
                     source_arg = _source_arg_stack_slot_fingerprint_8616(
                         offset,

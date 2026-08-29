@@ -9,7 +9,7 @@ Forbidden: source/COD/rendered-C inference or semantic materialization.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Protocol, cast
 
 from angr.errors import SimEngineError
@@ -21,15 +21,18 @@ from .alias.register_reaching_source import (
     callsite_source_reads_memory_8616,
     resolve_register_reaching_source_8616,
 )
-from .analysis_helpers import resolve_direct_call_target_from_block
+from .analysis_helpers import resolve_direct_call_target_from_instruction_8616
 from .callsite_register_instruction_facts import (
-    DecodedInstructionFactSurface8616,
     instruction_writes_memory_8616,
     instruction_writes_register_8616,
     register_replacement_source_8616,
     register_storage_snapshot_source_8616,
 )
 from .frontend_instruction_kinds import is_x86_16_call_mnemonic_8616
+from .frontend_instruction_reachability import decoded_block_instructions_8616
+from .register_source_block_inventory import (
+    collect_register_source_block_inventory_8616,
+)
 from .semantics.call_register_effects import (
     SyntheticCallRegisterEffectVerdict8616,
     classify_synthetic_call_register_effect_8616,
@@ -45,29 +48,44 @@ __all__ = (
 )
 
 
-class _Instruction8616(DecodedInstructionFactSurface8616, Protocol):
+class _MemoryOperand8616(Protocol):
+    """Capstone memory fields at the third-party instruction boundary."""
+
+    base: int
+    index: int
+    segment: int
+    disp: int
+
+
+class _Operand8616(Protocol):
+    """Capstone operand fields consumed through instruction-fact helpers."""
+
+    type: int
+    reg: int
+    imm: int
+    size: int
+    access: int
+    mem: _MemoryOperand8616
+
+
+class _DecodedInstruction8616(Protocol):
+    """Capstone detail fields consumed through instruction-fact helpers."""
+
+    operands: Sequence[_Operand8616]
+
+    def reg_name(self, reg_id: int) -> str:
+        """Return one backend register name."""
+
+    def regs_access(self) -> tuple[Sequence[int], Sequence[int]]:
+        """Return registers read and written by this instruction."""
+
+
+class _Instruction8616(Protocol):
     """angr Capstone wrapper fields used by this collector."""
 
     address: int
-
-
-class _CapstoneBlock8616(Protocol):
-    """Decoded instruction container exposed by an angr block."""
-
-    insns: Sequence[_Instruction8616]
-
-
-class _Block8616(Protocol):
-    """angr block surface used by transfer collection."""
-
-    capstone: _CapstoneBlock8616
-
-
-class _Factory8616(Protocol):
-    """angr block factory boundary."""
-
-    def block(self, addr: int, *, size: int | None = None, opt_level: int) -> _Block8616:
-        """Decode one block at ``addr``."""
+    mnemonic: str
+    insn: _DecodedInstruction8616
 
 
 class _FunctionManager8616(Protocol):
@@ -86,24 +104,7 @@ class _KnowledgeBase8616(Protocol):
 class _Project8616(Protocol):
     """angr project fields consumed by register transfer collection."""
 
-    factory: _Factory8616
     kb: _KnowledgeBase8616
-
-
-class _GraphNode8616(Protocol):
-    """Function graph node bounds used by transfer collection."""
-
-    addr: int
-    size: int
-
-
-class _Graph8616(Protocol):
-    """Directed function graph surface used by the Alias input collector."""
-
-    nodes: Iterable[_GraphNode8616]
-
-    def predecessors(self, node: _GraphNode8616) -> Iterable[_GraphNode8616]:
-        """Return direct in-function predecessors of ``node``."""
 
 
 class _Function8616(Protocol):
@@ -111,24 +112,17 @@ class _Function8616(Protocol):
 
     addr: int
     project: _Project8616
-    graph: _Graph8616
+
+
+class _CalleeFunction8616(Protocol):
+    """Direct-callee function block ownership used by leaf proofs."""
+
     block_addrs_set: set[int]
-
-
-def _graph_node_addr_8616(node: object) -> int | None:
-    """Return an address from an angr node or a NetworkX integer node."""
-    if isinstance(node, int):
-        return node
-    try:
-        address = cast(_GraphNode8616, node).addr
-    except AttributeError:
-        return None
-    return address if isinstance(address, int) else None
 
 
 def _direct_leaf_call_preserves_register_8616(
     project: _Project8616,
-    instruction: _Instruction8616,
+    target: int | None,
     register: str,
 ) -> bool:
     """Prove a direct one-block leaf callee does not write ``register``.
@@ -137,7 +131,6 @@ def _direct_leaf_call_preserves_register_8616(
     its leaf stub. In that case decode the exact target as one basic block and
     retain the same terminal-return and no-write requirements.
     """
-    target = resolve_direct_call_target_from_block(project, instruction.address)
     if not isinstance(target, int):
         return False
     if is_synthetic_call_stub_8616(project, target):
@@ -151,7 +144,7 @@ def _direct_leaf_call_preserves_register_8616(
         block_addrs = (target,)
     else:
         try:
-            block_addrs = tuple(sorted(cast(_Function8616, callee).block_addrs_set))
+            block_addrs = tuple(sorted(cast(_CalleeFunction8616, callee).block_addrs_set))
         except (AttributeError, TypeError):
             return False
         if not block_addrs:
@@ -159,7 +152,11 @@ def _direct_leaf_call_preserves_register_8616(
     if len(block_addrs) != 1:
         return False
     try:
-        instructions = tuple(project.factory.block(block_addrs[0], opt_level=0).capstone.insns)
+        instructions = decoded_block_instructions_8616(
+            project,
+            block_addrs[0],
+            opt_level=0,
+        )
     except (AttributeError, SimEngineError, TypeError, ValueError):
         return False
     if not instructions or instructions[-1].mnemonic.lower() not in {"ret", "retf", "retw"}:
@@ -175,14 +172,14 @@ def _direct_leaf_call_preserves_register_8616(
 
 def _synthetic_call_preserves_register_8616(
     project: _Project8616,
-    instruction: _Instruction8616,
+    callsite_addr: int,
+    target: int | None,
     register: str,
 ) -> bool:
     """Consume the registered MS C ABI only for an exact synthetic target."""
-    target = resolve_direct_call_target_from_block(project, instruction.address)
     effect = classify_synthetic_call_register_effect_8616(
         project,
-        callsite_addr=instruction.address,
+        callsite_addr=callsite_addr,
         target_addr=target,
         register=register,
     )
@@ -217,15 +214,20 @@ def _block_transfer_8616(
             clobbers_memory_sources = False
             continue
         if is_x86_16_call_mnemonic_8616(mnemonic):
+            target = resolve_direct_call_target_from_instruction_8616(
+                project,
+                instruction,
+            )
             if not (
                 _direct_leaf_call_preserves_register_8616(
                     project,
-                    instruction,
+                    target,
                     register,
                 )
                 or _synthetic_call_preserves_register_8616(
                     project,
-                    instruction,
+                    instruction.address,
+                    target,
                     register,
                 )
             ):
@@ -260,39 +262,20 @@ def recover_register_source_before_instruction_8616(
     try:
         project = boundary.project
         entry_addr = boundary.addr
-        block_addrs = tuple(sorted(boundary.block_addrs_set))
-        graph = boundary.graph
-        graph_nodes = tuple(graph.nodes)
     except (AttributeError, TypeError):
         return resolve_register_reaching_source_8616((), entry_addr=0, sink_addr=0)
-    node_by_addr: dict[int, _GraphNode8616] = {}
-    for node in graph_nodes:
-        node_addr = _graph_node_addr_8616(node)
-        if node_addr is not None:
-            node_by_addr[node_addr] = node
+    inventory = collect_register_source_block_inventory_8616(function)
+    if not inventory.complete or inventory.function_addr != entry_addr:
+        return resolve_register_reaching_source_8616(
+            (),
+            entry_addr=entry_addr,
+            sink_addr=0,
+        )
     transfers: list[RegisterBlockTransfer8616] = []
     sink_addr: int | None = None
-    for block_addr in block_addrs:
-        graph_node = node_by_addr.get(block_addr)
-        if graph_node is None:
-            return resolve_register_reaching_source_8616((), entry_addr=entry_addr, sink_addr=0)
-        try:
-            block_size = int(graph_node.size)
-            if block_size <= 0:
-                return resolve_register_reaching_source_8616((), entry_addr=entry_addr, sink_addr=0)
-            instructions = tuple(
-                project.factory.block(block_addr, size=block_size, opt_level=0).capstone.insns
-            )
-            predecessor_addrs = tuple(
-                address
-                for predecessor in graph.predecessors(graph_node)
-                if (address := _graph_node_addr_8616(predecessor)) is not None
-            )
-            predecessors = tuple(sorted(predecessor_addrs))
-        except (AttributeError, TypeError, ValueError):
-            return resolve_register_reaching_source_8616((), entry_addr=entry_addr, sink_addr=0)
+    for block in inventory.blocks:
         prefix: list[_Instruction8616] = []
-        for instruction in instructions:
+        for instruction in cast(tuple[_Instruction8616, ...], block.instructions):
             if instruction.address == instruction_addr:
                 if sink_addr is not None:
                     return resolve_register_reaching_source_8616(
@@ -300,7 +283,7 @@ def recover_register_source_before_instruction_8616(
                         entry_addr=entry_addr,
                         sink_addr=0,
                     )
-                sink_addr = block_addr
+                sink_addr = block.block_addr
                 break
             prefix.append(instruction)
         kind, source, clobbers_memory_sources = _block_transfer_8616(
@@ -310,8 +293,8 @@ def recover_register_source_before_instruction_8616(
         )
         transfers.append(
             RegisterBlockTransfer8616(
-                block_addr,
-                predecessors,
+                block.block_addr,
+                block.predecessors,
                 kind,
                 source,
                 clobbers_memory_sources,

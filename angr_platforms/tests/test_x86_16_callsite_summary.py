@@ -16,6 +16,7 @@ from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     StructuredCallKind8616,
+    _decode_linear_insns_at_8616,
     _logical_arg_interface_for_target_8616,
     _logical_arg_widths_for_target_8616,
     _return_shape_after_call,
@@ -32,6 +33,18 @@ from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
 MSC_ANCHKSTK_BYTES = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
+
+
+def test_follow_decode_refuses_unmapped_lazy_capstone_bytes() -> None:
+    class UnmappedBlock:
+        @property
+        def capstone(self) -> object:
+            raise KeyError(0x10BB)
+
+    factory = SimpleNamespace(block=lambda *_args, **_kwargs: UnmappedBlock())
+    function = SimpleNamespace(project=SimpleNamespace(factory=factory))
+
+    assert _decode_linear_insns_at_8616(function, 0x10BB, limit=1) == ()
 
 
 def test_structured_call_kind_separates_codegen_insert_from_machine_calls() -> None:

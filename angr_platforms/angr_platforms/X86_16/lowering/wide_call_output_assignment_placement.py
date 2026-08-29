@@ -22,13 +22,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_variable import SimStackVariable, SimVariable
 
-from ..analysis.stack_frame_ir import (
-    FrameAccessArtifact,
-    FrameCoordinateStatus8616,
-)
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..semantics.carry_borrow_contracts import CarryBorrowKind8616
 from ..widening.carry_borrow_storage import WideCarryBorrowStorage8616
+from .stack_frame_projection import (
+    entry_sp_offset_for_machine_bp_range_8616 as _entry_sp_offset_for_bp_8616,
+)
 from .stack_lowering_from_facts import materialize_stack_cvar_at_offset_from_facts_8616
 from .stack_variable_coordinates import stack_variable_coordinate_registry_8616
 from .wide_call_output_assignment_ast import (
@@ -37,12 +36,23 @@ from .wide_call_output_assignment_ast import (
     direct_statement_group_parents_8616,
     exact_wide_call_output_call_sites_8616,
 )
+from .wide_call_output_assignment_carriers import (
+    CarrierStatementRef8616 as _CarrierStatementRef8616,
+)
+from .wide_call_output_assignment_carriers import (
+    complete_carrier_coverage_8616,
+    delete_carrier_refs_8616,
+)
 from .wide_call_output_assignment_contracts import (
     WideCallOutputAssignmentFact8616,
     WideCallOutputAssignmentFailure8616,
     WideCallOutputAssignmentResolution8616,
     WideCallOutputAssignmentVerdict8616,
     refused_wide_call_output_assignment_8616,
+)
+from .wide_call_output_assignment_replay import (
+    WideCallOutputReplayStatus8616,
+    reconcile_materialized_wide_call_output_assignment_8616,
 )
 
 _EVIDENCE_TAG_8616 = "inertia_x86_16_wide_call_output_assignment"
@@ -56,19 +66,10 @@ class _CFunctionBoundary8616(Protocol):
     arg_list: tuple[CVariable, ...]
 
 
-class _CodegenFrameBoundary8616(Protocol):
-    """Dynamic angr codegen surface carrying typed frame evidence."""
+class _CodegenProjectBoundary8616(Protocol):
+    """Dynamic angr codegen surface carrying its project."""
 
-    _inertia_vex_ir_frame: FrameAccessArtifact
-
-
-@dataclass(frozen=True, slots=True)
-class _CarrierStatementRef8616:
-    """One exact mutable statement slot owned by a carrier fact."""
-
-    group: CStatements
-    index: int
-    statement: object
+    project: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,49 +117,6 @@ def _exact_stack_cvar_8616(
         ):
             candidates[id(variable)] = cvar
     return next(iter(candidates.values())) if len(candidates) == 1 else None
-
-
-def _entry_sp_offset_for_bp_8616(
-    codegen: object,
-    bp_offset: int,
-    size: int,
-) -> int | None:
-    """Project one machine-BP range into angr's entry-SP coordinate."""
-    projection = stack_variable_coordinate_registry_8616(codegen).for_bp_range(
-        bp_offset,
-        size,
-    )
-    if projection is not None:
-        entry_sp_offset = projection.entry_sp_offset
-        return entry_sp_offset if isinstance(entry_sp_offset, int) else None
-    boundary = cast(_CodegenFrameBoundary8616, codegen)
-    try:
-        frame = boundary._inertia_vex_ir_frame
-    except AttributeError:
-        return None
-    coordinate = frame.bp_coordinate if isinstance(frame, FrameAccessArtifact) else None
-    if (
-        coordinate is None
-        or coordinate.status is not FrameCoordinateStatus8616.PROVEN
-        or not isinstance(coordinate.bp_entry_sp_delta, int)
-    ):
-        return None
-    return bp_offset + coordinate.bp_entry_sp_delta
-
-
-def _already_materialized_8616(
-    root: object,
-    fact: WideCallOutputAssignmentFact8616,
-) -> bool:
-    """Return whether exactly one canonical assignment already owns this fact."""
-    matches = 0
-    for node in _iter_c_nodes_deep_8616(root):
-        if not isinstance(node, CAssignment):
-            continue
-        tags = node.tags
-        if isinstance(tags, dict) and tags.get(_EVIDENCE_TAG_8616) == fact:
-            matches += 1
-    return matches == 1
 
 
 def _has_call_8616(statement: object) -> bool:
@@ -285,17 +243,6 @@ def _carrier_placement_8616(
     )
 
 
-def _delete_carrier_refs_8616(refs: tuple[_CarrierStatementRef8616, ...]) -> None:
-    """Delete exact carrier slots in descending per-group index order."""
-    by_group: dict[int, tuple[CStatements, list[int]]] = {}
-    for ref in refs:
-        entry = by_group.setdefault(id(ref.group), (ref.group, []))
-        entry[1].append(ref.index)
-    for group, indices in by_group.values():
-        for index in sorted(indices, reverse=True):
-            del group.statements[index]
-
-
 def materialize_wide_call_output_assignment_8616(
     codegen: object,
     cfunc: object,
@@ -305,12 +252,25 @@ def materialize_wide_call_output_assignment_8616(
     """Materialize one exact assignment and retire only its owned carriers."""
     boundary = cast(_CFunctionBoundary8616, cfunc)
     root = boundary.statements
-    if _already_materialized_8616(root, fact):
+    replay = reconcile_materialized_wide_call_output_assignment_8616(
+        codegen,
+        root,
+        fact,
+    )
+    if replay.status is WideCallOutputReplayStatus8616.REFUSED:
+        return refused_wide_call_output_assignment_8616(
+            source,
+            WideCallOutputAssignmentFailure8616.MIXED_STATEMENT_OWNERSHIP,
+            fact=fact,
+            placement_classified=True,
+        )
+    if replay.status is not WideCallOutputReplayStatus8616.ABSENT:
         return WideCallOutputAssignmentResolution8616(
             source,
             WideCallOutputAssignmentVerdict8616.MATERIALIZED,
             fact=fact,
             placement_classified=True,
+            changed=replay.changed,
             already_materialized=True,
         )
     destination = _exact_stack_cvar_8616(
@@ -325,7 +285,8 @@ def materialize_wide_call_output_assignment_8616(
             WideCallOutputAssignmentFailure8616.DESTINATION_CVARIABLE_MISSING,
             fact=fact,
         )
-    call_sites = exact_wide_call_output_call_sites_8616(root, fact)
+    project = cast(_CodegenProjectBoundary8616, codegen).project
+    call_sites = exact_wide_call_output_call_sites_8616(root, fact, project)
     if len(call_sites) != 1:
         failure = (
             WideCallOutputAssignmentFailure8616.CALLSITE_MISSING
@@ -357,6 +318,16 @@ def materialize_wide_call_output_assignment_8616(
         )
     required = frozenset(fact.carrier_ins_addrs) - {fact.call_output.callsite_addr}
     placement = _carrier_placement_8616(root, call_site, required)
+    if (
+        placement.failure
+        is WideCallOutputAssignmentFailure8616.CARRIER_COVERAGE_MISSING
+    ):
+        complete = complete_carrier_coverage_8616(root, required)
+        placement = _CarrierScan8616(
+            complete.refs,
+            complete.observed,
+            complete.failure,
+        )
     if placement.failure is not None:
         return refused_wide_call_output_assignment_8616(
             source,
@@ -372,7 +343,7 @@ def materialize_wide_call_output_assignment_8616(
     rhs = CBinaryOp(operation, call_site.call, source_cvar, codegen=codegen, tags=tags)
     assignment = CAssignment(destination, rhs, codegen=codegen, tags=tags)
     call_site.statements.statements[call_site.index] = assignment
-    _delete_carrier_refs_8616(placement.refs)
+    delete_carrier_refs_8616(placement.refs)
     return WideCallOutputAssignmentResolution8616(
         source,
         WideCallOutputAssignmentVerdict8616.MATERIALIZED,

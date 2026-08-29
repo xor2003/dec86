@@ -42,6 +42,9 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
     StackMemoryObjectKind8616,
     lower_x86_16_stack_memory_ssa_alias_artifact,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+)
 from angr_platforms.X86_16.widening.carry_borrow_pipeline import (
     CarryBorrowWideningPipeline8616,
     build_carry_borrow_widening_pipeline_8616,
@@ -198,7 +201,8 @@ def test_lowering_materializes_exact_wide_stack_local() -> None:
     }
     assert len(variables) == 1
     variable, cvar = next(iter(variables.items()))
-    assert (variable.offset, variable.size) == (-4, 4)
+    assert (variable.offset, variable.size) == (-6, 4)
+    assert machine_bp_offset_for_stack_variable_8616(codegen, variable) == -4
     assert isinstance(cvar.variable_type, SimTypeLong)
 
 
@@ -221,7 +225,10 @@ def test_refused_widening_preserves_both_narrow_stack_locals() -> None:
         for variable, cvar in codegen.cfunc.variables_in_use.items()
         if isinstance(variable, SimStackVariable)
     }
-    assert {(variable.offset, variable.size) for variable in variables} == {(-6, 2), (-4, 2)}
+    assert {
+        (variable.offset, variable.size, machine_bp_offset_for_stack_variable_8616(codegen, variable))
+        for variable in variables
+    } == {(-8, 2, -6), (-6, 2, -4)}
     assert all(isinstance(cvar.variable_type, SimTypeShort) for cvar in variables.values())
 
 

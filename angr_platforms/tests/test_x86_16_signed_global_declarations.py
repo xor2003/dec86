@@ -100,11 +100,20 @@ def _codegen(*conditions: ConditionIR) -> _Codegen:
 
 def test_signed_high_word_condition_materializes_signed_wide_global_declaration() -> None:
     codegen = _codegen(_condition("sle", 0x134))
+    codegen._inertia_global_declaration_specs_8616 = (
+        ("unsigned short", "g_before", None),
+        ("unsigned long", "g_0132", None),
+        ("unsigned char", "g_after", None),
+    )
 
     changed = materialize_signed_global_declarations_8616(codegen.project, codegen)
 
     assert changed is True
-    assert codegen._inertia_global_declaration_specs_8616 == (("long", "g_0132", None),)
+    assert codegen._inertia_global_declaration_specs_8616 == (
+        ("unsigned short", "g_before", None),
+        ("unsigned char", "g_after", None),
+        ("long", "g_0132", None),
+    )
     assert codegen._inertia_signed_global_declaration_facts_8616[0].base_offset == 0x132
     stats = codegen._inertia_signed_global_declaration_stats_8616
     assert (
@@ -115,7 +124,17 @@ def test_signed_high_word_condition_materializes_signed_wide_global_declaration(
         stats.failure_count,
     ) == (1, 1, 1, 1, 0)
 
+    codegen._inertia_global_declaration_specs_8616 = (
+        ("unsigned short", "g_before", None),
+        ("long", "g_0132", None),
+        ("unsigned char", "g_after", None),
+    )
     assert materialize_signed_global_declarations_8616(codegen.project, codegen) is False
+    assert codegen._inertia_global_declaration_specs_8616 == (
+        ("unsigned short", "g_before", None),
+        ("long", "g_0132", None),
+        ("unsigned char", "g_after", None),
+    )
 
 
 def test_typed_high_word_condition_joins_scalar_without_ast_projection() -> None:

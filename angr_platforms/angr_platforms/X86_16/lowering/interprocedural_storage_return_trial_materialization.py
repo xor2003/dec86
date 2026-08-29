@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from ..alias.domains import register_domain_for_name, register_view_for_name
 from ..caller_return_use_contracts import (
+    AxValueView8616,
     CallerReturnUseFact8616,
     CallsiteReturnUseKind8616,
 )
@@ -28,6 +29,7 @@ from ..semantics.call_stack_effect_pipeline import (
 )
 from ..semantics.terminal_return_storage import TerminalReturnStorage8616
 from .condition_transfer import collect_typed_condition_artifacts_8616
+from .interprocedural_storage_caller_context import CallerSSAContext8616
 from .interprocedural_storage_contracts import (
     StorageIdentity8616,
     StorageIdentityKind8616,
@@ -47,6 +49,9 @@ from .interprocedural_storage_return_defs import (
 )
 from .interprocedural_storage_return_pointer import (
     classify_pointer_return_storage_8616,
+)
+from .interprocedural_storage_return_pointer_witness import (
+    pointer_return_witness_use_8616,
 )
 from .interprocedural_storage_return_split import (
     classify_split_return_storage_8616,
@@ -132,34 +137,37 @@ def _witness_use_8616(
 
     pointer_use = classification.pointer_use
     if pointer_use is not None:
-        aliases = tuple(
-            step
-            for step in pointer_use.aliases
-            if step.instr_addr == fact.witness_instruction_addr
-        )
-        if len(aliases) != 1:
-            return None, bool(aliases)
-        alias = aliases[0]
-        return (
-            (
-                StorageUseEvidence8616(
-                    block_addr=alias.block_addr,
-                    instr_index=alias.instr_index,
-                    instr_addr=alias.instr_addr,
-                    callsite_addr=fact.callsite_addr,
-                ),
-            ),
-            False,
+        return pointer_return_witness_use_8616(
+            artifact,
+            fact,
+            pointer_use,
+            output_storages,
         )
 
     def _reads_output(value: object) -> bool:
         """Match one IR operand to an exact Alias-owned output view."""
-        return isinstance(value, IRValue) and value.space is MemSpace.REG and any(
-            value.size == storage.width
-            and register_domain_for_name(value.name)
-            == register_domain_for_name(storage.register)
-            and register_view_for_name(value.name)
-            == register_view_for_name(storage.register)
+        if not isinstance(value, IRValue) or value.space is not MemSpace.REG:
+            return False
+        return any(
+            (
+                value.size == storage.width
+                and register_domain_for_name(value.name)
+                == register_domain_for_name(storage.register)
+                and register_view_for_name(value.name)
+                == register_view_for_name(storage.register)
+            )
+            or (
+                fact.byte_extension is not None
+                and fact.observed_value_view is AxValueView8616.AX
+                and storage.width == 1
+                and register_view_for_name(storage.register)
+                == register_view_for_name("al")
+                and value.size == 2
+                and register_domain_for_name(value.name)
+                == register_domain_for_name(storage.register)
+                and register_view_for_name(value.name)
+                == register_view_for_name("ax")
+            )
             for storage in output_storages
         )
 
@@ -193,6 +201,7 @@ def _classify_return_8616(
     definitions: CallOutputDefinitionResult8616,
     output_storages: tuple[StorageIdentity8616, ...],
     conditions_by_caller: dict[int, tuple[ConditionIR, ...]],
+    caller_function: object | None,
 ) -> ReturnStorageTypeResult8616 | None:
     """Dispatch one exact use kind to its owning typed classifier."""
     if fact.kind is CallsiteReturnUseKind8616.CONDITION:
@@ -201,6 +210,7 @@ def _classify_return_8616(
             collected, _edge_evidence = collect_typed_condition_artifacts_8616(
                 project,
                 fact.caller_addr,
+                function=caller_function,
             )
             conditions = tuple(collected)
             conditions_by_caller[fact.caller_addr] = conditions
@@ -216,6 +226,15 @@ def _classify_return_8616(
             definitions,
             output_storages,
             conditions,
+        )
+    if (
+        fact.kind is CallsiteReturnUseKind8616.VALUE
+        and fact.byte_extension is not None
+    ):
+        return classify_return_storage_type_8616(
+            fact,
+            output_storages,
+            (),
         )
     if (
         fact.kind is CallsiteReturnUseKind8616.VALUE
@@ -236,9 +255,16 @@ def materialize_callsite_return_trials_8616(
     output_storages: tuple[StorageIdentity8616, ...],
     accepted_target_addrs: tuple[int, ...],
     conditions_by_caller: dict[int, tuple[ConditionIR, ...]],
+    caller_context: CallerSSAContext8616 | None = None,
 ) -> tuple[tuple[StorageTrial8616, ...] | None, ReturnStorageTrialCollectionFailure8616 | None]:
     """Materialize one callsite's exact return pieces or one typed refusal."""
-    ssa = semantic_function_ssa_artifact_at_address_8616(project, fact.caller_addr)
+    caller_project = project if caller_context is None else caller_context.evidence_project
+    caller_function = None if caller_context is None else caller_context.caller_function
+    if caller_project is None:
+        raise TypeError("complete caller SSA context lost its evidence project")
+    ssa = semantic_function_ssa_artifact_at_address_8616(
+        caller_project, fact.caller_addr, function=caller_function
+    )
     artifact = ssa.artifact
     if artifact is None:
         return None, _failure_8616(
@@ -253,6 +279,7 @@ def materialize_callsite_return_trials_8616(
         callee_addr,
         accepted_target_addrs,
         output_storages,
+        project=caller_project,
     )
     if not definitions.complete:
         kind = (
@@ -267,12 +294,13 @@ def materialize_callsite_return_trials_8616(
             definition_failure=definitions.failure,
         )
     classification = _classify_return_8616(
-        project,
+        caller_project,
         artifact,
         fact,
         definitions,
         output_storages,
         conditions_by_caller,
+        caller_function,
     )
     if classification is None:
         return None, _failure_8616(

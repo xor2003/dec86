@@ -8,6 +8,7 @@ from angr_platforms.X86_16.alias.register_reaching_source import (
 )
 from angr_platforms.X86_16.callsite_register_provenance import (
     recover_callsite_register_source_8616,
+    recover_register_source_before_instruction_8616,
 )
 from angr_platforms.X86_16.callsite_summary import summarize_x86_16_callsite
 from angr_platforms.X86_16.semantics.call_register_effects import (
@@ -201,6 +202,35 @@ def test_callsite_register_source_crosses_binary_proven_leaf_call() -> None:
     assert result.source == ("imm", 146)
 
 
+def test_reaching_source_resolves_each_call_target_once_per_query(monkeypatch) -> None:
+    project = _build_project_from_bytes(
+        bytes.fromhex("56 be 92 00 e8 02 00 56 c3 c3"),
+        base_addr=0x1000,
+        entry_point=0x1000,
+    )
+    cfg = project.analyses.CFGFast(normalize=True, force_complete_scan=False)
+    function = cfg.kb.functions[0x1000]
+    calls: list[int] = []
+
+    def resolve_target(_project: object, instruction: object) -> int:
+        calls.append(instruction.address)
+        return 0x1009
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_instruction_8616",
+        resolve_target,
+    )
+
+    result = recover_register_source_before_instruction_8616(
+        function,
+        instruction_addr=0x1007,
+        register="si",
+    )
+
+    assert result.verdict is RegisterReachingSourceVerdict8616.PROVEN
+    assert calls == [0x1004]
+
+
 def test_callsite_register_source_decodes_leaf_with_empty_cfg_function(monkeypatch) -> None:
     project = _build_project_from_bytes(
         bytes.fromhex("56 be 92 00 e8 02 00 56 c3 c3"),
@@ -224,8 +254,8 @@ def test_callsite_register_source_decodes_leaf_with_empty_cfg_function(monkeypat
         block_addrs_set=discovered.block_addrs_set,
     )
     monkeypatch.setattr(
-        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_block",
-        lambda _project, _address: 0x1009,
+        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_instruction_8616",
+        lambda _project, _instruction: 0x1009,
     )
 
     result = recover_callsite_register_source_8616(
@@ -247,8 +277,8 @@ def test_callsite_register_source_refuses_out_of_image_leaf_target(monkeypatch) 
     cfg = project.analyses.CFGFast(normalize=True, force_complete_scan=False)
     function = cfg.kb.functions[0x1000]
     monkeypatch.setattr(
-        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_block",
-        lambda _project, _address: 0x2000,
+        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_instruction_8616",
+        lambda _project, _instruction: 0x2000,
     )
 
     result = recover_callsite_register_source_8616(
@@ -271,8 +301,8 @@ def test_callsite_register_source_refuses_synthetic_leaf_body(monkeypatch) -> No
     function = cfg.kb.functions[0x1000]
     record_synthetic_call_stubs_8616(project, frozenset({0x1008}))
     monkeypatch.setattr(
-        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_block",
-        lambda _project, _address: 0x1008,
+        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_instruction_8616",
+        lambda _project, _instruction: 0x1008,
     )
 
     result = recover_callsite_register_source_8616(
@@ -333,8 +363,8 @@ def test_callsite_register_source_refuses_undiscovered_leaf_register_write(monke
         block_addrs_set=discovered.block_addrs_set,
     )
     monkeypatch.setattr(
-        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_block",
-        lambda _project, _address: 0x1009,
+        "angr_platforms.X86_16.callsite_register_provenance.resolve_direct_call_target_from_instruction_8616",
+        lambda _project, _instruction: 0x1009,
     )
 
     result = recover_callsite_register_source_8616(

@@ -19,16 +19,31 @@ from enum import Enum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
+    CConstant,
+    CDirtyExpression,
     CDoWhileLoop,
     CExpression,
     CForLoop,
     CUnaryOp,
+    CVariable,
     CWhileLoop,
 )
+from angr.sim_variable import SimRegisterVariable
 
-from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from ..c_ast_utils import (
+    _clone_c_ast_tree_8616,
+    _iter_c_nodes_deep_8616,
+    _replace_c_children_8616,
+    _same_c_expression_8616,
+)
 from ..ir.condition_ir import ConditionIR
+from ..ir.core import IRValue, MemSpace
+from .loop_condition_ownership import (
+    CompositeLoopExitOwnershipStatus8616,
+    classify_composite_loop_exit_ownership_8616,
+)
 
 
 class LoopContinuationEdge8616(Enum):
@@ -51,6 +66,18 @@ class _LoopBoundary8616(Protocol):
     body: object
 
 
+class _CodegenFunctionBoundary8616(Protocol):
+    """Dynamic angr C-function identity used for register ownership."""
+
+    addr: int
+
+
+class _CodegenBoundary8616(Protocol):
+    """Dynamic angr codegen surface used for register ownership."""
+
+    cfunc: _CodegenFunctionBoundary8616 | None
+
+
 @dataclass(frozen=True, slots=True)
 class LoopConditionMaterializationStats8616:
     """Evidence accounting for typed loop continuation materialization."""
@@ -63,6 +90,8 @@ class LoopConditionMaterializationStats8616:
     changed_count: int = 0
     taken_continuation_count: int = 0
     fallthrough_continuation_count: int = 0
+    counter_update_materialized_count: int = 0
+    composite_loop_exit_owned_count: int = 0
 
     @property
     def changed(self) -> bool:
@@ -77,8 +106,8 @@ def _condition_key_8616(condition: ConditionIR) -> tuple[int, int] | None:
     return condition.src_insn, condition.block_addr
 
 
-def _tag_pairs_8616(expression: CExpression) -> frozenset[tuple[int, int]]:
-    """Return all complete instruction/block identities in one expression."""
+def _tag_pairs_8616(expression: object) -> frozenset[tuple[int, int]]:
+    """Return all complete instruction/block identities in one C subtree."""
     pairs: set[tuple[int, int]] = set()
     for node in _iter_c_nodes_deep_8616(expression):
         boundary = cast(_TaggedExpressionBoundary8616, node)
@@ -121,6 +150,125 @@ def _structured_body_block_addrs_8616(body: object) -> frozenset[int]:
         if isinstance(block_addr, int):
             addresses.add(block_addr)
     return frozenset(addresses)
+
+
+def _materialize_plain_loop_counter_update_8616(
+    body: object,
+    condition: ConditionIR,
+    codegen: object,
+) -> int:
+    """Bind one proven loop-register virtual value to its unique self-update."""
+    operand = condition.lhs
+    if (
+        not isinstance(operand, IRValue)
+        or operand.space is not MemSpace.REG
+        or not isinstance(operand.name, str)
+    ):
+        return 0
+
+    matches: list[tuple[CAssignment, CBinaryOp, int]] = []
+    for node in _iter_c_nodes_deep_8616(body):
+        if not isinstance(node, CAssignment) or not isinstance(node.lhs, CVariable):
+            continue
+        variable = node.lhs.variable
+        rhs = node.rhs
+        dirty_operand = rhs.lhs if isinstance(rhs, CBinaryOp) else None
+        try:
+            dirty_varid = dirty_operand.dirty.varid if isinstance(dirty_operand, CDirtyExpression) else None
+        except AttributeError:
+            dirty_varid = None
+        if (
+            not isinstance(variable, SimRegisterVariable)
+            or variable.name != operand.name.lower()
+            or not isinstance(rhs, CBinaryOp)
+            or rhs.op not in {"Add", "Sub"}
+            or not isinstance(dirty_varid, int)
+            or not isinstance(rhs.rhs, CConstant)
+            or rhs.rhs.value != 1
+        ):
+            continue
+        matches.append((node, rhs, dirty_varid))
+    if len(matches) != 1:
+        return 0
+
+    assignment, _rhs, dirty_varid = matches[0]
+    variable = cast(SimRegisterVariable, assignment.lhs.variable)
+    try:
+        cfunc = cast(_CodegenBoundary8616, codegen).cfunc
+    except AttributeError:
+        cfunc = None
+    function_region = cfunc.addr if cfunc is not None else None
+    region = variable.region if isinstance(variable.region, int) else function_region
+    shared = SimRegisterVariable(
+        variable.reg,
+        variable.size,
+        ident=f"inertia-register-{operand.name.lower()}",
+        region=region if isinstance(region, int) else None,
+        name=operand.name.lower(),
+    )
+    assignment.lhs.variable = shared
+    assignment.lhs.unified_variable = shared
+    replacement_count = 0
+
+    def _replace_proven_register_carrier(node: object) -> object:
+        """Replace only the unique virtual identity proven by the self-update."""
+        nonlocal replacement_count
+        if not isinstance(node, CDirtyExpression):
+            return node
+        try:
+            node_varid = node.dirty.varid
+        except AttributeError:
+            return node
+        if node_varid != dirty_varid:
+            return node
+        replacement_count += 1
+        return _clone_c_ast_tree_8616(assignment.lhs)
+
+    _replace_c_children_8616(body, _replace_proven_register_carrier)
+    return int(replacement_count > 0)
+
+
+def _bind_existing_loop_condition_register_8616(
+    current: CExpression,
+    body: object,
+    condition: ConditionIR,
+) -> int:
+    """Bind an already-readable guard to its unique typed register identity."""
+    operand = condition.lhs
+    if not isinstance(operand, IRValue) or operand.space is not MemSpace.REG or not isinstance(operand.name, str):
+        return 0
+    candidates = {
+        node.variable
+        for node in _iter_c_nodes_deep_8616(body)
+        if isinstance(node, CVariable)
+        and isinstance(node.variable, SimRegisterVariable)
+        and node.variable.name == operand.name.lower()
+        and isinstance(node.variable.ident, str)
+        and isinstance(node.variable.region, int)
+    }
+    if len(candidates) != 1:
+        return 0
+    shared = next(iter(candidates))
+    replacement_count = 0
+
+    def _replace_anonymous_register(node: object) -> object:
+        """Replace only the typed operand's anonymous physical-register view."""
+        nonlocal replacement_count
+        if not isinstance(node, CVariable) or not isinstance(node.variable, SimRegisterVariable):
+            return node
+        variable = node.variable
+        if variable.reg != shared.reg or variable.size != shared.size:
+            return node
+        if variable is shared and node.unified_variable is shared:
+            return node
+        replacement = cast(CVariable, _clone_c_ast_tree_8616(node))
+        replacement.variable = shared
+        replacement.unified_variable = shared
+        replacement_count += 1
+        return replacement
+
+    _replace_c_children_8616(current, _replace_anonymous_register)
+    return replacement_count
 
 
 def _enters_body_through_linear_trampoline_8616(
@@ -290,6 +438,8 @@ def materialize_typed_loop_continuation_conditions_8616(
     changed_count = 0
     taken_count = 0
     fallthrough_count = 0
+    counter_update_count = 0
+    composite_loop_exit_owned_count = 0
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop)):
             continue
@@ -298,6 +448,8 @@ def materialize_typed_loop_continuation_conditions_8616(
         if not isinstance(current, CExpression):
             continue
         matching_keys = _tag_pairs_8616(current).intersection(conditions_by_key)
+        if not matching_keys:
+            matching_keys = _tag_pairs_8616(loop.body).intersection(conditions_by_key)
         if not matching_keys:
             continue
         raw_count += 1
@@ -308,6 +460,18 @@ def materialize_typed_loop_continuation_conditions_8616(
         if len(candidates) != 1:
             continue
         normalized_count += 1
+        composite_ownership = classify_composite_loop_exit_ownership_8616(
+            loop.body,
+            key,
+            successors,
+        )
+        if composite_ownership.status is CompositeLoopExitOwnershipStatus8616.UNIQUE:
+            classified_count += 1
+            materialized_count += 1
+            composite_loop_exit_owned_count += 1
+            continue
+        if composite_ownership.status is CompositeLoopExitOwnershipStatus8616.AMBIGUOUS:
+            continue
         _mark_condition_binding_8616(current, key)
         condition = candidates[0]
         edge = _continuation_edge_8616(
@@ -322,6 +486,8 @@ def materialize_typed_loop_continuation_conditions_8616(
             taken_count += 1
         else:
             fallthrough_count += 1
+        counter_update_count += _materialize_plain_loop_counter_update_8616(loop.body, condition, codegen)
+        _bind_existing_loop_condition_register_8616(current, loop.body, condition)
         replacement = lower_condition(condition)
         if replacement is None:
             continue
@@ -346,4 +512,6 @@ def materialize_typed_loop_continuation_conditions_8616(
         changed_count=changed_count,
         taken_continuation_count=taken_count,
         fallthrough_continuation_count=fallthrough_count,
+        counter_update_materialized_count=counter_update_count,
+        composite_loop_exit_owned_count=composite_loop_exit_owned_count,
     )

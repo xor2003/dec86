@@ -31,6 +31,10 @@ from angr_platforms.X86_16.widening.global_object_layout_codec import (
 from angr_platforms.X86_16.widening.indexed_global_object_layout import (
     recover_global_object_layout_evidence_8616,
 )
+from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import (
+    ProjectBoundedGlobalObjectRangeSourceKind8616,
+    recover_program_bounded_global_object_ranges_8616,
+)
 
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.indexed_alias_program_context as indexed_context
@@ -123,6 +127,7 @@ def test_real_alias_program_widens_two_layouts_and_exact_copy_family() -> None:
     assert {
         refusal.failure for refusal in result.refusals
     } == {GlobalObjectLayoutFailureKind8616.UPSTREAM_COPY_REFUSAL}
+    assert all(function.ranges.closed for function in program.functions)
 
 
 def test_transformed_copy_does_not_join_proven_layout_families() -> None:
@@ -238,8 +243,10 @@ def test_transported_widening_still_publishes_local_ir_ssa() -> None:
         },
         auto_load_libs=False,
     )
-    project._inertia_project_global_object_layout_evidence_8616 = (
-        recover_global_object_layout_evidence_8616(program)
+    layouts = recover_global_object_layout_evidence_8616(program)
+    project._inertia_project_global_object_layout_evidence_8616 = layouts
+    project._inertia_project_bounded_global_object_ranges_8616 = (
+        recover_program_bounded_global_object_ranges_8616(program, layouts)
     )
 
     result = prepare_direct_indexed_alias_program_context_8616(
@@ -321,6 +328,20 @@ def test_persisted_widening_reuses_complete_layout_across_fresh_projects(
     assert recovery_calls == [1]
     assert first_project._inertia_project_global_object_layout_evidence_8616.closed
     assert second_project._inertia_project_global_object_layout_evidence_8616.closed
+    first_ranges = first_project._inertia_project_bounded_global_object_ranges_8616
+    second_ranges = second_project._inertia_project_bounded_global_object_ranges_8616
+    assert first_ranges.closed
+    assert second_ranges.closed
+    assert first_ranges.layouts == first_project._inertia_project_global_object_layout_evidence_8616
+    assert second_ranges.layouts == second_project._inertia_project_global_object_layout_evidence_8616
+    assert (
+        first_ranges.source.kind
+        is ProjectBoundedGlobalObjectRangeSourceKind8616.LIVE_ALIAS_PROGRAM
+    )
+    assert (
+        second_ranges.source.kind
+        is ProjectBoundedGlobalObjectRangeSourceKind8616.TRANSPORTED_RECORD
+    )
     assert registered_function_ssa_artifact_8616(
         second_project,
         0x1000,

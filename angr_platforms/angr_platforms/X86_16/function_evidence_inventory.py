@@ -25,6 +25,8 @@ class FunctionEvidenceKind8616(Enum):
     INDEXED_GLOBAL_STORES = "indexed_global_stores"
     FAR_POINTER_SEGMENTED_LOADS = "far_pointer_segmented_loads"
     NEIGHBOR_CALL_TARGETS = "neighbor_call_targets"
+    DIRECT_GLOBAL_INSTRUCTION_VIEWS = "direct_global_instruction_views"
+    REGISTER_SOURCE_BLOCKS = "register_source_blocks"
 
 
 @dataclass(frozen=True, slots=True)

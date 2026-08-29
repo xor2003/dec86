@@ -20,11 +20,14 @@ from .interprocedural_storage_contracts import (
 )
 from .interprocedural_storage_reaching_contracts import (
     CallArgumentDefinitionFailure8616,
+    LogicalPushValue8616,
     PhysicalCallArgumentPiece8616,
+    PhysicalPushStoreSlice8616,
     SSAInstructionSite8616,
 )
 
 __all__ = [
+    "logical_push_value_8616",
     "reaching_definition_width_8616",
     "resolve_physical_store_definitions_8616",
 ]
@@ -73,18 +76,26 @@ def _logical_source_slice_8616(
     value: IRValue,
     logical_width: int,
     seen: frozenset[tuple[object, ...]] = frozenset(),
+    *,
+    follow_register_definitions: bool = False,
 ) -> tuple[IRValue, int] | None:
     """Trace one physical store value to its logical source and byte offset."""
     key = (value.space, value.name, value.version, value.source_tmp, value.size)
     if key in seen:
         return None
     if value.const is not None or (
-        value.space is MemSpace.REG and value.size >= logical_width
+        value.space is MemSpace.REG
+        and value.size >= logical_width
+        and not follow_register_definitions
     ):
         return value, 0
     definition = _prior_value_definition_8616(site, value)
     if definition is None:
-        return None
+        return (
+            (value, 0)
+            if value.space is MemSpace.REG and value.size >= logical_width
+            else None
+        )
     if definition.op == "MOV" and len(definition.args) == 1:
         source = definition.args[0]
         return (
@@ -93,6 +104,7 @@ def _logical_source_slice_8616(
                 source,
                 logical_width,
                 seen | {key},
+                follow_register_definitions=follow_register_definitions,
             )
             if isinstance(source, IRValue)
             else None
@@ -110,6 +122,7 @@ def _logical_source_slice_8616(
                 source,
                 logical_width,
                 seen | {key},
+                follow_register_definitions=follow_register_definitions,
             )
             return None if traced is None else (traced[0], traced[1] + shift.const // 8)
     return None
@@ -154,14 +167,34 @@ def _bp_affine_8616(
     return None
 
 
-def resolve_physical_store_definitions_8616(
+def _same_logical_root_8616(
+    left: IRValue,
+    right: IRValue,
+    width: int,
+) -> bool:
+    """Return whether two physical traces identify one logical scalar root."""
+    if left.const is not None or right.const is not None:
+        mask = (1 << (width * 8)) - 1
+        return bool(
+            isinstance(left.const, int)
+            and isinstance(right.const, int)
+            and left.const & mask == right.const & mask
+        )
+    return bool(
+        left.space is right.space
+        and left.name == right.name
+        and left.offset == right.offset
+        and left.version == right.version
+    )
+
+
+def logical_push_value_8616(
     sites: tuple[SSAInstructionSite8616, ...],
     piece: PhysicalCallArgumentPiece8616,
-) -> tuple[
-    tuple[StorageReachingDefinition8616, ...] | None,
-    CallArgumentDefinitionFailure8616 | None,
-]:
-    """Bind one logical pushed value to its exact outgoing stack-store pieces."""
+    *,
+    follow_register_definitions: bool = False,
+) -> tuple[LogicalPushValue8616 | None, CallArgumentDefinitionFailure8616 | None]:
+    """Reconstruct one logical pushed value from exact physical stores."""
     candidates = tuple(
         (site, site.instr.args[0], site.instr.args[1])
         for site in sites
@@ -181,28 +214,61 @@ def resolve_physical_store_definitions_8616(
     ordered = tuple(sorted(candidates, key=lambda item: item[1].offset))
     first_address = ordered[0][1]
     cursor = first_address.offset
-    for _site, address, _value in ordered:
+    source_offset = 0
+    slices: list[PhysicalPushStoreSlice8616] = []
+    roots: list[IRValue] = []
+    for site, address, value in ordered:
         if address.offset != cursor or address.base_values != first_address.base_values:
             return None, CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_CONFLICT
+        traced = _logical_source_slice_8616(
+            site,
+            value,
+            piece.width,
+            follow_register_definitions=follow_register_definitions,
+        )
+        if traced is None or traced[1] != source_offset:
+            return None, CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
+        slices.append(PhysicalPushStoreSlice8616(site, address, value, source_offset))
+        roots.append(traced[0])
         cursor += address.size
-    if sum(address.size for _site, address, _value in ordered) != piece.width:
-        return None, CallArgumentDefinitionFailure8616.SOURCE_WIDTH_CONFLICT
-    traces = tuple(
-        _logical_source_slice_8616(site, value, piece.width)
-        for site, _address, value in ordered
-    )
-    expected_offsets: list[int] = []
-    source_offset = 0
-    for _site, address, _value in ordered:
-        expected_offsets.append(source_offset)
         source_offset += address.size
-    if any(trace is None for trace in traces) or tuple(
-        trace[1] for trace in traces if trace is not None
-    ) != tuple(expected_offsets):
-        return None, CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
-    roots = tuple(trace[0] for trace in traces if trace is not None)
+    if source_offset != piece.width:
+        return None, CallArgumentDefinitionFailure8616.SOURCE_WIDTH_CONFLICT
+    if any(not _same_logical_root_8616(roots[0], root, piece.width) for root in roots[1:]):
+        return None, CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_CONFLICT
+    root = next((item for item in roots if item.size == piece.width), roots[0])
+    result = LogicalPushValue8616(root, piece.width, tuple(slices))
+    if not result.complete:
+        return None, CallArgumentDefinitionFailure8616.SOURCE_WIDTH_CONFLICT
+    return result, None
+
+
+def resolve_physical_store_definitions_8616(
+    sites: tuple[SSAInstructionSite8616, ...],
+    piece: PhysicalCallArgumentPiece8616,
+) -> tuple[
+    tuple[StorageReachingDefinition8616, ...] | None,
+    CallArgumentDefinitionFailure8616 | None,
+]:
+    """Bind one logical pushed value to its exact outgoing stack-store pieces."""
     source = piece.source
     kind = source[0] if source else None
+    logical, logical_failure = logical_push_value_8616(
+        sites,
+        piece,
+        follow_register_definitions=kind
+        in {
+            CallsitePushSourceKind8616.IMMEDIATE,
+            CallsitePushSourceKind8616.IMMEDIATE.value,
+        },
+    )
+    if logical_failure is not None or logical is None:
+        return (
+            None,
+            logical_failure
+            or CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND,
+        )
+    root = logical.root
     source_storages: tuple[StorageIdentity8616 | None, ...]
     if kind in {
         CallsitePushSourceKind8616.IMMEDIATE,
@@ -211,23 +277,16 @@ def resolve_physical_store_definitions_8616(
         if len(source) != 2 or not isinstance(source[1], int):
             return None, CallArgumentDefinitionFailure8616.SOURCE_SHAPE_CONFLICT
         mask = (1 << (piece.width * 8)) - 1
-        if any(
-            root.const is None or root.const & mask != source[1] & mask
-            for root in roots
-        ):
+        if root.const is None or root.const & mask != source[1] & mask:
             return None, CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
-        source_storages = (None,) * len(ordered)
+        source_storages = (None,) * len(logical.slices)
     elif kind in {
         CallsitePushSourceKind8616.BP_ADDRESS,
         CallsitePushSourceKind8616.BP_ADDRESS.value,
     }:
-        if (
-            len(source) != 2
-            or not isinstance(source[1], int)
-            or any(root != roots[0] for root in roots)
-        ):
+        if len(source) != 2 or not isinstance(source[1], int):
             return None, CallArgumentDefinitionFailure8616.SOURCE_SHAPE_CONFLICT
-        affine = _bp_affine_8616(ordered[0][0], roots[0])
+        affine = _bp_affine_8616(logical.slices[0].site, root)
         if (
             affine is None
             or affine[0] != 1
@@ -247,12 +306,14 @@ def resolve_physical_store_definitions_8616(
                     segment_origin=SegmentOrigin.PROVEN,
                 ),
             )
-            for (_site, address, _value), offset in zip(
-                ordered,
-                expected_offsets,
-                strict=True,
-            )
+            for item in logical.slices
+            for address, offset in ((item.address, item.source_offset),)
         )
+    elif kind in {
+        CallsitePushSourceKind8616.EXPR,
+        CallsitePushSourceKind8616.EXPR.value,
+    }:
+        source_storages = (None,) * len(logical.slices)
     else:
         return None, CallArgumentDefinitionFailure8616.UNSUPPORTED_SOURCE_KIND
     definitions = tuple(
@@ -263,11 +324,12 @@ def resolve_physical_store_definitions_8616(
             instr_addr=piece.push_addr,
             source_storage=source_storage,
         )
-        for (site, _address, value), source_storage in zip(
-            ordered,
+        for item, source_storage in zip(
+            logical.slices,
             source_storages,
             strict=True,
         )
+        for site, value in ((item.site, item.value),)
     )
     if any(not definition.is_complete for definition in definitions):
         return None, CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND

@@ -5317,11 +5317,11 @@ def test_architecture_check_requires_quality_fast_type_ratchet(tmp_path):
                 "QA_TYPED_FILES := \\",
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters decompiler-check-fast",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -5352,14 +5352,14 @@ def test_architecture_check_requires_focused_ruff_promotion_filter(tmp_path):
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
                 "TYPE_RATCHET_SELECTED_FILES := $(PY_FILES)",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality: linters type-ratchet-changed decompiler-check",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline:",
                 "\t$(PYTHON) scripts/test_pipeline.py --require-external",
@@ -5390,14 +5390,14 @@ def test_architecture_check_requires_quality_type_ratchet(tmp_path):
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
                 "TYPE_RATCHET_SELECTED_FILES := $(PY_FILES)",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality: linters decompiler-check",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline:",
                 "\t$(PYTHON) scripts/test_pipeline.py --require-external",
@@ -5429,7 +5429,7 @@ def test_architecture_check_requires_check_all_project_guards(tmp_path):
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
                 "TYPE_RATCHET_SELECTED_FILES := $(PY_FILES)",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "check-all: ruff-all pyright-all architecture-check agent-context-check test-ownership-check pytest-all",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality: linters type-ratchet-changed decompiler-check",
@@ -5437,7 +5437,7 @@ def test_architecture_check_requires_check_all_project_guards(tmp_path):
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline:",
                 "\t$(PYTHON) scripts/test_pipeline.py --require-external",
@@ -5469,13 +5469,13 @@ def test_architecture_check_requires_changed_type_ratchet_command(tmp_path):
                 "QA_TYPED_FILES := \\",
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t@echo skipped",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -5504,13 +5504,13 @@ def test_architecture_check_requires_default_test_pipeline_command(tmp_path):
                 "QA_TYPED_FILES := \\",
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -5539,13 +5539,13 @@ def test_architecture_check_requires_promoted_typed_files_in_makefile(tmp_path):
                 "QA_TYPED_FILES := \\",
                 "\tmonkeytype_config.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -6185,13 +6185,13 @@ def test_architecture_check_requires_agent_context_in_promoted_typed_makefile_se
                 "\tscripts/check_changed_non_test_types.py \\",
                 "\tscripts/sortdemo_decompiler_status.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -6229,13 +6229,13 @@ def test_architecture_check_requires_quality_gate_in_promoted_typed_makefile_set
                 "\tscripts/check_changed_non_test_types.py \\",
                 "\tscripts/sortdemo_decompiler_status.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -6274,13 +6274,13 @@ def test_architecture_check_requires_runtime_guard_in_promoted_typed_makefile_se
                 "\tscripts/check_changed_non_test_types.py \\",
                 "\tscripts/sortdemo_decompiler_status.py",
                 "QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))",
-                "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files",
+                "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(TYPE_RATCHET_SELECTED_FILES)",
                 "quality-fast: linters type-ratchet-changed decompiler-check-fast",
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -6939,7 +6939,7 @@ def test_architecture_check_rejects_check_files_without_context_guards(tmp_path)
                 "type-ratchet-changed:",
                 "\t$(PYTHON) scripts/check_changed_non_test_types.py $(QA_CHANGED_TYPED_FILES)",
                 "decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline",
-                "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast",
+                "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast",
                 "decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded",
                 "test-pipeline-fast:",
                 "\t$(PYTHON) scripts/test_pipeline.py --tier fast --require-external",
@@ -7234,6 +7234,61 @@ def test_runtime_architecture_guard_accepts_current_parent_attestation(monkeypat
     )
 
     architecture_runtime_guard.assert_decompiler_architecture_clean()
+
+
+def test_runtime_architecture_guard_reuses_current_process_attestation(monkeypatch):
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID",
+        None,
+    )
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_architecture_guard_source_fingerprint",
+        lambda _root, _cli: "current-source",
+    )
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_architecture_guard_cache_is_clean",
+        lambda _fingerprint: True,
+    )
+    architecture_runtime_guard.assert_decompiler_architecture_clean()
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_architecture_guard_source_fingerprint",
+        lambda _root, _cli: pytest.fail("same process must reuse its attestation"),
+    )
+
+    architecture_runtime_guard.assert_decompiler_architecture_clean()
+
+
+def test_runtime_architecture_guard_does_not_reuse_forked_process_attestation(monkeypatch):
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID",
+        os.getpid() - 1,
+    )
+    fingerprinted = False
+
+    def fingerprint(_root, _cli):
+        nonlocal fingerprinted
+        fingerprinted = True
+        return "current-source"
+
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_architecture_guard_source_fingerprint",
+        fingerprint,
+    )
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_architecture_guard_cache_is_clean",
+        lambda _fingerprint: True,
+    )
+
+    architecture_runtime_guard.assert_decompiler_architecture_clean()
+
+    assert fingerprinted is True
 
 
 def test_runtime_architecture_guard_rejects_stale_parent_attestation(monkeypatch):

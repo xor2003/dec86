@@ -343,18 +343,18 @@ def materialize_signed_global_declarations_8616(project: object, codegen: object
             stats.failure_count += 1
             continue
         stats.classified_fact_count += 1
-        replace_global_declaration_spec_from_stronger_typed_evidence_8616(
-            codegen,
-            ctype=GlobalDeclarationCType8616.SIGNED_LONG,
-            name=candidate.name,
-            array_len=None,
-        )
+        fact = SignedGlobalDeclarationFact8616(candidate.base_offset, candidate.name)
+        if fact not in previous_facts or ("long", candidate.name, None) not in _global_declaration_specs_8616(surface):
+            replace_global_declaration_spec_from_stronger_typed_evidence_8616(
+                codegen,
+                ctype=GlobalDeclarationCType8616.SIGNED_LONG,
+                name=candidate.name,
+                array_len=None,
+            )
         if ("long", candidate.name, None) not in _global_declaration_specs_8616(surface):
             stats.failure_count += 1
             continue
-        materialized_facts.append(
-            SignedGlobalDeclarationFact8616(candidate.base_offset, candidate.name)
-        )
+        materialized_facts.append(fact)
         stats.materialized_count += 1
 
     facts = tuple(dict.fromkeys(materialized_facts))

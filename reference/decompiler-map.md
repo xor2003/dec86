@@ -58,19 +58,18 @@ discovery catalog into Alias once and never classifies semantic evidence.
 Legacy instruction-backed collectors are per-function rendering/parity debt, not an alternate project-layout owner. The read-only parity modules in Lowering may
 report divergence but never select evidence or change C; the inventory script
 isolates the executable from sidecars and reports non-library functions.
+Near-offset call arguments follow the same chain: IR owns exact affine proof,
+and Lowering joins it with callee-owned pointer output evidence atomically.
+Target projection, object grouping, type proof, and direct/indirect ownership
+are specified in `reference/pointer-parameter-output-pipeline.md`.
 Alias accepts only unambiguous unscaled pointer-relative or scaled global forms; IR owns exact LOAD-to-STORE SSA lanes, Alias endpoint/index identity, and Widening families and bounds without defaults or numeric proximity.
-For interprocedural global-memory outputs, Semantics owns exact store and
-terminal-path facts, Alias owns segmented range identity and overlapping-view
-ownership, Widening owns exact caller-load projections into those ranges, and
-Types/Lowering owns caller CFG/use trials. A contained caller view may be
-materialized only with its exact byte offset into a unique maximal Alias range;
-crossing, width-conflicting, or unproven views must refuse before Lowering.
-Function contracts retain those projections under one Alias-owned memory
-object. They must not flatten whole and contained views into independent scalar
-return slots; `outputs` is reserved for register/sequence returns. Atomic
-publication revalidates that every object view has exactly one matching effect
-and optional `LIVE_OUT` trial in the same caller/callsite binding; stale,
-duplicate, missing, or orphaned projections fail before project mutation.
+Loop bounds follow the same chain: IR carries exact-byte conditions into SSA and owns immutable CFG, dominators, single-entry loops, and byte-backed zero/plus-one induction writes; Alias owns canonical index identity, and Widening maps one segmented layout before proving an extent. The final Widening layout/range bundle is serialized atomically through the project cache and clean-worker transport. Types/Lowering may only strengthen an existing declaration with an accepted exact range and matching indexed identity; dynamic bounds such as SORTD InitBars, external entries, ambiguous overlaps, missing names, and declaration conflicts remain typed refusals.
+For interprocedural global-memory outputs, Semantics owns terminal stores, Alias
+owns segmented ranges, Widening owns exact caller-load views, and Types/Lowering
+owns CFG/use trials. Contained views require an exact offset into one maximal
+range; crossing or ambiguous views refuse. Function contracts keep all views
+under that Alias object, reserve `outputs` for register/sequence returns, and
+validate matching effects and `LIVE_OUT` trials before atomic publication.
 
 ## Never Fix Here
 

@@ -31,6 +31,23 @@ result.txt
 .corpus
 node_modules/
 .venv/
+build/
+*.egg-info/
+*.prof
+pyvex_ffi_parser_cache.*
+tmp_archive/
+examples/build_*/
+signature_catalogs/.zip_catalog_cache/
+.signature_catalog_cache/
+inertia_decompiler/*.c
+inertia_decompiler/*.pyx
+cod/**/*.dec
+cod/**/*.dec.stdout
+VIKINGS*.dec
+VIKINGS*.err
+SORTD.dec
+SORTD_.dec
+SORTD.failed-*.dec
 
 # Generated large catalog artifacts
 signature_catalogs/all_compilers.pat

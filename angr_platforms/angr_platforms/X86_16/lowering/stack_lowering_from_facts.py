@@ -34,6 +34,7 @@ from .stack_variable_binding import (
     build_stack_variable_bindings_8616,
 )
 from .stack_variable_coordinates import (
+    record_stack_variable_coordinate_alias_8616,
     record_stack_variable_coordinate_projection_8616,
     stack_variable_coordinate_registry_8616,
 )
@@ -456,6 +457,7 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
                 for var, cvar in variables_in_use.items()
                 if isinstance(var, SimStackVariable)
                 and _canonical_stack_offset_8616(var.offset) == offset
+                and (not isinstance(var.size, int) or var.size <= size)
             ]
             if matches:
                 canonical_var, canonical_cvar = min(
@@ -471,7 +473,17 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
                     _apply_stack_binding_name_8616(candidate_cvar, binding_name)
                     _register_stack_cvar_surface_8616(codegen, candidate_cvar, target_type)
                 if isinstance(canonical_var, SimStackVariable):
-                    return _record(cast(object, canonical_cvar))
+                    recorded = _record(cast(object, canonical_cvar))
+                    for variable, _candidate_cvar in matches:
+                        if variable is canonical_var:
+                            continue
+                        record_stack_variable_coordinate_alias_8616(
+                            codegen,
+                            bp_offset=bp_offset,
+                            size=size,
+                            variable=variable,
+                        )
+                    return recorded
 
         variable = SimStackVariable(
             offset,

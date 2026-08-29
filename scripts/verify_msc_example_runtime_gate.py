@@ -259,7 +259,7 @@ int main(void)
 """
 
 
-SCALAR_TYPES_HARNESS_MAIN = """
+SCALAR_TYPES_HARNESS_MAIN: str = """
 int main(void)
 {
     char text1[4];
@@ -283,7 +283,7 @@ int main(void)
     if (add_sc(1, 2) != 3) {
         return 1;
     }
-    if (mix_uc(7, 3) != (unsigned char)13) {
+    if (mix_uc(64, 0) != (unsigned char)128) {
         return 2;
     }
     if (byteops_unsigned() != 0xC000U) {

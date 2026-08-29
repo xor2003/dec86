@@ -44,6 +44,8 @@ def finalize_shared_call_occurrences_8616(project: object, codegen: object) -> b
     changed = bool(_codegen.split_distinct_condition_call_occurrences_8616(codegen))
     stored_assignments = materialize_stored_call_result_assignments_8616(codegen)
     changed = stored_assignments.changed or changed
+    if os.environ.get("INERTIA_DEBUG_STORED_CALL_RESULT_OCCURRENCES") == "1":
+        logger.warning("[stored-call-result-assignments] result=%r", stored_assignments)
     result_aliases = materialize_shared_call_result_aliases_8616(codegen)
     changed = result_aliases.changed or changed
     frame_arguments = prune_exact_call_return_frame_arguments_8616(project, codegen)

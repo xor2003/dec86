@@ -3,7 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: expose a cheap typed generation only while every mutation that
 can invalidate direct-stack replay is published by the enclosing owner.
-Do not infer stability from object identity, rendered C, call order, or names.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 Dynamic boundary: generation state is attached to third-party angr codegen.
 """
 

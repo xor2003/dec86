@@ -51,7 +51,6 @@ import time
 import typing
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, cast
 
 from angr.ailment.statement import Return as AILReturn
@@ -80,7 +79,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimStackVariable
 
 from inertia_decompiler.runtime_support import AnalysisTimeout, analysis_timeout, timing_output_enabled
 from inertia_decompiler.telemetry import annotate_current_span, span
@@ -116,12 +115,17 @@ from .decompiler_return_compat import (
     _return_compat_function_caller_return_use_8616,
     codegen_has_explicit_void_return_8616,
 )
-from .frontend_function_instructions import collect_function_instruction_inventory_8616
+from .frontend_function_instructions import (
+    BoundedLinearInstructionInventory8616,
+    collect_bounded_linear_instruction_inventory_8616,
+    collect_function_instruction_inventory_8616,
+)
 from .ir.condition_ir import (
     invert_condition_fingerprint_string_8616,
     normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_fingerprint_string_8616,
 )
+from .ir.status_flag_lift_context import active_status_flag_lift_context_8616
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
 from .lowering.global_declarations import ctype_for_global_width_8616, record_global_declaration_spec_8616
@@ -133,6 +137,7 @@ from .lowering.real_mode_linear import (
     _direct_stack_move_instruction_facts_8616,
     _direct_stack_update_instruction_facts_8616,
     _type_for_access_width_8616,
+    lower_stable_ss_linear_stack_dereferences_8616,
     materialize_direct_global_incdec_instructions_8616,
     materialize_direct_stack_incdec_instructions_8616,
     materialize_direct_stack_mov_instructions_8616,
@@ -168,14 +173,28 @@ from .lowering.stack_lowering_from_facts import (
 )
 from .lowering.stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
+    positive_stack_specs_8616,
     reconcile_callsite_interface_declarations_8616,
 )
+from .lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    publish_selected_stack_cvar_projection_8616,
+    stack_cvar_for_machine_bp_range_8616,
+)
 from .lowering.stack_variable_display_names import (
+    publish_stack_variable_projection_display_names_8616,
     reapply_stack_variable_projection_names_8616,
+    rebind_restored_stack_coordinate_registry_8616,
 )
 from .pipeline.contracts import assert_pipeline_contracts_8616
 from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
+from .pipeline.result_contracts import require_optional_result_type_8616, require_result_type_8616
+from .pipeline.structured_ast_generation import structured_ast_generation_8616
+from .postprocess.bootstrap_orchestration import (
+    PostprocessBootstrapOperations8616,
+    run_postprocess_bootstrap_steps_8616,
+)
 from .postprocess.optimization.dce import _dead_code_elimination_8616
 from .postprocess.optimization.dead_condition_carriers import prune_unread_pure_condition_carriers_8616
 from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
@@ -185,6 +204,96 @@ from .postprocess.optimization.pass_driver import (
     _normalize_cfunc_root_for_optimization_8616,
 )
 from .postprocess.optimization.trivial_copy import prune_adjacent_temporary_copy_assignments_8616
+from .postprocess.pass_runtime import (
+    CallArgumentAstEffect8616,
+    DecompilerPostprocessPassSpec,
+    PostprocessRuntimeConfig8616,
+)
+from .postprocess.pass_transaction import (
+    PostprocessMutationWitnessCache8616,
+    PostprocessPassPreflightAction8616,
+    PostprocessPassPreflightInput8616,
+    PostprocessPassTransactionState8616,
+    decide_postprocess_pass_preflight_8616,
+)
+from .postprocess.pass_validation_policy import (
+    CALLSITE_STACK_ARGUMENT_PASS_NAMES_8616 as _CALLSITE_STACK_ARGUMENT_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616 as _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616 as _DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616 as _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616 as _HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    JCC_REWRITE_VALIDATION_PASS_NAMES_8616 as _JCC_REWRITE_VALIDATION_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    MANDATORY_VALIDATION_PASS_NAMES_8616 as _MANDATORY_VALIDATION_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    MISSING_TERMINAL_AX_RETURN_PASS_NAMES_8616 as _MISSING_TERMINAL_AX_RETURN_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    NON_IDIV_DIRECT_STACK_MOVE_SOURCE_KINDS_8616 as _NON_IDIV_DIRECT_STACK_MOVE_SOURCE_KINDS_8616,
+)
+from .postprocess.pass_validation_policy import (
+    PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616 as _PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616,
+)
+from .postprocess.pass_validation_policy import (
+    PASS_REJECT_BUDGET_DEFAULT_8616 as _PASS_REJECT_BUDGET_DEFAULT_8616,
+)
+from .postprocess.pass_validation_policy import (
+    PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616 as _PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616,
+)
+from .postprocess.rollback_snapshot_cache import (
+    PostprocessRollbackSnapshot8616,
+    PostprocessRollbackSnapshotController8616,
+    RollbackSnapshotInvalidation8616,
+)
+from .postprocess.runtime_configuration import configure_postprocess_runtime_8616
+from .postprocess.validation_contracts import (
+    CfgReturnExprDeltaRefusal8616 as _CfgReturnExprDeltaRefusal8616,
+)
+from .postprocess.validation_contracts import (
+    DirectGlobalSymbolRef8616 as _DirectGlobalSymbolRef8616,
+)
+from .postprocess.validation_contracts import (
+    PostprocessDestructiveSalvageFamily8616 as _PostprocessDestructiveSalvageFamily8616,
+)
+from .postprocess.validation_contracts import (
+    PostprocessFunctionComplexity8616 as _PostprocessFunctionComplexity8616,
+)
+from .postprocess.validation_contracts import (
+    PostprocessPassRefusalReason8616 as _PostprocessPassRefusalReason8616,
+)
+from .postprocess.validation_contracts import (
+    PostprocessValidationBlockingReason8616 as _PostprocessValidationBlockingReason8616,
+)
+from .postprocess.validation_contracts import (
+    PostprocessValidationDeltaKind8616 as _PostprocessValidationDeltaKind8616,
+)
+from .postprocess.validation_contracts import (
+    TerminalStackArgDecision8616 as _TerminalStackArgDecision8616,
+)
+from .postprocess.validation_contracts import (
+    VoidEmptyReturnGuardDecision8616 as _VoidEmptyReturnGuardDecision8616,
+)
+from .postprocess.validation_contracts import (
+    VoidTailCallGuardDecision8616 as _VoidTailCallGuardDecision8616,
+)
+from .postprocess.validation_contracts import (
+    postprocess_validation_blocking_reasons_8616 as _postprocess_validation_blocking_reasons_8616,
+)
+from .postprocess.validation_contracts import (
+    record_postprocess_validation_blocking_reason_8616 as _record_postprocess_validation_blocking_reason_8616,
+)
 from .render_compat import repair_cfunctioncall_render_targets_8616
 from .structuring.condition_provenance import (
     replay_codegen_structured_condition_segment_provenance_8616,
@@ -444,10 +553,8 @@ from .tail_validation import (
     callsite_far_pointer_remnant_prune_delta_8616,
     callsite_helper_control_target_delta_8616,
     callsite_mixed_helper_stack_control_delta_8616,
-    callsite_resolved_indirect_helper_control_delta_8616,
     callsite_resolved_indirect_helper_stack_delta_8616,
     callsite_stack_arg_slot_alias_condition_delta_8616,
-    callsite_stack_precision_control_delta_8616,
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
     conditional_continue_guard_repair_delta_8616,
@@ -468,6 +575,7 @@ from .tail_validation import (
     x86_16_tail_validation_result_passed,
 )
 from .tail_validation_fingerprint import _expr_fingerprint, _stack_slot_fingerprint_from_slot_8616
+from .tail_validation_generation import tail_validation_summary_input_generation_8616
 
 type AngrProjectValue = Any
 type AngrFunctionValue = Any
@@ -507,407 +615,7 @@ __all__ = [
 ]
 
 
-class _PostprocessValidationDeltaKind8616(Enum):
-    BLOCKING = "blocking"
-    NAME_ONLY_HELPER_ANNOTATION = "name_only_helper_annotation"
-    JCC_CALL_RETURN_CONDITION_REBINDING = "jcc_call_return_condition_rebinding"
-    JCC_CONDITION_MATERIALIZATION = "jcc_condition_materialization"
-    DIRECT_GLOBAL_UPDATE_MATERIALIZATION = "direct_global_update_materialization"
-    GLOBAL_BYTE_SUM_LOOP_MATERIALIZATION = "global_byte_sum_loop_materialization"
-    DIRECT_STACK_UPDATE_MATERIALIZATION = "direct_stack_update_materialization"
-    DIRECT_STACK_MOVE_MATERIALIZATION = "direct_stack_move_materialization"
-    DIRECT_STACK_MOVE_UPDATE_MATERIALIZATION = "direct_stack_move_update_materialization"
-    UNREACHABLE_AFTER_RETURN_PRUNE = "unreachable_after_return_prune"
-    CALLSITE_STACK_ARGUMENT_MATERIALIZATION = "callsite_stack_argument_materialization"
-    STACK_PROTOTYPE_WIDTH_RECONCILIATION = "stack_prototype_width_reconciliation"
-    STACK_PROBE_HELPER_CLEANUP = "stack_probe_helper_cleanup"
-    MISSING_TERMINAL_AX_RETURN = "missing_terminal_ax_return"
-    CFG_RETURN_CHAIN_MATERIALIZATION = "cfg_return_chain_materialization"
-    CFG_RETURN_EXPR_CHAIN_MATERIALIZATION = "cfg_return_expr_chain_materialization"
-    DEFAULT_SCALAR_VOID_RETURN_CLASSIFICATION = "default_scalar_void_return_classification"
-    UNOBSERVED_DEFAULT_SCALAR_SYNTHETIC_RETURN = "unobserved_default_scalar_synthetic_return"
-    EXPOSED_NONVOID_STACK_ARG_SCALAR_RETURN = "exposed_nonvoid_stack_arg_scalar_return"
-    CFG_VOID_TAIL_CALL_GUARD_MATERIALIZATION = "cfg_void_tail_call_guard_materialization"
-    PROVEN_SURPLUS_EMPTY_GUARD_CLEANUP = "proven_surplus_empty_guard_cleanup"
-    CONDITIONAL_CONTINUE_GUARD_REPAIR = "conditional_continue_guard_repair"
-    SWITCH_LOOP_EXIT_RETURN_REPAIR = "switch_loop_exit_return_repair"
-
-
-class _PostprocessValidationBlockingReason8616(Enum):
-    MISSING_SOURCE_EVIDENCED_CALLS = "missing_source_evidenced_calls"
-    MISSING_SOURCE_EVIDENCED_CALL_MULTIPLICITY = "missing_source_evidenced_call_multiplicity"
-    SOURCE_EVIDENCED_ARGUMENT_CLASS_MISMATCH = "source_evidenced_argument_class_mismatch"
-    SOURCE_EVIDENCED_CALL_ORDER_MISMATCH = "source_evidenced_call_order_mismatch"
-    SOURCE_EVIDENCED_LOOP_STRUCTURE_MISSING = "source_evidenced_loop_structure_missing"
-    SOURCE_EVIDENCED_LOOP_CALL_HOISTED = "source_evidenced_loop_call_hoisted"
-    UNREACHABLE_CALL_AFTER_RETURN = "unreachable_call_after_return"
-    SOURCE_EVIDENCED_SIDE_EFFECT_FLOOR_NOT_MET = "source_evidenced_side_effect_floor_not_met"
-    DESTRUCTIVE_POSTPROCESS_VALIDATION_DELTA = "destructive_postprocess_validation_delta"
-
-    @classmethod
-    def coerce(cls: StructuredAstValue, value: StructuredAstValue) -> _PostprocessValidationBlockingReason8616 | None:
-        """Convert stored validation-reason values into the typed enum."""
-        if isinstance(value, cls):
-            return cast(_PostprocessValidationBlockingReason8616, value)
-        if isinstance(value, str):
-            with contextlib.suppress(ValueError):
-                return cast(_PostprocessValidationBlockingReason8616, cls(value))
-        return None
-
-
-class _PostprocessDestructiveSalvageFamily8616(Enum):
-    DIRECT_STACK_UPDATE = "direct_stack_update"
-    DIRECT_STACK_MOVE = "direct_stack_move"
-    UNKNOWN = "unknown"
-
-
-class _CfgReturnExprDeltaRefusal8616(Enum):
-    MISSING_EVIDENCE = "missing_evidence"
-    MISSING_DELTA = "missing_delta"
-    UNEXPECTED_FIELDS = "unexpected_fields"
-    MISSING_RETURNS_DELTA = "missing_returns_delta"
-    UNEXPECTED_ADDED_RETURNS = "unexpected_added_returns"
-    UNEXPECTED_REMOVED_RETURNS = "unexpected_removed_returns"
-    UNEXPECTED_ADDED_CONDITIONS = "unexpected_added_conditions"
-    UNEXPECTED_ADDED_CONTROL = "unexpected_added_control"
-    UNEXPECTED_HELPER_DELTA = "unexpected_helper_delta"
-
-
-class _VoidEmptyReturnGuardDecision8616(Enum):
-    PRUNE = "prune"
-    KEEP_NOT_VOID = "keep_not_void"
-    KEEP_NO_BRANCH_PROOF = "keep_no_branch_proof"
-    KEEP_WITHIN_BRANCH_BUDGET = "keep_within_branch_budget"
-    KEEP_BRANCH_BACKED_CONDITION = "keep_branch_backed_condition"
-    KEEP_NOT_EMPTY_RETURN_GUARD = "keep_not_empty_return_guard"
-
-
-class _VoidTailCallGuardDecision8616(Enum):
-    MATERIALIZE = "materialize"
-    MATERIALIZE_SUFFIX_DIAMOND = "materialize_suffix_diamond"
-    KEEP_NOT_VOID = "keep_not_void"
-    KEEP_NO_CFG_PROOF = "keep_no_cfg_proof"
-    KEEP_NO_TAIL_CALL = "keep_no_tail_call"
-    KEEP_NO_BRANCH_MATCH = "keep_no_branch_match"
-    KEEP_AMBIGUOUS_BRANCH_MATCH = "keep_ambiguous_branch_match"
-
-
-class _PostprocessPassRefusalReason8616(Enum):
-    LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE = "large_function_local_validation_unavailable"
-    VERY_LARGE_FUNCTION_LOCAL_VALIDATION_UNAVAILABLE = "very_large_function_local_validation_unavailable"
-
-
-class _TerminalStackArgDecision8616(Enum):
-    EXISTING_ARG = "existing_arg"
-    EXISTING_STACK_SLOT = "existing_stack_slot"
-    MATERIALIZED_ARG = "materialized_arg"
-    MATERIALIZED_STACK_SLOT = "materialized_stack_slot"
-    FALLBACK = "fallback"
-
-
 _UnconsumedLoopBreakJccStats8616 = UnconsumedLoopBreakJccStats8616
-
-
-_MISSING_TERMINAL_AX_RETURN_PASS_NAMES_8616 = frozenset(
-    {
-        "_materialize_missing_terminal_ax_return_8616",
-    }
-)
-
-
-_JCC_REWRITE_VALIDATION_PASS_NAMES_8616 = frozenset(
-    {
-        "_rewrite_decoded_jcc_conditions_8616",
-        "_rewrite_decoded_jcc_conditions_after_calls_8616",
-        "_materialize_unconsumed_loop_break_jcc_8616",
-        "_repair_conditional_continue_guards_after_loop_break_8616",
-    }
-)
-
-_DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616 = frozenset(
-    {
-        "_materialize_direct_global_incdec_instructions_8616",
-        "_materialize_direct_global_incdec_instructions_final_8616",
-    }
-)
-
-_DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616 = frozenset(
-    {
-        "_materialize_direct_stack_incdec_instructions_8616",
-        "_materialize_direct_stack_incdec_instructions_final_8616",
-    }
-)
-
-_DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616 = frozenset(
-    {
-        "_materialize_direct_stack_mov_instructions_8616",
-        "_materialize_direct_stack_mov_instructions_final_8616",
-        "_prune_unsupported_function_pointer_stack_move_assignments_8616",
-    }
-)
-
-_NON_IDIV_DIRECT_STACK_MOVE_SOURCE_KINDS_8616 = frozenset(
-    kind for kind in DirectStackMoveSourceKind8616 if kind is not DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER
-)
-
-_HELPER_NAME_ONLY_VALIDATION_PASS_NAMES_8616 = _JCC_REWRITE_VALIDATION_PASS_NAMES_8616 | frozenset(
-    {
-        "_materialize_callsite_stack_arguments_8616",
-        "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
-        "_prune_consumed_segmented_stack_arg_stores_8616",
-        "_prune_consumed_segmented_stack_arg_stores_final_8616",
-        "_prune_consumed_segmented_stack_arg_stores_after_ss_lowering_8616",
-    }
-)
-
-_CALLSITE_STACK_ARGUMENT_PASS_NAMES_8616 = frozenset(
-    {
-        "_materialize_callsite_stack_arguments_8616",
-        "_materialize_callsite_stack_arguments_final_8616",
-        "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
-        "_prune_consumed_segmented_stack_arg_stores_8616",
-        "_prune_consumed_segmented_stack_arg_stores_final_8616",
-        "_prune_consumed_segmented_stack_arg_stores_after_ss_lowering_8616",
-        "_prune_scalar_global_high_byte_call_arg_remnants_after_ss_lowering_8616",
-        "_materialize_recovered_callsite_stack_arguments_8616",
-    }
-)
-
-_CALL_RECOVERY_VALIDATION_PASS_NAMES_8616 = frozenset(
-    {
-        "_recover_missing_direct_calls_from_evidence_early_8616",
-        "_recover_missing_direct_calls_from_evidence_8616",
-        "_normalize_call_target_names_8616",
-        "_normalize_recovered_call_target_names_8616",
-        "_materialize_callsite_stack_arguments_8616",
-        "_materialize_callsite_stack_arguments_final_8616",
-        "_materialize_recovered_callsite_stack_arguments_8616",
-        "_recover_missing_direct_calls_final_8616",
-    }
-)
-
-_OPTIMIZATION_VALIDATION_PASS_NAMES_8616 = frozenset(f"optimization:{spec.name}" for spec in OPTIMIZATION_PASSES)
-
-_LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616 = (
-    frozenset(
-        {
-            "optimization",
-            "_apply_annotations_8616",
-            "_apply_word_global_types_8616",
-            "_apply_typed_condition_stack_arg_signedness_8616",
-            "_materialize_stable_stack_semantics_bootstrap_8616",
-            "_materialize_stable_stack_semantics_early_8616",
-            "_promote_stack_prototype_from_bp_loads_8616",
-            "_reconcile_exact_stack_argument_prototype_8616",
-            "_prune_return_address_stack_arguments_8616",
-            "_apply_typed_conditions_to_codegen_8616",
-            "_simplify_boolean_cites_8616",
-            "_simplify_structured_expressions_8616",
-            "_maybe_eliminate_single_use_temporaries_8616",
-            "_lower_stable_ss_stack_accesses_8616",
-            "_simplify_structured_expressions_after_stack_lowering_8616",
-            "_materialize_stable_stack_semantics_postprocess_8616",
-            "_materialize_stable_stack_semantics_final_8616",
-            "_lower_runtime_ss_segment_helpers_to_stack_final_8616",
-            "_dead_code_elimination_after_callsite_stack_arguments_8616",
-            "_dead_code_elimination_after_flag_prune_8616",
-            "_dead_code_elimination_after_stable_stack_final_8616",
-            "_dead_code_elimination_after_ss_callsite_stack_arguments_8616",
-            "_dead_code_elimination_final_cleanup_8616",
-            "_rewrite_flag_condition_pairs_8616",
-            "_rewrite_flag_bit_value_uses_8616",
-            "_prune_unused_flag_assignments_8616",
-            "_prune_overwritten_flag_assignments_8616",
-            "_fix_interval_guard_conditions_8616",
-            "_materialize_global_byte_index_sum_loop_8616",
-            "_materialize_nested_stack_counter_accumulator_loop_8616",
-            "_materialize_stack_arg_accumulator_loop_8616",
-            "_repair_conditional_continue_guards_from_evidence_8616",
-            "_materialize_cfg_selector_return_branches_early_8616",
-            "_materialize_cfg_mask_accumulator_8616",
-            "_materialize_cfg_selector_return_branches_8616",
-            "_materialize_unconsumed_loop_break_jcc_8616",
-            "_repair_conditional_continue_guards_after_loop_break_8616",
-            "_repair_loop_exit_return_guards_8616",
-            "_repair_unresolved_function_exit_gotos_8616",
-            "_unify_positive_bp_arg_stack_variables_8616",
-            "_unify_positive_bp_arg_stack_variables_final_8616",
-            "_simplify_structured_expressions_after_call_stack_lowering_8616",
-            "_simplify_structured_expressions_after_final_call_materialization_8616",
-            "_recover_missing_direct_calls_from_evidence_early_8616",
-            "_recover_missing_direct_calls_from_evidence_8616",
-            "_normalize_fact_backed_stack_accesses_8616",
-            "_normalize_call_target_names_8616",
-            "_normalize_recovered_call_target_names_8616",
-            "_materialize_callsite_stack_arguments_8616",
-            "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
-            "_prune_consumed_segmented_stack_arg_stores_8616",
-            "_prune_consumed_segmented_stack_arg_stores_final_8616",
-            "_prune_consumed_segmented_stack_arg_stores_after_ss_lowering_8616",
-            "_prune_scalar_global_high_byte_call_arg_remnants_after_ss_lowering_8616",
-            "_materialize_callsite_prototypes_8616",
-            "_materialize_recovered_callsite_stack_arguments_8616",
-            "_materialize_stack_byte_pair_return_8616",
-            "_recover_missing_direct_calls_final_8616",
-            "_materialize_pointer_memory_idioms_8616",
-            "_materialize_empty_if_return_branches_8616",
-            "_materialize_void_tail_call_guard_from_cfg_8616",
-            "_prune_surplus_void_empty_return_guards_8616",
-            "_prune_surplus_void_empty_return_guards_final_8616",
-            "_prune_unreachable_after_return_final_8616",
-            "_materialize_empty_if_return_branches_final_8616",
-            "_materialize_void_tail_call_guard_from_cfg_final_8616",
-            "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
-            "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
-        }
-    )
-    | _JCC_REWRITE_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616
-    | _OPTIMIZATION_VALIDATION_PASS_NAMES_8616
-)
-
-_MANDATORY_VALIDATION_PASS_NAMES_8616 = frozenset(
-    {
-        "_apply_annotations_8616",
-        "_apply_typed_condition_stack_arg_signedness_8616",
-        "_apply_typed_conditions_to_codegen_8616",
-        "_materialize_stable_stack_semantics_bootstrap_8616",
-        "_materialize_stable_stack_semantics_early_8616",
-        "_materialize_stable_stack_semantics_postprocess_8616",
-        "_materialize_stable_stack_semantics_final_8616",
-        "_lower_stable_ss_stack_accesses_8616",
-        "_lower_runtime_ss_segment_helpers_to_stack_final_8616",
-        "_promote_stack_prototype_from_bp_loads_8616",
-        "_reconcile_exact_stack_argument_prototype_8616",
-        "_prune_return_address_stack_arguments_8616",
-        "_simplify_structured_expressions_8616",
-        "_simplify_structured_expressions_after_stack_lowering_8616",
-        "_simplify_structured_expressions_after_call_stack_lowering_8616",
-        "_simplify_structured_expressions_after_final_call_materialization_8616",
-        "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
-        "_materialize_global_byte_index_sum_loop_8616",
-        "_materialize_nested_stack_counter_accumulator_loop_8616",
-        "_materialize_stack_arg_accumulator_loop_8616",
-        "_materialize_unconsumed_loop_break_jcc_8616",
-        "_prune_unused_flag_assignments_8616",
-        "_prune_overwritten_flag_assignments_8616",
-        "_dead_code_elimination_after_callsite_stack_arguments_8616",
-        "_dead_code_elimination_after_flag_prune_8616",
-        "_dead_code_elimination_after_stable_stack_final_8616",
-        "_dead_code_elimination_after_ss_callsite_stack_arguments_8616",
-        "_dead_code_elimination_final_cleanup_8616",
-        "_classify_return_shape_8616",
-        "_prune_consumed_segmented_stack_arg_stores_8616",
-        "_prune_consumed_segmented_stack_arg_stores_final_8616",
-        "_prune_consumed_segmented_stack_arg_stores_after_ss_lowering_8616",
-        "_rerun_stack_lowering_consumers_after_calls_8616",
-        "_materialize_direct_stack_mov_instructions_8616",
-        "_materialize_direct_stack_mov_instructions_final_8616",
-        "_unify_positive_bp_arg_stack_variables_8616",
-        "_unify_positive_bp_arg_stack_variables_final_8616",
-    }
-    | _CALL_RECOVERY_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616
-    | _OPTIMIZATION_VALIDATION_PASS_NAMES_8616
-)
-
-_PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616 = frozenset(
-    {
-        "_apply_annotations_8616",
-        "_apply_typed_condition_stack_arg_signedness_8616",
-        "_apply_typed_conditions_to_codegen_8616",
-        "_materialize_stable_stack_semantics_bootstrap_8616",
-        "_materialize_stable_stack_semantics_early_8616",
-        "_materialize_stable_stack_semantics_postprocess_8616",
-        "_materialize_stable_stack_semantics_final_8616",
-        "_lower_stable_ss_stack_accesses_8616",
-        "_lower_runtime_ss_segment_helpers_to_stack_final_8616",
-        "_promote_stack_prototype_from_bp_loads_8616",
-        "_reconcile_exact_stack_argument_prototype_8616",
-        "_prune_return_address_stack_arguments_8616",
-        "_simplify_structured_expressions_8616",
-        "_simplify_structured_expressions_after_stack_lowering_8616",
-        "_simplify_structured_expressions_after_call_stack_lowering_8616",
-        "_simplify_structured_expressions_after_final_call_materialization_8616",
-        "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
-        "_materialize_global_byte_index_sum_loop_8616",
-        "_materialize_nested_stack_counter_accumulator_loop_8616",
-        "_materialize_stack_arg_accumulator_loop_8616",
-        "_materialize_unconsumed_loop_break_jcc_8616",
-        "_prune_unused_flag_assignments_8616",
-        "_prune_overwritten_flag_assignments_8616",
-        "_dead_code_elimination_after_callsite_stack_arguments_8616",
-        "_dead_code_elimination_after_flag_prune_8616",
-        "_dead_code_elimination_after_stable_stack_final_8616",
-        "_dead_code_elimination_after_ss_callsite_stack_arguments_8616",
-        "_classify_return_shape_8616",
-        "_prune_consumed_segmented_stack_arg_stores_8616",
-        "_prune_consumed_segmented_stack_arg_stores_final_8616",
-        "_prune_consumed_segmented_stack_arg_stores_after_ss_lowering_8616",
-        "_rerun_stack_lowering_consumers_after_calls_8616",
-        "_materialize_direct_stack_mov_instructions_8616",
-        "_materialize_direct_stack_mov_instructions_final_8616",
-        "_unify_positive_bp_arg_stack_variables_8616",
-        "_unify_positive_bp_arg_stack_variables_final_8616",
-    }
-    | _CALL_RECOVERY_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616
-    | _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616
-    | _OPTIMIZATION_VALIDATION_PASS_NAMES_8616
-)
-
-_PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616 = (
-    _PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
-    - _CALL_RECOVERY_VALIDATION_PASS_NAMES_8616
-    - _DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616
-    - _DIRECT_STACK_UPDATE_VALIDATION_PASS_NAMES_8616
-    - _DIRECT_STACK_MOVE_VALIDATION_PASS_NAMES_8616
-    - _JCC_REWRITE_VALIDATION_PASS_NAMES_8616
-    - frozenset(
-        {
-            "_simplify_boolean_cites_8616",
-            "_simplify_structured_expressions_8616",
-            "_simplify_structured_expressions_after_stack_lowering_8616",
-            "_simplify_structured_expressions_after_call_stack_lowering_8616",
-            "_simplify_structured_expressions_after_final_call_materialization_8616",
-            "_fix_interval_guard_conditions_8616",
-        }
-    )
-)
-_PASS_REJECT_BUDGET_DEFAULT_8616 = 6
-_POSTPROCESS_EXPENSIVE_VALIDATION_BASELINE_MS_8616 = 2000
-
-
-@dataclass(frozen=True)
-class _PostprocessFunctionComplexity8616:
-    block_count: int = 0
-    byte_count: int = 0
-    source: str = "missing"
-
-    @property
-    def is_expensive_for_local_validation(self: StructuredAstValue) -> bool:
-        """Return whether bounded per-pass validation exceeds the local budget."""
-        return bool(self.block_count >= 40 or self.byte_count >= 640 or (self.block_count >= 36 and self.byte_count >= 360))
-
-
-@dataclass
-class _LiveRegisterDeclarationRepairStats8616:
-    raw_fact_count: int = 0
-    normalized_fact_count: int = 0
-    classified_fact_count: int = 0
-    materialized_count: int = 0
-    failure_count: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class _DirectGlobalSymbolRef8616:
-    name: str
-    relative_disp: int
-    width: int
-    max_relative_disp: int
 
 
 _C_AST_CHILD_ATTRS_8616 = (
@@ -1108,7 +816,11 @@ def _bind_codegen_variable_types_to_arch_8616(codegen: StructuredAstValue) -> No
 
 def _postprocess_exit_goto_repair_delta_8616(validation: Mapping[str, StructuredAstValue]) -> bool:
     """Compatibility shim for validation-owned exit-goto repair delta policy."""
-    return exit_goto_repair_delta_8616(validation)
+    return require_result_type_8616(
+        exit_goto_repair_delta_8616(validation),
+        bool,
+        owner="tail_validation.exit_goto_repair_delta_8616",
+    )
 
 
 def _postprocess_has_unresolved_gotos_8616(codegen: StructuredAstValue) -> bool:
@@ -1189,12 +901,20 @@ def _rerun_stack_lowering_consumers_after_calls_8616(project: StructuredAstValue
         codegen._inertia_stack_lowering_large_function_byte_only_8616 = (
             int(getattr(codegen, "_inertia_stack_lowering_large_function_byte_only_8616", 0) or 0) + 1
         )
-        return _rewrite_stack_byte_offsets(project, codegen)
+        return require_result_type_8616(
+            _rewrite_stack_byte_offsets(project, codegen),
+            bool,
+            owner="cli_c_ast_rewrites._rewrite_ss_stack_byte_offsets",
+        )
     if _structured_ast_too_large_for_broad_rerun_8616():
         codegen._inertia_stack_lowering_rerun_ast_large_byte_only_8616 = (
             int(getattr(codegen, "_inertia_stack_lowering_rerun_ast_large_byte_only_8616", 0) or 0) + 1
         )
-        return _rewrite_stack_byte_offsets(project, codegen)
+        return require_result_type_8616(
+            _rewrite_stack_byte_offsets(project, codegen),
+            bool,
+            owner="cli_c_ast_rewrites._rewrite_ss_stack_byte_offsets",
+        )
 
     previous_budget_exists = hasattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616")
     previous_budget = getattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616", None)
@@ -1204,18 +924,22 @@ def _rerun_stack_lowering_consumers_after_calls_8616(project: StructuredAstValue
         getattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616", 16) or 16
     )
     try:
-        return run_stack_lowering_pass_8616(
-            lower_stable_ss_stack_accesses=lambda: False,
-            rewrite_ss_stack_byte_offsets=lambda: _rewrite_stack_byte_offsets(project, codegen),
-            canonicalize_stack_cvars=lambda: _rewrite_canonicalize_stack_cvars(codegen),
-            codegen=codegen,
-            project=project,
-            # This is a late consumer rerun after callsite materialization. Keep
-            # expensive global lowering disabled, but run runtime segment lowering
-            # once because call materialization can expose fresh segment carriers.
-            max_rounds=1,
-            lower_global_segment_accesses=False,
-            lower_runtime_segment_accesses=True,
+        return require_result_type_8616(
+            run_stack_lowering_pass_8616(
+                lower_stable_ss_stack_accesses=lambda: False,
+                rewrite_ss_stack_byte_offsets=lambda: _rewrite_stack_byte_offsets(project, codegen),
+                canonicalize_stack_cvars=lambda: _rewrite_canonicalize_stack_cvars(codegen),
+                codegen=codegen,
+                project=project,
+                # This is a late consumer rerun after callsite materialization. Keep
+                # expensive global lowering disabled, but run runtime segment lowering
+                # once because call materialization can expose fresh segment carriers.
+                max_rounds=1,
+                lower_global_segment_accesses=False,
+                lower_runtime_segment_accesses=True,
+            ),
+            bool,
+            owner="lowering.stack_lowering_impl.run_stack_lowering_pass_8616",
         )
     finally:
         if previous_budget_exists:
@@ -1283,7 +1007,11 @@ def _repair_switch_loop_exit_returns_from_evidence_pass_8616(
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring wrapper runs.
     if getattr(codegen, "_inertia_switch_loop_exit_return_structuring_pass_ran_8616", False):
         return False
-    return repair_switch_loop_exit_returns_from_evidence_8616(project, codegen)
+    return require_result_type_8616(
+        repair_switch_loop_exit_returns_from_evidence_8616(project, codegen),
+        bool,
+        owner="structuring.loop_body_repair.repair_switch_loop_exit_returns_from_evidence_8616",
+    )
 
 
 def _repair_conditional_continue_guards_from_evidence_pass_8616(
@@ -1293,14 +1021,22 @@ def _repair_conditional_continue_guards_from_evidence_pass_8616(
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring wrapper runs.
     if getattr(codegen, "_inertia_conditional_continue_guard_structuring_pass_ran_8616", False):
         return False
-    return repair_conditional_continue_guards_from_evidence_8616(project, codegen)
+    return require_result_type_8616(
+        repair_conditional_continue_guards_from_evidence_8616(project, codegen),
+        bool,
+        owner="structuring.loop_body_repair.repair_conditional_continue_guards_from_evidence_8616",
+    )
 
 
 def _repair_pretest_loop_break_guards_from_evidence_pass_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> bool:
     """Replay structuring-owned pretest repair after legacy AST regeneration."""
-    return repair_pretest_loop_break_guards_from_evidence_8616(project, codegen)
+    return require_result_type_8616(
+        repair_pretest_loop_break_guards_from_evidence_8616(project, codegen),
+        bool,
+        owner="structuring.loop_body_repair.repair_pretest_loop_break_guards_from_evidence_8616",
+    )
 
 
 def _repair_hoisted_jcc_target_copies_from_evidence_pass_8616(
@@ -1310,7 +1046,11 @@ def _repair_hoisted_jcc_target_copies_from_evidence_pass_8616(
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring wrapper runs.
     if getattr(codegen, "_inertia_hoisted_jcc_target_copy_structuring_pass_ran_8616", False):
         return False
-    return repair_hoisted_jcc_target_copies_from_evidence_8616(project, codegen)
+    return require_result_type_8616(
+        repair_hoisted_jcc_target_copies_from_evidence_8616(project, codegen),
+        bool,
+        owner="structuring.loop_body_repair.repair_hoisted_jcc_target_copies_from_evidence_8616",
+    )
 
 
 def _apply_typed_conditions_to_codegen_pass_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
@@ -1318,7 +1058,11 @@ def _apply_typed_conditions_to_codegen_pass_8616(project: StructuredAstValue, co
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring wrapper runs.
     if getattr(codegen, "_inertia_condition_materialization_structuring_pass_ran_8616", False):
         return False
-    return _apply_typed_conditions_to_codegen_8616(project, codegen)
+    return require_result_type_8616(
+        _apply_typed_conditions_to_codegen_8616(project, codegen),
+        bool,
+        owner="structuring.condition_materialization.apply_typed_conditions_to_codegen_8616",
+    )
 
 
 def _rewrite_decoded_jcc_conditions_pass_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
@@ -1326,7 +1070,11 @@ def _rewrite_decoded_jcc_conditions_pass_8616(project: StructuredAstValue, codeg
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring wrapper runs.
     if getattr(codegen, "_inertia_condition_materialization_structuring_pass_ran_8616", False):
         return False
-    return _jcc._rewrite_decoded_jcc_conditions_8616(project, codegen)
+    return require_result_type_8616(
+        _jcc._rewrite_decoded_jcc_conditions_8616(project, codegen),
+        bool,
+        owner="decompiler_postprocess_jcc._rewrite_decoded_jcc_conditions_8616",
+    )
 
 
 def _rewrite_flag_condition_pairs_pass_8616(codegen: StructuredAstValue) -> bool:
@@ -1334,7 +1082,11 @@ def _rewrite_flag_condition_pairs_pass_8616(codegen: StructuredAstValue) -> bool
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring cleanup wrapper runs.
     if getattr(codegen, "_inertia_condition_cleanup_structuring_pass_ran_8616", False):
         return False
-    return _flags._rewrite_flag_condition_pairs_8616(codegen)
+    return require_result_type_8616(
+        _flags._rewrite_flag_condition_pairs_8616(codegen),
+        bool,
+        owner="postprocess.flags_cleanup._rewrite_flag_condition_pairs_8616",
+    )
 
 
 def _rewrite_flag_bit_value_uses_pass_8616(codegen: StructuredAstValue) -> bool:
@@ -1342,7 +1094,11 @@ def _rewrite_flag_bit_value_uses_pass_8616(codegen: StructuredAstValue) -> bool:
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring cleanup wrapper runs.
     if getattr(codegen, "_inertia_condition_cleanup_structuring_pass_ran_8616", False):
         return False
-    return _flags._rewrite_flag_bit_value_uses_8616(codegen)
+    return require_result_type_8616(
+        _flags._rewrite_flag_bit_value_uses_8616(codegen),
+        bool,
+        owner="postprocess.flags_cleanup._rewrite_flag_bit_value_uses_8616",
+    )
 
 
 def _fix_interval_guard_conditions_pass_8616(codegen: StructuredAstValue) -> bool:
@@ -1350,7 +1106,11 @@ def _fix_interval_guard_conditions_pass_8616(codegen: StructuredAstValue) -> boo
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring cleanup wrapper runs.
     if getattr(codegen, "_inertia_condition_cleanup_structuring_pass_ran_8616", False):
         return False
-    return _flags._fix_interval_guard_conditions_8616(codegen)
+    return require_result_type_8616(
+        _flags._fix_interval_guard_conditions_8616(codegen),
+        bool,
+        owner="postprocess.flags_cleanup._fix_interval_guard_conditions_8616",
+    )
 
 
 def _signed_i16_immediate_8616(value: int) -> int:
@@ -1482,7 +1242,7 @@ def _terminal_stack_arg_expr_8616(
         variable = getattr(arg, "variable", None)
         if (
             isinstance(variable, SimStackVariable)
-            and _canonical_stack_offset_8616(getattr(variable, "offset", None)) == canonical_disp
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == canonical_disp
         ):
             _apply_prototype_arg_identity(arg)
             _record_stack_arg_decision(_TerminalStackArgDecision8616.EXISTING_ARG)
@@ -1493,7 +1253,7 @@ def _terminal_stack_arg_expr_8616(
         for var, candidate in variables_in_use.items():
             if (
                 isinstance(var, SimStackVariable)
-                and _canonical_stack_offset_8616(getattr(var, "offset", None)) == canonical_disp
+                and machine_bp_offset_for_stack_variable_8616(codegen, var) == canonical_disp
                 and candidate is not None
             ):
                 _apply_prototype_arg_identity(candidate)
@@ -1916,10 +1676,14 @@ def _branch_target_return_value_8616(project: StructuredAstValue, target_addr: i
     def _load_block(block_addr: int) -> StructuredAstValue | None:
         return project.factory.block(block_addr, opt_level=0)
 
-    return _structuring_branch_target_return_value_8616(
-        target_addr,
-        _load_block,
-        _signed_i16_immediate_8616,
+    return require_optional_result_type_8616(
+        _structuring_branch_target_return_value_8616(
+            target_addr,
+            _load_block,
+            _signed_i16_immediate_8616,
+        ),
+        int,
+        owner="structuring.return_chains.branch_target_return_value_8616",
     )
 
 
@@ -2107,22 +1871,12 @@ def _linear_terminal_ax_return_expr_8616(
 
     def _byte_stack_value_expr_from_disp(disp: int) -> StructuredAstValue | None:
         """Materialize an 8-bit stack value from a typed BP-relative terminal effect."""
-        if disp % 2:
-            word = _terminal_stack_arg_expr_8616(project, codegen, disp - 1, 2)
-            if word is None:
-                return None
-            return CBinaryOp(
-                "Shr",
-                _clone_c_expr_8616(word),
-                CConstant(8, SimTypeShort(False), codegen=codegen),
-                codegen=codegen,
-            )
-        word = _terminal_stack_arg_expr_8616(project, codegen, disp, 2)
-        if word is None:
+        byte = _terminal_stack_arg_expr_8616(project, codegen, disp, 1)
+        if byte is None:
             return None
         return CBinaryOp(
             "And",
-            _clone_c_expr_8616(word),
+            _clone_c_expr_8616(byte),
             CConstant(0xFF, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
@@ -2281,52 +2035,47 @@ def _next_unconditional_target_after_jcc_8616(
         except Exception:
             return None
 
-    return _structuring_next_unconditional_target_after_jcc_8616(
-        block,
-        jcc_addr,
-        _load_block,
-        _jcc._branch_target_imm_8616,
+    return require_optional_result_type_8616(
+        _structuring_next_unconditional_target_after_jcc_8616(
+            block,
+            jcc_addr,
+            _load_block,
+            _jcc._branch_target_imm_8616,
+        ),
+        int,
+        owner="structuring.return_chains.next_unconditional_target_after_jcc_8616",
     )
 
 
 def _linear_function_insns_for_codegen_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> tuple[StructuredAstValue, ...]:
+    """Publish one cached Frontend-owned bounded instruction inventory."""
     base_insns = tuple(_jcc._function_insns_for_codegen_8616(project, codegen) or ())
     cfunc = getattr(codegen, "cfunc", None)
     func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(func_addr, int):
-        return base_insns
-    linear_insns = []
+    previous = getattr(codegen, "_inertia_bounded_linear_instruction_inventory_8616", None)
+    typed_previous = previous if isinstance(previous, BoundedLinearInstructionInventory8616) else None
+    inventory = collect_bounded_linear_instruction_inventory_8616(
+        project,
+        function_entry=func_addr if isinstance(func_addr, int) else None,
+        base_instructions=base_insns,
+        previous=typed_previous,
+    )
     bytes_by_addr: dict[int, bytes] = {}
-    addr = int(func_addr)
-    end_addr = addr + 0x800
-    while addr < end_addr:
-        try:
-            block = project.factory.block(addr, num_inst=1, opt_level=0)
-        except Exception:
-            break
-        decoded = _boundary_tuple_8616(getattr(getattr(block, "capstone", None), "insns", ()) or ())
-        if not decoded:
-            break
-        insn = decoded[0]
-        size = int(getattr(insn, "size", 0) or 0)
-        if size > 0:
-            with contextlib.suppress(Exception):
-                bytes_by_addr[int(addr)] = bytes(project.loader.memory.load(addr, size))
-        linear_insns.append(insn)
-        if str(getattr(insn, "mnemonic", "")).lower() in {"ret", "retf", "iret"}:
-            break
-        if size <= 0:
-            break
-        addr += size
-    by_addr = {int(getattr(insn, "address", 0) or 0): insn for insn in base_insns}
-    for insn in linear_insns:
-        by_addr[int(getattr(insn, "address", 0) or 0)] = insn
-    result = _boundary_tuple_8616(sorted(by_addr.values(), key=lambda item: int(getattr(item, "address", 0) or 0)))
-    if len(result) > len(base_insns):
+    if inventory is not typed_previous:
+        for insn in inventory.sequential_instructions:
+            addr = int(getattr(insn, "address", 0) or 0)
+            size = int(getattr(insn, "size", 0) or 0)
+            if size > 0:
+                with contextlib.suppress(Exception):
+                    bytes_by_addr[int(addr)] = bytes(project.loader.memory.load(addr, size))
+    result = tuple(inventory.instructions)
+    if isinstance(func_addr, int):
         with contextlib.suppress(Exception):
             codegen._inertia_jcc_function_insns_8616 = result
+            codegen._inertia_jcc_function_entry_8616 = func_addr
+            codegen._inertia_bounded_linear_instruction_inventory_8616 = inventory
     if bytes_by_addr:
         with contextlib.suppress(Exception):
             codegen._inertia_instruction_bytes_by_addr_8616 = bytes_by_addr
@@ -2340,7 +2089,11 @@ def _linear_jcc_block_starts_8616(
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
     if not insns:
         return ()
-    return _structuring_linear_jcc_block_starts_8616(insns)
+    return require_result_type_8616(
+        _structuring_linear_jcc_block_starts_8616(insns),
+        tuple,
+        owner="structuring.return_chains.linear_jcc_block_starts_8616",
+    )
 
 
 def _root_contains_ins_addr_8616(root: StructuredAstValue, target_addr: int) -> bool:
@@ -2583,10 +2336,14 @@ def _materialize_unconsumed_loop_break_jcc_8616(project: StructuredAstValue, cod
     # passing through the X86-16 Structuring wrapper.
     if getattr(codegen, "_inertia_unconsumed_loop_break_jcc_structuring_pass_ran_8616", False):
         return False
-    return _structuring_materialize_unconsumed_loop_break_jcc_8616(
-        project,
-        codegen,
-        _unconsumed_loop_break_jcc_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_materialize_unconsumed_loop_break_jcc_8616(
+            project,
+            codegen,
+            _unconsumed_loop_break_jcc_callbacks_8616(),
+        ),
+        bool,
+        owner="structuring.return_chains.materialize_unconsumed_loop_break_jcc_8616",
     )
 
 
@@ -2606,12 +2363,20 @@ def _return_chain_proof_callbacks_8616() -> ReturnChainProofCallbacks8616:
 
 def _condition_branch_return_value_8616(project: StructuredAstValue, cond: StructuredAstValue) -> int | None:
     """Compatibility shim for structuring-owned CFG branch return proof."""
-    return _structuring_condition_branch_return_value_8616(project, cond, _return_chain_proof_callbacks_8616())
+    return require_optional_result_type_8616(
+        _structuring_condition_branch_return_value_8616(project, cond, _return_chain_proof_callbacks_8616()),
+        int,
+        owner="structuring.return_chains.condition_branch_return_value_8616",
+    )
 
 
 def _ordered_conditional_return_values_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> list[int]:
     """Compatibility shim for structuring-owned CFG branch return ordering."""
-    return _structuring_ordered_conditional_return_values_8616(project, codegen, _return_chain_proof_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_ordered_conditional_return_values_8616(project, codegen, _return_chain_proof_callbacks_8616()),
+        list,
+        owner="structuring.return_chains.ordered_conditional_return_values_8616",
+    )
 
 
 def _decoded_cmp_condition_expr_8616(
@@ -2674,9 +2439,13 @@ def _last_call_addr_before_jcc_in_function_8616(
     project: StructuredAstValue, codegen: StructuredAstValue, jcc_addr: int
 ) -> int | None:
     """Compatibility shim for structuring-owned pre-JCC callsite proof."""
-    return _structuring_last_call_addr_before_jcc_in_function_8616(
-        _jcc._function_insns_for_codegen_8616(project, codegen),
-        jcc_addr,
+    return require_optional_result_type_8616(
+        _structuring_last_call_addr_before_jcc_in_function_8616(
+            _jcc._function_insns_for_codegen_8616(project, codegen),
+            jcc_addr,
+        ),
+        int,
+        owner="structuring.return_chains.last_call_addr_before_jcc_in_function_8616",
     )
 
 
@@ -2684,30 +2453,42 @@ def _ordered_conditional_return_pairs_from_cfg_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> list[tuple[StructuredAstValue, int]]:
     """Compatibility shim for structuring-owned CFG return-chain proof ordering."""
-    return _structuring_ordered_conditional_return_pairs_from_cfg_8616(
-        project,
-        codegen,
-        _return_chain_proof_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_ordered_conditional_return_pairs_from_cfg_8616(
+            project,
+            codegen,
+            _return_chain_proof_callbacks_8616(),
+        ),
+        list,
+        owner="structuring.return_chains.ordered_conditional_return_pairs_from_cfg_8616",
     )
 
 
 def _ordered_conditional_return_expr_pairs_from_cfg_8616(
     project: StructuredAstValue,
     codegen: StructuredAstValue,
+    *,
+    branch_target_return_expr: Callable[
+        [StructuredAstValue, StructuredAstValue, int], StructuredAstValue | None
+    ] = _branch_target_return_expr_8616,
 ) -> list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]]:
     """Compatibility shim for structuring-owned CFG return-expression pair ordering."""
-    return _structuring_ordered_conditional_return_expr_pairs_from_cfg_8616(
-        project,
-        codegen,
-        ReturnConditionalExprPairCallbacks8616(
-            linear_jcc_block_starts=_linear_jcc_block_starts_8616,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
-            branch_target_return_expr=_branch_target_return_expr_8616,
-            translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
-            decoded_condition_expr=_decoded_cmp_condition_expr_8616,
-            last_call_addr_before_jcc_in_function=_last_call_addr_before_jcc_in_function_8616,
+    return require_result_type_8616(
+        _structuring_ordered_conditional_return_expr_pairs_from_cfg_8616(
+            project,
+            codegen,
+            ReturnConditionalExprPairCallbacks8616(
+                linear_jcc_block_starts=_linear_jcc_block_starts_8616,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
+                branch_target_return_expr=branch_target_return_expr,
+                translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
+                decoded_condition_expr=_decoded_cmp_condition_expr_8616,
+                last_call_addr_before_jcc_in_function=_last_call_addr_before_jcc_in_function_8616,
+            ),
         ),
+        list,
+        owner="structuring.return_chains.ordered_conditional_return_expr_pairs_from_cfg_8616",
     )
 
 
@@ -2715,17 +2496,21 @@ def _ordered_conditional_void_tail_call_proofs_from_cfg_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> list[tuple[StructuredAstValue, StructuredAstValue]]:
     """Compatibility shim for structuring-owned void-tail-call proof ordering."""
-    return _structuring_ordered_conditional_void_tail_call_proofs_from_cfg_8616(
-        project,
-        codegen,
-        ReturnConditionalVoidTailCallCallbacks8616(
-            linear_jcc_block_starts=_linear_jcc_block_starts_8616,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
-            branch_target_return_expr=_branch_target_return_expr_8616,
-            translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
-            decoded_condition_expr=_decoded_cmp_condition_expr_8616,
+    return require_result_type_8616(
+        _structuring_ordered_conditional_void_tail_call_proofs_from_cfg_8616(
+            project,
+            codegen,
+            ReturnConditionalVoidTailCallCallbacks8616(
+                linear_jcc_block_starts=_linear_jcc_block_starts_8616,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
+                branch_target_return_expr=_branch_target_return_expr_8616,
+                translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
+                decoded_condition_expr=_decoded_cmp_condition_expr_8616,
+            ),
         ),
+        list,
+        owner="structuring.return_chains.ordered_conditional_void_tail_call_proofs_from_cfg_8616",
     )
 
 
@@ -2738,24 +2523,32 @@ def _selector_condition_call_addrs_8616(
     pairs: list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]],
 ) -> frozenset[int]:
     """Compatibility shim for structuring-owned selector condition call tags."""
-    return _structuring_selector_condition_call_addrs_8616(pairs, _iter_c_nodes_deep_8616)
+    return require_result_type_8616(
+        _structuring_selector_condition_call_addrs_8616(pairs, _iter_c_nodes_deep_8616),
+        frozenset,
+        owner="structuring.return_chains.selector_condition_call_addrs_8616",
+    )
 
 
 def _selector_condition_call_addrs_from_cfg_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> frozenset[int]:
     """Compatibility shim for structuring-owned selector CFG callsite proof."""
-    return _structuring_selector_condition_call_addrs_from_cfg_8616(
-        project,
-        codegen,
-        ReturnSelectorCallsiteProofCallbacks8616(
-            linear_jcc_block_starts=_linear_jcc_block_starts_8616,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
-            branch_target_return_expr=_branch_target_return_expr_8616,
-            translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
-            last_call_addr_before_jcc_in_function=_last_call_addr_before_jcc_in_function_8616,
+    return require_result_type_8616(
+        _structuring_selector_condition_call_addrs_from_cfg_8616(
+            project,
+            codegen,
+            ReturnSelectorCallsiteProofCallbacks8616(
+                linear_jcc_block_starts=_linear_jcc_block_starts_8616,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
+                branch_target_return_expr=_branch_target_return_expr_8616,
+                translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
+                last_call_addr_before_jcc_in_function=_last_call_addr_before_jcc_in_function_8616,
+            ),
         ),
+        frozenset,
+        owner="structuring.return_chains.selector_condition_call_addrs_from_cfg_8616",
     )
 
 
@@ -2771,16 +2564,20 @@ def _selector_function_has_unsafe_effects_8616(
         project,
         function_entry=function_entry if isinstance(function_entry, int) else None,
     )
-    return _structuring_selector_function_has_unsafe_effects_8616(
-        project,
-        codegen,
-        SelectorUnsafeEffectsCallbacks8616(
-            function_inventory=lambda _project, _codegen: inventory,
-            direct_call_target=_jcc._direct_call_target_8616,
-            callee_name_for_target=_jcc._callee_name_for_target_8616,
-            target_is_stack_probe_helper=_target_is_stack_probe_helper_8616,
+    return require_result_type_8616(
+        _structuring_selector_function_has_unsafe_effects_8616(
+            project,
+            codegen,
+            SelectorUnsafeEffectsCallbacks8616(
+                function_inventory=lambda _project, _codegen: inventory,
+                direct_call_target=_jcc._direct_call_target_8616,
+                callee_name_for_target=_jcc._callee_name_for_target_8616,
+                target_is_stack_probe_helper=_target_is_stack_probe_helper_8616,
+            ),
+            allowed_call_addrs=allowed_call_addrs,
         ),
-        allowed_call_addrs=allowed_call_addrs,
+        bool,
+        owner="structuring.return_chains.selector_function_has_unsafe_effects_8616",
     )
 
 
@@ -2815,17 +2612,21 @@ def _selector_targets_from_32bit_jcc_chain_8616(
     project: StructuredAstValue, block_addr: int, jcc_insn: StructuredAstValue
 ) -> tuple[int, int] | None:
     """Compatibility shim for structuring-owned 32-bit selector target proof."""
-    return _structuring_selector_targets_from_32bit_jcc_chain_8616(
-        int(block_addr),
-        jcc_insn,
-        lambda addr: project.factory.block(int(addr), opt_level=0),
-        _jcc._branch_target_imm_8616,
-        lambda block, current_addr, jcc_addr: _structuring_next_unconditional_target_after_jcc_8616(
-            block,
-            int(jcc_addr),
+    return require_optional_result_type_8616(
+        _structuring_selector_targets_from_32bit_jcc_chain_8616(
+            int(block_addr),
+            jcc_insn,
             lambda addr: project.factory.block(int(addr), opt_level=0),
             _jcc._branch_target_imm_8616,
+            lambda block, current_addr, jcc_addr: _structuring_next_unconditional_target_after_jcc_8616(
+                block,
+                int(jcc_addr),
+                lambda addr: project.factory.block(int(addr), opt_level=0),
+                _jcc._branch_target_imm_8616,
+            ),
         ),
+        tuple,
+        owner="structuring.return_chains.selector_targets_from_32bit_jcc_chain_8616",
     )
 
 
@@ -2833,17 +2634,21 @@ def _equality_return_target_from_32bit_jcc_chain_8616(
     project: StructuredAstValue, block_addr: int, jcc_insn: StructuredAstValue
 ) -> int | None:
     """Compatibility shim for structuring-owned 32-bit equality target proof."""
-    return _structuring_equality_return_target_from_32bit_jcc_chain_8616(
-        int(block_addr),
-        jcc_insn,
-        lambda addr: project.factory.block(int(addr), opt_level=0),
-        _jcc._branch_target_imm_8616,
-        lambda block, current_addr, jcc_addr: _structuring_next_unconditional_target_after_jcc_8616(
-            block,
-            int(jcc_addr),
+    return require_optional_result_type_8616(
+        _structuring_equality_return_target_from_32bit_jcc_chain_8616(
+            int(block_addr),
+            jcc_insn,
             lambda addr: project.factory.block(int(addr), opt_level=0),
             _jcc._branch_target_imm_8616,
+            lambda block, current_addr, jcc_addr: _structuring_next_unconditional_target_after_jcc_8616(
+                block,
+                int(jcc_addr),
+                lambda addr: project.factory.block(int(addr), opt_level=0),
+                _jcc._branch_target_imm_8616,
+            ),
         ),
+        int,
+        owner="structuring.return_chains.equality_return_target_from_32bit_jcc_chain_8616",
     )
 
 
@@ -2851,22 +2656,31 @@ def _inequality_target_from_32bit_jcc_chain_8616(
     project: StructuredAstValue, block_addr: int, jcc_insn: StructuredAstValue
 ) -> int | None:
     """Compatibility shim for structuring-owned 32-bit inequality target proof."""
-    return _structuring_inequality_target_from_32bit_jcc_chain_8616(
-        int(block_addr),
-        jcc_insn,
-        lambda addr: project.factory.block(int(addr), opt_level=0),
-        _jcc._branch_target_imm_8616,
-        lambda block, current_addr, jcc_addr: _structuring_next_unconditional_target_after_jcc_8616(
-            block,
-            int(jcc_addr),
+    return require_optional_result_type_8616(
+        _structuring_inequality_target_from_32bit_jcc_chain_8616(
+            int(block_addr),
+            jcc_insn,
             lambda addr: project.factory.block(int(addr), opt_level=0),
             _jcc._branch_target_imm_8616,
+            lambda block, current_addr, jcc_addr: _structuring_next_unconditional_target_after_jcc_8616(
+                block,
+                int(jcc_addr),
+                lambda addr: project.factory.block(int(addr), opt_level=0),
+                _jcc._branch_target_imm_8616,
+            ),
         ),
+        int,
+        owner="structuring.return_chains.inequality_target_from_32bit_jcc_chain_8616",
     )
 
 
 def _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(
-    project: StructuredAstValue, codegen: StructuredAstValue
+    project: StructuredAstValue,
+    codegen: StructuredAstValue,
+    *,
+    branch_target_return_expr: Callable[
+        [StructuredAstValue, StructuredAstValue, int], StructuredAstValue | None
+    ] = _branch_target_return_expr_8616,
 ) -> list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]]:
     """Compatibility shim for structuring-owned 32-bit selector-return pair ordering."""
 
@@ -2895,25 +2709,29 @@ def _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(
         except Exception:
             return None
 
-    return _structuring_ordered_32bit_selector_return_expr_pairs_from_cfg_8616(
-        project,
-        codegen,
-        ReturnSelector32BitPairCallbacks8616(
-            function_block_addrs=_function_block_addrs,
-            load_block=_load_block,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            next_unconditional_target_after_jcc=lambda block, block_addr, jcc_addr: (
-                _structuring_next_unconditional_target_after_jcc_8616(
-                    block,
-                    int(jcc_addr),
-                    _load_block,
-                    _jcc._branch_target_imm_8616,
-                )
+    return require_result_type_8616(
+        _structuring_ordered_32bit_selector_return_expr_pairs_from_cfg_8616(
+            project,
+            codegen,
+            ReturnSelector32BitPairCallbacks8616(
+                function_block_addrs=_function_block_addrs,
+                load_block=_load_block,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                next_unconditional_target_after_jcc=lambda block, block_addr, jcc_addr: (
+                    _structuring_next_unconditional_target_after_jcc_8616(
+                        block,
+                        int(jcc_addr),
+                        _load_block,
+                        _jcc._branch_target_imm_8616,
+                    )
+                ),
+                translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
+                decoded_condition_expr=_decoded_cmp_condition_expr_8616,
+                branch_target_return_expr=branch_target_return_expr,
             ),
-            translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
-            decoded_condition_expr=_decoded_cmp_condition_expr_8616,
-            branch_target_return_expr=_branch_target_return_expr_8616,
         ),
+        list,
+        owner="structuring.return_chains.ordered_32bit_selector_return_expr_pairs_from_cfg_8616",
     )
 
 
@@ -2976,7 +2794,11 @@ def _next_linear_jmp_target_8616(insns: tuple[StructuredAstValue, ...], index: i
     next_insn = insns[index + 1]
     if str(getattr(next_insn, "mnemonic", "")).lower() not in {"jmp", "ljmp"}:
         return None
-    return _jcc._branch_target_imm_8616(next_insn)
+    return require_optional_result_type_8616(
+        _jcc._branch_target_imm_8616(next_insn),
+        int,
+        owner="decompiler_postprocess_jcc._branch_target_imm_8616",
+    )
 
 
 def _resolve_one_hop_jmp_target_8616(project: StructuredAstValue, target: int | None) -> int | None:
@@ -2985,10 +2807,14 @@ def _resolve_one_hop_jmp_target_8616(project: StructuredAstValue, target: int | 
     def _load_block(block_addr: int) -> StructuredAstValue | None:
         return project.factory.block(block_addr, opt_level=0)
 
-    return _structuring_resolve_one_hop_jmp_target_8616(
-        target,
-        _load_block,
-        _jcc._branch_target_imm_8616,
+    return require_optional_result_type_8616(
+        _structuring_resolve_one_hop_jmp_target_8616(
+            target,
+            _load_block,
+            _jcc._branch_target_imm_8616,
+        ),
+        int,
+        owner="structuring.return_chains.resolve_one_hop_jmp_target_8616",
     )
 
 
@@ -3098,42 +2924,51 @@ def _materialize_decrement_switch_return_chain_8616(project: StructuredAstValue,
     """Compatibility shim for CFG-proven decrement-switch return materialization."""
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
-    if _structuring_materialize_sequential_decrement_switch_return_chain_8616(
-        project,
-        codegen,
-        SequentialDecrementSwitchCallbacks8616(
-            set_cfunc_statements_root=_set_cfunc_statements_root_8616,
-            selector_stack_expr=_selector_stack_expr_from_ax_load_8616,
-            selector_function_has_unsafe_effects=_selector_function_has_unsafe_effects_8616,
-            selector_raw_stack_aliases=_selector_raw_stack_aliases_8616,
-            linear_function_insns=_linear_function_insns_for_codegen_8616,
-            next_linear_jmp_target=_next_linear_jmp_target_8616,
-            resolve_one_hop_jmp_target=_resolve_one_hop_jmp_target_8616,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            branch_target_return_expr=_branch_target_return_expr_8616,
-            clone_c_value=_clone_c_value_for_codegen_tree_8616,
-            expr_fingerprint=_expr_fingerprint,
+    sequential_materialized = require_result_type_8616(
+        _structuring_materialize_sequential_decrement_switch_return_chain_8616(
+            project,
+            codegen,
+            SequentialDecrementSwitchCallbacks8616(
+                set_cfunc_statements_root=_set_cfunc_statements_root_8616,
+                selector_stack_expr=_selector_stack_expr_from_ax_load_8616,
+                selector_function_has_unsafe_effects=_selector_function_has_unsafe_effects_8616,
+                selector_raw_stack_aliases=_selector_raw_stack_aliases_8616,
+                linear_function_insns=_linear_function_insns_for_codegen_8616,
+                next_linear_jmp_target=_next_linear_jmp_target_8616,
+                resolve_one_hop_jmp_target=_resolve_one_hop_jmp_target_8616,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                branch_target_return_expr=_branch_target_return_expr_8616,
+                clone_c_value=_clone_c_value_for_codegen_tree_8616,
+                expr_fingerprint=_expr_fingerprint,
+            ),
         ),
-    ):
+        bool,
+        owner="structuring.return_chains.materialize_sequential_decrement_switch_return_chain_8616",
+    )
+    if sequential_materialized:
         if debug:
             log.warning("[cfg-selector-return] sequential decrement-switch materialized")
         return True
-    materialized = _structuring_materialize_complex_decrement_switch_return_chain_8616(
-        project,
-        codegen,
-        ComplexDecrementSwitchCallbacks8616(
-            set_cfunc_statements_root=_set_cfunc_statements_root_8616,
-            selector_stack_expr=_selector_stack_expr_from_ax_load_8616,
-            selector_function_has_unsafe_effects=_selector_function_has_unsafe_effects_8616,
-            selector_raw_stack_aliases=_selector_raw_stack_aliases_8616,
-            linear_function_insns=_linear_function_insns_for_codegen_8616,
-            next_linear_jmp_target=_next_linear_jmp_target_8616,
-            resolve_one_hop_jmp_target=_resolve_one_hop_jmp_target_8616,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            branch_target_return_expr=_branch_target_return_expr_8616,
-            clone_c_value=_clone_c_value_for_codegen_tree_8616,
-            expr_fingerprint=_expr_fingerprint,
+    materialized = require_result_type_8616(
+        _structuring_materialize_complex_decrement_switch_return_chain_8616(
+            project,
+            codegen,
+            ComplexDecrementSwitchCallbacks8616(
+                set_cfunc_statements_root=_set_cfunc_statements_root_8616,
+                selector_stack_expr=_selector_stack_expr_from_ax_load_8616,
+                selector_function_has_unsafe_effects=_selector_function_has_unsafe_effects_8616,
+                selector_raw_stack_aliases=_selector_raw_stack_aliases_8616,
+                linear_function_insns=_linear_function_insns_for_codegen_8616,
+                next_linear_jmp_target=_next_linear_jmp_target_8616,
+                resolve_one_hop_jmp_target=_resolve_one_hop_jmp_target_8616,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                branch_target_return_expr=_branch_target_return_expr_8616,
+                clone_c_value=_clone_c_value_for_codegen_tree_8616,
+                expr_fingerprint=_expr_fingerprint,
+            ),
         ),
+        bool,
+        owner="structuring.return_chains.materialize_complex_decrement_switch_return_chain_8616",
     )
     if debug and materialized:
         log.warning("[cfg-selector-return] decrement-switch materialized")
@@ -3942,7 +3777,11 @@ def _stack_alias_name_from_optional_cod_8616(
 def _fallback_stack_arg_name_8616(disp: int) -> str:
     if int(disp) >= 4:
         return f"arg_{max(((int(disp) - 4) // 2) + 1, 1)}"
-    return _stack_object_name(int(disp))
+    return require_result_type_8616(
+        _stack_object_name(int(disp)),
+        str,
+        owner="lowering.stack_lowering_from_facts._stack_object_name",
+    )
 
 
 def _iter_stack_cvars_for_cfunc_8616(cfunc: StructuredAstValue) -> StructuredAstValue:
@@ -4030,6 +3869,7 @@ def _ensure_typed_stack_arg_expr_8616(
     *,
     fallback_name: str | None = None,
 ) -> StructuredAstValue:
+    """Materialize one typed argument using its authoritative machine-BP identity."""
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None or int(disp) < 4:
         return None
@@ -4087,7 +3927,17 @@ def _ensure_typed_stack_arg_expr_8616(
         name = arg_names[idx] if idx < len(arg_names) and isinstance(arg_names[idx], str) and arg_names[idx] else None
         if name is None:
             name = _fallback_stack_arg_name_8616(cursor)
-        cvar = _canonical_stack_cvar_at_offset_8616(cfunc, cursor)
+        cvar = stack_cvar_for_machine_bp_range_8616(codegen, cursor, width)
+        if not isinstance(cvar, CVariable):
+            legacy_cvar = _canonical_stack_cvar_at_offset_8616(cfunc, cursor)
+            legacy_variable = getattr(legacy_cvar, "variable", None)
+            cvar = (
+                legacy_cvar
+                if isinstance(legacy_cvar, CVariable)
+                and isinstance(legacy_variable, SimStackVariable)
+                and machine_bp_offset_for_stack_variable_8616(codegen, legacy_variable) == cursor
+                else None
+            )
         variable = getattr(cvar, "variable", None) if cvar is not None else None
         if not isinstance(cvar, CVariable) or not isinstance(variable, SimStackVariable):
             variable = SimStackVariable(cursor, width, base="bp", name=name, region=func_addr)
@@ -4096,6 +3946,13 @@ def _ensure_typed_stack_arg_expr_8616(
             variable.name = name
             variable.size = width
             cvar.variable_type = current_type
+        publish_selected_stack_cvar_projection_8616(
+            codegen,
+            cvar,
+            bp_offset=cursor,
+            size=width,
+            entry_sp_offset=variable.offset,
+        )
         _install_canonical_stack_cvar_8616(cfunc, cvar, current_type)
         desired_args.append(cvar)
         if cursor == disp:
@@ -5494,26 +5351,30 @@ def _ordered_32bit_conditional_return_pairs_from_cfg_8616(
         except Exception:
             return None
 
-    return _structuring_ordered_32bit_conditional_return_pairs_from_cfg_8616(
-        project,
-        codegen,
-        Return32BitConditionalPairCallbacks8616(
-            function_block_addrs=_function_block_addrs,
-            load_block=_load_block,
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            next_unconditional_target_after_jcc=lambda block, block_addr, jcc_addr: (
-                _structuring_next_unconditional_target_after_jcc_8616(
-                    block,
-                    int(jcc_addr),
-                    _load_block,
-                    _jcc._branch_target_imm_8616,
-                )
+    return require_result_type_8616(
+        _structuring_ordered_32bit_conditional_return_pairs_from_cfg_8616(
+            project,
+            codegen,
+            Return32BitConditionalPairCallbacks8616(
+                function_block_addrs=_function_block_addrs,
+                load_block=_load_block,
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                next_unconditional_target_after_jcc=lambda block, block_addr, jcc_addr: (
+                    _structuring_next_unconditional_target_after_jcc_8616(
+                        block,
+                        int(jcc_addr),
+                        _load_block,
+                        _jcc._branch_target_imm_8616,
+                    )
+                ),
+                branch_target_return_value=_branch_target_return_value_8616,
+                translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
+                decoded_condition_expr=_decoded_cmp_condition_expr_8616,
+                expr_fingerprint=_expr_fingerprint,
             ),
-            branch_target_return_value=_branch_target_return_value_8616,
-            translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
-            decoded_condition_expr=_decoded_cmp_condition_expr_8616,
-            expr_fingerprint=_expr_fingerprint,
         ),
+        list,
+        owner="structuring.return_chains.ordered_32bit_conditional_return_pairs_from_cfg_8616",
     )
 
 
@@ -5610,38 +5471,42 @@ def _ordered_32bit_mask_update_pairs_from_cfg_8616(
     func_addr = getattr(cfunc, "addr", None)
     if not isinstance(func_addr, int):
         return []
-    return _structuring_ordered_32bit_mask_update_pairs_from_cfg_8616(
-        project,
-        codegen,
-        int(slot_offset),
-        MaskAccumulatorPairCallbacks8616(
-            linear_jcc_block_starts=_linear_jcc_block_starts_8616,
-            selector_targets_from_32bit_jcc_chain=lambda block_addr, insn: _selector_targets_from_32bit_jcc_chain_8616(
-                project,
-                int(block_addr),
-                insn,
-            ),
-            equality_return_target_from_32bit_jcc_chain=lambda block_addr, insn: (
-                _equality_return_target_from_32bit_jcc_chain_8616(
+    return require_result_type_8616(
+        _structuring_ordered_32bit_mask_update_pairs_from_cfg_8616(
+            project,
+            codegen,
+            int(slot_offset),
+            MaskAccumulatorPairCallbacks8616(
+                linear_jcc_block_starts=_linear_jcc_block_starts_8616,
+                selector_targets_from_32bit_jcc_chain=lambda block_addr, insn: _selector_targets_from_32bit_jcc_chain_8616(
                     project,
                     int(block_addr),
                     insn,
-                )
+                ),
+                equality_return_target_from_32bit_jcc_chain=lambda block_addr, insn: (
+                    _equality_return_target_from_32bit_jcc_chain_8616(
+                        project,
+                        int(block_addr),
+                        insn,
+                    )
+                ),
+                inequality_target_from_32bit_jcc_chain=lambda block_addr, insn: (
+                    _inequality_target_from_32bit_jcc_chain_8616(
+                        project,
+                        int(block_addr),
+                        insn,
+                    )
+                ),
+                branch_target_imm=_jcc._branch_target_imm_8616,
+                next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
+                or_stack_update_imm=_or_stack_update_imm_8616,
+                translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
+                decoded_condition_expr=_decoded_cmp_condition_expr_8616,
+                expr_fingerprint=_expr_fingerprint,
             ),
-            inequality_target_from_32bit_jcc_chain=lambda block_addr, insn: (
-                _inequality_target_from_32bit_jcc_chain_8616(
-                    project,
-                    int(block_addr),
-                    insn,
-                )
-            ),
-            branch_target_imm=_jcc._branch_target_imm_8616,
-            next_unconditional_target_after_jcc=_next_unconditional_target_after_jcc_8616,
-            or_stack_update_imm=_or_stack_update_imm_8616,
-            translate_cmp_jcc_guard=_jcc._translate_cmp_jcc_guard_8616,
-            decoded_condition_expr=_decoded_cmp_condition_expr_8616,
-            expr_fingerprint=_expr_fingerprint,
         ),
+        list,
+        owner="structuring.return_chains.ordered_32bit_mask_update_pairs_from_cfg_8616",
     )
 
 
@@ -5655,15 +5520,19 @@ def _materialize_cfg_mask_accumulator_8616(project: StructuredAstValue, codegen:
     if getattr(codegen, "cfunc", None) is None:
         return False
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
-    materialized = _structuring_materialize_cfg_mask_accumulator_8616(
-        project,
-        codegen,
-        MaskAccumulatorMaterializationCallbacks8616(
-            first_stack_zero_init=_first_stack_zero_init_8616,
-            ordered_mask_update_pairs=_ordered_32bit_mask_update_pairs_from_cfg_8616,
-            stack_slot_expr=_jcc._stack_slot_expr_8616,
-            expr_fingerprint=_expr_fingerprint,
+    materialized = require_result_type_8616(
+        _structuring_materialize_cfg_mask_accumulator_8616(
+            project,
+            codegen,
+            MaskAccumulatorMaterializationCallbacks8616(
+                first_stack_zero_init=_first_stack_zero_init_8616,
+                ordered_mask_update_pairs=_ordered_32bit_mask_update_pairs_from_cfg_8616,
+                stack_slot_expr=_jcc._stack_slot_expr_8616,
+                expr_fingerprint=_expr_fingerprint,
+            ),
         ),
+        bool,
+        owner="structuring.return_chains.materialize_cfg_mask_accumulator_8616",
     )
     if debug and materialized:
         logging.getLogger(__name__).warning(
@@ -5673,12 +5542,53 @@ def _materialize_cfg_mask_accumulator_8616(project: StructuredAstValue, codegen:
     return materialized
 
 
-def _return_selector_callbacks_8616() -> ReturnSelectorCallbacks8616:
+def _return_selector_callbacks_8616(
+    *,
+    branch_target_return_expr: Callable[
+        [StructuredAstValue, StructuredAstValue, int], StructuredAstValue | None
+    ] = _branch_target_return_expr_8616,
+) -> ReturnSelectorCallbacks8616:
     """Build dynamic adapters from legacy postprocess selector-return proof providers."""
+    ordered_32bit_pairs: Callable[
+        [StructuredAstValue, StructuredAstValue],
+        list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]],
+    ]
+    ordered_conditional_pairs: Callable[
+        [StructuredAstValue, StructuredAstValue],
+        list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]],
+    ]
+    if branch_target_return_expr is _branch_target_return_expr_8616:
+        ordered_32bit_pairs = _ordered_32bit_selector_return_expr_pairs_from_cfg_8616
+        ordered_conditional_pairs = _ordered_conditional_return_expr_pairs_from_cfg_8616
+    else:
+        def _injected_ordered_32bit_pairs(
+            project: StructuredAstValue,
+            codegen: StructuredAstValue,
+        ) -> list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]]:
+            """Bind the Structuring-owned branch-expression provider."""
+            return _ordered_32bit_selector_return_expr_pairs_from_cfg_8616(
+                project,
+                codegen,
+                branch_target_return_expr=branch_target_return_expr,
+            )
+
+        def _injected_ordered_conditional_pairs(
+            project: StructuredAstValue,
+            codegen: StructuredAstValue,
+        ) -> list[tuple[StructuredAstValue, StructuredAstValue, StructuredAstValue]]:
+            """Bind the Structuring-owned branch-expression provider."""
+            return _ordered_conditional_return_expr_pairs_from_cfg_8616(
+                project,
+                codegen,
+                branch_target_return_expr=branch_target_return_expr,
+            )
+
+        ordered_32bit_pairs = _injected_ordered_32bit_pairs
+        ordered_conditional_pairs = _injected_ordered_conditional_pairs
     return ReturnSelectorCallbacks8616(
         materialize_decrement_switch_return_chain=_materialize_decrement_switch_return_chain_8616,
-        ordered_32bit_selector_return_expr_pairs=_ordered_32bit_selector_return_expr_pairs_from_cfg_8616,
-        ordered_conditional_return_expr_pairs=_ordered_conditional_return_expr_pairs_from_cfg_8616,
+        ordered_32bit_selector_return_expr_pairs=ordered_32bit_pairs,
+        ordered_conditional_return_expr_pairs=ordered_conditional_pairs,
         selector_condition_call_addrs=_selector_condition_call_addrs_8616,
         selector_condition_call_addrs_from_cfg=_selector_condition_call_addrs_from_cfg_8616,
         selector_function_has_unsafe_effects=lambda project, codegen, allowed: (
@@ -5694,13 +5604,26 @@ def _return_selector_callbacks_8616() -> ReturnSelectorCallbacks8616:
     )
 
 
-def _materialize_cfg_selector_return_branches_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
+def _materialize_cfg_selector_return_branches_8616(
+    project: StructuredAstValue,
+    codegen: StructuredAstValue,
+    *,
+    branch_target_return_expr: Callable[
+        [StructuredAstValue, StructuredAstValue, int], StructuredAstValue | None
+    ] = _branch_target_return_expr_8616,
+) -> bool:
     """Compatibility shim for structuring-owned CFG selector-return materialization."""
     ensure_return_chain_codegen_state_8616(codegen)
-    return _structuring_materialize_cfg_selector_return_branches_8616(
-        project,
-        codegen,
-        _return_selector_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_materialize_cfg_selector_return_branches_8616(
+            project,
+            codegen,
+            _return_selector_callbacks_8616(
+                branch_target_return_expr=branch_target_return_expr,
+            ),
+        ),
+        bool,
+        owner="structuring.return_chains.materialize_cfg_selector_return_branches_8616",
     )
 
 
@@ -5716,13 +5639,17 @@ def _materialize_cfg_selector_return_branches_pass_8616(
 
 def _last_ax_return_value_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> int | None:
     """Compatibility shim for structuring-owned terminal AX return-value proof."""
-    return _structuring_last_ax_return_value_8616(
-        project,
-        codegen,
-        LastAxReturnValueCallbacks8616(
-            function_insns=_jcc._function_insns_for_codegen_8616,
-            signed_i16_immediate=_signed_i16_immediate_8616,
+    return require_optional_result_type_8616(
+        _structuring_last_ax_return_value_8616(
+            project,
+            codegen,
+            LastAxReturnValueCallbacks8616(
+                function_insns=_jcc._function_insns_for_codegen_8616,
+                signed_i16_immediate=_signed_i16_immediate_8616,
+            ),
         ),
+        int,
+        owner="structuring.return_chains.last_ax_return_value_8616",
     )
 
 
@@ -5761,12 +5688,16 @@ def _root_matches_flattened_return_chain_8616(
     final_value: int,
 ) -> bool:
     """Compatibility shim for structuring-owned return-chain idempotency checks."""
-    return _structuring_root_matches_flattened_return_chain_8616(
-        project,
-        codegen,
-        cond_return_pairs,
-        final_value,
-        _return_chain_flatten_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_root_matches_flattened_return_chain_8616(
+            project,
+            codegen,
+            cond_return_pairs,
+            final_value,
+            _return_chain_flatten_callbacks_8616(),
+        ),
+        bool,
+        owner="structuring.return_chains.root_matches_flattened_return_chain_8616",
     )
 
 
@@ -5776,22 +5707,34 @@ def _flatten_conditional_return_chain_8616(
     cond_return_pairs: list[tuple[StructuredAstValue, int]],
 ) -> bool:
     """Compatibility shim for structuring-owned CFG return-chain flattening."""
-    return _structuring_flatten_conditional_return_chain_8616(
-        project,
-        codegen,
-        cond_return_pairs,
-        _return_chain_flatten_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_flatten_conditional_return_chain_8616(
+            project,
+            codegen,
+            cond_return_pairs,
+            _return_chain_flatten_callbacks_8616(),
+        ),
+        bool,
+        owner="structuring.return_chains.flatten_conditional_return_chain_8616",
     )
 
 
 def _node_contains_call_8616(node: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned return-chain call-node scans."""
-    return _structuring_node_contains_call_8616(node, _return_chain_flatten_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_node_contains_call_8616(node, _return_chain_flatten_callbacks_8616()),
+        bool,
+        owner="structuring.return_chains.node_contains_call_8616",
+    )
 
 
 def _is_register_call_assignment_8616(stmt: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned return-chain call-assignment scans."""
-    return _structuring_is_register_call_assignment_8616(stmt, _return_chain_flatten_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_is_register_call_assignment_8616(stmt, _return_chain_flatten_callbacks_8616()),
+        bool,
+        owner="structuring.return_chains.is_register_call_assignment_8616",
+    )
 
 
 def _materialize_cfg_conditional_return_suffix_8616(
@@ -5800,11 +5743,15 @@ def _materialize_cfg_conditional_return_suffix_8616(
     cond_return_pairs: list[tuple[StructuredAstValue, int]],
 ) -> bool:
     """Compatibility shim for structuring-owned CFG return-chain suffix rebuilds."""
-    return _structuring_materialize_cfg_conditional_return_suffix_8616(
-        project,
-        codegen,
-        cond_return_pairs,
-        _return_chain_flatten_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_materialize_cfg_conditional_return_suffix_8616(
+            project,
+            codegen,
+            cond_return_pairs,
+            _return_chain_flatten_callbacks_8616(),
+        ),
+        bool,
+        owner="structuring.return_chains.materialize_cfg_conditional_return_suffix_8616",
     )
 
 
@@ -5837,10 +5784,14 @@ def _return_chain_empty_if_callbacks_8616() -> ReturnChainEmptyIfCallbacks8616:
 def _materialize_empty_if_return_branches_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned empty-if return-chain materialization."""
     ensure_return_chain_codegen_state_8616(codegen)
-    return _structuring_materialize_empty_if_return_branches_8616(
-        project,
-        codegen,
-        _return_chain_empty_if_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_materialize_empty_if_return_branches_8616(
+            project,
+            codegen,
+            _return_chain_empty_if_callbacks_8616(),
+        ),
+        bool,
+        owner="structuring.return_chains.materialize_empty_if_return_branches_8616",
     )
 
 
@@ -5856,22 +5807,38 @@ def _single_if_return_8616(
     stmt: StructuredAstValue,
 ) -> tuple[StructuredAstValue, StructuredAstValue] | None:
     """Compatibility shim for structuring-owned single-if-return proof."""
-    return _structuring_single_if_return_8616(stmt)
+    return require_optional_result_type_8616(
+        _structuring_single_if_return_8616(stmt),
+        tuple,
+        owner="structuring.return_chains.single_if_return_8616",
+    )
 
 
 def _const_return_value_8616(expr: StructuredAstValue) -> int | None:
     """Compatibility shim for structuring-owned constant-return proof."""
-    return _structuring_const_return_value_8616(expr)
+    return require_optional_result_type_8616(
+        _structuring_const_return_value_8616(expr),
+        int,
+        owner="structuring.return_chains.const_return_value_8616",
+    )
 
 
 def _is_empty_return_statement_8616(stmt: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned empty-return statement proof."""
-    return _structuring_is_empty_return_statement_8616(stmt)
+    return require_result_type_8616(
+        _structuring_is_empty_return_statement_8616(stmt),
+        bool,
+        owner="structuring.return_chains.is_empty_return_statement_8616",
+    )
 
 
 def _codegen_has_explicit_void_return_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
     """Compatibility shim for return-compat-owned void return proof."""
-    return codegen_has_explicit_void_return_8616(project, codegen)
+    return require_result_type_8616(
+        codegen_has_explicit_void_return_8616(project, codegen),
+        bool,
+        owner="decompiler_return_compat.codegen_has_explicit_void_return_8616",
+    )
 
 
 def _void_tail_call_shape_callbacks_8616() -> VoidTailCallShapeCallbacks8616:
@@ -5888,14 +5855,22 @@ def _flatten_straightline_c_statements_8616(
     stmt: StructuredAstValue,
 ) -> tuple[StructuredAstValue, ...] | None:
     """Compatibility shim for structuring-owned straight-line C statement proof."""
-    return _structuring_flatten_straightline_c_statements_8616(stmt, _void_tail_call_shape_callbacks_8616())
+    return require_optional_result_type_8616(
+        _structuring_flatten_straightline_c_statements_8616(stmt, _void_tail_call_shape_callbacks_8616()),
+        tuple,
+        owner="structuring.return_chains.flatten_straightline_c_statements_8616",
+    )
 
 
 def _tail_call_payload_from_statement_8616(
     stmt: StructuredAstValue, codegen: StructuredAstValue
 ) -> tuple[CFunctionCall, StructuredAstValue] | None:
     """Compatibility shim for structuring-owned void tail-call payload proof."""
-    return _structuring_tail_call_payload_from_statement_8616(stmt, codegen, _void_tail_call_shape_callbacks_8616())
+    return require_optional_result_type_8616(
+        _structuring_tail_call_payload_from_statement_8616(stmt, codegen, _void_tail_call_shape_callbacks_8616()),
+        tuple,
+        owner="structuring.return_chains.tail_call_payload_from_statement_8616",
+    )
 
 
 def _void_tail_call_suffix_diamond_callbacks_8616(
@@ -5914,13 +5889,17 @@ def _condition_identity_keys_8616(
     project: StructuredAstValue, cond: StructuredAstValue
 ) -> frozenset[StructuredAstValue]:
     """Compatibility shim for structuring-owned condition identity proof keys."""
-    return _structuring_condition_identity_keys_8616(
-        project,
-        cond,
-        ConditionIdentityCallbacks8616(
-            condition_tags=_jcc._condition_tags_8616,
-            expr_fingerprint=_expr_fingerprint,
+    return require_result_type_8616(
+        _structuring_condition_identity_keys_8616(
+            project,
+            cond,
+            ConditionIdentityCallbacks8616(
+                condition_tags=_jcc._condition_tags_8616,
+                expr_fingerprint=_expr_fingerprint,
+            ),
         ),
+        frozenset,
+        owner="structuring.return_chains.condition_identity_keys_8616",
     )
 
 
@@ -5934,21 +5913,33 @@ def _expression_fingerprint_callbacks_8616() -> ExpressionFingerprintCallbacks86
 
 def _call_argument_fingerprints_8616(project: StructuredAstValue, call: CFunctionCall) -> frozenset[str]:
     """Compatibility shim for structuring-owned call argument fingerprints."""
-    return _structuring_call_argument_fingerprints_8616(project, call, _expression_fingerprint_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_call_argument_fingerprints_8616(project, call, _expression_fingerprint_callbacks_8616()),
+        frozenset,
+        owner="structuring.return_chains.call_argument_fingerprints_8616",
+    )
 
 
 def _call_argument_component_fingerprints_8616(project: StructuredAstValue, call: CFunctionCall) -> frozenset[str]:
     """Compatibility shim for structuring-owned call argument component fingerprints."""
-    return _structuring_call_argument_component_fingerprints_8616(
-        project,
-        call,
-        _expression_fingerprint_callbacks_8616(),
+    return require_result_type_8616(
+        _structuring_call_argument_component_fingerprints_8616(
+            project,
+            call,
+            _expression_fingerprint_callbacks_8616(),
+        ),
+        frozenset,
+        owner="structuring.return_chains.call_argument_component_fingerprints_8616",
     )
 
 
 def _node_component_fingerprints_8616(project: StructuredAstValue, node: StructuredAstValue) -> frozenset[str]:
     """Compatibility shim for structuring-owned C AST component fingerprints."""
-    return _structuring_node_component_fingerprints_8616(project, node, _expression_fingerprint_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_node_component_fingerprints_8616(project, node, _expression_fingerprint_callbacks_8616()),
+        frozenset,
+        owner="structuring.return_chains.node_component_fingerprints_8616",
+    )
 
 
 def _c_statement_shape_8616(stmt: StructuredAstValue, *, max_depth: int = 3) -> StructuredAstValue:
@@ -6233,12 +6224,20 @@ def _is_void_tail_call_guard_materialization_delta_8616(
     """Compatibility shim for validation-owned void-tail-call guard delta policy."""
     # Dynamic codegen compatibility boundary for legacy materialization counters.
     materialized_count = int(getattr(codegen, "_inertia_void_tail_call_guard_materialized_8616", 0) or 0)
-    return void_tail_call_guard_materialization_delta_8616(materialized_count, validation)
+    return require_result_type_8616(
+        void_tail_call_guard_materialization_delta_8616(materialized_count, validation),
+        bool,
+        owner="tail_validation.void_tail_call_guard_materialization_delta_8616",
+    )
 
 
 def _is_conditional_branch_insn_8616(insn: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned conditional-branch classification."""
-    return _structuring_is_conditional_branch_insn_8616(insn)
+    return require_result_type_8616(
+        _structuring_is_conditional_branch_insn_8616(insn),
+        bool,
+        owner="structuring.return_chains.is_conditional_branch_insn_8616",
+    )
 
 
 def _real_conditional_branch_count_for_codegen_8616(
@@ -6246,24 +6245,40 @@ def _real_conditional_branch_count_for_codegen_8616(
 ) -> int | None:
     """Compatibility shim for structuring-owned conditional branch counting."""
     insns = _linear_function_insns_for_codegen_8616(project, codegen)
-    return _structuring_conditional_branch_count_8616(insns)
+    return require_optional_result_type_8616(
+        _structuring_conditional_branch_count_8616(insns),
+        int,
+        owner="structuring.return_chains.conditional_branch_count_8616",
+    )
 
 
 def _else_node_empty_8616(node: StructuredAstValue | None) -> bool:
     """Compatibility shim for structuring-owned else-node emptiness proof."""
-    return _structuring_else_node_empty_8616(node)
+    return require_result_type_8616(
+        _structuring_else_node_empty_8616(node),
+        bool,
+        owner="structuring.return_chains.else_node_empty_8616",
+    )
 
 
 def _c_node_semantically_empty_8616(node: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned semantic-empty C AST proof."""
-    return _structuring_c_node_semantically_empty_8616(node, _return_chain_flatten_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_c_node_semantically_empty_8616(node, _return_chain_flatten_callbacks_8616()),
+        bool,
+        owner="structuring.return_chains.c_node_semantically_empty_8616",
+    )
 
 
 def _surplus_empty_guard_condition_8616(
     stmt: StructuredAstValue,
 ) -> tuple[StructuredAstValue, _SurplusIfGuardKind8616] | None:
     """Compatibility shim for structuring-owned surplus empty-if guard proof."""
-    return _structuring_surplus_empty_guard_condition_8616(stmt, _return_chain_flatten_callbacks_8616())
+    return require_optional_result_type_8616(
+        _structuring_surplus_empty_guard_condition_8616(stmt, _return_chain_flatten_callbacks_8616()),
+        tuple,
+        owner="structuring.return_chains.surplus_empty_guard_condition_8616",
+    )
 
 
 def _condition_branch_tag_callbacks_8616(project: StructuredAstValue) -> ConditionBranchTagCallbacks8616:
@@ -6290,7 +6305,11 @@ def _condition_branch_tag_evidence_8616(
 
 def _condition_has_jcc_evidence_8616(project: StructuredAstValue, cond: StructuredAstValue) -> bool:
     """Compatibility shim for structuring-owned condition JCC evidence policy."""
-    return _structuring_condition_has_jcc_evidence_8616(cond, _condition_branch_tag_callbacks_8616(project))
+    return require_result_type_8616(
+        _structuring_condition_has_jcc_evidence_8616(cond, _condition_branch_tag_callbacks_8616(project)),
+        bool,
+        owner="structuring.return_chains.condition_has_jcc_evidence_8616",
+    )
 
 
 def _prune_surplus_void_empty_return_guards_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
@@ -6585,10 +6604,10 @@ def _prune_duplicate_empty_return_guard_before_cfg_suffix_8616(
         for value in _boundary_tuple_8616(getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ())
     )
     if not has_materialized_return_chain:
-        cfg_pairs = _ordered_conditional_return_pairs_from_cfg_8616(project, codegen)
+        cfg_values = _ordered_conditional_return_values_8616(project, codegen)
         final_value = _last_ax_return_value_8616(project, codegen)
-        if cfg_pairs and final_value is not None:
-            values = (*tuple(int(value) for _cond, value in cfg_pairs), int(final_value))
+        if cfg_values and final_value is not None:
+            values = (*tuple(int(value) for value in cfg_values), int(final_value))
             has_materialized_return_chain = True
         else:
             if debug:
@@ -6657,13 +6676,21 @@ def _return_chain_counts_8616(codegen: StructuredAstValue) -> tuple[int, int]:
     """Compatibility shim for structuring-owned return-chain AST counts."""
     # Dynamic boundary: angr codegen may or may not expose cfunc/statements.
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-    return _structuring_return_chain_counts_8616(root, _return_chain_count_callbacks_8616())
+    return require_result_type_8616(
+        _structuring_return_chain_counts_8616(root, _return_chain_count_callbacks_8616()),
+        tuple,
+        owner="structuring.return_chains.return_chain_counts_8616",
+    )
 
 
 def _return_chain_expected_counts_8616(codegen: StructuredAstValue) -> tuple[int, int] | None:
     """Compatibility shim for structuring-owned return-chain metadata counts."""
     ensure_return_chain_codegen_state_8616(codegen)
-    return _structuring_return_chain_expected_counts_8616(codegen)
+    return require_optional_result_type_8616(
+        _structuring_return_chain_expected_counts_8616(codegen),
+        tuple,
+        owner="structuring.return_chains.return_chain_expected_counts_8616",
+    )
 
 
 def _repair_unresolved_function_exit_gotos_pass_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
@@ -6677,24 +6704,6 @@ def _repair_unresolved_function_exit_gotos_pass_8616(project: StructuredAstValue
             codegen,
         )
     )
-
-
-class CallArgumentAstEffect8616(Enum):
-    """Declare whether a postprocess pass rebuilds call arguments."""
-
-    PRESERVES = "preserves"
-    REBUILDS = "rebuilds"
-
-
-@dataclass(frozen=True, slots=True)
-class DecompilerPostprocessPassSpec:
-    """Configured postprocess pass entry."""
-
-    name: str
-    func: Callable[..., bool]
-    needs_project: bool
-    callsite_final_gate: bool = False
-    call_argument_effect: CallArgumentAstEffect8616 = CallArgumentAstEffect8616.PRESERVES
 
 
 def _record_unchanged_postprocess_validation_skip_8616(codegen: StructuredAstValue, pass_name: str) -> None:
@@ -6758,7 +6767,11 @@ def _dead_code_elimination_after_flag_prune_8616(codegen: StructuredAstValue) ->
     codegen._inertia_dce_allow_storage_free_dirty_8616 = True
     codegen._inertia_dce_allow_dirty_value_reads_8616 = True
     try:
-        return _dead_code_elimination_8616(codegen)
+        return require_result_type_8616(
+            _dead_code_elimination_8616(codegen),
+            bool,
+            owner="postprocess.optimization.dce._dead_code_elimination_8616",
+        )
     finally:
         if had_attr:
             codegen._inertia_dce_allow_storage_free_dirty_8616 = previous
@@ -7648,7 +7661,11 @@ def _materialize_direct_global_incdec_instructions_postprocess_8616(
     if getattr(codegen, "_inertia_direct_global_incdec_materialization_structuring_pass_ran_8616", False):
         return False
     function = _current_postprocess_function_for_codegen_8616(project, codegen)
-    return materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function)
+    return require_result_type_8616(
+        materialize_direct_global_incdec_instructions_8616(codegen, project=project, function=function),
+        bool,
+        owner="lowering.real_mode_linear.materialize_direct_global_incdec_instructions_8616",
+    )
 
 
 def _materialize_direct_stack_incdec_instructions_postprocess_8616(
@@ -7659,7 +7676,11 @@ def _materialize_direct_stack_incdec_instructions_postprocess_8616(
     if getattr(codegen, "_inertia_direct_stack_materialization_structuring_pass_ran_8616", False):
         return False
     function = _current_postprocess_function_for_codegen_8616(project, codegen)
-    return materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+    return require_result_type_8616(
+        materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function),
+        bool,
+        owner="lowering.real_mode_linear.materialize_direct_stack_incdec_instructions_8616",
+    )
 
 
 def _materialize_direct_stack_mov_instructions_postprocess_8616(
@@ -7688,8 +7709,12 @@ def _materialize_direct_stack_mov_instructions_postprocess_8616(
             )
             return False
     function = _current_postprocess_function_for_codegen_8616(project, codegen)
-    return materialize_direct_stack_mov_instructions_8616(
-        codegen, project=project, function=function, allow_stack_slot_fallback=allow_stack_slot_fallback
+    return require_result_type_8616(
+        materialize_direct_stack_mov_instructions_8616(
+            codegen, project=project, function=function, allow_stack_slot_fallback=allow_stack_slot_fallback
+        ),
+        bool,
+        owner="lowering.real_mode_linear.materialize_direct_stack_mov_instructions_8616",
     )
 
 
@@ -7698,10 +7723,14 @@ def _prune_unsupported_function_pointer_stack_move_assignments_postprocess_8616(
     codegen: StructuredAstValue,
 ) -> bool:
     function = _current_postprocess_function_for_codegen_8616(project, codegen)
-    return prune_unsupported_function_pointer_stack_move_assignments_8616(
-        codegen,
-        project=project,
-        function=function,
+    return require_result_type_8616(
+        prune_unsupported_function_pointer_stack_move_assignments_8616(
+            codegen,
+            project=project,
+            function=function,
+        ),
+        bool,
+        owner="lowering.real_mode_linear.prune_unsupported_function_pointer_stack_move_assignments_8616",
     )
 
 
@@ -7766,7 +7795,11 @@ def _recover_missing_direct_calls_from_evidence_early_postprocess_8616(
     # Dynamic boundary: legacy angr codegen only has this flag after structuring callsite priming runs.
     if getattr(codegen, "_inertia_callsite_stack_arguments_structuring_pass_ran_8616", False):
         return False
-    return _calls._recover_missing_direct_calls_from_evidence_8616(project, codegen)
+    return require_result_type_8616(
+        _calls._recover_missing_direct_calls_from_evidence_8616(project, codegen),
+        bool,
+        owner="lowering.callsite_materialization._recover_missing_direct_calls_from_evidence_8616",
+    )
 
 
 def _materialize_callsite_stack_arguments_postprocess_8616(
@@ -7797,7 +7830,11 @@ def _recover_missing_direct_calls_final_postprocess_8616(
     # semantic priming was unavailable.
     if getattr(codegen, "_inertia_callsite_stack_arguments_structuring_pass_ran_8616", False):
         return False
-    return _calls._recover_missing_direct_calls_from_evidence_8616(project, codegen)
+    return require_result_type_8616(
+        _calls._recover_missing_direct_calls_from_evidence_8616(project, codegen),
+        bool,
+        owner="lowering.callsite_materialization._recover_missing_direct_calls_from_evidence_8616",
+    )
 
 
 def _materialize_callsite_stack_arguments_final_postprocess_8616(
@@ -7840,7 +7877,11 @@ def _materialize_callsite_prototypes_postprocess_8616(project: StructuredAstValu
     # Dynamic boundary: legacy angr codegen only has this flag after structuring semantic priming runs.
     if getattr(codegen, "_inertia_callsite_prototypes_structuring_pass_ran_8616", False):
         return False
-    return _calls._materialize_callsite_prototypes_8616(project, codegen)
+    return require_result_type_8616(
+        _calls._materialize_callsite_prototypes_8616(project, codegen),
+        bool,
+        owner="lowering.callsite_materialization._materialize_callsite_prototypes_8616",
+    )
 
 
 def _materialize_stdlib_call_chains_postprocess_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> bool:
@@ -7848,7 +7889,11 @@ def _materialize_stdlib_call_chains_postprocess_8616(project: StructuredAstValue
     # Dynamic boundary: legacy angr codegen only has this flag after structuring semantic priming runs.
     if getattr(codegen, "_inertia_stdlib_call_chains_structuring_pass_ran_8616", False):
         return False
-    return _calls._materialize_stdlib_call_chains_8616(project, codegen)
+    return require_result_type_8616(
+        _calls._materialize_stdlib_call_chains_8616(project, codegen),
+        bool,
+        owner="lowering.callsite_materialization._materialize_stdlib_call_chains_8616",
+    )
 
 
 def _current_postprocess_function_for_codegen_8616(
@@ -7879,8 +7924,17 @@ def _materialize_direct_stack_mov_instructions_final_postprocess_8616(
 def _lower_runtime_ss_segment_helpers_to_stack_final_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> bool:
-    changed = materialize_runtime_helper_segment_carriers_8616(codegen, project=project)
-    return lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project) or changed
+    changed = require_result_type_8616(
+        materialize_runtime_helper_segment_carriers_8616(codegen, project=project),
+        bool,
+        owner="lowering.segmented_memory_lowering.materialize_runtime_helper_segment_carriers_8616",
+    )
+    lowered = require_result_type_8616(
+        lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project),
+        bool,
+        owner="lowering.segmented_memory_lowering.lower_runtime_ss_segment_helpers_to_stack_8616",
+    )
+    return lowered or changed
 
 
 def _materialize_pointer_arg_indirect_loads_postprocess_8616(
@@ -8830,6 +8884,9 @@ def _restore_codegen_inertia_metadata_8616(
     for name, value in snapshot.items():
         with contextlib.suppress(Exception):
             setattr(codegen, name, value)
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is not None:
+        rebind_restored_stack_coordinate_registry_8616(codegen, cfunc)
     _invalidate_tail_validation_derived_caches_8616(codegen)
 
 
@@ -9078,6 +9135,9 @@ def _invalidate_tail_validation_derived_caches_8616(codegen: StructuredAstValue)
         "_inertia_stack_offset_cache",
         "_inertia_stack_pointer_aliases_for_cvars",
         "_inertia_jcc_register_exprs_by_ins_addr_8616",
+        "_inertia_direct_stack_replay_stable_generation_8616",
+        "_inertia_direct_stack_ownership_replay_stable_generation_8616",
+        "_inertia_direct_stack_move_ownership_replayed_8616",
     ):
         with contextlib.suppress(Exception):
             setattr(codegen, attr, None)
@@ -9537,7 +9597,11 @@ def _repair_loop_exit_return_guards_8616(codegen: StructuredAstValue) -> bool:
     # Dynamic boundary: legacy angr codegen only has this flag after the structuring wrapper runs.
     if getattr(codegen, "_inertia_loop_exit_guard_structuring_pass_ran_8616", False):
         return False
-    return repair_loop_exit_return_guards_8616(codegen, default_loop_exit_return_guard_callbacks_8616())
+    return require_result_type_8616(
+        repair_loop_exit_return_guards_8616(codegen, default_loop_exit_return_guard_callbacks_8616()),
+        bool,
+        owner="structuring.loop_exit_return_guards.repair_loop_exit_return_guards_8616",
+    )
 
 
 def _coerce_nonnegative_int_8616(value: StructuredAstValue) -> int:
@@ -9891,10 +9955,8 @@ def _prime_stack_prototype_before_validation_baseline_8616(
     """Materialize stack interface state before validation baseline capture.
 
     Return-address pruning changes angr's declaration maps and therefore must
-    precede ConditionIR operand materialization.  The implementation remains
-    a compatibility bridge until the typed stack-interface owner absorbs it;
-    running it here prevents a late cleanup pass from invalidating typed
-    condition projections.
+    precede ConditionIR operand materialization. Replay the typed Lowering
+    owner here so later cleanup cannot invalidate condition projections.
     """
     if getattr(codegen, "_inertia_pre_validation_stack_prototype_primed", False):
         return False
@@ -9902,12 +9964,6 @@ def _prime_stack_prototype_before_validation_baseline_8616(
     try:
         with span("x86_16.decompile.prime_stack.prototype"):
             changed = bool(materialize_annotated_stack_prototype_8616(project, codegen))
-        # Compatibility bridge for legacy BP-load prototype promotion. This is
-        # still owned by the type/lowering migration plan; run it before the
-        # validation baseline so later postprocess does not introduce a fresh
-        # prototype/argument surface that typed-condition signedness must fix.
-        with span("x86_16.decompile.prime_stack.prototype_bp_loads"):
-            changed = bool(_post._promote_stack_prototype_from_bp_loads_8616(project, codegen)) or changed
         with span("x86_16.decompile.prime_stack.return_address"):
             changed = bool(_post._prune_return_address_stack_arguments_8616(project, codegen)) or changed
         codegen._inertia_pre_validation_return_address_pruned_8616 = True
@@ -10113,96 +10169,23 @@ def _prime_typed_conditions_before_validation_baseline_8616(
 
 def _postprocess_runtime_config_8616(
     project: StructuredAstValue, codegen: StructuredAstValue, pass_specs: StructuredAstValue
-) -> tuple[int | None, bool, bool, set[str], StructuredAstValue]:
-    def _impl() -> tuple[int | None, bool, bool, set[str], StructuredAstValue]:
-        func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
-        delta = getattr(project, "_inertia_original_linear_delta", None)
-        func_addr_candidates: set[int] = set()
-        if isinstance(func_addr, int):
-            func_addr_candidates.add(func_addr)
-            if isinstance(delta, int):
-                func_addr_candidates.add(func_addr + delta)
-                func_addr_candidates.add(func_addr - delta)
-        replacement_records = getattr(project, "_inertia_typed_switch_seqnode_replacement_8616", None)
-        if isinstance(func_addr, int) and isinstance(replacement_records, list):
-            codegen._inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616 = any(
-                isinstance(record, Mapping)
-                and record.get("function_addr") in func_addr_candidates
-                and record.get("changed") is True
-                and _coerce_nonnegative_int_8616(record.get("replaced_count")) > 0
-                for record in replacement_records
+) -> PostprocessRuntimeConfig8616:
+    return configure_postprocess_runtime_8616(
+        project,
+        codegen,
+        pass_specs,
+        complexity_resolver=_postprocess_function_complexity_8616,
+        baseline_summary_collector=lambda active_project, active_codegen: (
+            _collect_tail_validation_summary_with_baseline_canonicalization_8616(
+                active_project,
+                active_codegen,
+                mode="live_out",
             )
-        trace_func_addr = func_addr
-        if isinstance(trace_func_addr, int) and isinstance(delta, int):
-            trace_func_addr = trace_func_addr + delta
-        validation_enabled = bool(getattr(project, "_inertia_tail_validation_enabled", True))
-        per_pass_validation_enabled = bool(getattr(project, "_inertia_postprocess_per_pass_validation_enabled", True))
-        if os.environ.get("INERTIA_DEBUG_CONDITION_TRACE") or os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
-            per_pass_validation_enabled = True
-        if os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
-            per_pass_validation_enabled = True
-        complexity = _postprocess_function_complexity_8616(project, codegen, func_addr)
-        baseline_validation_cost_ms = int(getattr(codegen, "_inertia_postprocess_pre_validation_cost_ms_8616", 0) or 0)
-        expensive_validation_baseline = (
-            baseline_validation_cost_ms >= _POSTPROCESS_EXPENSIVE_VALIDATION_BASELINE_MS_8616
-        )
-        large_function_for_per_pass_tv = complexity.is_expensive_for_local_validation or expensive_validation_baseline
-        if large_function_for_per_pass_tv and not os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
-            per_pass_validation_enabled = False
-        codegen._inertia_skip_per_pass_validation_large_function = large_function_for_per_pass_tv
-        codegen._inertia_postprocess_function_complexity_8616 = {
-            "blocks": complexity.block_count,
-            "bytes": complexity.byte_count,
-            "source": complexity.source,
-            "expensive": large_function_for_per_pass_tv,
-            "baseline_validation_cost_ms": baseline_validation_cost_ms,
-            "expensive_validation_baseline": expensive_validation_baseline,
-        }
-        skip_env = os.environ.get("INERTIA_SKIP_POSTPROCESS_PASSES")
-        skip_names: set[str] = set()
-        if isinstance(skip_env, str) and skip_env.strip():
-            skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
-        if not _fact_backed_stack_normalize_enabled_8616():
-            skip_names.add("_normalize_fact_backed_stack_accesses_8616")
-        reject_budget_raw = os.environ.get("INERTIA_POSTPROCESS_OPTIONAL_REJECT_BUDGET", "").strip()
-        reject_budget = _PASS_REJECT_BUDGET_DEFAULT_8616
-        if reject_budget_raw:
-            try:
-                reject_budget = max(0, int(reject_budget_raw))
-            except ValueError:
-                reject_budget = _PASS_REJECT_BUDGET_DEFAULT_8616
-        pass_timeout_seconds: int | None = None
-        # Expensive functions already use one final whole-tail validation rather
-        # than per-pass validation. Keep their optional rewrite passes bounded
-        # more tightly too; otherwise a long sequence of individually bounded
-        # passes can consume the entire function budget under xdist contention.
-        # One second is too small for an evidence-backed pass when several
-        # decompiler workers share the host. A bounded two-second budget
-        # avoids false validation failures without making optional rewrites
-        # unbounded or changing the caller's outer function deadline.
-        default_pass_timeout = "2" if large_function_for_per_pass_tv else "6"
-        pass_timeout_raw = os.environ.get("INERTIA_POSTPROCESS_PASS_TIMEOUT_SEC", "").strip() or default_pass_timeout
-        if pass_timeout_raw:
-            try:
-                parsed = float(pass_timeout_raw)
-                if parsed > 0.0:
-                    pass_timeout_seconds = max(1, round(parsed))
-            except ValueError:
-                pass_timeout_seconds = None
-        baseline_summary = None
-        if validation_enabled:
-            cached_baseline = getattr(codegen, "_inertia_postprocess_pre_validation_summary", None)
-            if cached_baseline is not None:
-                baseline_summary = cached_baseline
-            else:
-                baseline_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
-                    project, codegen, mode="live_out"
-                )
-        codegen._inertia_postprocess_passes = tuple(spec.name for spec in pass_specs)
-        codegen._inertia_postprocess_optional_reject_budget_8616 = reject_budget
-        return pass_timeout_seconds, validation_enabled, per_pass_validation_enabled, skip_names, baseline_summary
-
-    return _impl()
+        ),
+        fact_backed_stack_normalize_enabled=(
+            _fact_backed_stack_normalize_enabled_8616()
+        ),
+    )
 
 
 def _large_function_for_postprocess_snapshot_8616(project: StructuredAstValue, func_addr: int | None) -> bool:
@@ -10347,11 +10330,12 @@ def _postprocess_local_validation_refusal_reason_8616(
 
 
 def _postprocess_set_completion_state_8616(
-    project: StructuredAstValue, codegen: StructuredAstValue, accepted_changed: bool
+    project: StructuredAstValue, codegen: StructuredAstValue, state: PostprocessPassTransactionState8616
 ) -> bool:
-    codegen._inertia_postprocess_changed = accepted_changed
+    codegen._inertia_postprocess_mutation_generation_8616 = state.mutation_generation()
+    codegen._inertia_postprocess_changed = state.accepted_changed
     project._inertia_decompiler_stage = "postprocess"
-    return accepted_changed
+    return bool(state.accepted_changed)
 
 
 def _postprocess_codegen_has_text_8616(codegen: StructuredAstValue) -> bool:
@@ -10375,121 +10359,67 @@ def _postprocess_run_bootstrap_steps_8616(
     apply_step: Callable[[str, Callable[[], bool]], bool],
 ) -> bool:
     """Run semantic bootstrap consumers through guarded postprocess validation."""
-
-    def _apply_bootstrap_step(pass_name: str, operation: Callable[[], bool]) -> bool:
-        """Apply one bootstrap step and expose its inclusive debug timing."""
-        started = time.perf_counter()
-        keep_running = apply_step(pass_name, operation)
-        if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
-            print(
-                f"[{time.strftime('%H:%M:%S')}] postprocess bootstrap: {pass_name} "
-                f"({time.perf_counter() - started:.3f}s)",
-                file=sys.stderr,
-                flush=True,
-            )
-        return keep_running
-
-    if _heap_postprocess_debug_enabled_8616():
-        print(
-            "[postprocess-bootstrap] "
-            f"function={getattr(getattr(codegen, 'cfunc', None), 'addr', None)!r} "
-            f"skip={','.join(sorted(skip_names)) if skip_names else '-'}",
-            file=sys.stderr,
-            flush=True,
-        )
-    if "_normalize_fact_backed_stack_accesses_8616" not in skip_names:
-        if not _apply_bootstrap_step(
-            "_normalize_fact_backed_stack_accesses_8616",
-            lambda: _normalize_fact_backed_stack_accesses_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    mov_pass_enabled = "_materialize_direct_stack_mov_instructions_8616" not in skip_names
-    incdec_pass_enabled = "_materialize_direct_stack_incdec_instructions_8616" not in skip_names
-    if mov_pass_enabled:
-        if _heap_postprocess_debug_enabled_8616():
-            print(
-                "[postprocess-bootstrap] enter _materialize_direct_stack_mov_instructions_8616",
-                file=sys.stderr,
-                flush=True,
-            )
-        if not _apply_bootstrap_step(
-            "_materialize_direct_stack_mov_instructions_8616",
-            lambda: _materialize_direct_stack_mov_instructions_postprocess_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if incdec_pass_enabled:
-        if _heap_postprocess_debug_enabled_8616():
-            print(
-                "[postprocess-bootstrap] enter _materialize_direct_stack_incdec_instructions_8616",
-                file=sys.stderr,
-                flush=True,
-            )
-        if not _apply_bootstrap_step(
-            "_materialize_direct_stack_incdec_instructions_8616",
-            lambda: _materialize_direct_stack_incdec_instructions_postprocess_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if "_apply_typed_conditions_to_codegen_8616" not in skip_names:
-        if not _apply_bootstrap_step(
-            "_apply_typed_conditions_to_codegen_8616",
-            lambda: _apply_typed_conditions_to_codegen_pass_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if "_materialize_global_byte_index_sum_loop_8616" not in skip_names:
-        if not _apply_bootstrap_step(
-            "_materialize_global_byte_index_sum_loop_8616",
-            lambda: _materialize_global_byte_index_sum_loop_postprocess_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if "_materialize_nested_stack_counter_accumulator_loop_8616" not in skip_names:
-        if not _apply_bootstrap_step(
-            "_materialize_nested_stack_counter_accumulator_loop_8616",
-            lambda: _materialize_nested_stack_counter_accumulator_loop_postprocess_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if "_materialize_stack_arg_accumulator_loop_8616" not in skip_names:
-        if not _apply_bootstrap_step(
-            "_materialize_stack_arg_accumulator_loop_8616",
-            lambda: _materialize_stack_arg_accumulator_loop_postprocess_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if "_materialize_cfg_selector_return_branches_early_8616" not in skip_names:
-        if not _apply_bootstrap_step(
-            "_materialize_cfg_selector_return_branches_early_8616",
-            lambda: _materialize_cfg_selector_return_branches_pass_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    if "_rewrite_decoded_jcc_conditions_8616" not in skip_names and not (
-        getattr(codegen, "_inertia_return_selector_materialized_8616", False)
-        or getattr(codegen, "_inertia_pointer_memory_materialized_8616", None)
-        or getattr(codegen, "_inertia_global_byte_sum_loop_materialized_8616", False)
-        or getattr(codegen, "_inertia_nested_stack_counter_loop_materialized_8616", False)
-        or getattr(codegen, "_inertia_stack_arg_accumulator_loop_materialized_8616", False)
-    ):
-        if not _apply_bootstrap_step(
-            "_rewrite_decoded_jcc_conditions_8616",
-            lambda: _rewrite_decoded_jcc_conditions_pass_8616(project, codegen),
-        ):
-            return False
-        if codegen._inertia_postprocess_validation_failed:
-            return False
-    return True
+    result = run_postprocess_bootstrap_steps_8616(
+        codegen,
+        skip_names,
+        apply_step,
+        PostprocessBootstrapOperations8616(
+            normalize_fact_backed_stack_accesses=lambda: (
+                _normalize_fact_backed_stack_accesses_8616(project, codegen)
+            ),
+            materialize_direct_stack_mov=lambda: (
+                _materialize_direct_stack_mov_instructions_postprocess_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            materialize_direct_stack_incdec=lambda: (
+                _materialize_direct_stack_incdec_instructions_postprocess_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            apply_typed_conditions=lambda: (
+                _apply_typed_conditions_to_codegen_pass_8616(project, codegen)
+            ),
+            materialize_global_byte_index_sum_loop=lambda: (
+                _materialize_global_byte_index_sum_loop_postprocess_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            materialize_nested_stack_counter_loop=lambda: (
+                _materialize_nested_stack_counter_accumulator_loop_postprocess_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            materialize_stack_arg_accumulator_loop=lambda: (
+                _materialize_stack_arg_accumulator_loop_postprocess_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            materialize_selector_return_branches=lambda: (
+                _materialize_cfg_selector_return_branches_pass_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            rewrite_decoded_jcc_conditions=lambda: (
+                _rewrite_decoded_jcc_conditions_pass_8616(project, codegen)
+            ),
+            selector_return_contract_active=lambda: (
+                _selector_return_contract_active_8616(codegen)
+            ),
+        ),
+        debug_enabled=_heap_postprocess_debug_enabled_8616(),
+        timing_enabled=(
+            timing_output_enabled()
+            and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1"
+        ),
+    )
+    return bool(result)
 
 
 def _postprocess_run_optimization_step_8616(
@@ -10650,8 +10580,6 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
 
         _debug_pointer_surface_8616("entry")
 
-        accepted_changed = False
-        last_changed_pass = None
         codegen._inertia_rewrite_failed = False
         codegen._inertia_rewrite_failure_pass = None
         codegen._inertia_rewrite_failure_error = None
@@ -10662,7 +10590,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
         codegen._inertia_postprocess_validation_failure_pass = None
         codegen._inertia_postprocess_validation_failure_error = None
         pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
-        pass_timeout_seconds, validation_enabled, per_pass_validation_enabled, skip_names, baseline_summary = (
+        pass_timeout_seconds, validation_enabled, per_pass_validation_enabled, skip_names, initial_baseline_summary = (
             _postprocess_runtime_config_8616(project, codegen, pass_specs)
         )
         if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
@@ -10677,41 +10605,41 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
         delta = getattr(project, "_inertia_original_linear_delta", None)
         if isinstance(trace_func_addr, int) and isinstance(delta, int):
             trace_func_addr = trace_func_addr + delta
-        validation_required_passes = {
-            "_rewrite_decoded_jcc_conditions_8616",
-            "_rewrite_decoded_jcc_conditions_after_calls_8616",
-            "_materialize_unconsumed_loop_break_jcc_8616",
-            "_repair_loop_exit_return_guards_8616",
-            "_recover_missing_direct_calls_from_evidence_early_8616",
-            "_recover_missing_direct_calls_from_evidence_8616",
-            "_normalize_fact_backed_stack_accesses_8616",
-            "_prune_return_address_stack_arguments_8616",
-            "_normalize_call_target_names_8616",
-            "_normalize_recovered_call_target_names_8616",
-            "_materialize_callsite_stack_arguments_8616",
-            "_materialize_callsite_prototypes_8616",
-            "_materialize_recovered_callsite_stack_arguments_8616",
-            "_materialize_stack_byte_pair_return_8616",
-            "_materialize_direct_global_incdec_instructions_8616",
-            "_materialize_direct_global_incdec_instructions_final_8616",
-            "_recover_missing_direct_calls_final_8616",
-            "_materialize_pointer_memory_idioms_8616",
-            "_materialize_empty_if_return_branches_8616",
-            "_prune_surplus_void_empty_return_guards_8616",
-            "_prune_surplus_void_empty_return_guards_final_8616",
-            "_prune_unreachable_after_return_final_8616",
-            "_materialize_empty_if_return_branches_final_8616",
-            "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
-            "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
-        }
         timeout_continue_passes = {
             "_apply_annotations_8616",
             "_promote_stack_prototype_from_bp_loads_8616",
         }
+        transaction_state = PostprocessPassTransactionState8616(
+            baseline_summary=initial_baseline_summary,
+            known_cycle_path=_c_ast_cycle_path_8616(
+                getattr(getattr(codegen, "cfunc", None), "statements", None)
+            ),
+        )
+        rollback_snapshots = PostprocessRollbackSnapshotController8616(codegen)
+        optimization_witnesses = PostprocessMutationWitnessCache8616[
+            tuple[object, object]
+        ]()
+
+        def _optimization_witness_8616() -> tuple[object, object]:
+            """Build the exact AST and validation-input witness for one state."""
+            return (
+                structured_ast_generation_8616(codegen),
+                tail_validation_summary_input_generation_8616(project, codegen),
+            )
+
+        def _complete_postprocess_8616() -> bool:
+            """Publish closed witness accounting before completing the transaction."""
+            codegen._inertia_postprocess_optimization_witness_stats_8616 = (
+                optimization_witnesses.stats()
+            )
+            return _postprocess_set_completion_state_8616(
+                project,
+                codegen,
+                transaction_state,
+            )
 
         def _apply_step(pass_name: str, step_func: Callable[[], bool]) -> bool:
             """Run one pass through dynamic codegen compatibility state and validation guards."""
-            nonlocal accepted_changed, baseline_summary, last_changed_pass
             debug_pointer_ast = os.environ.get("INERTIA_DEBUG_POINTER_MEMORY_IDIOMS") == "1"
 
             def _pointer_ast_lines_8616() -> tuple[str, ...]:
@@ -10744,33 +10672,11 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
             prototype_arg_state_before = _prototype_arg_state_8616()
             # Repair: ensure statements is always CStatements before every pass.
             # Many transform() callbacks return plain lists, which corrupts downstream.
-            _repair_cfunc_statements_wrapper(codegen)
+            if _repair_cfunc_statements_wrapper(codegen):
+                rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.PREPASS_REPAIR)
+                optimization_witnesses.invalidate()
             prototype_before = codegen.cfunc.functy
             large_function_skip = bool(getattr(codegen, "_inertia_skip_per_pass_validation_large_function", False))
-            is_optimization_pass = pass_name in _OPTIMIZATION_VALIDATION_PASS_NAMES_8616
-            force_pass_validation = bool(os.environ.get("INERTIA_FORCE_PER_PASS_TV")) and (
-                pass_name in validation_required_passes or pass_name in _MANDATORY_VALIDATION_PASS_NAMES_8616
-            )
-            force_pass_validation = force_pass_validation or (
-                validation_enabled and not large_function_skip and pass_name in _MANDATORY_VALIDATION_PASS_NAMES_8616
-            )
-            if (
-                validation_enabled
-                and large_function_skip
-                and not per_pass_validation_enabled
-                and not force_pass_validation
-                and not is_optimization_pass
-                and pass_name in _LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
-                and not _postprocess_pass_has_local_evidence_8616(pass_name, codegen)
-            ):
-                reason = _postprocess_local_validation_refusal_reason_8616(pass_name, codegen)
-                refused = _boundary_list_8616(getattr(codegen, "_inertia_postprocess_refused_passes_8616", ()) or ())
-                refused.append({"pass": pass_name, "reason": reason.value})
-                codegen._inertia_postprocess_refused_passes_8616 = tuple(refused)
-                skipped = _boundary_list_8616(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
-                skipped.append(pass_name)
-                codegen._inertia_postprocess_rejected_passes = tuple(skipped)
-                return True
             optional_reject_budget = int(
                 getattr(
                     codegen,
@@ -10779,15 +10685,35 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                 )
                 or 0
             )
-            optional_reject_count = int(getattr(codegen, "_inertia_postprocess_optional_reject_count_8616", 0) or 0)
-            if (
-                validation_enabled
-                and not per_pass_validation_enabled
-                and optional_reject_budget > 0
-                and optional_reject_count >= optional_reject_budget
-                and pass_name in _PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616
-                and not _postprocess_pass_has_local_evidence_8616(pass_name, codegen)
-            ):
+            optional_reject_count = int(
+                getattr(codegen, "_inertia_postprocess_optional_reject_count_8616", 0) or 0
+            )
+            preflight_input = PostprocessPassPreflightInput8616(
+                pass_name=pass_name,
+                validation_enabled=validation_enabled,
+                per_pass_validation_enabled=per_pass_validation_enabled,
+                large_function_skip=large_function_skip,
+                force_per_pass_requested=bool(os.environ.get("INERTIA_FORCE_PER_PASS_TV")),
+                optional_reject_budget=optional_reject_budget,
+                optional_reject_count=optional_reject_count,
+            )
+            preflight = decide_postprocess_pass_preflight_8616(preflight_input)
+            if preflight.action is PostprocessPassPreflightAction8616.PROBE_LOCAL_EVIDENCE:
+                preflight = decide_postprocess_pass_preflight_8616(
+                    preflight_input.with_local_evidence(
+                        _postprocess_pass_has_local_evidence_8616(pass_name, codegen)
+                    )
+                )
+            if preflight.action is PostprocessPassPreflightAction8616.REFUSE_LOCAL_PROOF:
+                reason = _postprocess_local_validation_refusal_reason_8616(pass_name, codegen)
+                refused = _boundary_list_8616(getattr(codegen, "_inertia_postprocess_refused_passes_8616", ()) or ())
+                refused.append({"pass": pass_name, "reason": reason.value})
+                codegen._inertia_postprocess_refused_passes_8616 = tuple(refused)
+                skipped = _boundary_list_8616(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
+                skipped.append(pass_name)
+                codegen._inertia_postprocess_rejected_passes = tuple(skipped)
+                return True
+            if preflight.action is PostprocessPassPreflightAction8616.SKIP_REJECT_BUDGET:
                 skipped = _boundary_list_8616(
                     getattr(codegen, "_inertia_postprocess_reject_budget_skipped_passes_8616", ()) or ()
                 )
@@ -10797,10 +10723,40 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                 rejected.append(pass_name)
                 codegen._inertia_postprocess_rejected_passes = tuple(rejected)
                 return True
-            requires_snapshot = validation_enabled and (
-                per_pass_validation_enabled or force_pass_validation or is_optimization_pass
+            if preflight.action is not PostprocessPassPreflightAction8616.EXECUTE:
+                raise PipelineHardError(
+                    "postprocess preflight did not close its local-evidence request",
+                    layer="rewrite/postprocess:pass_transaction",
+                )
+            is_optimization_pass = preflight.is_optimization_pass
+            force_pass_validation = preflight.force_pass_validation
+            requires_snapshot = preflight.requires_snapshot
+            return_chain_expected = _return_chain_expected_counts_8616(codegen)
+            cycle_before = transaction_state.known_cycle_path
+
+            def _materialize_rollback_snapshot_8616() -> PostprocessRollbackSnapshot8616 | None:
+                """Capture every projection restored after a rejected postprocess pass."""
+                cfunc_snapshot = _snapshot_codegen_cfunc(codegen)
+                if cfunc_snapshot is None:
+                    return None
+                return PostprocessRollbackSnapshot8616(
+                    cfunc=cfunc_snapshot,
+                    metadata=_snapshot_codegen_inertia_metadata_8616(codegen),
+                    text=_snapshot_codegen_text_state_8616(codegen),
+                    project_function=_snapshot_project_function_metadata_8616(
+                        project,
+                        getattr(getattr(codegen, "cfunc", None), "addr", None),
+                    ),
+                    cycle_path=cycle_before,
+                )
+
+            snapshot_state = (
+                rollback_snapshots.acquire(_materialize_rollback_snapshot_8616)
+                if requires_snapshot or return_chain_expected is not None
+                else None
             )
-            snapshot = _snapshot_codegen_cfunc(codegen) if requires_snapshot else None
+            rollback_snapshots.stats()
+            snapshot = snapshot_state.cfunc if snapshot_state is not None else None
             if requires_snapshot and snapshot is None:
                 rejected = _boundary_list_8616(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
                 rejected.append(pass_name)
@@ -10812,26 +10768,24 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                     getattr(codegen, "_inertia_postprocess_snapshot_error", None) or "unknown",
                 )
                 return True
-            return_chain_expected = _return_chain_expected_counts_8616(codegen)
-            if return_chain_expected is not None and snapshot is None:
-                snapshot = _snapshot_codegen_cfunc(codegen)
-            metadata_snapshot = _snapshot_codegen_inertia_metadata_8616(codegen) if snapshot is not None else None
-            text_snapshot = _snapshot_codegen_text_state_8616(codegen) if snapshot is not None else None
-            project_function_snapshot = (
-                _snapshot_project_function_metadata_8616(
-                    project,
-                    getattr(getattr(codegen, "cfunc", None), "addr", None),
-                )
-                if snapshot is not None
+            metadata_snapshot = snapshot_state.metadata if snapshot_state is not None else None
+            text_snapshot = snapshot_state.text if snapshot_state is not None else None
+            project_function_snapshot = snapshot_state.project_function if snapshot_state is not None else None
+            if snapshot_state is not None:
+                cycle_before = snapshot_state.cycle_path
+            optimization_before = (
+                optimization_witnesses.current_or_build(_optimization_witness_8616)
+                if is_optimization_pass
                 else None
             )
-            cycle_before = _c_ast_cycle_path_8616(getattr(getattr(codegen, "cfunc", None), "statements", None))
 
             def _restore_step_state(*, context: str | None = None) -> None:
                 _restore_project_function_metadata_8616(project_function_snapshot)
                 _restore_codegen_cfunc(codegen, snapshot)
                 _restore_codegen_inertia_metadata_8616(codegen, metadata_snapshot)
                 _restore_codegen_text_state_8616(codegen, text_snapshot)
+                transaction_state.record_cycle_path(cycle_before)
+                rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.RESTORE_CONSUMED)
 
             try:
                 if isinstance(pass_timeout_seconds, int) and pass_timeout_seconds > 0:
@@ -10870,6 +10824,8 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
             except AnalysisTimeout as ex:
                 if per_pass_validation_enabled or force_pass_validation or is_optimization_pass:
                     _restore_step_state()
+                else:
+                    rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.PASS_EXCEPTION)
                 codegen._inertia_rewrite_failed = True
                 codegen._inertia_rewrite_failure_pass = pass_name
                 codegen._inertia_rewrite_failure_error = f"timeout: {ex}"
@@ -10879,7 +10835,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                 logging.getLogger(__name__).warning(
                     "Skipping 86_16 postprocess pass %s after %s: timeout (%s)",
                     pass_name,
-                    last_changed_pass or "no earlier rewrite",
+                    transaction_state.last_changed_pass or "no earlier rewrite",
                     ex,
                 )
                 if pass_name in timeout_continue_passes:
@@ -10893,17 +10849,21 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
             except PipelineHardError:
                 if per_pass_validation_enabled or force_pass_validation or is_optimization_pass:
                     _restore_step_state()
+                else:
+                    rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.PASS_EXCEPTION)
                 raise
             except Exception as ex:
                 if per_pass_validation_enabled or force_pass_validation or is_optimization_pass:
                     _restore_step_state()
+                else:
+                    rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.PASS_EXCEPTION)
                 codegen._inertia_rewrite_failed = True
                 codegen._inertia_rewrite_failure_pass = pass_name
                 codegen._inertia_rewrite_failure_error = str(ex)
                 logging.getLogger(__name__).warning(
                     "Skipping 86_16 postprocess pass %s after %s: %s",
                     pass_name,
-                    last_changed_pass or "no earlier rewrite",
+                    transaction_state.last_changed_pass or "no earlier rewrite",
                     ex,
                     exc_info=True,
                 )
@@ -10933,6 +10893,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                 rejected.append(pass_name)
                 codegen._inertia_postprocess_rejected_passes = tuple(rejected)
                 return True
+            transaction_state.record_cycle_path(cycle_after)
             if return_chain_expected is not None:
                 actual_if_count, actual_return_count = _return_chain_counts_8616(codegen)
                 expected_if_count, expected_return_count = return_chain_expected
@@ -10952,17 +10913,31 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                     rejected.append(pass_name)
                     codegen._inertia_postprocess_rejected_passes = tuple(rejected)
                     return True
-            enforce_pass_validation = (
-                per_pass_validation_enabled or force_pass_validation or is_optimization_pass
-            )
+            if is_optimization_pass and not step_changed:
+                optimization_after = _optimization_witness_8616()
+                optimization_witnesses.record(optimization_after)
+                if optimization_after != optimization_before:
+                    step_changed = True
+                    misreported = _boundary_list_8616(
+                        getattr(
+                            codegen,
+                            "_inertia_postprocess_misreported_unchanged_passes_8616",
+                            (),
+                        )
+                        or ()
+                    )
+                    misreported.append(pass_name)
+                    codegen._inertia_postprocess_misreported_unchanged_passes_8616 = tuple(misreported)
+            if step_changed:
+                optimization_witnesses.invalidate()
+                rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.PASS_REPORTED_CHANGE)
+            elif cycle_after != cycle_before:
+                rollback_snapshots.invalidate(RollbackSnapshotInvalidation8616.PASS_MUTATION_DETECTED)
             if (
-                large_function_skip
-                and not os.environ.get("INERTIA_FORCE_PER_PASS_TV")
-                and not force_pass_validation
-                and not is_optimization_pass
+                validation_enabled
+                and preflight.enforce_pass_validation
+                and transaction_state.baseline_summary is not None
             ):
-                enforce_pass_validation = False
-            if validation_enabled and enforce_pass_validation and baseline_summary is not None:
                 if not step_changed:
                     _record_unchanged_postprocess_validation_skip_8616(codegen, pass_name)
                     return True
@@ -11010,7 +10985,10 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                         current_summary.conditions,
                     )
                 with span("x86_16.postprocess.validation.compare", function=trace_func_addr, pass_name=pass_name):
-                    validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
+                    validation = compare_x86_16_tail_validation_summaries(
+                        transaction_state.baseline_summary,
+                        current_summary,
+                    )
                 if not x86_16_tail_validation_result_passed(validation):
                     is_exit_goto_repair_delta = _postprocess_exit_goto_repair_delta_8616(validation)
                     has_structured_blocking_reason = bool(_postprocess_validation_blocking_reasons_8616(validation))
@@ -11626,7 +11604,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                     elif is_exit_goto_repair_delta:
                         is_blocking_delta = False
                     if not is_blocking_delta:
-                        baseline_summary = current_summary
+                        transaction_state.replace_baseline(current_summary)
                         _dump_postprocess_trace_text_8616(
                             codegen,
                             pass_name=f"accepted.{pass_name}",
@@ -11634,8 +11612,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                         )
                         # Non-blocking per-pass delta: keep pass result and continue.
                         if step_changed:
-                            accepted_changed = True
-                            last_changed_pass = pass_name
+                            transaction_state.accept_change(pass_name)
                             codegen._inertia_last_postprocess_pass = pass_name
                         return True
                     rejected = _boundary_list_8616(getattr(codegen, "_inertia_postprocess_rejected_passes", ()) or ())
@@ -11703,7 +11680,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                         restored_step_proven = _postprocess_restored_step_matches_baseline_8616(
                             project,
                             codegen,
-                            baseline_summary,
+                            transaction_state.baseline_summary,
                             restored_cfunc_snapshot=snapshot,
                         )
                         if restored_step_proven:
@@ -11747,8 +11724,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                     return False
 
             if step_changed:
-                accepted_changed = True
-                last_changed_pass = pass_name
+                transaction_state.accept_change(pass_name)
                 codegen._inertia_last_postprocess_pass = pass_name
             return True
 
@@ -11776,14 +11752,17 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
             )
 
         if not _postprocess_run_bootstrap_steps_8616(project, codegen, skip_names, _apply_step):
-            return _postprocess_set_completion_state_8616(project, codegen, accepted_changed)
+            return _complete_postprocess_8616()
         if not _postprocess_run_optimization_step_8616(project, codegen, per_pass_validation_enabled, _apply_step):
-            return _postprocess_set_completion_state_8616(project, codegen, accepted_changed)
+            return _complete_postprocess_8616()
 
         _postprocess_run_pass_specs_8616(project, codegen, pass_specs, trace_func_addr, _apply_step)
         if not codegen._inertia_postprocess_validation_failed and not getattr(
             codegen, "_inertia_postprocess_regeneration_disabled", False
-        ) and _postprocess_should_regenerate_final_8616(codegen, accepted_changed):
+        ) and _postprocess_should_regenerate_final_8616(
+            codegen,
+            transaction_state.accepted_changed,
+        ):
             final_context = (
                 f"{trace_func_addr:#x} postprocess:final"
                 if isinstance(trace_func_addr, int)
@@ -11795,7 +11774,7 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                 pass_name="final",
                 trace_func_addr=trace_func_addr,
             )
-        return _postprocess_set_completion_state_8616(project, codegen, accepted_changed)
+        return _complete_postprocess_8616()
 
     return _impl()
 
@@ -11932,52 +11911,12 @@ def _dump_postprocess_trace_text_8616(
 
 
 def _repair_missing_cnode_codegen_metadata_8616(root: StructuredAstValue, codegen: StructuredAstValue) -> int:
+    """Repair rendering metadata only; Types/Lowering owns declarations."""
     repaired = 0
-    stats = _LiveRegisterDeclarationRepairStats8616()
-    cfunc = getattr(codegen, "cfunc", None)
-    variables_in_use = getattr(cfunc, "variables_in_use", None)
-    unified_local_vars = getattr(cfunc, "unified_local_vars", None)
     seen: set[int] = set()
 
-    def _unified_variable_for(variable: SimRegisterVariable) -> StructuredAstValue:
-        variable_manager = getattr(cfunc, "variable_manager", None)
-        unified_variable = None
-        if variable_manager is not None:
-            unified = getattr(variable_manager, "unified_variable", None)
-            if callable(unified):
-                with contextlib.suppress(Exception):
-                    unified_variable = unified(variable)
-        return unified_variable if unified_variable is not None else variable
-
-    def _materialize_register_declaration(variable: SimRegisterVariable, node: CVariable) -> None:
-        nonlocal unified_local_vars
-        materialized = False
-        declaration_variable = _unified_variable_for(variable)
-        if getattr(node, "unified_variable", None) is None and declaration_variable is not variable:
-            with contextlib.suppress(Exception):
-                node.unified_variable = declaration_variable
-                materialized = True
-        variable_type = getattr(node, "variable_type", None)
-        if variable_type is None:
-            variable_type = SimTypeShort(False)
-            with contextlib.suppress(Exception):
-                node.variable_type = variable_type
-        if isinstance(variables_in_use, dict) and variable not in variables_in_use:
-            variables_in_use[variable] = node
-            materialized = True
-        if isinstance(unified_local_vars, dict):
-            entries = unified_local_vars.get(declaration_variable)
-            if not isinstance(entries, set):
-                unified_local_vars[declaration_variable] = {(node, variable_type)}
-                materialized = True
-            elif not any(existing is node for existing, _type in entries):
-                entries.add((node, variable_type))
-                materialized = True
-        if materialized:
-            stats.materialized_count += 1
-
     def _walk(node: StructuredAstValue) -> None:
-        nonlocal repaired, variables_in_use
+        nonlocal repaired
         if node is None or isinstance(node, (str, bytes, int, float, bool)):
             return
         if isinstance(node, dict):
@@ -12000,17 +11939,6 @@ def _repair_missing_cnode_codegen_metadata_8616(root: StructuredAstValue, codege
                 node.codegen = codegen
                 repaired += 1
 
-        if isinstance(node, CVariable):
-            variable = node.variable
-            if isinstance(variable, SimRegisterVariable):
-                stats.raw_fact_count += 1
-                if isinstance(variables_in_use, dict):
-                    stats.normalized_fact_count += 1
-                    stats.classified_fact_count += 1
-                    _materialize_register_declaration(variable, node)
-                else:
-                    stats.failure_count += 1
-
         for attr in _C_AST_CHILD_ATTRS_8616:
             if hasattr(node, attr):
                 with contextlib.suppress(Exception):
@@ -12021,8 +11949,6 @@ def _repair_missing_cnode_codegen_metadata_8616(root: StructuredAstValue, codege
         codegen._inertia_codegen_metadata_repaired = (
             int(getattr(codegen, "_inertia_codegen_metadata_repaired", 0) or 0) + repaired
         )
-    if stats.raw_fact_count or stats.failure_count:
-        codegen._inertia_live_register_declaration_repair_stats_8616 = stats
     return repaired
 
 
@@ -12404,12 +12330,20 @@ def _is_direct_callsite_helper_and_return_delta_8616(
 
 def _validation_delta_touched_fields_8616(delta: dict[str, StructuredAstValue]) -> set[str]:
     """Compatibility shim for validation-owned touched-field detection."""
-    return validation_delta_touched_fields_8616(delta)
+    return require_result_type_8616(
+        validation_delta_touched_fields_8616(delta),
+        set,
+        owner="tail_validation.validation_delta_touched_fields_8616",
+    )
 
 
 def _validation_delta_removes_stack_or_control_effects_8616(validation: dict[str, StructuredAstValue]) -> bool:
     """Compatibility shim for validation-owned destructive delta detection."""
-    return validation_delta_removes_stack_or_control_effects_8616(validation)
+    return require_result_type_8616(
+        validation_delta_removes_stack_or_control_effects_8616(validation),
+        bool,
+        owner="tail_validation.validation_delta_removes_stack_or_control_effects_8616",
+    )
 
 
 def _postprocess_validation_failed_pass_name_8616(codegen: StructuredAstValue) -> str | None:
@@ -12467,7 +12401,11 @@ def _postprocess_restored_step_matches_baseline_8616(
             exc_info=True,
         )
         return False
-    return x86_16_tail_validation_result_passed(validation)
+    return require_result_type_8616(
+        x86_16_tail_validation_result_passed(validation),
+        bool,
+        owner="tail_validation.x86_16_tail_validation_result_passed",
+    )
 
 
 def _clear_proven_destructive_rejection_8616(codegen: StructuredAstValue) -> None:
@@ -12630,7 +12568,11 @@ def _is_adjacent_global_high_byte_precision_delta_8616(
 
 def _is_segmented_stack_slot_size_precision_delta_8616(validation: Mapping[str, StructuredAstValue]) -> bool:
     """Compatibility shim for validation-owned segmented stack-slot size precision policy."""
-    return segmented_stack_slot_size_precision_delta_8616(validation)
+    return require_result_type_8616(
+        segmented_stack_slot_size_precision_delta_8616(validation),
+        bool,
+        owner="tail_validation.segmented_stack_slot_size_precision_delta_8616",
+    )
 
 
 def _is_stack_prototype_width_reconciliation_delta_8616(
@@ -13484,10 +13426,14 @@ def _is_function_pointer_stack_overwrite_prune_delta_8616(
         return False
     has_prune_counter = int(stats.get("unsupported_function_pointer_assignment_pruned_count", 0) or 0) > 0
     has_function_pointer_store_evidence = bool(_direct_stack_move_immediate_function_pointer_offsets_8616(codegen))
-    return direct_stack_move_function_pointer_prune_delta_8616(
-        validation,
-        _direct_stack_move_evidence_offsets_8616(codegen),
-        has_prune_evidence=has_prune_counter or has_function_pointer_store_evidence,
+    return require_result_type_8616(
+        direct_stack_move_function_pointer_prune_delta_8616(
+            validation,
+            _direct_stack_move_evidence_offsets_8616(codegen),
+            has_prune_evidence=has_prune_counter or has_function_pointer_store_evidence,
+        ),
+        bool,
+        owner="tail_validation.direct_stack_move_function_pointer_prune_delta_8616",
     )
 
 
@@ -13687,7 +13633,11 @@ def _is_conditional_continue_guard_repair_delta_8616(
     stats = getattr(codegen, "_inertia_structuring_conditional_continue_stats_8616", None)
     # Dynamic codegen compatibility boundary for structuring materialization counters.
     materialized_count = int(getattr(stats, "materialized_count", 0) or 0)
-    return conditional_continue_guard_repair_delta_8616(materialized_count, validation)
+    return require_result_type_8616(
+        conditional_continue_guard_repair_delta_8616(materialized_count, validation),
+        bool,
+        owner="tail_validation.conditional_continue_guard_repair_delta_8616",
+    )
 
 
 def _is_switch_loop_exit_return_repair_delta_8616(
@@ -13706,7 +13656,11 @@ def _is_switch_loop_exit_return_repair_delta_8616(
         legacy_materialized = False
     if legacy_materialized:
         materialized_count = 1
-    return switch_loop_exit_return_repair_delta_8616(materialized_count, validation)
+    return require_result_type_8616(
+        switch_loop_exit_return_repair_delta_8616(materialized_count, validation),
+        bool,
+        owner="tail_validation.switch_loop_exit_return_repair_delta_8616",
+    )
 
 
 def _direct_stack_move_has_signed_idiv_remainder_evidence_8616(codegen: StructuredAstValue) -> bool:
@@ -13730,14 +13684,22 @@ def _direct_stack_move_has_signed_idiv_remainder_evidence_8616(codegen: Structur
 
 def _is_direct_stack_move_idiv_remainder_aux_delta_8616(validation: Mapping[str, StructuredAstValue]) -> bool:
     """Compatibility shim for validation-owned idiv-remainder auxiliary delta policy."""
-    return direct_stack_move_idiv_remainder_aux_delta_8616(validation)
+    return require_result_type_8616(
+        direct_stack_move_idiv_remainder_aux_delta_8616(validation),
+        bool,
+        owner="tail_validation.direct_stack_move_idiv_remainder_aux_delta_8616",
+    )
 
 
 def _validation_without_delta_fields_8616(
     validation: dict[str, StructuredAstValue], fields: set[str]
 ) -> dict[str, StructuredAstValue]:
     """Compatibility shim for validation-owned delta-field stripping."""
-    return validation_without_delta_fields_8616(validation, fields)
+    return require_result_type_8616(
+        validation_without_delta_fields_8616(validation, fields),
+        dict,
+        owner="tail_validation.validation_without_delta_fields_8616",
+    )
 
 
 def _is_direct_stack_move_idiv_remainder_materialization_delta_8616(
@@ -13823,7 +13785,11 @@ def _helper_delta_added_targets_are_function_callsite_evidenced_8616(
 def _normalize_validation_condition_token_8616(token: StructuredAstValue) -> str | None:
     if not isinstance(token, str) or not token:
         return None
-    return normalize_condition_fingerprint_algebraic_8616(normalize_condition_fingerprint_string_8616(token))
+    return require_optional_result_type_8616(
+        normalize_condition_fingerprint_algebraic_8616(normalize_condition_fingerprint_string_8616(token)),
+        str,
+        owner="tail_validation.normalize_condition_fingerprint_algebraic_8616",
+    )
 
 
 def _condition_token_from_control_effect_8616(token: StructuredAstValue) -> str | None:
@@ -14363,22 +14329,16 @@ def _stack_arg_slot_aliases_from_codegen_8616(
 _STACK_SLOT_WRITE_TOKEN_RE_8616 = re.compile(r"stack_slot:SS:BP[+-]0x[0-9a-fA-F]+:size\d+")
 
 
-def _is_callsite_stack_precision_control_delta_8616(control_delta: dict[str, StructuredAstValue]) -> bool:
-    """Compatibility shim for validation-owned callsite stack precision control policy."""
-    return callsite_stack_precision_control_delta_8616(control_delta)
-
-
-def _is_callsite_resolved_indirect_helper_control_delta_8616(control_delta: dict[str, StructuredAstValue]) -> bool:
-    """Compatibility shim for validation-owned resolved-indirect helper control policy."""
-    return callsite_resolved_indirect_helper_control_delta_8616(control_delta)
-
-
 def _is_stack_arg_slot_alias_condition_delta_8616(
     codegen: StructuredAstValue, delta: dict[str, StructuredAstValue]
 ) -> bool:
     """Compatibility shim for validation-owned stack-arg alias deltas."""
     aliases = _stack_arg_slot_aliases_from_codegen_8616(codegen)
-    return callsite_stack_arg_slot_alias_condition_delta_8616(delta, aliases)
+    return require_result_type_8616(
+        callsite_stack_arg_slot_alias_condition_delta_8616(delta, aliases),
+        bool,
+        owner="tail_validation.callsite_stack_arg_slot_alias_condition_delta_8616",
+    )
 
 
 def _is_callsite_far_pointer_remnant_prune_delta_8616(
@@ -14387,7 +14347,11 @@ def _is_callsite_far_pointer_remnant_prune_delta_8616(
     """Compatibility shim for validation-owned far-pointer remnant prune deltas."""
     # Dynamic boundary: codegen carries optional postprocess pass counters.
     pruned = int(getattr(codegen, "_inertia_callsite_pre_call_farptr_high_byte_remnants_pruned_8616", 0) or 0)
-    return callsite_far_pointer_remnant_prune_delta_8616(pruned, delta)
+    return require_result_type_8616(
+        callsite_far_pointer_remnant_prune_delta_8616(pruned, delta),
+        bool,
+        owner="tail_validation.callsite_far_pointer_remnant_prune_delta_8616",
+    )
 
 
 def _is_callsite_resolved_indirect_helper_stack_delta_8616(
@@ -14444,7 +14408,11 @@ def _is_callsite_consumed_stack_store_prune_delta_8616(
     """Compatibility shim for validation-owned consumed stack-store prune deltas."""
     # Dynamic boundary: codegen carries optional postprocess pass counters.
     pruned_count = int(getattr(codegen, "_inertia_consumed_segmented_stack_byte_arg_store_pruned_8616", 0) or 0)
-    return callsite_consumed_stack_store_prune_delta_8616(pruned_count, delta)
+    return require_result_type_8616(
+        callsite_consumed_stack_store_prune_delta_8616(pruned_count, delta),
+        bool,
+        owner="tail_validation.callsite_consumed_stack_store_prune_delta_8616",
+    )
 
 
 def _is_callsite_helper_control_target_delta_8616(
@@ -15213,44 +15181,6 @@ def _classify_postprocess_validation_delta_8616(
     return _PostprocessValidationDeltaKind8616.BLOCKING
 
 
-def _postprocess_validation_blocking_reasons_8616(
-    validation: Mapping[str, StructuredAstValue],
-) -> tuple[_PostprocessValidationBlockingReason8616, ...]:
-    raw_reasons = validation.get("postprocess_validation_blocking_reasons")
-    if raw_reasons is None:
-        return ()
-    if isinstance(raw_reasons, (str, _PostprocessValidationBlockingReason8616)):
-        raw_items = (raw_reasons,)
-    else:
-        try:
-            raw_items = tuple(raw_reasons)
-        except TypeError:
-            return ()
-    reasons: list[_PostprocessValidationBlockingReason8616] = []
-    for raw in raw_items:
-        reason = _PostprocessValidationBlockingReason8616.coerce(raw)
-        if reason is not None and reason not in reasons:
-            reasons.append(reason)
-    return tuple(reasons)
-
-
-def _record_postprocess_validation_blocking_reason_8616(
-    validation: MutableMapping[str, StructuredAstValue],
-    reason: _PostprocessValidationBlockingReason8616,
-) -> None:
-    reasons = list(_postprocess_validation_blocking_reasons_8616(validation))
-    if reason not in reasons:
-        reasons.append(reason)
-    validation["postprocess_validation_blocking_reasons"] = tuple(item.value for item in reasons)
-
-
-def _postprocess_validation_has_blocking_reason_8616(
-    validation: Mapping[str, StructuredAstValue],
-    reason: _PostprocessValidationBlockingReason8616,
-) -> bool:
-    return reason in _postprocess_validation_blocking_reasons_8616(validation)
-
-
 def _postprocess_validation_has_source_evidenced_blocking_reason_8616(
     validation: Mapping[str, StructuredAstValue],
 ) -> bool:
@@ -15362,8 +15292,12 @@ def _normalize_stack_variable_identifiers_8616(codegen: StructuredAstValue) -> N
                 annotations = info.get(ANNOTATION_KEY) if isinstance(info, MutableMapping) else None
                 stack_vars = annotations.get("stack_vars") if isinstance(annotations, dict) else None
                 if isinstance(stack_vars, dict):
-                    positive_specs_are_normalized = _post._positive_stack_specs_are_normalized_for_codegen_8616(
-                        stack_vars, codegen
+                    arg_name_by_offset.update(
+                        {
+                            bp_offset: name
+                            for bp_offset, name in positive_stack_specs_8616(function)
+                            if isinstance(name, str) and name
+                        }
                     )
                     for offset, spec in stack_vars.items():
                         if not isinstance(offset, int):
@@ -15375,14 +15309,11 @@ def _normalize_stack_variable_identifiers_8616(codegen: StructuredAstValue) -> N
                                 name = spec_name
                         if isinstance(name, str) and name:
                             if offset > 0:
-                                codegen_offset = offset + 2 if positive_specs_are_normalized else offset
-                                canonical_offset = _canonical_stack_offset_8616(codegen_offset)
-                                if isinstance(canonical_offset, int):
-                                    arg_name_by_offset[canonical_offset] = name
                                 continue
                             canonical_offset = _canonical_stack_offset_8616(offset)
                             if isinstance(canonical_offset, int):
                                 local_name_by_offset[canonical_offset] = name
+        publish_stack_variable_projection_display_names_8616(codegen, local_name_by_offset)
         prototype = getattr(cfunc, "functy", None)
         proto_arg_names = _boundary_tuple_8616(getattr(prototype, "arg_names", ()) or ())
         proto_args = _boundary_tuple_8616(getattr(prototype, "args", ()) or ())
@@ -15403,7 +15334,7 @@ def _normalize_stack_variable_identifiers_8616(codegen: StructuredAstValue) -> N
             arg_var = getattr(arg, "variable", None)
             if not isinstance(arg_var, SimStackVariable):
                 continue
-            arg_offset = _canonical_stack_offset_8616(arg_var.offset)
+            arg_offset = machine_bp_offset_for_stack_variable_8616(codegen, arg_var)
             if not isinstance(arg_offset, int):
                 continue
             arg_name = getattr(arg, "name", None)
@@ -15461,7 +15392,7 @@ def _normalize_stack_variable_identifiers_8616(codegen: StructuredAstValue) -> N
                 # Normalize unresolved stack carrier names to stable stack semantics.
                 # This is typed/name materialization from stack offsets, not text cleanup.
                 name = getattr(var, "name", None)
-                offset = _canonical_stack_offset_8616(getattr(var, "offset", None))
+                offset = machine_bp_offset_for_stack_variable_8616(codegen, var)
                 if not isinstance(offset, int):
                     continue
                 new_name = arg_name_by_offset.get(offset) or local_name_by_offset.get(offset)
@@ -15489,7 +15420,7 @@ def _normalize_stack_variable_identifiers_8616(codegen: StructuredAstValue) -> N
                     var = getattr(node, attr, None)
                     if var is None or var.__class__.__name__ != "SimStackVariable":
                         continue
-                    offset = _canonical_stack_offset_8616(getattr(var, "offset", None))
+                    offset = machine_bp_offset_for_stack_variable_8616(codegen, var)
                     if not isinstance(offset, int):
                         continue
                     new_name = arg_name_by_offset.get(offset) or local_name_by_offset.get(offset)
@@ -16159,6 +16090,13 @@ def _decompile_8616(self: StructuredAstValue) -> None:
                 ),
             )
             _debug_prevalidation_pointer_surface_8616("after-segmented-memory-replay")
+            _run_pre_validation_prime_step_8616(
+                "stack_word_loads_final",
+                lambda: lower_stable_ss_linear_stack_dereferences_8616(
+                    self.codegen,
+                    project=self.project,
+                ),
+            )
         baseline_cfunc_snapshot = _measure_pre_validation_value_8616(
             "baseline_cfunc_snapshot",
             lambda: _snapshot_codegen_cfunc(self.codegen),
@@ -16527,7 +16465,9 @@ def _decompile_8616(self: StructuredAstValue) -> None:
         )
         _tv_sys4.stderr.flush()
 
-    return _impl()
+    function = getattr(self, "function", None) or getattr(self, "func", None)
+    with active_status_flag_lift_context_8616(self.project, function):
+        return _impl()
 
 
 def _handle_failed_postprocess_validation_8616(

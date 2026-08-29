@@ -14,6 +14,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
+from angr_platforms.X86_16 import decompiler_postprocess_utils
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_loads import (
     _global_load_addr_8616,
@@ -21,6 +22,7 @@ from angr_platforms.X86_16.decompiler_postprocess_loads import (
     _segmented_load_addr_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_utils import (
+    _iter_c_nodes_deep_8616,
     _match_real_mode_linear_expr_8616,
     _replace_c_children_8616,
 )
@@ -108,6 +110,26 @@ def test_postprocess_utils_keep_ds_dereference_loads_explicit():
     assert _segmented_load_addr_8616(deref, project) == ("ds", 0x234)
 
 
+def test_postprocess_walk_bypasses_container_helper_for_direct_and_scalar_slots(
+    monkeypatch,
+):
+    codegen = _DummyCodegen()
+    lhs = _const(1, codegen)
+    rhs = _const(2, codegen)
+    expression = CBinaryOp("Or", lhs, rhs, codegen=codegen)
+
+    def refuse_container_walk(*_args, **_kwargs):
+        raise AssertionError("direct and scalar slots must bypass container walk")
+
+    monkeypatch.setattr(
+        decompiler_postprocess_utils,
+        "_iter_c_node_children_8616",
+        refuse_container_walk,
+    )
+
+    assert tuple(_iter_c_nodes_deep_8616(expression)) == (expression, rhs, lhs)
+
+
 def test_postprocess_utils_match_scaled_high_byte_only_for_true_globals():
     codegen = _DummyCodegen()
     global_high = CBinaryOp("Mul", _global_deref(0x235, codegen), _const(0x100, codegen), codegen=codegen)
@@ -146,3 +168,34 @@ def test_replace_c_children_rewrites_switch_case_tuple_bodies_and_default():
     assert changed is True
     assert switch.cases[0][1].statements[0].expr is replacement
     assert switch.default.statements[0].expr is replacement
+
+
+def test_postprocess_replace_only_reads_declared_child_slots():
+    """Postprocess replacement must not probe unrelated AST descriptors."""
+
+    class _SyntheticStructuredNode:
+        __module__ = "angr.analyses.decompiler.structured_codegen.synthetic"
+        __slots__ = ("lhs", "rhs_read_count")
+
+        def __init__(self, lhs: object) -> None:
+            self.lhs = lhs
+            self.rhs_read_count = 0
+
+        @property
+        def rhs(self) -> None:
+            self.rhs_read_count += 1
+            return None
+
+    codegen = _DummyCodegen()
+    original = _const(1, codegen)
+    replacement = _const(2, codegen)
+    root = _SyntheticStructuredNode(original)
+
+    changed = _replace_c_children_8616(
+        root,
+        lambda node: replacement if node is original else node,
+    )
+
+    assert changed is True
+    assert root.lhs is replacement
+    assert root.rhs_read_count == 0

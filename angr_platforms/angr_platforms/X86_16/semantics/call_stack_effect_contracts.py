@@ -27,6 +27,7 @@ class CallStackEffectFailure8616(StrEnum):
     """Stable reasons caller-frame preservation cannot be proven."""
 
     ARGUMENT_CLASSES_INCOMPLETE = "argument_classes_incomplete"
+    ARGUMENT_ADDRESS_PROVENANCE_CONFLICT = "argument_address_provenance_conflict"
     ARGUMENT_COUNT_UNKNOWN = "argument_count_unknown"
     ARGUMENT_SOURCES_INCOMPLETE = "argument_sources_incomplete"
     ARGUMENT_WIDTHS_INCOMPLETE = "argument_widths_incomplete"

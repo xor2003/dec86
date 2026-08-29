@@ -7,8 +7,24 @@ or parallel clean-process execution without owning decompiler semantics.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
+
+
+class _FunctionWorkItem8616(Protocol):
+    """Minimal work-item surface required by clean-worker scheduling."""
+
+    @property
+    def index(self) -> int:
+        """Return the stable output index."""
+        ...
+
+    @property
+    def function(self) -> object:
+        """Return the dynamic function passed to complexity estimation."""
+        ...
 
 
 class CleanProcessOverride8616(StrEnum):
@@ -54,6 +70,26 @@ def clean_process_override_8616(value: str | None) -> CleanProcessOverride8616:
     if normalized in {"0", "false", "no", "off"}:
         return CleanProcessOverride8616.DISABLED
     return CleanProcessOverride8616.DEFAULT
+
+
+def prioritize_clean_function_work_8616[FunctionWorkItemT8616: _FunctionWorkItem8616](
+    items: Sequence[FunctionWorkItemT8616],
+    *,
+    function_complexity: Callable[[object], tuple[int, int]],
+) -> tuple[FunctionWorkItemT8616, ...]:
+    """Submit larger clean-process jobs first while preserving output identity.
+
+    Longest-processing-time-first reduces the final worker-wave critical path.
+    Stable item indexes break equal-complexity ties deterministically; callers
+    still collect and emit results in their original index order.
+    """
+
+    def priority(item: FunctionWorkItemT8616) -> tuple[int, int, int]:
+        """Return descending block/byte complexity with a stable index tie."""
+        block_count, byte_count = function_complexity(item.function)
+        return (-max(block_count, 0), -max(byte_count, 0), item.index)
+
+    return tuple(sorted(items, key=priority))
 
 
 def select_function_worker_policy_8616(

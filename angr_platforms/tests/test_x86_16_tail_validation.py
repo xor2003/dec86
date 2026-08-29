@@ -49,6 +49,7 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
     IndexedSegmentedGlobalEvidence8616,
     IndexedSegmentedGlobalStoreEvidence8616,
 )
+from angr_platforms.X86_16.postprocess import pass_validation_policy
 from angr_platforms.X86_16.structuring.loop_break_jcc import (
     LoopHeaderDuplicateGuardRemovalFact8616,
 )
@@ -1124,13 +1125,21 @@ def test_tail_validation_summary_refuses_mismatched_boundary_context(monkeypatch
     project = _project()
     codegen = _DummyCodegen()
     codegen.cfunc = SimpleNamespace(addr=0x4010, body=CStatements([], codegen=codegen))
-    codegen._inertia_tail_validation_boundary_context_8616 = tail_validation_module._TailValidationBoundaryContext8616(
-        mode="live_out",
-        root_id=id(codegen.cfunc.body),
-        boundary_fingerprint="stale",
-        contextual_call_fingerprints={},
-        contextual_call_summaries={},
-        contextual_condition_fingerprints={},
+    codegen._inertia_tail_validation_boundary_context_8616 = (
+        tail_validation_module._TailValidationBoundaryContext8616(
+            mode="live_out",
+            root_id=id(codegen.cfunc.body),
+            boundary_fingerprint="stale",
+            summary_input_generation=(
+                tail_validation_module.tail_validation_summary_input_generation_8616(
+                    project,
+                    codegen,
+                )
+            ),
+            contextual_call_fingerprints={},
+            contextual_call_summaries={},
+            contextual_condition_fingerprints={},
+        )
     )
     rebuilds = {"count": 0}
 
@@ -2635,6 +2644,72 @@ def test_tail_validation_summary_cache_hit_skips_ast_walk(monkeypatch):
     assert codegen._inertia_tail_validation_last_summary_cache_hit is True
 
 
+def test_tail_validation_fresh_boundary_cache_hit_skips_semantic_validators(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    _codegen([], codegen)
+
+    first = collect_x86_16_tail_validation_summary(project, codegen)
+    boundary_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen)
+
+    def fail_validator(*_args, **_kwargs):
+        raise AssertionError("fresh boundary cache reran semantic validator")
+
+    for validator_name in (
+        "validate_structured_def_use_8616",
+        "validate_required_callsites_8616",
+        "validate_required_callsite_multiplicity_8616",
+        "validate_call_interfaces_8616",
+        "validate_call_argument_classes_8616",
+        "validate_function_parameters_8616",
+        "validate_function_return_class_8616",
+        "_validate_final_control_flow_8616",
+        "validate_storage_identities_8616",
+    ):
+        monkeypatch.setattr(tail_validation_module, validator_name, fail_validator)
+
+    second = collect_x86_16_tail_validation_summary(
+        project,
+        codegen,
+        boundary_fingerprint=boundary_fingerprint,
+    )
+
+    assert second is first
+    assert codegen._inertia_tail_validation_last_summary_cache_hit is True
+
+
+def test_tail_validation_fresh_boundary_cache_misses_after_evidence_generation_change(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    _codegen([], codegen)
+
+    first = collect_x86_16_tail_validation_summary(project, codegen)
+    codegen._inertia_function_parameter_width_facts_8616 = ()
+    boundary_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen)
+    original_validator = tail_validation_module.validate_required_callsites_8616
+    validator_calls = 0
+
+    def count_validator(*args, **kwargs):
+        nonlocal validator_calls
+        validator_calls += 1
+        return original_validator(*args, **kwargs)
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "validate_required_callsites_8616",
+        count_validator,
+    )
+
+    second = collect_x86_16_tail_validation_summary(
+        project,
+        codegen,
+        boundary_fingerprint=boundary_fingerprint,
+    )
+
+    assert second is first
+    assert validator_calls == 1
+
+
 def test_tail_validation_collects_duplicate_helper_calls():
     project = _project()
     codegen = _DummyCodegen()
@@ -2797,9 +2872,26 @@ def _const(value: int, codegen):
     return CConstant(value, SimTypeShort(False), codegen=codegen)
 
 
-def _reg(project, name: str, codegen, *, var_name: str | None = None):
+def _reg(
+    project,
+    name: str,
+    codegen,
+    *,
+    var_name: str | None = None,
+    ident: int | str | None = None,
+    region: int | None = None,
+):
     reg_offset, reg_size = project.arch.registers[name]
-    return CVariable(SimRegisterVariable(reg_offset, reg_size, name=var_name or name), codegen=codegen)
+    return CVariable(
+        SimRegisterVariable(
+            reg_offset,
+            reg_size,
+            ident=ident,
+            name=var_name or name,
+            region=region,
+        ),
+        codegen=codegen,
+    )
 
 
 def _stack(offset: int, codegen, *, name: str = "local"):
@@ -3141,7 +3233,8 @@ def test_tail_validation_uses_decoded_indexed_store_stack_identity_for_raw_pair(
     raw_codegen._inertia_indexed_global_store_evidence_8616 = (
         IndexedSegmentedGlobalStoreEvidence8616(0xB4C, 2, -4, 1, 0x10870),
     )
-    _codegen(raw_stores, raw_codegen)
+    raw_init = CAssignment(stale_index, _const(0, raw_codegen), codegen=raw_codegen)
+    _codegen([raw_init, *raw_stores], raw_codegen)
 
     indexed_codegen = _DummyCodegen()
     indexed_index = _stack(-4, indexed_codegen, name="iRowTmp")
@@ -3160,7 +3253,11 @@ def test_tail_validation_uses_decoded_indexed_store_stack_identity_for_raw_pair(
         _const(0, indexed_codegen),
         codegen=indexed_codegen,
     )
-    _codegen([indexed_store], indexed_codegen)
+    indexed_codegen._inertia_indexed_global_store_evidence_8616 = (
+        IndexedSegmentedGlobalStoreEvidence8616(0xB4C, 2, -4, 1, 0x10870),
+    )
+    indexed_init = CAssignment(indexed_index, _const(0, indexed_codegen), codegen=indexed_codegen)
+    _codegen([indexed_init, indexed_store], indexed_codegen)
 
     raw_summary = collect_x86_16_tail_validation_summary(project, raw_codegen, mode="live_out")
     indexed_summary = collect_x86_16_tail_validation_summary(project, indexed_codegen, mode="live_out")
@@ -6816,14 +6913,14 @@ def test_postprocess_mandatory_validation_covers_late_semantic_rewriters():
         "_simplify_structured_expressions_after_final_call_materialization_8616",
         "_simplify_structured_expressions_after_stack_lowering_8616",
     }
-    expected |= postprocess_stage._OPTIMIZATION_VALIDATION_PASS_NAMES_8616
+    expected |= pass_validation_policy.OPTIMIZATION_VALIDATION_PASS_NAMES_8616
 
     assert (
-        postprocess_stage._OPTIMIZATION_VALIDATION_PASS_NAMES_8616
-        <= postprocess_stage._LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
+        pass_validation_policy.OPTIMIZATION_VALIDATION_PASS_NAMES_8616
+        <= pass_validation_policy.LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
     )
-    assert expected <= postprocess_stage._MANDATORY_VALIDATION_PASS_NAMES_8616
-    assert expected <= postprocess_stage._PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+    assert expected <= pass_validation_policy.MANDATORY_VALIDATION_PASS_NAMES_8616
+    assert expected <= pass_validation_policy.PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
 
 
 def test_postprocess_codegen_validates_small_function_after_ss_callsite_args(monkeypatch):
@@ -7301,7 +7398,7 @@ def test_postprocess_force_validates_nonmandatory_large_function_pass(monkeypatc
     )
 
 
-def test_postprocess_optimization_validates_when_stable(monkeypatch):
+def test_postprocess_optimization_reuses_witness_without_hiding_mutation(monkeypatch):
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
         _inertia_tail_validation_enabled=True,
@@ -7315,7 +7412,8 @@ def test_postprocess_optimization_validates_when_stable(monkeypatch):
 
     def _optimization_noop_pass(_codegen):
         calls.append("optimization")
-        _codegen.cfunc.state = "changed"
+        if len(calls) == 2:
+            _codegen.cfunc.state = "changed"
         return False
 
     def _summary(_project, codegen_arg, *, mode="live_out"):
@@ -7347,7 +7445,10 @@ def test_postprocess_optimization_validates_when_stable(monkeypatch):
     monkeypatch.setattr(
         postprocess_stage,
         "OPTIMIZATION_PASSES",
-        (SimpleNamespace(name="dce", func=_optimization_noop_pass),),
+        (
+            SimpleNamespace(name="dce", func=_optimization_noop_pass),
+            SimpleNamespace(name="const_prop", func=_optimization_noop_pass),
+        ),
     )
     monkeypatch.setattr(
         postprocess_stage,
@@ -7361,10 +7462,17 @@ def test_postprocess_optimization_validates_when_stable(monkeypatch):
     changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
 
     assert changed is False
-    assert calls == ["optimization"]
+    assert calls == ["optimization", "optimization"]
     assert codegen.cfunc.state == "baseline"
     assert codegen._inertia_postprocess_validation_failed is False
-    assert codegen._inertia_postprocess_rejected_passes == ("optimization:dce",)
+    assert codegen._inertia_postprocess_rejected_passes == ("optimization:const_prop",)
+    witness_stats = codegen._inertia_postprocess_optimization_witness_stats_8616
+    assert witness_stats.lookup_count == 2
+    assert witness_stats.rebuild_count == 1
+    assert witness_stats.reuse_count == 1
+    assert witness_stats.record_count == 2
+    assert witness_stats.invalidation_count == 1
+    assert witness_stats.closed is True
 
 
 def test_postprocess_codegen_validates_small_function_annotations(monkeypatch):
@@ -8117,10 +8225,18 @@ def test_tail_validation_normalizes_void_return_loop_exit_guard_after_call_feede
         _stack(-4, before_codegen, name="goal"),
         codegen=before_codegen,
     )
-    feeder = CAssignment(_reg(project, "ax", after_codegen, var_name="t"), after_call, codegen=after_codegen)
+    after_carrier = _reg(
+        project,
+        "ax",
+        after_codegen,
+        var_name="t",
+        ident="clock_result",
+        region=0x1000,
+    )
+    feeder = CAssignment(after_carrier, after_call, codegen=after_codegen)
     after_cond = CBinaryOp(
         "CmpGT",
-        _reg(project, "ax", after_codegen, var_name="t"),
+        after_carrier,
         _stack(-4, after_codegen, name="goal"),
         codegen=after_codegen,
     )
@@ -8671,15 +8787,31 @@ def test_tail_validation_normalizes_multi_branch_void_return_loop_exit_guard(mon
         _stack(-4, before_codegen, name="goal"),
         codegen=before_codegen,
     )
+    after_goal_hi = _stack(4, after_codegen, name="goal_hi")
+    first_exit_carrier = _reg(
+        project,
+        "dx",
+        after_codegen,
+        ident="entry_dx",
+        region=0x1000,
+    )
     first_exit_cond = CBinaryOp(
         "CmpGT",
-        _reg(project, "dx", after_codegen),
-        _stack(-2, after_codegen, name="goal_hi"),
+        first_exit_carrier,
+        after_goal_hi,
         codegen=after_codegen,
+    )
+    after_carrier = _reg(
+        project,
+        "ax",
+        after_codegen,
+        var_name="t",
+        ident="clock_result",
+        region=0x1000,
     )
     second_exit_cond = CBinaryOp(
         "CmpGT",
-        _reg(project, "ax", after_codegen),
+        after_carrier,
         _stack(-4, after_codegen, name="goal_lo"),
         codegen=after_codegen,
     )
@@ -8694,7 +8826,7 @@ def test_tail_validation_normalizes_multi_branch_void_return_loop_exit_guard(mon
                 CStatements(
                     [
                         CAssignment(
-                            _reg(project, "ax", after_codegen, var_name="t"),
+                            after_carrier,
                             CFunctionCall("clock", None, [], codegen=after_codegen),
                             codegen=after_codegen,
                         ),
@@ -8720,6 +8852,7 @@ def test_tail_validation_normalizes_multi_branch_void_return_loop_exit_guard(mon
         ],
         after_codegen,
     )
+    after.cfunc.arg_list = [first_exit_carrier]
 
     monkeypatch.setattr(
         tail_validation_module,

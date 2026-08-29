@@ -34,6 +34,11 @@ from ..semantics.terminal_return_storage import (
     terminal_return_storage_8616,
 )
 from .condition_transfer import collect_typed_condition_artifacts_8616
+from .interprocedural_storage_caller_context import (
+    CallerSSAContext8616,
+    CallerSSAContextVerdict8616,
+    caller_ssa_context_for_return_use_8616,
+)
 from .interprocedural_storage_collection_contracts import (
     FunctionInputStorageTrialCollection8616,
     StorageTrialCollectionVerdict8616,
@@ -82,6 +87,9 @@ from .interprocedural_storage_return_trial_materialization import (
 )
 from .interprocedural_storage_return_type_contracts import (
     ReturnStorageTypeFailure8616,
+)
+from .pointer_parameter_caller_target_contracts import (
+    PointerParameterCallerTargetEvidence8616,
 )
 
 
@@ -191,6 +199,7 @@ def _materialize_canonical_split_return_trials_8616(
     output_storages: tuple[StorageIdentity8616, ...],
     accepted_target_addrs: tuple[int, ...],
     conditions_by_caller: dict[int, tuple[ConditionIR, ...]],
+    caller_context: CallerSSAContext8616 | None,
 ) -> tuple[StorageTrial8616, ...] | None:
     """Retry a typed split-witness conflict at exact instruction granularity."""
     if len(output_storages) != 2:
@@ -204,7 +213,13 @@ def _materialize_canonical_split_return_trials_8616(
     if set(storages_by_domain) != {AX, DX}:
         return None
 
-    ssa = semantic_function_ssa_artifact_at_address_8616(project, fact.caller_addr)
+    caller_project = project if caller_context is None else caller_context.evidence_project
+    caller_function = None if caller_context is None else caller_context.caller_function
+    if caller_project is None:
+        return None
+    ssa = semantic_function_ssa_artifact_at_address_8616(
+        caller_project, fact.caller_addr, function=caller_function
+    )
     artifact = ssa.artifact
     if artifact is None:
         return None
@@ -214,6 +229,7 @@ def _materialize_canonical_split_return_trials_8616(
         callee_addr,
         accepted_target_addrs,
         output_storages,
+        project=caller_project,
     )
     if not definitions.complete or len(definitions.definitions) != len(output_storages):
         return None
@@ -227,7 +243,7 @@ def _materialize_canonical_split_return_trials_8616(
     conditions = conditions_by_caller.get(fact.caller_addr)
     if conditions is None:
         collected, _edge_evidence = collect_typed_condition_artifacts_8616(
-            project,
+            caller_project,
             fact.caller_addr,
         )
         conditions = tuple(collected)
@@ -298,6 +314,7 @@ def collect_function_return_storage_trials_8616(
     evidence: CallerReturnUseEvidence8616,
     *,
     accepted_target_addrs: tuple[int, ...] = (),
+    pointer_targets: PointerParameterCallerTargetEvidence8616 | None = None,
 ) -> FunctionReturnStorageTrialCollection8616:
     """Merge exact return/live-out trials into one complete input census."""
     callee_addr = inputs.trials.function_addr
@@ -366,7 +383,11 @@ def collect_function_return_storage_trials_8616(
     live_out_stats = StorageTrialStats8616()
     if not failures:
         live_outs = collect_function_memory_live_out_trials_8616(
-            project, callee_addr, inputs.trials.callsites, targets
+            project,
+            callee_addr,
+            inputs.trials.callsites,
+            targets,
+            pointer_targets=pointer_targets,
         )
         live_out_stats = live_outs.stats
         if not live_outs.complete:
@@ -431,12 +452,26 @@ def collect_function_return_storage_trials_8616(
             callsite = attach_callsite_memory_live_out_evidence_8616(
                 callsite, memory_live_out_evidence
             )
+            caller_context = caller_ssa_context_for_return_use_8616(
+                project, callee_addr, fact
+            )
+            if caller_context.verdict is CallerSSAContextVerdict8616.CONFLICT:
+                failures.append(
+                    _failure_8616(
+                        ReturnStorageTrialCollectionFailureKind8616.CALLER_IDENTITY_CONFLICT,
+                        callee_addr,
+                        fact,
+                    )
+                )
+                continue
+            exact_context = caller_context if caller_context.complete else None
             if fact.excluded_recursive_passthrough:
                 passthrough = materialize_return_passthrough_trial_8616(
                     project,
                     callee_addr,
                     fact,
                     targets,
+                    exact_context,
                 )
                 if not passthrough.complete or passthrough.trial is None:
                     failures.append(
@@ -467,6 +502,7 @@ def collect_function_return_storage_trials_8616(
                 output_storages,
                 targets,
                 conditions_by_caller,
+                exact_context,
             )
             if (
                 failure is not None
@@ -482,6 +518,7 @@ def collect_function_return_storage_trials_8616(
                     output_storages,
                     targets,
                     conditions_by_caller,
+                    exact_context,
                 )
                 if return_trials is not None:
                     failure = None

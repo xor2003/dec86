@@ -20,7 +20,10 @@ from .callee_global_object_collection import (
     collect_callee_global_object_interface_evidence_8616,
 )
 from .callee_global_object_evidence import CalleeGlobalObjectSourceFamilyFact8616
-from .callee_pointer_evidence import CalleePointerArgumentEvidence8616
+from .callee_pointer_contracts import (
+    CalleePointerArgumentEvidence8616,
+    callee_pointer_argument_evidence_by_addr_8616,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +31,6 @@ _LOGGER = logging.getLogger(__name__)
 class _ProjectSourceEvidenceSurface8616(Protocol):
     """Owned project caches used by project-wide source-family collection."""
 
-    _inertia_callee_pointer_argument_evidence_8616: dict[int, object]
     _inertia_project_global_object_source_evidence_8616: GlobalObjectSourceEvidence8616
 
 
@@ -44,6 +46,7 @@ class GlobalObjectSourceEvidence8616:
     materialized_count: int
     failure_count: int
     pointer_target_addrs: tuple[int, ...] = ()
+    layout_evidence: GlobalObjectLayoutEvidence8616 | None = None
 
     def validate(self) -> None:
         """Reject incoherent collection counters or project target identity."""
@@ -70,6 +73,10 @@ class GlobalObjectSourceEvidence8616:
             raise ValueError("global source evidence pointer targets are not canonical")
         if any(target_addr < 0 for target_addr in self.pointer_target_addrs):
             raise ValueError("global source evidence has a negative pointer target")
+        if self.scope_addr is None and self.layout_evidence is None:
+            raise ValueError("project global source evidence has no layout dependency")
+        if self.layout_evidence is not None and not self.layout_evidence.closed:
+            raise ValueError("global source evidence layout dependency is open")
         if self.scope_addr is None and any(
             fact.target_addr not in self.pointer_target_addrs for fact in self.source_facts
         ):
@@ -111,6 +118,8 @@ def join_global_object_source_facts_8616(
     scope_addr: int | None,
     source_facts: Iterable[CalleeGlobalObjectSourceFamilyFact8616],
     pointer_target_addrs: tuple[int, ...] = (),
+    *,
+    layout_evidence: GlobalObjectLayoutEvidence8616 | None = None,
 ) -> GlobalObjectSourceEvidence8616:
     """Join source facts by storage base and refuse family conflicts."""
     normalized = tuple(source_facts)
@@ -138,18 +147,13 @@ def join_global_object_source_facts_8616(
         materialized_count=0,
         failure_count=len(normalized) - len(classified),
         pointer_target_addrs=pointer_target_addrs,
+        layout_evidence=layout_evidence,
     )
 
 
 def _proven_pointer_target_addresses_8616(project: object) -> tuple[int, ...]:
     """Return targets with a complete binary pointer-argument contract."""
-    surface = cast(_ProjectSourceEvidenceSurface8616, project)
-    try:
-        registry = surface._inertia_callee_pointer_argument_evidence_8616
-    except AttributeError:
-        return ()
-    if not isinstance(registry, dict):
-        raise TypeError("callee pointer evidence registry must be a dict")
+    registry = callee_pointer_argument_evidence_by_addr_8616(project)
     return tuple(
         sorted(
             target_addr
@@ -177,7 +181,9 @@ def collect_project_global_object_source_evidence_8616(
     if (
         isinstance(cached, GlobalObjectSourceEvidence8616)
         and cached.pointer_target_addrs == pointer_targets
+        and cached.layout_evidence == layout_evidence
     ):
+        cached.validate()
         return cached
     facts: list[CalleeGlobalObjectSourceFamilyFact8616] = []
     for target_addr in pointer_targets:
@@ -200,6 +206,7 @@ def collect_project_global_object_source_evidence_8616(
         None,
         facts,
         pointer_targets,
+        layout_evidence=layout_evidence,
     )
     attach_project_global_object_source_evidence_8616(project, joined)
     if os.environ.get("INERTIA_DEBUG_CALLEE_GLOBAL_OBJECT_SOURCES") == "1":

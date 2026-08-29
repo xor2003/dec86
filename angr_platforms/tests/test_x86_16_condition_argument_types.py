@@ -3,11 +3,16 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CFunction, CStatements, CVariable
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimTypeFunction, SimTypeLong
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.lowering.authoritative_function_prototypes import (
+    authoritative_function_prototype_8616,
+    capture_authoritative_function_prototype_8616,
+)
 from angr_platforms.X86_16.lowering.condition_argument_type_facts import (
     record_wide_condition_argument_type_evidence_8616,
 )
@@ -41,7 +46,12 @@ class _FunctionManager:
 
 def _fixture(*, signed: bool) -> tuple[SimpleNamespace, _DummyCodegen]:
     arch = Arch86_16()
-    function = SimpleNamespace(addr=0x1000, prototype=None)
+    function = SimpleNamespace(
+        addr=0x1000,
+        prototype=None,
+        prototype_source=PrototypeSource.CCA_DECOMPILER,
+        info={},
+    )
     project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_FunctionManager(function)))
     codegen = _DummyCodegen(arch)
     arguments = [
@@ -98,6 +108,9 @@ def test_unsigned_wide_condition_materializes_unsigned_long_arguments() -> None:
 
 def test_signed_wide_condition_overrides_unsigned_low_word_fragments() -> None:
     project, codegen = _fixture(signed=False)
+    function = project.kb.functions.function(addr=0x1000, create=False)
+    assert function is not None
+    capture_authoritative_function_prototype_8616(project, function)
     codegen._inertia_typed_conditions = [
         ConditionIR(
             "ult",
@@ -114,6 +127,13 @@ def test_signed_wide_condition_overrides_unsigned_low_word_fragments() -> None:
     assert result.changed is True
     assert result.stats.failure_count == 0
     assert [argument.signed for argument in codegen.cfunc.functy.args] == [True, True]
+    authoritative = authoritative_function_prototype_8616(
+        project,
+        function,
+        argument_count=2,
+    )
+    assert authoritative is not None
+    assert [argument.signed for argument in authoritative.args] == [True, True]
 
 
 def test_conflicting_raw_word_facts_refuse_argument_type_change() -> None:

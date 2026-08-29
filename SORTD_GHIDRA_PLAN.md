@@ -18,7 +18,7 @@ Numeric function and global names are acceptable when the executable has no
 debug information. Source names below identify addresses for this report only;
 they must not become recovery evidence.
 
-## Current Checkpoint (2026-08-27)
+## Current Checkpoint (2026-08-29)
 
 Current sidecar-free command:
 
@@ -28,29 +28,222 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
 ```
 
 - discovery and execution attempt all 20 non-library functions
-- 13 functions emit validated C; seven refuse and fall back to assembly/details
+- the strict executable-only gate emits validated C for all 20 functions with
+  zero discovery failures, empty bodies, fallbacks, timeouts, or tracebacks
 - generated C contains no unsupported/unknown-instruction marker and no packed
   parity, overflow, `eflags`, or `cc_op` equation
-- `sub_109e8` now passes validation with its argument assignment before the
-  pretest loop and its binary-proven division at the loop-body entry
-- cold wall time is 278.41 seconds with seven clean workers and about 294 MiB
-  parent peak RSS; this is below the 300-second whole-run target
-- unchanged-tree replay is 95.90 seconds: 13 accepted functions are cache hits,
-  while the seven refused functions are deliberately revalidated
+- a fresh unquiet executable-only run on 2026-08-28 completed in about 202
+  seconds, used seven function workers at roughly 1.9 GB aggregate RSS, and
+  reported 20/20 decompiled with whole-tail validation clean
+- the untouched 723-line portable-flat translation unit passes
+  `gcc -std=c11 -fsyntax-only` with no diagnostics; all Swaps callsites render
+  typed `g_0B4C[...]` pointers rather than raw assembly or unsupported markers
+- `sub_109e8`, DrawFrame `0x101f0`, DrawTime `0x10498`, SwapBars `0x10768`,
+  QuickSort `0x10ce0`, Beep `0x10e70`, and Sleep `0x10f38` pass their exact
+  executable-only gates
+- Sleep `0x10f38` passes live Tail Validation and its permanent executable-only
+  gate with exactly two binary-proven clock calls, correct loop-exit ownership,
+  and the exact four-byte positive-BP parameter materialized by Types/Lowering
+- ReInitBars `0x10678` is ratified with exactly one clock call at binary
+  callsite `0x10683`; Lowering recognizes the third-party AIL tag protocol and
+  removes only the duplicate carrier statement for that exact callsite
+- BubbleSort `0x108d0` is ratified after Types/Lowering retained the adjacent
+  unchanged global-to-stack copy
+- Beep `0x10e70` is ratified after Types/Lowering
+  unified machine-BP call-return storage with the projected entry-SP local;
+  the existing `inp(0x61)` call and its argument are preserved unchanged, both
+  control guards are correct
+- byte-executed slices of typed word stack accesses retain their Alias-owned
+  word identity; this closes DrawTime and QuickSort without changing the
+  frontend's independently resolved byte execution contract
+- caller-observed byte-return signedness is aggregated only after a complete
+  Frontend callsite census. Types/Lowering now projects the proven AL return
+  class into the callee prototype and final C rendering; incomplete evidence
+  and prototype conflicts remain typed refusals
+- the `scalar_types_io` full compile/run/decompile/recompile/decompiled-run gate
+  includes the high-bit case `mix_uc(64, 0) == 128`, so a wrongly signed byte
+  return cannot pass through integer promotion unnoticed. All ten generated
+  functions validate and the rebuilt DOS program exits with the expected 255
+- a current-tree stack-object regression inverted the containment predicate and
+  selected storage smaller than the requested access. Restoring the owned
+  invariant `storage_size >= access_width` preserves byte views of aggregates
+  and arrays and keeps wide-return low halves distinct; all 236 segmented
+  runtime lowering tests pass
+- accepted results are cached and refused functions are revalidated
 
-The remaining P0 fallbacks, ordered by the earliest useful owner, are:
+The current CMP16 coordinate-collision fix passes its changed-surface gates and
+the real `rel_i16` function emits six distinct, correct relations with
+`validation=passed`. All six failures from the first 2026-08-29 focused lane
+are now closed, including the final C-declaration smoke. Its root causes were
+lost Rust-backed AIL instruction tags, missing exact prototype/entry-SP to
+machine-BP word ownership, and an over-restrictive identical-return validation
+consumer. The fix remains in Types/Lowering and Tail Validation; it does not
+recover semantics in Rewrite.
 
-1. `0x10498`: Lowering leaves forbidden flattened `ss << 4` address arithmetic
-2. `0x107b8`: Lowering leaves unresolved stack locals although semantic
-   validation itself is stable
-3. `0x108d0`: Structuring loses the binary-proven `BP-6 = 0` loop initializer
-4. `0x10e70`: IR/Alias-to-Lowering carrier definitions do not reach all uses
-5. `0x102e0`: virtual register carriers remain uninitialized in switch arms
-6. `0x10560`: stack definitions and an 86-byte aggregate do not reach all uses
-7. `0x10b50`: Structuring projects one Jcc as two loop guards
+The last complete focused target refresh is red. At `12:49:42 +02:00` it reported
+**3,968 passed and 17 failed in 403.81 seconds** under seven workers. An exact
+17-node retry reported **1 passed and 16 failed in 164.52 seconds**: the
+sidecar HeapSort timeout passed on retry, so it is tracked as performance and
+flakiness debt rather than counted as a reproducible semantic failure. Sleep
+remains closed. Swaps and the independently exposed DrawTime carry-bit failure
+are also closed by focused regressions and live Tail Validation. The 15
+remaining reproducible failures are grouped by symptom before the earliest
+owning contract is proved:
 
-No failure is accepted or cached. The plan remains incomplete until all seven
-emit C, validate, recompile, and pass the behavior/pipeline gates.
+- three InitMenu validation/condition failures
+- five validation-clean loop/control-flow shape failures
+- five call, object, or indexed-storage materialization failures
+- one DrawFrame structuring/postprocess validation failure
+- one RunMenu portable-C declaration failure
+
+The next implementation target is InitMenu. Work stops after this checkpoint;
+InitMenu has not started in this execution window.
+
+The first live SORTD repair also closed a general Types/Lowering carrier-loss
+defect for wide call outputs. Sleep `0x10f38` now materializes its proven wide
+return instead of failing pipeline accounting. Structuring now materializes
+condition chains before loop conditions and transfers exact CFG-backed
+composite loop-exit ownership without descending into nested loops. The 122-test
+related Structuring surface passes, and the live sidecar-free Sleep body has
+`validation=passed`, two clock calls, no duplicate JCC, and no uninitialized
+`dx` carrier.
+
+The permanent Sleep regression is now closed. Its root cause was a
+Types/Lowering precedence error: a contained two-byte access narrowed an exact
+four-byte body storage owner before the closed caller-width census was joined.
+Contained accesses now provide views without shrinking wider body-owned
+storage. The new unit regression failed before the fix; the permanent
+sidecar-free executable check, 18 related Types/Lowering tests, 133 related
+Structuring tests, Ruff, and MyPy over all four touched production modules pass.
+The external MSC6 lane was not rerun at this checkpoint; its last result still
+passed `compare16` and failed `function_pointers` and `pointer_memory`
+validation. The overall goal remains incomplete because the required project
+gates and tasks 3, 5, 6, 7, and 8 are open.
+
+## Execution Ledger And Estimation
+
+Ledger start: `2026-08-29T08:16:21+02:00` (`Europe/Belgrade`). Historical
+start, finish, and effort values that were not measured at the time are marked
+`pre-ledger` or `unknown`; they are not reconstructed from commit dates. From
+this checkpoint onward, each active step records:
+
+- start and finish wall-clock timestamps
+- focused engineering time, excluding unattended test time and pauses
+- wall span separately, so long tests do not distort implementation estimates
+- test/build wait separately from focused engineering time
+- acceptance evidence and the next unclosed boundary
+- the previous and revised remaining-time range plus the evidence for any change
+
+Start is written at the first task-directed command, not when a failure was
+first noticed. Finish is written only after the row's DoD passes. `Spent` is
+updated at each checkpoint; pauses and unattended test/build waits are excluded.
+Unknown historical values remain unknown instead of being inferred from file or
+commit timestamps. These rules make forecast error measurable per root cause.
+
+The fixed weights below define total progress. A task advances only when its
+DoD evidence passes; code volume, elapsed calendar time, and plausible-looking
+output do not advance the percentage.
+
+| Task | Weight | Complete | Started | Finished | Focused spent | Remaining focused estimate | Evidence / next boundary |
+| --- | ---: | ---: | --- | --- | ---: | ---: | --- |
+| 1. Whole-binary export | 5% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed by canonical stdout and strict compilation evidence. |
+| 2. Behavior proof | 8% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed for all source-selftested non-library functions. |
+| 3. Interprocedural contracts | 20% | 70% | pre-ledger | - | unknown | 32-50h | General indexed, indirect, stack, and broader multi-output storage remain; classify the external MSC6 failures and current stack/argument gate failures. |
+| 4. Semantic-loss ratchets | 7% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed by the strict 20/20 executable-only gate and permanent tests. |
+| 5. Proof-backed readability | 8% | 0% | not started | - | 0h | 8-12h | Starts only after the semantic and behavior gates remain closed. |
+| 6. Profiling and performance | 10% | 70% | pre-ledger | - | unknown | 8-12h | Measure aggregate PSS and profile the single-function serial tail. |
+| 7. Reko mechanisms | 8% | 0% | not started | - | 0h | 10-16h | Implement only mechanisms supported by owned typed evidence. |
+| 8. Ghidra mechanisms | 34% | 88% | pre-ledger | - | unknown | 45-72h | Close the six current live SORTD owner families, finish open call/type/CFG mechanisms, and rerun all acceptance gates. |
+| **Total** | **100%** | **71%** | - | - | **historical total unavailable** | **93-141h** | Weighted completion remains 71%. Sleep, Swaps, and DrawTime meet their function-fix DoD, but no additional weighted task has reached its task-level DoD. |
+
+Task-owner estimates above overlap where Tasks 3 and 8 share a mechanism. They
+are not summed. The non-overlapping forecast table below is the authoritative
+source for the total remaining estimate.
+
+### Active Step Timing
+
+| Step | Started | Finished | Focused spent | Wall span | Status | Remaining focused estimate | Acceptance evidence |
+| --- | --- | --- | ---: | ---: | --- | ---: | --- |
+| CMP16 coordinate-domain collision isolation and Types/Lowering refusal | `2026-08-29 07:18 +02:00` (first recorded command) | `2026-08-29 09:03 +02:00` | unknown before ledger plus 35-45m after `08:16` | 1h45m | completed | 0h | Two regressions failed before and pass after the fix. Real `rel_i16` emits all six distinct comparisons with `validation=passed`. Initial rollback-leak hypothesis was disproved; the owner was BP/entry-SP coordinate resolution. |
+| Changed-surface verification for the CMP16 fix | `2026-08-29 08:49 +02:00` | `2026-08-29 09:03 +02:00` | 8-12m | 14m | completed | 0h | Ruff `--fix`, focused MyPy/type ratchet, architecture checks, 97 related tests, 50 owned tests, and the focused real executable gate pass. |
+| Exact logical stack-word ownership | `2026-08-29 09:04 +02:00` | `2026-08-29 09:21 +02:00` | 15-17m | 17m | completed | 0h | Exact Alias logical-read identity now permits one proven two-byte `SS:BP` owner; unproven same-variable recomposition still refuses. Twelve focused tests pass and the live smoke AST now contains `v5 = arg_4` instead of a false byte recomposition. |
+| Packed FLAGS preservation validation and production lift context | `2026-08-29 09:21 +02:00` | `2026-08-29 09:31 +02:00` | 9-10m | 10m | completed | 0h | Seventeen focused context/validation tests have 16 passes; the only remaining failure is the end-to-end smoke shape. The previous whole-postprocess `uninitialized eflags` discard is gone, and the live AST exposes the next independent Structuring defect. |
+| Collapse pure identical-return guards in Structuring | `2026-08-29 09:34 +02:00` | `2026-08-29 10:10 +02:00` | 26-31m engineering; test waits excluded | 36m | completed | 0h | Structuring owns the typed pure-guard proof and closed evidence counters; Tail Validation consumes its exact delta. Widening now propagates block definitions into returns, and regenerated argument names preserve the Lowering-owned BP/entry-SP projection. Ruff, MyPy for all eight production files, the type/doc ratchet, startup architecture/context/ownership checks, 17 focused tests, and the complete 568-test owned surface pass. |
+| Original six focused failures | `2026-08-29 10:10 +02:00` | `2026-08-29 11:06 +02:00` | 40-50m; test waits excluded | 56m | completed | 0h | The final C-declaration smoke now emits `return lhs + rhs;`; Beep and DrawTime remain validation-clean. Twenty-five focused and 188 changed-surface tests pass. Ruff `--fix`, direct MyPy over seven production modules, file type/doc ratchets, and startup architecture/context/ownership checks pass. |
+| Current focused-lane failure closure | `2026-08-29 11:14 +02:00` | - | 117-143m local plus 25-35m parallel agent time at `13:43`; waits excluded | 2h29m at `13:43` | in progress | 8-21.5h | The two ALU integrations and complete Sleep, Swaps, and DrawTime function DoDs pass. The last complete lane had 17 failures; 16 reproduced and the sidecar HeapSort timeout passed on retry. Fifteen failures remain in five owner families. |
+| Frontend/debug and test-profile contract closure | `2026-08-29 11:27 +02:00` (delegated window) | `2026-08-29 11:49 +02:00` | 10-15m agent time, overlapped | 22m | completed | 0h | A truly unsupported `SLDT EAX` fixture preserves the required clear exit, and the inventory replacement selects the current topology regression. Eight focused tests plus Ruff and MyPy pass. |
+| Stack-coordinate, argument-identity, and stack-object unit closure | `2026-08-29 11:27 +02:00` (parallel local/delegated window) | `2026-08-29 11:49 +02:00` | 15-22m, overlapped | 22m | completed | 0h | Canonical entry-SP coordinates and exact body-owned argument identity now agree. Thirteen focused tests pass; the fixture-only canonicalization changes preserve production refusal behavior. |
+| Wide call-output, loop control-flow, and argument closure for live Sleep | `2026-08-29 11:36 +02:00` | `2026-08-29 12:41 +02:00` | 47-58m engineering; test waits excluded | 1h05m | completed | 0h | Live Tail Validation, the permanent executable-only Sleep test, the combined 151-test Types/Lowering and Structuring surface, direct Ruff/MyPy, and parallel `make linters-files` pass. The function retains two clock calls and one 32-bit argument. |
+| Exact inner-break ownership under a typed loop header | `2026-08-29 11:49 +02:00` | `2026-08-29 11:54 +02:00` | 4-5m | 5m | completed | 0h | Regression failed before and all 16 loop-break tests pass after the existing owner checks exact break candidates before refusing a typed header. |
+| Final condition-refresh/loop-closure pass order | `2026-08-29 11:54 +02:00` | `2026-08-29 11:58 +02:00` | 3-4m | 4m | completed | 0h | The order regression failed before and 17 related tests pass after final condition refresh precedes final loop-break closure. |
+| Typed composite-loop-exit ownership for Sleep | `2026-08-29 11:58 +02:00` | `2026-08-29 12:24 +02:00` (checkpoint) | 17-22m; test waits excluded | 26m | completed | 0h | The regression failed before the fix. Condition chains now precede loop materialization; exact CFG-backed ownership handles both pre- and post-break projections, isolates nested loops, and refuses re-entry targets. The related 122-test surface and live `0x10f38` Tail Validation pass. |
+| Positive-BP 32-bit argument plan/interface closure for Sleep | before `2026-08-29 12:24 +02:00`; exact first command was lost at compaction | `2026-08-29 12:35 +02:00` | 10-17m; approximate because the start preceded the retained ledger checkpoint | unknown | completed | 0h | Live instrumentation proved a closed one-argument/four-byte caller census but a wrongly narrowed two-byte body plan. The test failed before the generic storage-width precedence fix; the unit and permanent executable gates now pass with `materialized=1`, `failure=0`. |
+| ALU carry/borrow effect-order integrations | `2026-08-29 11:27 +02:00` (delegated) | `2026-08-29 12:07 +02:00` | 25-35m agent time, overlapped; exact timer unavailable | 40m | completed | 0h | Both integrations report one materialized effect and zero failures. Fifty-two focused tests, Ruff `--fix`, MyPy on four production modules, and diff checks pass. |
+| Complete focused pytest refresh after Sleep closure | `2026-08-29 12:42:58 +02:00` | `2026-08-29 12:49:42 +02:00` | 0m engineering | 6m44s test wall | completed | 0h | Exact Makefile target: 3,968 passed, 17 failed, 13 warnings. The ten slowest tests are recorded by pytest; the longest was InitMenu at 135.49s. |
+| Reproduce and symptom-cluster the 17 focused failures | `2026-08-29 12:49:42 +02:00` | `2026-08-29 12:54:19 +02:00` | 4m37s; test waits excluded | 4m37s plus 2m45s retry test wall | completed | 0h | Exact 17-node retry: 16 failed and one sidecar HeapSort timeout passed. The 16 failures are assigned to six symptom families; earliest-layer owner proof remains part of each implementation row, not this clustering row. |
+| Swaps destination identity and validation-blind-spot closure | `2026-08-29 12:54:19 +02:00` | `2026-08-29 13:32 +02:00` | 31-35m; waits excluded | 37m41s | completed | 0h | Two failing-before regressions prove the machine-BP/entry-SP collision and the validation blind spot. Exact coordinate selection preserves all three object-copy effects; duplicate storage identity is refused. The live Swaps regression passes with `validation=passed`, strict C syntax, and the correct three assignments. |
+| DrawTime carry-predicate sibling-join closure | `2026-08-29 13:30 +02:00` | `2026-08-29 13:43 +02:00` | 10-13m; waits excluded | 13m | completed | 0h | A failing-before CFG-ownership regression proves the low subtraction may be a sibling of the flags definition. Types/Lowering now performs the existing unique exact arithmetic fallback for a typed missing predicate. The live DrawTime regression and a 72-test carry/Swaps cluster pass with clean Tail Validation and C syntax. |
+| Required project gates after the fix | `2026-08-29 08:51 +02:00` | - | 222-269m local plus 25-35m parallel agent time at `13:43`; test time excluded | 4h52m at `13:43` | in progress | 14-38h | Focused pytest was measured at 17 failures, 16 reproducible; Swaps is closed and DrawTime's newly exposed failure is closed. External MSC6 last had two validation failures. Close the five remaining live families, then rerun focused pytest, external tiny examples, `quality-hard`, and `test-pipeline` before claiming the gate. |
+
+### Forecasted Execution Steps
+
+This table is the estimation calibration record for the remaining plan. A row
+gets an actual start only when work begins and an actual finish only after its
+DoD passes. `Spent` is focused engineering time; unattended builds and test
+wall time are recorded in the active-step table or acceptance evidence. The
+estimate is revised after every completed row, so later estimates are based on
+measured root-cause closure time rather than the number of failing tests.
+The final cell in each row is that row's DoD. Missing any listed condition,
+weakening a gate, or moving semantics to a later layer is its definition of
+failure; the detailed reason and failure clauses remain authoritative in the
+numbered task section below.
+The rows are non-overlapping and currently sum to the same rounded 93-141h total
+as the weighted task ledger. Estimates for the six live families are deliberately
+separate: a passing test count cannot hide an independent semantic owner or a
+validation blind spot.
+
+| Order | Step | Start | Finish | Spent | Current estimate | Dependency / completion boundary |
+| ---: | --- | --- | --- | ---: | ---: | --- |
+| 1 | Reproduce and symptom-cluster the current focused failures | `2026-08-29 12:49:42 +02:00` | `2026-08-29 12:54:19 +02:00` | 4m37s focused; 2m45s test wall separate | complete | Complete lane: 3,968 passed / 17 failed. Exact retry: 16 failed / 1 passed. Six independent symptom families are recorded. |
+| 2 | Close frontend/debug and test-profile contract failures | `2026-08-29 11:27 +02:00` | `2026-08-29 11:49 +02:00` | 10-15m agent time, overlapped | complete | Focused failures pass without weakening unsupported-instruction exits or retiring required coverage. |
+| 3 | Close stack-coordinate, argument-identity, and stack-object unit failures | `2026-08-29 11:27 +02:00` | `2026-08-29 11:49 +02:00` | 15-22m local/agent time, overlapped | complete | Machine-BP facts resolve through the authoritative coordinate projection; focused unit clusters and refusal cases pass. |
+| 4 | Close ALU carry/borrow effect-order integrations | `2026-08-29 11:27 +02:00` (delegated) | `2026-08-29 12:07 +02:00` | 25-35m agent time, overlapped; exact timer unavailable | complete | Generated C preserves one low-half operation and one proven high-half carry/borrow effect; both focused integrations and the 52-test suite pass. |
+| 5a | Fix Swaps destination identity and the Tail Validation blind spot | `2026-08-29 12:54:19 +02:00` | `2026-08-29 13:32 +02:00` | 31-35m; test waits excluded | complete | The first incorrect consumer was Types/Lowering's raw entry-SP lookup for machine-BP arguments. Two unit regressions, live C semantics, Tail Validation, strict C syntax, and the changed-surface checks pass. |
+| 5b | Close DrawTime carry-predicate sibling ownership | `2026-08-29 13:30 +02:00` | `2026-08-29 13:43 +02:00` | 10-13m; test waits excluded | complete | A typed missing predicate searches the complete function only through the existing unique exact arithmetic/CFG ownership proof. Ambiguous and mismatched evidence still refuse; the focused and live regressions pass. |
+| 5c | Close the three InitMenu validation/condition failures | not started | - | 0h | 1.5-4h | Explicit binary-backed conditions and the pause guard validate without Rewrite semantics or source/address-specific recovery. |
+| 5d | Close the five validation-clean loop/control-flow shape failures | not started | - | 0h | 2-5h | ReInitBars, BubbleSort, PercolateUp, and the remaining loop cases use CFG-owned loop/exit structure and retain required calls and stores. |
+| 5e | Close the five call/object/indexed-storage materialization failures | not started | - | 0h | 3-8h | Segmented live-ins, object widths, pointer classes, calls, and indexed global storage are materialized from closed typed evidence. |
+| 5f | Close the DrawFrame validation failure | not started | - | 0h | 1-3h | DrawFrame passes Tail Validation with no semantic repair in Structuring cleanup or Rewrite. |
+| 5g | Close the RunMenu portable-C declaration failure | not started | - | 0h | 0.5-1.5h | The unchanged generated function compiles as portable C and keeps the Escape path; declaration ownership remains Types/Lowering or CLI export. |
+| 6 | Rerun the complete focused pytest lane and classify any newly exposed failures | not started after live-family closure | - | 0h; latest baseline test wall is 6m44s plus 2m45s retry | 0.25-0.75h focused | The complete lane passes; any new failure is assigned to its earliest owned contract and added as a separately timed row. |
+| 7 | Fix and rerun external MSC6 `function_pointers` and `pointer_memory` gates | diagnosis observed `2026-08-29 11:24 +02:00`; implementation not started | - | diagnosis time unknown | 3-8h | Correct the shared machine-BP/entry-SP consumer defect at Types/Lowering, add runtime-shaped regressions, and obtain validation-clean compile/decompile/recompile/runtime results. |
+| 8 | Run `quality-hard`, `test-pipeline`, and required expanded acceptance gates | not started | - | 0h | 3-8h focused plus test wall time | Every mandatory lint, type, architecture, focused, tiny-example, and pipeline gate passes without exclusions or weakened checks. |
+| 9 | Finish remaining general interprocedural contracts and open Ghidra mechanisms | not started | - | 0h | 53-63h | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, and CFG mechanisms. |
+| 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
+| 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
+| 12 | Implement evidence-supported Reko mechanisms | not started | - | 0h | 10-16h | Task 7 per-step DoD passes; unsupported mechanisms remain explicit refusals. |
+
+### Estimate History
+
+| Checkpoint | Remaining focused estimate | Change | Evidence |
+| --- | ---: | ---: | --- |
+| `2026-08-29 11:49 +02:00` | 91-139h | baseline | Five focused failures closed; 2 ALU and 16 live SORTD checks reproduced. |
+| `2026-08-29 12:05 +02:00` | 90-138h | -1h / -1h | Sleep moved from an unclassified rendering symptom to one Structuring ownership boundary; two generic regressions pass. |
+| `2026-08-29 12:07 +02:00` | 89-133h | -1h / -5h | Both delegated ALU integrations pass their DoD, removing that whole forecast row. |
+| `2026-08-29 12:24 +02:00` | 89-132h | 0h / -1h after rounding | Sleep's composite loop-exit ownership now passes 122 related tests and live Tail Validation. The remaining Sleep failure is isolated to one Types/Lowering positive-BP plan/interface decision. |
+| `2026-08-29 12:41 +02:00` | 88-131h | -1h / -1h | Sleep's permanent sidecar-free test, combined 151-test surface, and parallel per-file linter/type ratchets pass; its remaining prototype boundary was a generic contained-view width precedence defect. |
+| `2026-08-29 12:59 +02:00` | 95-145h | +7h / +14h | The exact retry reduced 17 failures to 16 reproducible failures but exposed six independent owner families. Swaps also reveals a Tail Validation blind spot, so the previous single-bucket 2.25-9.5h estimate was not defensible. |
+| `2026-08-29 13:16 +02:00` | 94-144h | -1h / -1h after rounding | Live pass-by-pass identity tracing isolates Swaps to one Types/Lowering coordinate-consumer defect. The step remains open because its failing-before test, production correction, and Tail Validation rejection case have not all passed. |
+| `2026-08-29 13:43 +02:00` | 93-141h | -1h / -3h after rounding | Swaps passes its complete function-fix DoD. DrawTime's independently exposed carry-predicate failure also has a failing-before generic regression, an earliest-layer fix, live `validation=passed`, strict C syntax, and a 72-test related cluster. |
+
+Current expected finish for the complete plan is **93-141 focused engineering
+hours**, approximately **2.4-4.8 working weeks** at 30-40 focused hours per
+week, or roughly **2026-09-15 through 2026-10-01** if work continues at that
+rate. The midpoint forecast is about **117 focused hours / 2026-09-21**.
+This is a range, not a calendar promise: newly exposed semantic failures can
+increase it. The next recalibration occurs when the InitMenu owner family meets
+its DoD, then after every subsequent family, using measured focused time per
+independent root cause rather than the raw count of failing tests.
 
 ## Historical Measured Baseline
 
@@ -78,15 +271,24 @@ produced conflicting declarations. Whole-binary stdout now uses the same owned,
 structured export contract as generated artifacts. Conflicts are typed failures
 reported on stderr with a nonzero exit status.
 
-Latest required-gate verification on 2026-08-26 passes all three default lanes
-with zero failures, skips, or timeouts. The focused lane passes 1,709 tests in
-54.898 seconds; Ultra QuickC passes 4/4 fixtures with 4/4 validation in 43.300
-seconds; and all seven MS C tiny constructs pass their compile, original-run,
-decompile, recompile, and decompiled-run contracts in 90.898 seconds. The
-focused lane remains over its historical 30-second soft budget and is retained
-as performance debt, not hidden as a correctness pass. `linters-dev` also
-passes Ruff `--fix`, MyPy, the 38-module mypyc compile/import smoke, and the
-development complexity gate.
+Latest required-gate verification on 2026-08-28 passes all three default lanes
+with zero failures, skips, or timeouts. The focused lane passes 1,841 tests in
+66.77 seconds; all four Ultra QuickC fixtures pass in 55.39 seconds; and all
+seven MS C tiny constructs pass their compile, original-run, decompile,
+recompile, and decompiled-run contracts in 55.89 seconds. The focused lane
+remains over its historical 30-second soft budget and is retained as
+performance debt, not hidden as a correctness pass. The hard gate also passes
+Ruff `--fix`, strict MyPy over 224 source files, the 38-module mypyc
+compile/import smoke, architecture and ownership checks, and 1,841 tests. The
+generated-C quality comparisons pass without semantic-quality regression.
+
+This rerun caught a real `scalar_types_io/byteops_unsigned` validation
+regression after the byte-safe frontend work: word-aligned frame bindings were
+incorrectly replacing the proven one-byte access width of direct stack
+variables. Tail Validation now keeps direct access width distinct from frame
+allocation width. The focused construct decompiles all ten functions, validates
+cleanly, recompiles, and returns the expected 255; the full default pipeline
+keeps that behavior as a permanent external gate.
 
 ## Address Coverage
 
@@ -132,12 +334,12 @@ canonicalizes those declarations and passes `gcc -std=c11 -Wall -Wextra
 Owner: CLI/export assembly in `inertia_decompiler/`. Function postprocess must
 not reconcile interprocedural declarations.
 
-### P0: Semantic completeness (reopened)
+### Closed P0: Semantic completeness
 
-The historical 20/20 checkpoint below is no longer the current edited-tree
-state. The current checkpoint has 13 validated C functions and seven explicit
-fallbacks. In particular, `sub_109e8` is now closed, while the seven failures
-listed above remain P0 and must not be hidden by output cleanup or caching.
+The current edited tree passes the strict executable-only 20/20 gate with zero
+validation failures or unsupported-instruction output. RunMenu `0x102e0` keeps
+its Escape return, and DrawTime/QuickSort consume byte-executed stack slices
+through complete Alias range evidence rather than Rewrite or CLI repair.
 
 The generated behavior gate now compiles and executes unchanged output for all
 19 non-library functions covered by `SORTDEMO.C` function self-tests. `main`
@@ -453,6 +655,27 @@ Measured progress on 2026-08-17:
   Ruff `--fix`, strict MyPy, and architecture checks pass. The prior CLI smoke
   test no longer accepts timeout as success; its fresh seven-worker real run
   passes in 219.27 seconds and enforces exact call counts and validation.
+- Types/Lowering now publishes every condition-derived and binary-proven
+  pointer interface to the authoritative prototype registry before later
+  stack/segment replays. A stale same-precedence CCA snapshot can no longer
+  restore unsigned arguments over signed `ConditionIR` or restore scalar
+  arguments over a proven pointer class; stronger signature/user snapshots
+  still win.
+- Parameter validation now distinguishes logical C width from ABI stack-slot
+  width. A byte scalar in a two-byte MS C slot may match either projection,
+  while a logical type wider than its storage or a width matching neither
+  projection refuses validation.
+- The terminal-call Types/Lowering owner now replaces an inferred `void`
+  prototype only when closed caller-use evidence, a typed callee return, and an
+  exact AX-preserving terminal path agree. It publishes that contract before
+  Structuring materializes `return callee(...)`; explicit signature/user
+  prototypes remain immutable.
+- The real `compare16`, `simple_control`, `function_pointers`,
+  `pointer_memory`, and `scalar_types_io` fixtures compile, decompile,
+  recompile, validate, and return `255`. `select_and_apply` retains the required
+  returned `apply_twice` call, and `fill_bytes` retains its byte-pointer
+  interface. The focused condition/terminal-return/validation surfaces pass
+  216 tests, and the full required pipeline passes 3/3 lanes.
 
 Remaining task-3 work: materializing indexed, indirect, stack, and broader
 multi-output live-out storage plus stack effects beyond closed terminal `ret`
@@ -467,7 +690,8 @@ callsites are implemented.
 
 ### 4. Keep discovery and semantic-loss ratchets permanent
 
-Status: reopened; discovery remains 20/20, but current materialization is 13/20.
+Status: complete; the current strict whole gate is 20/20 with zero discovery,
+materialization, fallback, validation, timeout, or traceback failures.
 
 Reason: The known-good 20-function corpus is a durable completeness boundary.
 Permanent discovery, materialization, fallback, and tiny-example ratchets stop
@@ -528,8 +752,9 @@ Definition of failure:
 
 ### 6. Profile before further parallelization
 
-Status: in progress; primary N-1 execution and accepted-result caching are
-complete, while per-function hot-path work remains.
+Status: in progress; primary N-1 execution, accepted-result caching, and
+complexity-prioritized clean-worker submission are complete, while aggregate
+PSS verification and per-function hot-path work remain.
 
 Reason: The validated primary path already uses available CPUs, while mutable
 fallback rebuilds may share project state and multiply memory. Profiling and
@@ -568,14 +793,23 @@ Measured maintenance on 2026-08-27:
 
 - pure-binary clean-process failures no longer trigger an evidence-identical
   in-process retry; sidecar-backed retries remain when evidence can differ
-- a longest-first worker dispatch experiment increased wall time to 440.56
-  seconds and was reverted; stable address order is faster on this host
-- the current cold run is 278.41 seconds and unchanged-tree replay is 95.90
-  seconds, versus the preceding 362.07-second cold and 116.90-second replay
 - the remaining replay cost belongs to uncached failed functions; caching their
   failure payloads is forbidden because failure details vary under contention
-- once the queue drains, one complex function owns the serial tail; additional
-  workers cannot shorten that phase, so future work must profile internal passes
+
+Measured maintenance on 2026-08-28:
+
+- clean workers now use deterministic longest-processing-time-first submission
+  from the already available block/byte complexity estimate; result collection
+  and C emission retain original stable indexes
+- on the same edited tree, workers, environment, and binary, wall time fell from
+  259.25s to 211.86s (47.39s, 18.3%) while user CPU stayed effectively flat at
+  1161.45s versus 1153.79s. The generated C files are byte-identical, all 20
+  functions decompile, asm/detail fallback remains zero, and whole-tail
+  validation is clean
+- the earlier 440.56s longest-first experiment is superseded: it did not use
+  this bounded clean-worker submission contract and was not a valid predictor
+  for the current queue. Remaining speed work must profile internal passes,
+  especially the 42-block QuickSort worker that still closes the final wave
 
 ### 7. Borrow Reko's proven quality mechanisms without its unsafe fallbacks
 
@@ -1072,7 +1306,9 @@ ownership, deterministic return/live-out trial
 collection, signed/unsigned strict and non-strict `DX:AX` ordering use typing,
 sign-insensitive equality/inequality use typing, recursive pass-through
 propagation, production SCC publication, and atomic callee plus callsite type
-application are complete. Exact direct DS/ES must-write live-outs with condition
+application are complete. Exact terminal call-result passthrough now also
+updates inferred caller return types before Structuring while preserving
+explicit signature/user interfaces. Exact direct DS/ES must-write live-outs with condition
 uses preserved on every target-reaching caller CFG path are implemented,
 including a deterministic union when different callers consume disjoint proven
 outputs. Nested overlapping direct views now materialize only through a unique
@@ -1080,8 +1316,11 @@ maximal Alias owner. Widening projects exact and contained direct caller views
 from that owner, retaining the proven byte offset and exact access width before
 Types/Lowering creates a trial. Every project-wide trial, return, and live-out
 consumer now reads the canonical Semantics-ready exact-function SSA artifact.
-RunMenu call-result-to-stack materialization is complete; indexed, indirect,
-stack, and broader object-type or multiple-output materialization remain.
+RunMenu call-result-to-stack materialization is complete. The first terminal
+pointer-parameter output slice reaches a logical callee-parameter registry;
+exact caller-target projection from expression reaching definitions and typed
+callsite effect/object materialization are complete. Proof-driven pointee/object
+typing, indexed effects, and broader object-type materialization remain.
 
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove
@@ -1658,11 +1897,112 @@ Measured progress on 2026-08-20:
   Ruff `--fix`, strict focused MyPy, and all 11 focused SimType tests pass; the
   full three-function `pointer_memory` compile/run/decompile/recompile/
   decompiled-run gate is green with clean tail validation and exit code 255
-- next implementation boundary: generalize live-out evidence only when Alias,
-  Widening, and SSA prove indexed, indirect, stack, or broader multiple-output
-  storage. Conditional, exact whole-owner, contained, overlapping-caller-view,
-  and object-owned direct stable `DS`/`ES` effects are complete for this scope
-  and must not be reconstructed from rendered C
+- caller storage trials now build SSA from the Frontend-owned exact function
+  boundary rather than a synthetic entry-only block. The old one-block census
+  stopped at an early stack-probe call, silently missed later application
+  callsites, and refused otherwise proven pointer inputs and returns as
+  `CALLSITE_NOT_FOUND`
+- the focused multi-block census regression proves every exact block reaches IR
+  import. The real `scalar_types_io` `pick_ptr` contract is now accepted as two
+  pointer inputs, one scalar selector, and one pointer return; its unchanged
+  generated C recompiles and the rebuilt DOS executable returns 255
+- next implementation boundary: publish pointer-parameter memory outputs before
+  attempting general indexed or indirect effects. In SORTD `Swaps` (`0x107b8`),
+  exact IR stores through `BX` at `0x107d7` and `0x107df` retain distinct SSA
+  versions; the Alias reaching-source owner proves those versions come from
+  callee inputs `SS:BP+4` and `SS:BP+6`, respectively
+- the vertical slice must preserve the pointer-relative segment, offset, width,
+  store sites, terminal-path disposition, and parameter storage through
+  Semantics, Alias, Widening, and Types/Lowering. Caller targets may be projected
+  only from each exact reaching argument definition. Ambiguous bases, competing
+  parameter sources, partial path coverage, and caller target conflicts must
+  remain typed refusals
+- conditional, exact whole-owner, contained, overlapping-caller-view, and
+  object-owned direct stable `DS`/`ES` effects are complete for their current
+  scope and must not be reconstructed from rendered C
+- the first pointer-parameter output vertical slice is implemented at its
+  owning layers. Semantics retains all four terminal byte stores in sidecar-free
+  Swaps `0x107b8`; Alias proves the two distinct BX versions originate at
+  `SS:BP+4` and `SS:BP+6`; Widening forms two exact two-byte parameter-relative
+  views; Types/Lowering publishes logical output parameters 0 and 1 in one
+  project-local typed registry with closed evidence counters
+- exact caller memory targets are now projected at the separate Lowering join.
+  IR owns exact
+  16-bit modular affine traces with constants, stack-derived terms,
+  coefficients, logical-word reconstruction, and SSA definition paths;
+  Types/Lowering requires that projection to agree with the typed callsite
+  source and retains the exact outgoing byte definitions. Carry-dependent,
+  malformed, width-conflicting, unsupported, missing, and contradictory
+  expressions refuse with distinct typed reasons
+- the sidecar-free Swaps census proves and atomically publishes all 18 targets
+  across nine callers: 17 exact affine expression arguments, including the
+  two-source form at `0x10c8e`, plus the direct `DS:0x0b4c` offset. Each target
+  joins the callee-proven `DS` segment and two-byte width without guessing a
+  pointee type or converting dynamic storage into a direct global identity.
+  The storage lifecycle now publishes this registry immediately after callee
+  output views and before input trials
+- typed caller effect/object materialization is complete at the function
+  contract boundary. The live-out collector partitions all 18 targets by exact
+  caller/callsite, the object join groups them into two callee-owned pointer
+  outputs with nine views each, and atomic publication revalidates every view
+  against the original callsite effect. Dynamic targets never become direct
+  `StorageIdentity8616.MEMORY` owners or fabricated scalar `LIVE_OUT` trials;
+  duplicate, mismatched, missing, and orphaned facts refuse atomically. The
+  next boundary is proof-driven pointee/object typing and code-generation
+  consumption, not another effect-recovery pass
+- the production integration exposed and removed a cross-layer Semantics veto:
+  one same-segment indirect STORE previously erased every independently proven
+  direct terminal STORE as a possible alias conflict. Semantics now retains the
+  direct fact without claiming disjointness; Alias and interprocedural Lowering
+  remain the only owners of the relationship. The real Swaps pipeline test
+  carries both effects through the accepted function contract
+- Ruff `--fix`, strict MyPy, type/doc/dot-access ratchets, startup architecture,
+  context and ownership checks, and the 725-test ownership-expanded
+  changed-file gate pass. The mandatory full pipeline passes 1,841 curated
+  tests plus all seven MS C tiny compile/decompile/recompile/exit-behavior
+  examples; its external semantic summary is three passed, zero failed, zero
+  skipped, and zero timed out
+- the pointer slice and its adjacent return/declaration ownership fixes pass the
+  focused semantic tests, strict MyPy, Ruff `--fix`, and the full sidecar-free
+  gate: 20 attempted, normalized, classified, decompiled, and materialized;
+  zero timeout, traceback, discovery, empty-output, validation, or policy
+  failures. DrawTime and DrawBar declarations consume exact Frontend range
+  boundaries when direct-call stubs are empty, and Beep keeps its two-argument
+  interface without read-only return probes materializing phantom arguments
+- the fresh post-fix sidecar-free SORTD run decompiles 20/20 functions with
+  `validation=passed`, clean whole-tail validation, no unsupported instruction
+  or assembly fallback output, and strict GCC acceptance. Its 723-line C is
+  byte-identical to the pre-fix output; the loaded run took 283.15 seconds at
+  451% CPU with 328,380 KiB parent maximum RSS
+- direct-stack replay now distinguishes a changed structured statement root
+  from newly published typed evidence. Evidence-only publication remains a
+  stable C result, duplicate stores remain suppressed, and a failed
+  `SemanticLaneState` is never cached as stable, so a repaired materializer is
+  retried instead of skipped. Nine focused replay/materialization regressions
+  pass with Ruff `--fix` and strict MyPy
+- the edited-state `quality-hard` gate passes Ruff `--fix`, strict MyPy across
+  224 production files, the 38-module mypyc import smoke, complexity,
+  architecture/startup/context/ownership checks, and 1,841/1,841 fast-pipeline
+  tests in 84.32s. CMP16, LOOPS, and FPTR generated-C quality comparisons all
+  pass; measured candidate speed ratios were 2.641x, 2.176x, and 0.884x
+- caller-observed byte-return recovery now has one complete-census join in
+  Types/Lowering. It aggregates exact post-call extension evidence, refuses
+  empty/provisional/conflicting observations without caching them, and applies
+  the accepted signedness to both the function prototype and the final
+  regenerated C surface. Focused acceptance, refusal, conflict, and projection
+  tests pass, and the uncached real `mix_uc` function renders as
+  `unsigned char` with `validation=passed`
+- the scalar fixture and both generated runtime harness projections now require
+  `mix_uc(64, 0) == 128`; this high-bit assertion closes the signedness hole
+  that low-bit arithmetic alone could not detect. Its ten-function full DOS
+  pipeline passes compile, original execution, decompilation, validation,
+  recompilation, and decompiled execution with expected exit code 255
+- the current milestone passes Ruff `--fix`, strict MyPy across 254 source
+  files, the 39-module mypyc smoke, 139 callsite/interface tests, 236 segmented
+  runtime lowering tests, and 1,871 fast-pipeline tests. The idle-host
+  optimization suite and mandatory full `test-pipeline` remain pending because
+  a concurrent seven-worker decompilation caused the CMP16 baseline to hit the
+  unchanged 180-second timeout before quality comparison
 
 Definition of done:
 
@@ -1686,8 +2026,10 @@ Definition of failure:
 Status: in progress; the IR-to-Alias prerequisite and first project-wide
 Widening consumer migration are complete. Indexed DS/ES addresses retain exact
 versioned terms and Alias storage/index ownership; Widening now owns two-byte
-global layout and exact copy-family joins. Bounded range/type propagation and
-replacement of the remaining per-function legacy rendering collectors remain.
+global layout, exact copy-family joins, and the first exact static bounded-range
+publication. Types/Lowering consumes that range for exact existing declaration
+extents. General type propagation and replacement of the remaining per-function
+legacy rendering collectors remain.
 
 Reason: Type information must follow value and alias provenance across the
 pipeline before memory expressions can become pointers, indexes, fields, or
@@ -1824,9 +2166,33 @@ Measured progress on 2026-08-21:
   census, (3) [done] classify Alias facts as pointer-relative versus global
   indexed candidates, (4) [done] prove whole-element load-to-store value paths
   in IR and project both endpoints through Alias, (5) [done] migrate project
-  layout recovery to Alias-fed Widening, and now (6) prove bounded object ranges
-  before Types/Lowering materializes arrays. Widening must not consume the
-  parity inventory or any rendered representation
+  layout recovery to Alias-fed Widening, (6) [done for exact static loop bounds]
+  publish bounded object ranges and consume them in Types/Lowering, and now
+  (7) generalize range/type propagation to dynamic, indexed, indirect, stack,
+  and field-bearing objects. Widening must not consume the parity inventory or
+  any rendered representation
+- Widening now reduces the complete Alias program census into one closed final
+  project-range artifact. Static exact loop bounds may produce a range;
+  dynamic bounds, incomplete function evidence, uncovered accesses, layout
+  mismatches, and segment conflicts remain typed refusals with closed counters
+- the range artifact has one typed deterministic codec and is transported with
+  its exact layout dependency through project caches and clean-worker JSON.
+  Missing, malformed, open, or cross-layout records refuse instead of being
+  reconstructed independently inside a worker
+- Types/Lowering consumes only that transported Widening artifact, binds it to
+  one exact existing segmented global declaration, and strengthens only the
+  proven array extent. Ambiguous or missing names hard-fail when a classified
+  range cannot materialize; upstream dynamic-range refusals leave declarations
+  unchanged
+- focused positive, refusal, cache, worker-transport, and declaration tests
+  pass. The complete edited-state `quality-hard` gate passes Ruff `--fix`,
+  strict MyPy for 211 source files, mypyc import smoke for 38 modules,
+  architecture/context/ownership checks, 1,808 tests, and all three generated-C
+  comparisons
+- the required default pipeline passes the same 1,808 tests and every selected
+  MS C compile/run/decompile/recompile/decompiled-run contract. All ten
+  `scalar_types_io` functions validate, recompile, and produce rebuilt exit 255;
+  no pipeline lane fails, skips, or times out
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,
@@ -1852,11 +2218,10 @@ Definition of failure:
 
 #### 8.4 Normalize split values and carry before type and structure recovery
 
-Status: reopened and in progress. Semantics -> Alias -> Widening retains exact
-ADC/SBB values, but the former C-AST placement contract collapsed each
-definition to instruction address alone and inferred execution ownership from
-post-join container paths. That was not sufficient proof at branch joins and
-invalidated the previous DrawTime completion claim.
+Status: complete for the bounded split-value and carry/borrow scope exercised by
+SORTD. Semantics -> Alias -> Widening retains exact ADC/SBB values, and typed
+pre-join CFG instruction ownership now prevents the former instruction-address-
+only placement contract from claiming ambiguous branch joins.
 
 Structuring now publishes typed pre-join Clinic CFG instruction ownership with
 exact block/instruction sites and typed missing, ambiguous, unreachable, and
@@ -1903,22 +2268,18 @@ Definition of failure:
 - semantic normalization occurs in Structuring, Rewrite, CLI, or export
 - a slice, carry, memory effect, condition, or call argument changes incorrectly
 
-Measured current state on 2026-08-26:
+Measured closure on 2026-08-28:
 
-- 21 focused carry/CFG ownership tests pass, including two mutually exclusive
+- 22 focused carry/CFG ownership tests pass, including two mutually exclusive
   SUB/borrow chains sharing one FLAGS SSA identity, another reaching machine
   definition, duplicate owners, missing owners, and same-block order conflict
-- Ruff `--fix`, strict focused MyPy for eight production modules, and the
-  ownership manifest pass; the architecture checker reports no failure in this
-  surface, while unrelated concurrent new modules still fail their own header
-  and typed-promotion checks
-- the exact production sidecar-free DrawTime run through pre-join ownership
-  finishes in 71 seconds with no carry or ownership refusal, retains
-  `Beep(60 * row, 75)` and both Sleep argument shapes, and correctly returns
-  `validation=failed`: 34 uninitialized carriers and a forbidden raw
-  `ss << 4` expression remain
-- closed evidence counters, `validation=passed`, recompilation, and required
-  pipelines remain mandatory before this task can return to complete
+- the fresh strict sidecar-free SORTD gate generates and validates all 20
+  application functions with zero fallback, timeout, traceback, discovery, or
+  policy failure. DrawTime emits `sub_10e70(arg_4 * 60, 75)`, both exact Sleep
+  argument shapes, no raw `ss << 4`, and `validation=passed`
+- the same edited source state passes `quality-hard`, the default test pipeline,
+  strict MyPy, Ruff `--fix`, architecture/context/ownership checks, all three
+  generated-C comparisons, and every selected MS C end-to-end contract
 
 #### 8.5 Collapse CFG regions only after conditions are explicit
 
@@ -2310,13 +2671,13 @@ Definition of failure:
 
 #### 8.11 Eliminate dead status-flag definitions before C expressions exist
 
-Status: in progress; implementation and exact-function acceptance are complete,
-while the required project pipeline and seven remaining function closures are
-pending. Typed per-bit same-block
-and function-CFG proofs, direct-callee summaries, and lazy frontend emission are
-implemented for `ADD`, `SUB`, `INC`, `DEC`, `SHL`, `SHR`, and `SAR`. On the
-exact `sub_109e8` CLI path all 11 classified CFG candidates materialize and
-packed flag equations fall from 4 to 0.
+Status: complete for the bounded SORTD status-flag and unsupported-instruction
+closure. Typed per-bit same-block and function-CFG proofs, direct-callee
+summaries, and lazy frontend emission are implemented for `ADD`, `SUB`, `INC`,
+`DEC`, `SHL`, `SHR`, and `SAR`. On the exact `sub_109e8` CLI path all 11
+classified CFG candidates materialize and packed flag equations fall from 4 to
+0. The strict sidecar-free corpus now closes 20/20, and the required default
+project pipeline passes.
 
 Reason: Eagerly materialized packed-status updates retain large parity and
 carry equations even when later instructions overwrite every affected flag.
@@ -2361,10 +2722,15 @@ Current evidence on 2026-08-27:
   clean, GCC acceptance, both calls intact, and no unsupported instructions;
   no call/body repair occurs in Rewrite or CLI
 - the current whole-file C output has zero unsupported/unknown-instruction and
-  zero packed flag-equation markers; 13/20 functions validate and seven honest
-  fallbacks remain for the independent failures in the current checkpoint
-- changed-source Ruff `--fix`, mypy, types/docs, architecture, and ownership
-  checks pass; required whole-pipeline verification is the remaining acceptance
+  zero packed flag-equation markers; the strict run validates all 20 selected
+  non-library functions with no fallback, empty body, timeout, or traceback
+- Beep's exact gate preserves the one-argument `inp(0x61)` call node, binds its
+  typed machine `[BP-2]` return store to the projected `local_2`, emits both
+  required uses, and passes tail validation without call reconstruction
+- changed-source Ruff `--fix`, MyPy, mypyc, types/docs, architecture, and
+  ownership checks pass; the default pipeline passes 1,763 Python tests and all
+  three selected MS C tiny-example build/run/decompile/recompile lanes with no
+  failures, skips, or timeouts
 
 Definition of failure:
 

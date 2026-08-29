@@ -1,0 +1,2 @@
+# Generated mypyc/native build outputs duplicate their Python source owners.
+build/

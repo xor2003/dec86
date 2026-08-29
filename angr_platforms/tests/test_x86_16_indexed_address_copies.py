@@ -43,6 +43,9 @@ from angr_platforms.X86_16.ir.indexed_address_access_normalization import (
 from angr_platforms.X86_16.ir.indexed_address_pipeline import (
     apply_x86_16_indexed_address_evidence_8616,
 )
+from angr_platforms.X86_16.ir.indexed_address_range_contracts import (
+    IndexedLoopRangeEvidence8616,
+)
 
 GLOBAL_WORD_COPY = bytes.fromhex(
     "55 89 e5 83 ec 02 c7 46 fe 01 00 "
@@ -326,10 +329,14 @@ def test_ir_main_path_publishes_address_and_copy_evidence_atomically() -> None:
 
     addresses = codegen._inertia_indexed_address_evidence_8616
     copies = codegen._inertia_indexed_address_copy_evidence_8616
+    ranges = codegen._inertia_indexed_loop_range_evidence_8616
     assert isinstance(addresses, IndexedAddressEvidence8616)
     assert isinstance(copies, IndexedAddressCopyEvidence8616)
+    assert isinstance(ranges, IndexedLoopRangeEvidence8616)
     assert copies.closed
     assert copies.source is addresses
+    assert ranges.closed
+    assert ranges.stats.raw_fact_count == ranges.stats.failure_count == 2
 
 
 def test_main_path_publishes_ir_and_alias_copy_evidence_atomically() -> None:
@@ -340,7 +347,10 @@ def test_main_path_publishes_ir_and_alias_copy_evidence_atomically() -> None:
 
     aliases = codegen._inertia_indexed_address_alias_evidence_8616
     copies = codegen._inertia_indexed_address_alias_copy_evidence_8616
+    ranges = codegen._inertia_indexed_loop_range_alias_evidence_8616
     assert isinstance(aliases, IndexedAddressAliasEvidence8616)
     assert isinstance(copies, IndexedAliasCopyEvidence8616)
     assert copies.closed
     assert copies.aliases is aliases
+    assert ranges.closed
+    assert ranges.stats.raw_fact_count == ranges.stats.failure_count == 2

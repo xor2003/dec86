@@ -27,6 +27,10 @@ from archinfo import Arch
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..ir.core import MemSpace
 from ..widening.segmented_load_identity import SegmentedLoadIdentity8616, segmented_load_tags_8616
+from .linear_global_decomposition_cache import (
+    LinearGlobalDecompositionCache8616,
+    LinearGlobalDecompositionCacheStats8616,
+)
 from .near_pointer_argument import (
     NearPointerArgumentFact8616,
     collect_near_pointer_argument_facts_8616,
@@ -66,6 +70,7 @@ from .stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
     materialize_exact_trailing_stack_argument_8616,
 )
+from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 type _CarrierKey8616 = tuple[str, int | str]
 
@@ -117,6 +122,7 @@ class _AngrCodegenBoundary8616(Protocol):
     _inertia_near_pointer_argument_refusals_8616: list[NearPointerArgumentRefusal8616]
     _inertia_near_pointer_argument_stats_8616: NearPointerArgumentStats8616
     _inertia_stack_pointer_snapshot_stats_8616: StackPointerSnapshotStats8616
+    _inertia_linear_global_decomposition_cache_stats_8616: LinearGlobalDecompositionCacheStats8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,12 +297,20 @@ def _cvar_plus_scaled_index_8616(
     return None
 
 
-def _stack_offset_for_cvar_8616(cvar: object) -> int | None:
+def _stack_offset_for_cvar_8616(
+    cvar: object,
+    codegen: _AngrCodegenBoundary8616 | None,
+) -> int | None:
+    """Return one stack variable's machine-BP coordinate."""
     if not isinstance(cvar, structured_c.CVariable):
         return None
     for variable in (cvar.variable, cvar.unified_variable):
         offset = _dynamic_angr_attr_8616(variable, "offset", None)
         if isinstance(variable, SimStackVariable) and isinstance(offset, int):
+            if codegen is not None:
+                bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+                if isinstance(bp_offset, int):
+                    return bp_offset
             return offset
     return None
 
@@ -315,13 +329,16 @@ def _near_pointer_arg_type_8616(
     cfunc = codegen.cfunc
     arg_list = tuple(cfunc.arg_list or ())
     prototype_args = tuple(_dynamic_angr_sequence_attr_8616(cfunc.functy, "args"))
-    cvar_offset = _stack_offset_for_cvar_8616(cvar)
+    cvar_offset = _stack_offset_for_cvar_8616(cvar, codegen)
     matches: list[SimTypePointer] = []
     for index, arg in enumerate(arg_list):
         if not isinstance(arg, structured_c.CVariable):
             continue
         same_object = arg is cvar
-        same_offset = isinstance(cvar_offset, int) and _stack_offset_for_cvar_8616(arg) == cvar_offset
+        same_offset = (
+            isinstance(cvar_offset, int)
+            and _stack_offset_for_cvar_8616(arg, codegen) == cvar_offset
+        )
         if not same_object and not same_offset:
             continue
         proto_type = prototype_args[index] if index < len(prototype_args) else None
@@ -380,7 +397,7 @@ def _materialize_binary_proven_near_pointer_argument_8616(
         )
         if indexed is not None:
             cvar, _index = indexed
-    stack_offset = _stack_offset_for_cvar_8616(cvar)
+    stack_offset = _stack_offset_for_cvar_8616(cvar, codegen)
     if proven_stack_offset is not None:
         if isinstance(stack_offset, int) and stack_offset != proven_stack_offset:
             return None
@@ -389,7 +406,7 @@ def _materialize_binary_proven_near_pointer_argument_8616(
             argument
             for argument in tuple(codegen.cfunc.arg_list or ())
             if isinstance(argument, structured_c.CVariable)
-            and _stack_offset_for_cvar_8616(argument) == stack_offset
+            and _stack_offset_for_cvar_8616(argument, codegen) == stack_offset
         )
         if len(canonical_matches) != 1:
             return None
@@ -420,7 +437,8 @@ def _materialize_binary_proven_near_pointer_argument_8616(
     argument_matches = tuple(
         (index, argument)
         for index, argument in enumerate(arguments)
-        if isinstance(argument, structured_c.CVariable) and _stack_offset_for_cvar_8616(argument) == stack_offset
+        if isinstance(argument, structured_c.CVariable)
+        and _stack_offset_for_cvar_8616(argument, codegen) == stack_offset
     )
     prototype = codegen.cfunc.functy
     if not isinstance(prototype, SimTypeFunction):
@@ -467,7 +485,7 @@ def _materialize_binary_proven_near_pointer_argument_8616(
             (index, argument)
             for index, argument in enumerate(arguments)
             if isinstance(argument, structured_c.CVariable)
-            and _stack_offset_for_cvar_8616(argument) == stack_offset
+            and _stack_offset_for_cvar_8616(argument, codegen) == stack_offset
         )
         typed_prototype = cast(SimTypeFunction, codegen.cfunc.functy)
         prototype_args = tuple(typed_prototype.args or ())
@@ -539,7 +557,7 @@ def _rematerialize_binary_proven_near_pointer_types_8616(
     for argument in arguments:
         if not isinstance(argument, structured_c.CVariable):
             continue
-        stack_offset = _stack_offset_for_cvar_8616(argument)
+        stack_offset = _stack_offset_for_cvar_8616(argument, codegen)
         widths = {
             fact.access_width_bytes
             for fact in pointer_facts
@@ -638,7 +656,7 @@ def _lower_typed_pointer_register_carrier_stores_8616(
             if not isinstance(pointer, structured_c.CVariable):
                 continue
             pointer_type = _near_pointer_arg_type_8616(pointer, codegen)
-            stack_offset = _stack_offset_for_cvar_8616(pointer)
+            stack_offset = _stack_offset_for_cvar_8616(pointer, codegen)
             if pointer_type is None or not isinstance(stack_offset, int):
                 continue
             carrier_key = _carrier_key_8616(carrier)
@@ -772,7 +790,7 @@ def _near_pointer_arg_access_8616(
         )
         if indexed_fact_cvar is not None:
             fact_cvar, _fact_index = indexed_fact_cvar
-    fact_stack_offset = _stack_offset_for_cvar_8616(fact_cvar)
+    fact_stack_offset = _stack_offset_for_cvar_8616(fact_cvar, codegen)
     try:
         available_facts = codegen._inertia_near_pointer_argument_facts_8616 if codegen is not None else ()
     except AttributeError:
@@ -1088,6 +1106,7 @@ def _match_segmented_memory_expr_8616(
     *,
     project: object,
     access: str,
+    decomposition_cache: LinearGlobalDecompositionCache8616 | None = None,
 ) -> SegmentedMemoryExpr | None:
     def _impl() -> SegmentedMemoryExpr | None:
         nonlocal node
@@ -1103,12 +1122,21 @@ def _match_segmented_memory_expr_8616(
             width_bits = 0
             codegen = cast(_AngrCodegenBoundary8616 | None, _dynamic_angr_attr_8616(node, "codegen", None))
 
-        if not _may_contain_segment_linear_terms_8616(base_expr, project, codegen=codegen):
+        if not _may_contain_segment_linear_terms_8616(
+            base_expr,
+            project,
+            codegen=codegen,
+        ):
             if codegen is not None:
                 _bump_codegen_counter_8616(codegen, "_inertia_runtime_segment_lowering_fast_refused_8616")
             return None
 
-        decomposed = _decompose_linear_global_terms_8616(base_expr, project, codegen=codegen)
+        decomposed = _decompose_linear_global_terms_8616(
+            base_expr,
+            project,
+            codegen=codegen,
+            _carrier_cache=decomposition_cache,
+        )
         if decomposed is not None:
             segment_name, displacement, residual_terms = decomposed
             if segment_name is not None:
@@ -1178,9 +1206,16 @@ def _may_contain_segment_linear_terms_8616(
     *,
     codegen: _AngrCodegenBoundary8616 | None = None,
 ) -> bool:
-    pending = [_strip_casts_8616(node)]
+    """Return whether this expression root can encode segmented linear terms.
+
+    The decomposer consumes top-level additive terms, segment-scale binary
+    expressions, and generated carriers. Structured-C containers and arbitrary
+    nested children are visited separately by the child replacer, so descending
+    into them here repeats work and cannot make this root a segmented address.
+    """
+    root = _strip_casts_8616(node)
+    pending = [root]
     seen: set[int] = set()
-    visited = 0
     while pending:
         current = _strip_casts_8616(pending.pop())
         if current is None:
@@ -1189,24 +1224,23 @@ def _may_contain_segment_linear_terms_8616(
         if node_id in seen:
             continue
         seen.add(node_id)
-        visited += 1
-        if visited > 128:
-            # Refuse to guess on very large expressions. Fall through to the
-            # full matcher rather than risking a false negative.
-            return True
-        segment_name = _segment_base_name_8616(current, project, codegen=codegen)
-        if segment_name in {"ds", "es", "ss", "DS", "ES", "SS"}:
-            return True
+        if isinstance(current, structured_c.CBinaryOp) and current.op in {"Add", "Sub"}:
+            pending.extend((current.rhs, current.lhs))
+            continue
         if _linear_carrier_name_8616(current) is not None:
             return True
-        for attr in ("lhs", "rhs", "operand", "expr", "index", "variable"):
-            child = _dynamic_angr_attr_8616(current, attr, None)
-            if child is not None:
-                pending.append(child)
-        for attr in ("args", "operands"):
-            children = _dynamic_angr_attr_8616(current, attr, None)
-            if isinstance(children, (list, tuple)):
-                pending.extend(child for child in children if child is not None)
+        if (
+            isinstance(current, (structured_c.CBinaryOp, structured_c.CVariable))
+            or _dynamic_angr_attr_8616(current, "dirty", None) is not None
+        ) and _segment_base_name_8616(current, project, codegen=codegen) in {
+            "ds",
+            "es",
+            "ss",
+            "DS",
+            "ES",
+            "SS",
+        }:
+            return True
     return False
 
 
@@ -1306,8 +1340,25 @@ def lower_runtime_segment_access_8616(
     *,
     target: str,
     snapshot_tracker: StackPointerSnapshotTracker8616 | None = None,
+    decomposition_cache: LinearGlobalDecompositionCache8616 | None = None,
 ) -> object | None:
     """Lower a proven segmented dereference to a runtime helper or pointer access."""
+    stripped_expr = _strip_casts_8616(expr)
+    snapshot_candidate = snapshot_tracker is not None and (
+        isinstance(expr, structured_c.CIndexedVariable)
+        or (
+            isinstance(expr, structured_c.CFunctionCall)
+            and isinstance(expr.callee_target, str)
+            and expr.callee_target in {"SEG_U8", "SEG_U16", "SEG_U32"}
+            and len(expr.args) >= 2
+        )
+    )
+    dereference_candidate = (
+        isinstance(stripped_expr, structured_c.CUnaryOp)
+        and stripped_expr.op == "Dereference"
+    )
+    if not snapshot_candidate and not dereference_candidate:
+        return None
     codegen = cast(_AngrCodegenBoundary8616 | None, _dynamic_angr_attr_8616(expr, "codegen", None))
     if snapshot_tracker is not None and isinstance(expr, structured_c.CIndexedVariable):
         adjusted_access = snapshot_tracker.materialize_indexed_access(
@@ -1347,7 +1398,12 @@ def lower_runtime_segment_access_8616(
     project = _dynamic_angr_attr_8616(codegen, "project", None)
     if project is None:
         return None
-    matched = _match_segmented_memory_expr_8616(expr, project=project, access="read")
+    matched = _match_segmented_memory_expr_8616(
+        expr,
+        project=project,
+        access="read",
+        decomposition_cache=decomposition_cache,
+    )
     if matched is None:
         return None
     if snapshot_tracker is not None:
@@ -1379,13 +1435,29 @@ def lower_runtime_segment_access_8616(
     )
 
 
-def lower_runtime_segment_address_8616(expr: object, *, target: str) -> object | None:
+def lower_runtime_segment_address_8616(
+    expr: object,
+    *,
+    target: str,
+    decomposition_cache: LinearGlobalDecompositionCache8616 | None = None,
+) -> object | None:
     """Lower a proven segmented address expression to an explicit far pointer helper."""
+    stripped_expr = _strip_casts_8616(expr)
+    if not isinstance(
+        stripped_expr,
+        (structured_c.CBinaryOp, structured_c.CVariable),
+    ) and _dynamic_angr_attr_8616(stripped_expr, "dirty", None) is None:
+        return None
     codegen = cast(_AngrCodegenBoundary8616 | None, _dynamic_angr_attr_8616(expr, "codegen", None))
     project = _dynamic_angr_attr_8616(codegen, "project", None)
     if project is None:
         return None
-    matched = _match_segmented_memory_expr_8616(expr, project=project, access="address")
+    matched = _match_segmented_memory_expr_8616(
+        expr,
+        project=project,
+        access="address",
+        decomposition_cache=decomposition_cache,
+    )
     if matched is None:
         return None
     if matched.space not in {"DS", "ES"}:
@@ -1845,6 +1917,7 @@ def apply_runtime_segment_lowering_8616(
     active_function = _active_function_for_codegen_8616(typed_codegen)
     facts = collect_near_pointer_argument_facts_8616(active_function, project=project)
     snapshot_tracker = StackPointerSnapshotTracker8616(facts)
+    decomposition_cache = LinearGlobalDecompositionCache8616()
     snapshot_tracker.bind_unique_untagged_helpers(root)
     typed_codegen._inertia_near_pointer_argument_facts_8616 = facts
     typed_codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
@@ -1861,11 +1934,16 @@ def apply_runtime_segment_lowering_8616(
             node,
             target=target,
             snapshot_tracker=snapshot_tracker,
+            decomposition_cache=decomposition_cache,
         )
         if lowered_access is not None:
             changed = True
             return lowered_access
-        lowered_addr = lower_runtime_segment_address_8616(node, target=target)
+        lowered_addr = lower_runtime_segment_address_8616(
+            node,
+            target=target,
+            decomposition_cache=decomposition_cache,
+        )
         if lowered_addr is not None:
             changed = True
             return lowered_addr
@@ -1927,6 +2005,9 @@ def apply_runtime_segment_lowering_8616(
         refusals=tuple(typed_codegen._inertia_near_pointer_argument_refusals_8616),
     )
     typed_codegen._inertia_stack_pointer_snapshot_stats_8616 = snapshot_tracker.stats
+    typed_codegen._inertia_linear_global_decomposition_cache_stats_8616 = (
+        decomposition_cache.stats()
+    )
     snapshot_tracker.assert_closed()
     return changed
 

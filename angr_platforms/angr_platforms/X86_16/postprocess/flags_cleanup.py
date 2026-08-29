@@ -35,6 +35,7 @@ from ..decompiler_postprocess_utils import (
     _structured_codegen_node_8616,
     _unwrap_statements_8616,
 )
+from ..lowering.physical_registers import physical_register_offset_8616
 
 __all__ = [
     "_bool_cite_values_8616",
@@ -93,6 +94,24 @@ def _condition_body_pairs_8616(obj: object) -> list[tuple[CExpression, CStatemen
     return pairs
 
 
+def _switch_case_children_8616(node: object) -> tuple[object, ...]:
+    """Return structured case values, bodies, and default from angr switches."""
+    cases = _dynamic_attr_8616(node, "cases", None)
+    children: list[object] = []
+    if isinstance(cases, dict):
+        children.extend(cases.values())
+    elif isinstance(cases, (list, tuple)):
+        for item in cases:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                children.extend(item[:2])
+            elif _structured_codegen_node_8616(item):
+                children.append(item)
+    default = _dynamic_attr_8616(node, "default", None)
+    if _structured_codegen_node_8616(default):
+        children.append(default)
+    return tuple(child for child in children if _structured_codegen_node_8616(child))
+
+
 def _c_variable_register_offset_8616(node: object) -> int | None:
     if not isinstance(node, CVariable):
         return None
@@ -107,22 +126,7 @@ def _c_register_offset_8616(node: object) -> int | None:
     variable_offset = _c_variable_register_offset_8616(node)
     if variable_offset is not None:
         return variable_offset
-    if type(node).__name__ != "CDirtyExpression":
-        return None
-    dirty = _dynamic_attr_8616(node, "dirty", None)
-    try:
-        reg_offset = _dynamic_attr_8616(dirty, "reg_offset", None)
-    except (TypeError, ValueError):
-        reg_offset = None
-    if isinstance(reg_offset, int):
-        return int(reg_offset)
-    try:
-        reg = _dynamic_attr_8616(dirty, "reg", None)
-    except (TypeError, ValueError):
-        reg = None
-    if isinstance(reg, int):
-        return int(reg)
-    return None
+    return physical_register_offset_8616(node)
 
 
 def _flags_register_offset_8616(codegen: object) -> int | None:
@@ -1277,6 +1281,7 @@ def _prune_unused_flag_assignments_8616(project: object, codegen: object) -> boo
                             traversal_stack.append((cond, False))
                         if _structured_codegen_node_8616(body):
                             traversal_stack.append((body, False))
+                traversal_stack.extend((child, False) for child in _switch_case_children_8616(node))
 
         collect_reads(cfunc.statements)
 
@@ -1325,6 +1330,7 @@ def _prune_unused_flag_assignments_8616(project: object, codegen: object) -> boo
                 for _cond, body in pairs:
                     if _structured_codegen_node_8616(body):
                         stack.append(body)
+            stack.extend(_switch_case_children_8616(node))
         return changed
 
     return _impl()
@@ -1394,6 +1400,7 @@ def _c_expr_uses_register_8616(node: object, reg_offset: int) -> bool:
                         traversal_stack.append(cond)
                     if _structured_codegen_node_8616(body):
                         traversal_stack.append(body)
+            traversal_stack.extend(_switch_case_children_8616(current))
 
         return False
 
@@ -1503,6 +1510,7 @@ def _prune_overwritten_flag_assignments_8616(project: object, codegen: object) -
                     for _cond, body in pairs:
                         if _structured_codegen_node_8616(body):
                             stack.append(body)
+                stack.extend(_switch_case_children_8616(node))
             if not pass_changed:
                 break
         return changed

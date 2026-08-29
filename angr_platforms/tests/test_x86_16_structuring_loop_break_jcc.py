@@ -544,7 +544,11 @@ def test_structuring_removes_break_duplicated_by_exact_jcc_loop_header() -> None
         _reg("ax", codegen),
         _reg("bx", codegen),
         codegen=codegen,
-        tags={"ins_addr": 0x4005, "vex_block_addr": 0x4003},
+        tags={
+            "ins_addr": 0x4005,
+            "vex_block_addr": 0x4003,
+            "inertia_typed_loop_condition_bound_8616": True,
+        },
     )
     break_condition = CBinaryOp(
         "CmpLE",

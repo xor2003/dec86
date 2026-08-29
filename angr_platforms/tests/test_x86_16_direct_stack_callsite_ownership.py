@@ -1,0 +1,216 @@
+"""Regress exact callsite ownership during direct stack-return lowering."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CExpressionStatement,
+    CFunctionCall,
+    CStatements,
+    CVariable,
+)
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.ir import IRCallOutputProvenance8616, IRCallOutputShape8616
+from angr_platforms.X86_16.lowering.real_mode_linear import (
+    _replace_tagged_call_statement_with_stack_assignment_8616,
+)
+from angr_platforms.X86_16.lowering.wide_call_output_assignment_contracts import (
+    WideCallOutputAssignmentArtifact8616,
+    WideCallOutputAssignmentFact8616,
+    WideCallOutputAssignmentResolution8616,
+    WideCallOutputAssignmentStats8616,
+    WideCallOutputAssignmentVerdict8616,
+)
+from angr_platforms.X86_16.lowering.wide_call_output_assignment_replay import (
+    WideCallOutputAuthoritativeOwnershipStatus8616,
+    classify_authoritative_wide_call_output_projection_8616,
+)
+from angr_platforms.X86_16.semantics.carry_borrow_contracts import CarryBorrowKind8616
+
+
+class _Codegen:
+    """Minimal structured-C boundary for callsite ownership tests."""
+
+    def __init__(self, project: object) -> None:
+        """Initialize deterministic node identifiers."""
+        self._index = 0
+        self.cstyle_null_cmp = False
+        self.project = project
+
+    def next_idx(self, _name: str) -> int:
+        """Return the next node identifier."""
+        self._index += 1
+        return self._index
+
+    def next_node_idx(self) -> int:
+        """Return the next node identifier through angr's alternate API."""
+        return self.next_idx("")
+
+    def next_ident(self, name: str) -> str:
+        """Return a stable generated identifier."""
+        return name
+
+
+def _fixture() -> tuple[object, _Codegen, CVariable]:
+    """Build the dynamic project and destination variable boundaries."""
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        _inertia_original_linear_delta=0,
+    )
+    codegen = _Codegen(project)
+    destination = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="local_4"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    return project, codegen, destination
+
+
+def test_same_target_fallback_preserves_distinct_later_callsite() -> None:
+    """Do not replace another same-target call after the exact call was consumed."""
+    project, codegen, destination = _fixture()
+    consumed_call = CFunctionCall(
+        "clock", None, [], codegen=codegen, tags={"ins_addr": 0x100B}
+    )
+    existing = CAssignment(destination, consumed_call, codegen=codegen)
+    later_call = CFunctionCall(
+        "clock", None, [], codegen=codegen, tags={"ins_addr": 0x101A}
+    )
+    later_statement = CExpressionStatement(later_call, codegen=codegen)
+    root = CStatements([existing, later_statement], codegen=codegen)
+
+    result = _replace_tagged_call_statement_with_stack_assignment_8616(
+        root,
+        project,
+        0x100B,
+        "clock",
+        lambda tags: CAssignment(destination, consumed_call, codegen=codegen, tags=tags),
+    )
+
+    assert result is None
+    assert root.statements == [existing, later_statement]
+    assert later_call.tags["ins_addr"] == 0x101A
+
+
+def test_unique_same_target_fallback_remains_available_without_exact_callsite() -> None:
+    """Retain the conservative unique fallback when the exact call tag is absent."""
+    project, codegen, destination = _fixture()
+    degraded_call = CFunctionCall(
+        "clock", None, [], codegen=codegen, tags={"ins_addr": 0x101A}
+    )
+    root = CStatements(
+        [CExpressionStatement(degraded_call, codegen=codegen)],
+        codegen=codegen,
+    )
+
+    result = _replace_tagged_call_statement_with_stack_assignment_8616(
+        root,
+        project,
+        0x100B,
+        "clock",
+        lambda tags: CAssignment(destination, degraded_call, codegen=codegen, tags=tags),
+    )
+
+    assert result is root.statements[0]
+    assert result.tags["ins_addr"] == 0x100B
+
+
+def _wide_fact(callsite_addr: int = 0x100B) -> WideCallOutputAssignmentFact8616:
+    """Build the exact wide call-output fact used by ownership tests."""
+    return WideCallOutputAssignmentFact8616(
+        call_output=IRCallOutputProvenance8616(
+            callsite_addr=callsite_addr,
+            target_addr=0x1446,
+            shape=IRCallOutputShape8616.DX_AX,
+        ),
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        source_offset=4,
+        destination_offset=-4,
+        carrier_ins_addrs=(0x100B, 0x100E, 0x1011, 0x1014, 0x1017),
+        store_ins_addrs=(0x1014, 0x1017),
+    )
+
+
+def test_authoritative_wide_assignment_blocks_legacy_projection() -> None:
+    """Treat the exact dedicated wide-call result as the sole semantic owner."""
+    _project, codegen, _destination = _fixture()
+    fact = _wide_fact()
+    resolution = WideCallOutputAssignmentResolution8616(
+        source=object(),
+        verdict=WideCallOutputAssignmentVerdict8616.MATERIALIZED,
+        fact=fact,
+        placement_classified=True,
+    )
+    codegen._inertia_wide_call_output_assignment_artifact_8616 = (
+        WideCallOutputAssignmentArtifact8616(
+            function_addr=0x1000,
+            resolutions=(resolution,),
+            stats=WideCallOutputAssignmentStats8616(
+                raw_fact_count=1,
+                normalized_fact_count=1,
+                classified_fact_count=1,
+                materialized_count=1,
+            ),
+        )
+    )
+
+    ownership = classify_authoritative_wide_call_output_projection_8616(
+        codegen,
+        callsite_addr=0x100B,
+        target_addr=0x1446,
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        source_offset=4,
+        destination_offset=-4,
+        low_arithmetic_addr=0x100E,
+        high_arithmetic_addr=0x1011,
+        low_store_addr=0x1014,
+        high_store_addr=0x1017,
+    )
+
+    assert ownership.status is WideCallOutputAuthoritativeOwnershipStatus8616.MATERIALIZED
+    assert ownership.blocks_legacy_materialization is True
+    assert ownership.materialized is True
+
+
+def test_different_wide_callsite_does_not_claim_legacy_projection() -> None:
+    """Do not suppress a direct projection when the dedicated fact is different."""
+    _project, codegen, _destination = _fixture()
+    resolution = WideCallOutputAssignmentResolution8616(
+        source=object(),
+        verdict=WideCallOutputAssignmentVerdict8616.MATERIALIZED,
+        fact=_wide_fact(callsite_addr=0x1020),
+        placement_classified=True,
+    )
+    codegen._inertia_wide_call_output_assignment_artifact_8616 = (
+        WideCallOutputAssignmentArtifact8616(
+            function_addr=0x1000,
+            resolutions=(resolution,),
+            stats=WideCallOutputAssignmentStats8616(
+                raw_fact_count=1,
+                normalized_fact_count=1,
+                classified_fact_count=1,
+                materialized_count=1,
+            ),
+        )
+    )
+
+    ownership = classify_authoritative_wide_call_output_projection_8616(
+        codegen,
+        callsite_addr=0x100B,
+        target_addr=0x1446,
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        source_offset=4,
+        destination_offset=-4,
+        low_arithmetic_addr=0x100E,
+        high_arithmetic_addr=0x1011,
+        low_store_addr=0x1014,
+        high_store_addr=0x1017,
+    )
+
+    assert ownership.status is WideCallOutputAuthoritativeOwnershipStatus8616.FACT_ABSENT
+    assert ownership.blocks_legacy_materialization is False
+    assert ownership.materialized is False

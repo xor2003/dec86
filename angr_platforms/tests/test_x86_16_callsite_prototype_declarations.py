@@ -8,6 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CUnaryOp,
     CVariable,
 )
+from angr.rustylib.ailment import Tags
 from angr.sim_type import (
     SimStruct,
     SimTypeChar,
@@ -228,6 +229,52 @@ def test_call_target_identity_uses_address_name_without_canonical_kb_function() 
     assert call.callee_func is None
     assert call.callee_target == "sub_10768"
     assert codegen._inertia_call_target_identity_stats_8616.materialized_count == 1
+    assert codegen._inertia_call_target_identity_stats_8616.failure_count == 0
+
+
+def test_call_target_identity_uses_exact_far_summary_over_offset_only_callee() -> None:
+    codegen = _Codegen()
+    offset_only = SimpleNamespace(addr=0x15D5, name="sub_15d5")
+
+    class _OffsetOnlyFunctions:
+        @staticmethod
+        def function(*, addr: int, create: bool) -> object | None:
+            assert create is False
+            return offset_only if addr == 0x15D5 else None
+
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=_OffsetOnlyFunctions()),
+        _inertia_original_linear_delta=0xF000,
+    )
+    call = CFunctionCall(
+        "sub_15d5",
+        offset_only,
+        [],
+        tags=Tags({"ins_addr": 0x1051}),
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x10051,
+            target_addr=0x1DE05,
+            return_addr=0x10056,
+            kind="direct_far",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register=None,
+            return_used=False,
+        )
+    }
+
+    changed = canonicalize_callsite_target_identities_8616(project, codegen)
+
+    assert changed is True
+    assert call.callee_func is None
+    assert call.callee_target == "sub_1de05"
     assert codegen._inertia_call_target_identity_stats_8616.failure_count == 0
 
 

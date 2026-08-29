@@ -1,4 +1,4 @@
-"""Collect stack-argument signedness facts from proven conditions.
+"""Collect stack-argument sign-interpretation facts from proven conditions.
 
 Layer: Types/lowering.
 Responsibility: normalize direct and transferred ConditionIR operands into
@@ -22,6 +22,7 @@ from angr.sim_variable import SimStackVariable
 
 from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue, MemSpace
+from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 __all__ = [
     "ConditionArgumentFactsResult8616",
@@ -43,6 +44,7 @@ class _CodegenFactSurface8616(Protocol):
 class StackArgumentSignedness8616(StrEnum):
     """Signedness proven for one logical stack argument."""
 
+    SIGN_INSENSITIVE = "sign_insensitive"
     SIGNED = "signed"
     UNSIGNED = "unsigned"
 
@@ -71,7 +73,7 @@ def record_wide_condition_argument_type_evidence_8616(
     condition: ConditionIR,
 ) -> bool:
     """Record one CFG-proven wide condition for the later Types/Lowering pass."""
-    if condition.width_bits != 32 or not (condition.is_signed or condition.is_unsigned):
+    if condition.width_bits != 32 or _condition_signedness_8616(condition) is None:
         return False
     surface = cast(_CodegenFactSurface8616, codegen)
     try:
@@ -129,9 +131,10 @@ def _registered_stack_slice_8616(
     if not isinstance(expression, CVariable) or not isinstance(expression.variable, SimStackVariable):
         return None
     variable = expression.variable
-    if variable.base != "bp" or not isinstance(variable.offset, int) or variable.offset < 4:
+    bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    if variable.base != "bp" or not isinstance(bp_offset, int) or bp_offset < 4:
         return None
-    return variable.offset, max(1, int(variable.size or size))
+    return bp_offset, max(1, int(variable.size or size))
 
 
 def _condition_facts_8616(
@@ -139,21 +142,45 @@ def _condition_facts_8616(
     conditions: tuple[ConditionIR, ...],
     source: str,
 ) -> tuple[StackArgumentTypeFact8616, ...]:
-    """Normalize signed or unsigned order predicates into stack-slice facts."""
+    """Normalize type-relevant predicates into stack-slice facts."""
     facts: list[StackArgumentTypeFact8616] = []
     for condition in conditions:
-        if not (condition.is_signed or condition.is_unsigned):
+        signedness = _condition_signedness_8616(condition)
+        if signedness is None:
             continue
-        signedness = (
-            StackArgumentSignedness8616.SIGNED
-            if condition.is_signed
-            else StackArgumentSignedness8616.UNSIGNED
-        )
         for operand in (condition.lhs, condition.rhs):
             stack_slice = _registered_stack_slice_8616(codegen, condition, operand)
             if stack_slice is not None:
                 facts.append(StackArgumentTypeFact8616(*stack_slice, signedness, source))
     return tuple(facts)
+
+
+def _condition_signedness_8616(
+    condition: ConditionIR,
+) -> StackArgumentSignedness8616 | None:
+    """Project one condition to its exact scalar sign interpretation."""
+    if condition.is_signed:
+        return StackArgumentSignedness8616.SIGNED
+    if condition.is_unsigned:
+        return StackArgumentSignedness8616.UNSIGNED
+    if condition.op in {"eq", "ne", "zero", "nonzero"}:
+        return StackArgumentSignedness8616.SIGN_INSENSITIVE
+    return None
+
+
+def _joined_signedness_fact_8616(
+    candidates: list[StackArgumentTypeFact8616],
+) -> StackArgumentTypeFact8616 | None:
+    """Join neutral equality evidence with at most one ordering interpretation."""
+    ordering = {
+        candidate.signedness
+        for candidate in candidates
+        if candidate.signedness is not StackArgumentSignedness8616.SIGN_INSENSITIVE
+    }
+    if len(ordering) > 1:
+        return None
+    selected = next(iter(ordering), StackArgumentSignedness8616.SIGN_INSENSITIVE)
+    return next(candidate for candidate in candidates if candidate.signedness is selected)
 
 
 def collect_condition_argument_type_facts_8616(
@@ -187,10 +214,11 @@ def collect_condition_argument_type_facts_8616(
     selected: list[StackArgumentTypeFact8616] = []
     failures = 0
     for candidates in grouped.values():
-        if len({candidate.signedness for candidate in candidates}) != 1:
+        joined = _joined_signedness_fact_8616(candidates)
+        if joined is None:
             failures += 1
             continue
-        selected.append(candidates[0])
+        selected.append(joined)
     return ConditionArgumentFactsResult8616(
         tuple(selected),
         len(wide_conditions) + len(raw_conditions),

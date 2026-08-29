@@ -75,16 +75,21 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
-from .frontend_function_instructions import collect_function_instruction_inventory_8616
+from .frontend_function_instructions import (
+    FunctionInstructionInventory8616,
+    collect_function_instruction_inventory_8616,
+)
 from .frontend_instruction_reachability import decoded_block_instructions_8616
 from .ir.condition_ir import JCC_TO_COND_8616, ConditionIR
 from .ir.core import IRValue
 from .lowering.real_mode_linear import (
-    RealModeLinearStackAccess8616,
     proven_wide_stack_pair_low_offset_8616,
-    stack_cvar_for_stable_ss_linear_access_8616,
+    stack_cvar_for_machine_bp_range_8616,
 )
 from .lowering.segmented_memory_lowering import lower_runtime_segment_access_8616
+from .lowering.wide_stack_pair_evidence import (
+    materialize_proven_wide_stack_pair_variable_8616,
+)
 from .pipeline.contracts import SemanticLaneState
 from .tail_validation_fingerprint import _expr_fingerprint
 
@@ -491,7 +496,12 @@ def _wide_stack_pair_expr_8616(codegen: Any, hi_expr: object, lo_expr: object) -
     lo_offset = proven_wide_stack_pair_low_offset_8616(hi_expr, lo_expr)
     if lo_offset is None:
         return None
-    return cast(object | None, _stack_slot_expr_8616(codegen, lo_offset, 4))
+    return cast(
+        object | None,
+        materialize_proven_wide_stack_pair_variable_8616(
+            codegen, hi_expr, lo_expr, _stack_slot_expr_8616(codegen, lo_offset, 4)
+        ),
+    )
 
 
 def _expr_is_register_8616(project: Any, expr: object, reg_name: str) -> bool:
@@ -572,132 +582,37 @@ def _stack_slot_placeholder_name_8616(disp: int, size: int) -> str:
     return f"stack_bp_{sign}{abs(int(disp)):x}_b{int(size)}"
 
 
-def _stack_arg_width_from_type_8616(arg_type: object) -> int:
-    bits = getattr(arg_type, "size", None)
-    with contextlib.suppress(Exception):
-        if isinstance(bits, int) and bits > 0:
-            return max(2, int(bits // 8))
-    return 2
-
-
 def _is_unstable_stack_arg_name_8616(name: object) -> bool:
     return isinstance(name, str) and (
         name.startswith(("arg_", "local_", "stack_bp_", "s_"))
     )
 
 
-def _prototype_arg_name_for_stack_offset_8616(
-    codegen: Any, disp: int, *, project: Any | None = None
-) -> str | None:
-    cfunc = getattr(codegen, "cfunc", None)
-    if cfunc is None or int(disp) <= 2:
-        return None
-    candidates = [
-        getattr(cfunc, "functy", None),
-        getattr(cfunc, "prototype", None),
-    ]
-    project = project if project is not None else getattr(codegen, "project", None)
-    func_addr = getattr(cfunc, "addr", None)
-    if project is not None and isinstance(func_addr, int):
-        with contextlib.suppress(Exception):
-            func = project.kb.functions.function(addr=func_addr, create=False)
-            candidates.append(getattr(func, "prototype", None) if func is not None else None)
-    for prototype in candidates:
-        arg_names = tuple(getattr(prototype, "arg_names", ()) or ()) if prototype is not None else ()
-        args = tuple(getattr(prototype, "args", ()) or ()) if prototype is not None else ()
-        if not arg_names or len(arg_names) != len(args):
-            continue
-        cursor = 4
-        for name, arg_type in zip(arg_names, args, strict=False):
-            if cursor == int(disp) and isinstance(name, str) and name and not _is_unstable_stack_arg_name_8616(name):
-                return name
-            cursor += _stack_arg_width_from_type_8616(arg_type)
-    return None
-
-
-def _is_placeholder_stack_arg_name_8616(name: object) -> bool:
-    return _is_unstable_stack_arg_name_8616(name)
-
-
-def _sync_stack_arg_expr_name_from_prototype_8616(
-    codegen: Any, expr: Any, disp: int, *, project: Any | None = None
-) -> Any:
-    if int(disp) <= 2:
-        return expr
-    # Stack aliases are optional labels, not semantic argument identity. Exact
-    # typed prototype layout is the only admissible naming source at this
-    # cleanup boundary.
-    desired_name = _prototype_arg_name_for_stack_offset_8616(codegen, disp, project=project)
-    if not desired_name:
-        return expr
-    variable = getattr(expr, "variable", None)
-    if not isinstance(variable, SimStackVariable):
-        return expr
-    if int(variable.offset or 0) != int(disp):
-        return expr
-    current_name = variable.name
-    if current_name == desired_name:
-        return expr
-    # The typed prototype maps this exact BP displacement to one argument.
-    # Correct stale names even when an earlier optional alias looked stable.
-    with contextlib.suppress(Exception):
-        variable.name = desired_name
-    with contextlib.suppress(Exception):
-        expr.name = desired_name
-    unified = getattr(expr, "unified_variable", None)
-    if unified is not None:
-        with contextlib.suppress(Exception):
-            unified.name = desired_name
-    return expr
-
-
 def _stack_slot_expr_8616(
     codegen: Any, disp: int, size: int = 2, *, project: Any | None = None
 ) -> Any:
+    """Read one proven machine-BP stack object without changing its identity."""
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return None
 
-    def _candidate_exprs() -> Iterator[Any]:
-        yield from tuple(getattr(cfunc, "arg_list", ()) or ())
-        variables_in_use = getattr(cfunc, "variables_in_use", None)
-        if isinstance(variables_in_use, dict):
-            yield from variables_in_use.values()
-        unified_locals = getattr(cfunc, "unified_local_vars", None)
-        if isinstance(unified_locals, dict):
-            for cvars in unified_locals.values():
-                for item in cvars or ():
-                    if isinstance(item, tuple) and item:
-                        yield item[0]
+    requested_disp = int(disp)
+    requested_size = int(size) or 2
+    proven = stack_cvar_for_machine_bp_range_8616(
+        codegen,
+        requested_disp,
+        requested_size,
+    )
+    if isinstance(proven, CVariable):
+        return proven
 
-    # Positive BP displacements are function arguments in near 16-bit C calls.
-    # Reuse an existing canonical argument before stable stack lowering can
-    # synthesize a placeholder such as arg_4 and diverge from the signature.
-    if int(disp) > 2:
-        for expr in tuple(getattr(cfunc, "arg_list", ()) or ()):
-            variable = getattr(expr, "variable", None)
-            if isinstance(variable, SimStackVariable) and int(getattr(variable, "offset", 0) or 0) == int(disp):
-                return _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, disp, project=project)
-
-    with contextlib.suppress(Exception):
-        materialized = stack_cvar_for_stable_ss_linear_access_8616(
-            codegen,
-            RealModeLinearStackAccess8616(int(disp), int(size) or 2),
-        )
-        if materialized is not None:
-            return _sync_stack_arg_expr_name_from_prototype_8616(codegen, materialized, disp, project=project)
-
-    for expr in _candidate_exprs():
-        variable = getattr(expr, "variable", None)
-        if isinstance(variable, SimStackVariable) and int(getattr(variable, "offset", 0) or 0) == int(disp):
-            return _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, disp, project=project)
     region = getattr(cfunc, "addr", None)
     return CVariable(
         SimStackVariable(
-            int(disp),
-            int(size) or 2,
+            requested_disp,
+            requested_size,
             base="bp",
-            name=_stack_slot_placeholder_name_8616(disp, size),
+            name=_stack_slot_placeholder_name_8616(requested_disp, requested_size),
             region=region,
         ),
         codegen=codegen,
@@ -705,47 +620,7 @@ def _stack_slot_expr_8616(
 
 
 def _bp_operand_stack_expr_8616(codegen: Any, disp: int, size: int = 2) -> Any:
-    cfunc = getattr(codegen, "cfunc", None)
-    if cfunc is None:
-        return _stack_slot_expr_8616(codegen, disp, size)
-    requested_disp = int(disp)
-    requested_size = int(size) or 2
-    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
-        variable = getattr(arg, "variable", None)
-        if not isinstance(arg, CVariable) or not isinstance(variable, SimStackVariable):
-            continue
-        offset = getattr(variable, "offset", None)
-        if isinstance(offset, int) and int(offset) == requested_disp:
-            return arg
-
-    # x86-16 near C functions place the first stack argument at BP+4.
-    # Prefer this instruction operand evidence over unstable recovered positive
-    # BP aliases when the function prototype already proves an argument slot.
-    expected_disp = 4
-    for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
-        variable = getattr(arg, "variable", None)
-        if not isinstance(arg, CVariable):
-            continue
-        arg_type = arg.variable_type
-        arg_size = max(2, int(getattr(variable, "size", 0) or requested_size))
-        if requested_disp == expected_disp:
-            project = getattr(codegen, "project", None)
-            fallback_type = SimTypeShort(False)
-            arch = getattr(project, "arch", None)
-            if arch is not None:
-                fallback_type = fallback_type.with_arch(arch)
-            return CVariable(
-                SimStackVariable(
-                    requested_disp,
-                    requested_size,
-                    base="bp",
-                    name=f"arg_{requested_disp:x}",
-                    region=getattr(cfunc, "addr", None),
-                ),
-                variable_type=arg_type if arg_type is not None else fallback_type,
-                codegen=codegen,
-            )
-        expected_disp += arg_size
+    """Read a BP operand through the Types/Lowering coordinate owner."""
     return _stack_slot_expr_8616(codegen, disp, size)
 
 
@@ -858,6 +733,7 @@ def _function_insns_for_codegen_8616(project: Any, codegen: Any) -> tuple[Any, .
     )
     result = inventory.instructions if inventory.complete else ()
     with contextlib.suppress(Exception):
+        codegen._inertia_jcc_function_inventory_8616 = inventory
         codegen._inertia_jcc_function_insns_8616 = result
         codegen._inertia_jcc_function_entry_8616 = func_addr
     return result
@@ -1033,14 +909,29 @@ def _call_args_from_push_setup_8616(
 def _call_return_expr_before_insn_8616(project: Any, codegen: Any, ins_addr: int) -> CFunctionCall | None:
     debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
     insns = _function_insns_for_codegen_8616(project, codegen)
-    linear_insns = _linear_insns_before_addr_8616(project, codegen, int(ins_addr))
+    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+    inventory = getattr(codegen, "_inertia_jcc_function_inventory_8616", None)
+    inventory_covers_query = bool(
+        isinstance(inventory, FunctionInstructionInventory8616)
+        and inventory.complete
+        and inventory.function_entry == getattr(getattr(codegen, "cfunc", None), "addr", None)
+        and int(ins_addr) in index_by_addr
+    )
+    linear_insns = (
+        ()
+        if inventory_covers_query
+        else _linear_insns_before_addr_8616(project, codegen, int(ins_addr))
+    )
     if linear_insns:
         insns = _merge_unique_insns_by_addr_8616(insns, linear_insns)
         with contextlib.suppress(Exception):
             codegen._inertia_jcc_function_insns_8616 = insns
     if not insns:
         return None
-    index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
+    if linear_insns:
+        index_by_addr = {
+            int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)
+        }
     start_idx = index_by_addr.get(int(ins_addr))
     if start_idx is None and linear_insns:
         start_idx = len(tuple(insn for insn in insns if int(getattr(insn, "address", -1)) < int(ins_addr)))

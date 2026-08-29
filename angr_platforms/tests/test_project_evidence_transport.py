@@ -11,6 +11,15 @@ from angr_platforms.X86_16.callsite_summary import (
 from angr_platforms.X86_16.widening.global_object_layout import (
     GlobalObjectLayoutEvidence8616,
 )
+from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import (
+    ProjectBoundedGlobalObjectRangeEvidence8616,
+    ProjectBoundedGlobalObjectRangeSource8616,
+    ProjectBoundedGlobalObjectRangeSourceKind8616,
+    ProjectBoundedGlobalObjectRangeSourceStatus8616,
+)
+from angr_platforms.X86_16.widening.indexed_global_object_ranges import (
+    BoundedGlobalObjectRangeStats8616,
+)
 
 from inertia_decompiler.project_evidence_transport import (
     transfer_caller_return_use_evidence_8616,
@@ -73,9 +82,24 @@ def test_project_transport_preserves_binary_proven_compiler_helper_targets() -> 
 
 def test_project_transport_reuses_closed_global_object_widening() -> None:
     evidence = GlobalObjectLayoutEvidence8616((), 0, 0, 0, 0)
+    ranges = ProjectBoundedGlobalObjectRangeEvidence8616(
+        (),
+        (),
+        BoundedGlobalObjectRangeStats8616(),
+        ProjectBoundedGlobalObjectRangeSource8616(
+            ProjectBoundedGlobalObjectRangeSourceKind8616.LIVE_ALIAS_PROGRAM,
+            ProjectBoundedGlobalObjectRangeSourceStatus8616.COMPLETE,
+            0,
+            0,
+            0,
+            0,
+        ),
+        evidence,
+    )
     source = SimpleNamespace(
         arch=SimpleNamespace(_inertia_stack_probe_helper_targets_8616=frozenset()),
         _inertia_project_global_object_layout_evidence_8616=evidence,
+        _inertia_project_bounded_global_object_ranges_8616=ranges,
     )
     destination = SimpleNamespace(
         arch=SimpleNamespace(_inertia_stack_probe_helper_targets_8616=frozenset())
@@ -84,4 +108,6 @@ def test_project_transport_reuses_closed_global_object_widening() -> None:
     result = transfer_project_evidence_8616(source, destination)
 
     assert result.global_object_layout_artifact_count == 1
+    assert result.bounded_global_range_artifact_count == 1
     assert destination._inertia_project_global_object_layout_evidence_8616 is evidence
+    assert destination._inertia_project_bounded_global_object_ranges_8616 is ranges

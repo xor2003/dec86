@@ -32,6 +32,10 @@ from angr_platforms.X86_16.lowering.stack_aggregate_objects import (
     reapply_stack_aggregate_object_facts_8616,
     recover_stack_aggregate_object_facts_from_instructions_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    record_stack_variable_coordinate_projection_8616,
+)
 from capstone.x86_const import (
     X86_INS_CALL,
     X86_INS_LEA,
@@ -672,6 +676,95 @@ def test_materialization_supports_addressed_top_partition(monkeypatch) -> None:
         False
     ).with_arch(codegen.project.arch)
     assert call.args == [base_cvar]
+
+
+def test_materialization_promotes_projected_entry_sp_aggregate_base(monkeypatch) -> None:
+    codegen = _AggregateCodegen()
+    base_var, base_cvar = _stack_cvar(
+        codegen,
+        -92,
+        2,
+        "local_5a",
+        SimTypeShort(False),
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=base_var,
+        cvar=base_cvar,
+        bp_offset=-90,
+        entry_sp_offset=-92,
+        size=2,
+        display_name="local_5a",
+    )
+    fact = StackAggregateObjectFact8616(-90, 86, 2, 118, 0, 3, (-90,), -4, 2)
+    recovery = StackAggregateRecovery8616(
+        StackAggregateRecoveryStatus8616.MATERIALIZABLE,
+        raw_fact_count=5,
+        normalized_fact_count=5,
+        classified_fact_count=1,
+        materialized_count=0,
+        failure_count=0,
+        facts=(fact,),
+    )
+    monkeypatch.setattr(
+        aggregate_objects,
+        "collect_stack_aggregate_object_facts_8616",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    assert materialize_stack_aggregate_objects_8616(codegen, object(), object()) is True
+    assert isinstance(base_cvar.variable_type, SimTypeFixedSizeArray)
+    assert base_cvar.variable_type.length == 43
+    assert base_var.size == 2
+    assert len(codegen.cfunc.variables_in_use) == 1
+    assert machine_bp_offset_for_stack_variable_8616(codegen, base_var) == -90
+    regenerated = SimStackVariable(-92, 86, base="bp", name="local_5a")
+    assert machine_bp_offset_for_stack_variable_8616(codegen, regenerated) == -90
+
+
+def test_materialization_creates_missing_base_at_projected_entry_sp(monkeypatch) -> None:
+    codegen = _AggregateCodegen()
+    boundary_var, boundary_cvar = _stack_cvar(
+        codegen,
+        -4,
+        2,
+        "local_2",
+        SimTypeShort(False),
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=boundary_var,
+        cvar=boundary_cvar,
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+        display_name="local_2",
+    )
+    fact = StackAggregateObjectFact8616(-82, 80, 1, 82, 1, 2, (-83, -82), -2, 2)
+    recovery = StackAggregateRecovery8616(
+        StackAggregateRecoveryStatus8616.MATERIALIZABLE,
+        raw_fact_count=5,
+        normalized_fact_count=5,
+        classified_fact_count=1,
+        materialized_count=0,
+        failure_count=0,
+        facts=(fact,),
+    )
+    monkeypatch.setattr(
+        aggregate_objects,
+        "collect_stack_aggregate_object_facts_8616",
+        lambda *_args, **_kwargs: recovery,
+    )
+
+    assert materialize_stack_aggregate_objects_8616(codegen, object(), object()) is True
+    aggregate_vars = tuple(
+        variable
+        for variable in codegen.cfunc.variables_in_use
+        if isinstance(variable, SimStackVariable) and variable.size == 80
+    )
+    assert len(aggregate_vars) == 1
+    assert aggregate_vars[0].offset == -84
+    assert machine_bp_offset_for_stack_variable_8616(codegen, aggregate_vars[0]) == -82
 
 
 def test_materialization_decays_addressed_stack_array_call_argument(monkeypatch) -> None:

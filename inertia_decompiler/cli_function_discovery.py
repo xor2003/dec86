@@ -56,6 +56,7 @@ from inertia_decompiler.cache import (
     _recovery_cache_key,
     _store_cache_json,
 )
+from inertia_decompiler.cache_source_manifest import RecoveryCacheSourceScope8616
 from inertia_decompiler.cli_output import (
     _timestamped_print,
 )
@@ -1395,12 +1396,18 @@ def _collect_stitched_blocks_and_edges_8616(
             if start <= succ < end and succ not in visited:
                 queue.append(succ)
             edges.add((block_addr, succ))
-    reachable = _cap_stitched_blocks_to_leaders_8616(project, reachable)
+    reachable = _cap_stitched_blocks_to_leaders_8616(project, reachable, region_end=end)
     edges = _recompute_stitched_edges_8616(reachable, start, end)
     return reachable, edges
 
 
-def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[int, _AngrBlock]) -> dict[int, object]:
+def _cap_stitched_blocks_to_leaders_8616(
+    project: angr.Project,
+    reachable: dict[int, _AngrBlock],
+    *,
+    region_end: int | None = None,
+) -> dict[int, object]:
+    """Cap stitched blocks at the next leader and the authoritative region end."""
     if len(reachable) <= 1:
         return reachable
     leaders = sorted(reachable)
@@ -1412,11 +1419,13 @@ def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[
             capped[block_addr] = block
             continue
         block_end = block_addr + block_size
-        next_leader = next((leader for leader in leaders if block_addr < leader < block_end), None)
-        if not isinstance(next_leader, int):
+        cap_end = next((leader for leader in leaders if block_addr < leader < block_end), block_end)
+        if isinstance(region_end, int):
+            cap_end = min(cap_end, region_end)
+        if cap_end >= block_end:
             capped[block_addr] = block
             continue
-        capped_size = next_leader - block_addr
+        capped_size = cap_end - block_addr
         if capped_size <= 0:
             capped[block_addr] = block
             continue
@@ -1454,6 +1463,18 @@ def _should_replace_function_with_stitched_graph_8616(
     stitched_bytes = sum(len(_dynamic_attr(block, "bytes", b"")) for block in reachable.values())
     current_blocks = tuple(_dynamic_attr(function, "blocks", ()) or ())
     stitched_blocks = tuple(reachable.values())
+    if exact_region is not None and stitched_blocks:
+        region_start, region_end = exact_region
+        current_escapes_region = any(
+            isinstance(_dynamic_attr(block, "addr", None), int)
+            and (
+                block.addr < region_start
+                or block.addr + max(0, int(_dynamic_attr(block, "size", 0) or 0)) > region_end
+            )
+            for block in current_blocks
+        )
+        if current_escapes_region:
+            return True
     current_overlap = _block_overlap_count_8616(current_blocks, exact_region)
     stitched_overlap = _block_overlap_count_8616(stitched_blocks, exact_region)
     if current_overlap > stitched_overlap:
@@ -1965,6 +1986,23 @@ def _recover_candidate_function_pair(
             except Exception as exc:
                 last_error = exc
                 continue
+        if best_pair is not None and exact_region is not None:
+            try:
+                stitched_func, stitched = _stitch_x86_16_exact_function_8616(
+                    candidate_project,
+                    best_pair[1],
+                    exact_region,
+                )
+                if stitched:
+                    best_pair = (best_pair[0], stitched_func)
+                    _mark_x86_16_stitched_recovery_8616(stitched_func)
+                    best_score = _function_recovery_score(stitched_func)
+            except Exception as ex:
+                logging.getLogger(__name__).debug(
+                    "x86-16 explicit candidate-pair stitching failed for %s: %s",
+                    hex(candidate_addr),
+                    ex,
+                )
         truncated = False
         if (
             best_pair is not None
@@ -1989,8 +2027,14 @@ def _recover_candidate_function_pair(
                     hex(candidate_addr),
                     ex,
                 )
-            bounded_region = _richest_bounded_recovery_region(
-                candidate_addr, image_end=image_end, region_span=region_span
+            bounded_region = (
+                bounded_exact_region
+                if exact_region is not None
+                else _richest_bounded_recovery_region(
+                    candidate_addr,
+                    image_end=image_end,
+                    region_span=region_span,
+                )
             )
             richer_best_pair: _FunctionCfgPair | None = None
             richer_best_score = best_score
@@ -2033,7 +2077,8 @@ def _recover_candidate_function_pair(
             except Exception as exc:
                 last_error = exc
         if best_pair is not None:
-            _repair_x86_16_function_graph_8616(candidate_project, best_pair[1])
+            if exact_region is None:
+                _repair_x86_16_function_graph_8616(candidate_project, best_pair[1])
             if bounded_exact_region is not None:
                 _mark_function_binary_exact_region_8616(best_pair[1], bounded_exact_region)
             _mark_function_recovery_truncated(best_pair[1], truncated)
@@ -2253,6 +2298,7 @@ def _catalog_address_cache_key_8616(
     return _cache_key_object(_recovery_cache_key(
         binary_path=binary_path,
         kind="display_catalog_addrs",
+        source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
         extra={
             "entry": _dynamic_attr(project, "entry", None),
             "arch": _dynamic_attr(_dynamic_attr(project, "arch", None), "name", None),
@@ -2794,6 +2840,7 @@ def _seed_ranking_cache_key(
     return _cache_key_object(_recovery_cache_key(
         binary_path=Path(binary_path) if isinstance(binary_path, (str, Path)) else None,
         kind="exe_seed_ranking",
+        source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
         extra={
             "entry": _dynamic_attr(project, "entry", None),
             "linked_base": linked_base,
@@ -3276,12 +3323,24 @@ def attach_direct_target_argument_evidence_context_8616(
         ),
         None,
     )
-    if canonical_target is None:
+    caller_evidence = caller_return_use_evidence_by_addr_8616(source_project).get(
+        target_addr
+    )
+    if canonical_target is None and not (
+        caller_evidence is not None
+        and caller_evidence.verdict is not CallerReturnUseVerdict8616.UNKNOWN
+        and caller_evidence.raw_fact_count > 0
+        and caller_evidence.fact_census_complete
+    ):
         return False
     function_ranges = _pre_entry_source_function_ranges_8616(evidence_project, source_seeds)
     if not function_ranges:
         return False
-    target_aliases = _binary_padding_entry_aliases_8616(evidence_project, canonical_target)
+    target_aliases = (
+        (target_addr,)
+        if canonical_target is None
+        else _binary_padding_entry_aliases_8616(evidence_project, canonical_target)
+    )
     dynamic_target = cast(_AngrObject, target_project)
     dynamic_target._inertia_caller_function_ranges_8616 = function_ranges
     dynamic_target._inertia_caller_target_aliases_8616 = target_aliases
@@ -3846,6 +3905,7 @@ def _persistent_recovery_attempt_cache_key(
     return _cache_key_object(_recovery_cache_key(
         binary_path=binary_path,
         kind="function_recovery_attempt",
+        source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
         extra={
             "addr": addr,
             "mode": mode,
@@ -4110,6 +4170,7 @@ def _recover_seeded_exe_functions(
         cache_key = _recovery_cache_key(
             binary_path=Path(binary_path),
             kind="seeded_function_catalog",
+            source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
             extra={
                 "entry": _dynamic_attr(project, "entry", None),
                 "linked_base": linked_base,
@@ -4577,6 +4638,12 @@ def _recover_lst_function(
     allow_rebased_exact_slice: bool = True,
 ) -> _FunctionCfgPair:
     """Recover one metadata-bounded function with an explicit slice policy."""
+    function_entry_addrs = lst_metadata.function_entry_addrs
+    function_ranges = tuple(
+        lst_metadata.code_ranges[entry_addr]
+        for entry_addr in sorted(function_entry_addrs)
+        if entry_addr in lst_metadata.code_ranges
+    ) if function_entry_addrs else tuple(lst_metadata.code_ranges.values())
 
     def _impl() -> _FunctionCfgPair:
         addr = offset if lst_metadata.absolute_addrs else project.entry + offset
@@ -4591,7 +4658,7 @@ def _recover_lst_function(
                 project,
                 exact_region=exact_region,
                 caller_target_addrs=caller_target_addrs,
-                function_ranges=tuple(lst_metadata.code_ranges.values()),
+                function_ranges=function_ranges,
                 timeout=timeout,
                 name=name,
             )
@@ -4911,9 +4978,10 @@ def _filter_noncode_labeled_entries(
     labeled_entries: list[tuple[int, str]],
     metadata: LSTMetadata | None = None,
 ) -> list[tuple[int, str]]:
+    explicit_function_entries = metadata.function_entry_addrs if metadata is not None else frozenset()
     filtered: list[tuple[int, str]] = []
     for addr, name in labeled_entries:
-        if _is_plausible_code_seed(project, addr, metadata=metadata):
+        if addr in explicit_function_entries or _is_plausible_code_seed(project, addr, metadata=metadata):
             filtered.append((addr, name))
     return filtered
 
@@ -5020,6 +5088,7 @@ def _sidecar_label_ranking_cache_key(
     cache_key = _recovery_cache_key(
         binary_path=Path(binary_path),
         kind="sidecar_label_ranking",
+        source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
         extra={
             "entry": _dynamic_attr(project, "entry", None),
             "source_format": _dynamic_attr(metadata, "source_format", None),

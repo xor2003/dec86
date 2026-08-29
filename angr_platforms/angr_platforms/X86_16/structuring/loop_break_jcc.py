@@ -959,15 +959,15 @@ def materialize_unconsumed_loop_break_jcc_8616(
             continue
         stats.raw_fact_count += 1
         key = (jcc_addr, int(block_addr))
-        if jcc_addr in typed_loop_condition_jcc_addrs:
-            stats.refused_existing_condition += 1
-            continue
         existing_break_nodes = tuple(
             node
             for existing_key, nodes in existing_break_nodes_by_key.items()
             if existing_key[0] == jcc_addr
             for node in nodes
         )
+        if jcc_addr in typed_loop_condition_jcc_addrs and not existing_break_nodes:
+            stats.refused_existing_condition += 1
+            continue
         has_existing_condition_without_break = (
             any(existing_key[0] == jcc_addr for existing_key in existing_condition_keys)
             and not existing_break_nodes

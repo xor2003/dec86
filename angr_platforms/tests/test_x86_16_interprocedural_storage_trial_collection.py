@@ -18,6 +18,7 @@ from angr_platforms.X86_16.ir.function_ssa_registry import (
     FunctionSSAArtifactFailure8616,
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
+from angr_platforms.X86_16.lowering import interprocedural_storage_trial_collection as storage_trial_collection
 from angr_platforms.X86_16.lowering.callee_argument_count_evidence import (
     CalleeArgumentCountEvidence8616,
     CalleeArgumentCountVerdict8616,
@@ -113,6 +114,7 @@ def _project_with_census(
     )
     fact = CalleeCallsiteFact8616(
         evidence_project=project,
+        caller_function=caller,
         evidence_target_addr=summary.target_addr or 0,
         caller_addr=caller_addr,
         callsite_addr=summary.callsite_addr,
@@ -305,7 +307,7 @@ def test_split_global_word_retains_two_source_and_callee_pieces() -> None:
     ) == (0x1200, 0x1201)
 
 
-def test_unknown_signedness_refuses_without_classified_unmaterialized_gap() -> None:
+def test_unknown_signedness_refuses_before_caller_ssa(monkeypatch) -> None:
     summary = _summary(
         callsite_addr=0x1002,
         target_addr=0x1005,
@@ -313,6 +315,11 @@ def test_unknown_signedness_refuses_without_classified_unmaterialized_gap() -> N
         source=(CallsitePushSourceKind8616.IMMEDIATE.value, 5),
     )
     project = _project_with_census(bytes.fromhex("6a05e80000"), summary)
+    monkeypatch.setattr(
+        storage_trial_collection,
+        "semantic_function_ssa_artifact_at_address_8616",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("caller SSA must not run")),
+    )
 
     result = collect_function_input_storage_trials_8616(project, _empty_codegen(), 0x1005)
 
@@ -323,7 +330,7 @@ def test_unknown_signedness_refuses_without_classified_unmaterialized_gap() -> N
     assert result.failures[0].kind is StorageTrialCollectionFailureKind8616.SIGNEDNESS_UNKNOWN
 
 
-def test_missing_caller_ssa_retains_typed_registry_failure() -> None:
+def test_mismatched_caller_boundary_retains_typed_registry_failure() -> None:
     summary = _summary(
         callsite_addr=0x1002,
         target_addr=0x1005,
@@ -340,7 +347,10 @@ def test_missing_caller_ssa_retains_typed_registry_failure() -> None:
 
     assert result.verdict is StorageTrialCollectionVerdict8616.UNKNOWN_REFUSE
     assert result.failures[0].kind is StorageTrialCollectionFailureKind8616.CALLER_SSA_UNAVAILABLE
-    assert result.failures[0].ssa_failure is FunctionSSAArtifactFailure8616.FUNCTION_NOT_FOUND
+    assert (
+        result.failures[0].ssa_failure
+        is FunctionSSAArtifactFailure8616.FUNCTION_BOUNDARY_CONFLICT
+    )
 
 
 def test_duplicate_machine_callsite_identity_is_a_conflict() -> None:

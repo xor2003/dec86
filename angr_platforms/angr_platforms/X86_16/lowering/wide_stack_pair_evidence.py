@@ -21,6 +21,45 @@ from ..ir.core import IRValue, MemSpace
 from .real_mode_linear import proven_wide_stack_pair_low_offset_8616
 
 
+def materialize_proven_wide_stack_pair_variable_8616(
+    codegen: object,
+    high_expression: object,
+    low_expression: object,
+    candidate_expression: object,
+) -> CVariable | None:
+    """Materialize a four-byte stack variable only from a widening proof."""
+    low_offset = proven_wide_stack_pair_low_offset_8616(
+        high_expression,
+        low_expression,
+    )
+    if low_offset is None or not isinstance(candidate_expression, CVariable):
+        return None
+    candidate_variable = candidate_expression.variable
+    if (
+        not isinstance(candidate_variable, SimStackVariable)
+        or candidate_variable.offset != low_offset
+    ):
+        return None
+    if candidate_variable.size == 4:
+        return candidate_expression
+    if candidate_variable.size != 2:
+        return None
+    return CVariable(
+        SimStackVariable(
+            low_offset,
+            4,
+            base=candidate_variable.base,
+            base_addr=candidate_variable.base_addr,
+            ident=candidate_variable.ident,
+            name=candidate_variable.name,
+            region=candidate_variable.region,
+            category=candidate_variable.category,
+        ),
+        codegen=codegen,
+        tags=candidate_expression.tags,
+    )
+
+
 def _word_projection_source_8616(expression: object, shift: int) -> CVariable | None:
     """Recover one masked word projection of a proven wide stack C variable."""
     if not isinstance(expression, structured_c.CBinaryOp) or expression.op != "And":

@@ -115,6 +115,7 @@ def test_def_use_refuses_stack_local_read_before_assignment():
     assert report.materialized_count == 0
     assert report.failure_count == 1
     assert report.issue_tokens() == ("uninitialized-read:stack-local:SS:BP-0x2:size2:root.stmt0",)
+    assert report.semantic_issue_tokens() == ("uninitialized-read:stack-local:SS:BP-0x2:size2",)
 
 
 def test_def_use_accepts_stack_local_read_after_assignment():
@@ -968,6 +969,34 @@ def test_def_use_accepts_only_exact_typed_packed_flag_preservation_site() -> Non
     assert refused.failure_count == 1
 
 
+def test_def_use_accepts_tagged_packed_flag_condition_at_exact_site() -> None:
+    codegen = _codegen()
+    flags = _register_carrier(36, codegen, "flags", ident="flags_in")
+    condition = CUnaryOp("LogicalNot", flags, codegen=codegen)
+    condition.tags["ins_addr"] = 0x1010
+    root = CStatements(
+        [CIfElse([(condition, CStatements([], codegen=codegen))], codegen=codegen)],
+        codegen=codegen,
+    )
+
+    accepted = validate_structured_def_use_8616(
+        root,
+        packed_status_flag_preservation=PackedStatusFlagPreservationEvidence8616(
+            36, frozenset({0x1010})
+        ),
+    )
+    refused = validate_structured_def_use_8616(
+        root,
+        packed_status_flag_preservation=PackedStatusFlagPreservationEvidence8616(
+            36, frozenset({0x1020})
+        ),
+    )
+
+    assert accepted.passed
+    assert accepted.materialized_count == 1
+    assert refused.failure_count == 1
+
+
 def test_def_use_accepts_explicit_register_argument_at_entry() -> None:
     codegen = _codegen()
     argument = _register_carrier(6, codegen, "bx")
@@ -1212,7 +1241,7 @@ def test_tail_validation_summary_includes_uninitialized_register_carrier() -> No
     )
 
     assert summary.def_use_issues == (
-        "uninitialized-read:register-carrier:reg+0x6:size2:region0x1000:ssa-str-ssa_1:root.stmt0",
+        "uninitialized-read:register-carrier:reg+0x6:size2:region0x1000:ssa-str-ssa_1",
     )
 
 

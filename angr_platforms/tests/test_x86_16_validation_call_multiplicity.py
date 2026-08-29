@@ -25,6 +25,7 @@ class _Codegen:
     def __init__(self) -> None:
         self._next_index = 0
         self._inertia_callsite_summaries: dict[int, CallsiteSummary8616] = {}
+        self._inertia_callsite_summary_inventory_8616: dict[int, CallsiteSummary8616] = {}
         self.project = SimpleNamespace(arch=ArchX86())
 
     def next_idx(self, _kind: str) -> int:
@@ -164,9 +165,10 @@ def test_same_target_at_two_distinct_machine_callsites_is_not_a_duplicate() -> N
     first = _call(codegen, 0x1010)
     second = _call(codegen, 0x1020)
     root = CStatements([first, second], codegen=codegen)
-    codegen._inertia_callsite_summaries = {
-        id(first): _summary(0x1010),
-        id(second): _summary(0x1020),
+    codegen._inertia_callsite_summaries = {id(first): _summary(0x1010)}
+    codegen._inertia_callsite_summary_inventory_8616 = {
+        0x1010: _summary(0x1010),
+        0x1020: _summary(0x1020),
     }
 
     report = validate_required_callsite_multiplicity_8616(codegen, root)

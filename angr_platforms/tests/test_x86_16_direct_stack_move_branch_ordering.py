@@ -160,6 +160,7 @@ def test_branch_assignment_matches_indexed_stack_source() -> None:
     )
 
     assert _assignment_matches_stack_move_fact_8616(
+        codegen,
         assignment,
         _aggregate_branch_fact(0x1061C),
         move,
@@ -193,6 +194,7 @@ def test_branch_assignment_matches_indexed_stack_destination() -> None:
     )
 
     assert _assignment_matches_stack_move_fact_8616(
+        codegen,
         assignment,
         _aggregate_branch_fact(0x1062C),
         move,

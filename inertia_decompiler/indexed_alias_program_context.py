@@ -28,38 +28,42 @@ from angr_platforms.X86_16.lowering.global_object_program_requirement import (
     GlobalObjectProgramRequirementEvidence8616,
     collect_global_object_program_requirement_8616,
 )
+from angr_platforms.X86_16.lowering.project_callee_callsite_collection import (
+    collect_complete_project_callee_callsites_8616,
+)
+from angr_platforms.X86_16.lowering.project_global_object_source_collection import (
+    collect_complete_project_global_object_sources_8616,
+)
 from angr_platforms.X86_16.widening.global_object_layout import (
     GlobalObjectLayoutEvidence8616,
-)
-from angr_platforms.X86_16.widening.global_object_layout_codec import (
-    global_object_layout_evidence_from_record_8616,
-    global_object_layout_evidence_record_8616,
 )
 from angr_platforms.X86_16.widening.indexed_global_object_layout import (
     recover_global_object_layout_evidence_8616,
 )
-
-from .cache import (
-    _cache_key_lock,
-    _load_cache_json,
-    _recovery_cache_key,
-    _store_cache_json,
+from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import (
+    ProjectBoundedGlobalObjectRangeEvidence8616,
+    recover_program_bounded_global_object_ranges_8616,
 )
+
+from .cache import _cache_key_lock
 from .cli_function_discovery import (
-    _display_catalog_cache_policy_8616,
     _recover_fast_exe_catalog,
     _source_region_catalog_evidence_8616,
 )
 from .discovery_evidence_project import isolated_discovery_evidence_project_8616
+from .indexed_global_object_cache import (
+    INDEXED_GLOBAL_OBJECT_CACHE_NAMESPACE_8616,
+    PersistedIndexedGlobalObjectEvidence8616,
+    indexed_global_object_cache_key_8616,
+    load_indexed_global_object_cache_8616,
+    store_indexed_global_object_cache_8616,
+)
 from .project_evidence_transport import (
+    attach_project_bounded_global_object_ranges_8616,
     attach_project_global_object_layout_evidence_8616,
 )
 
 log: logging.Logger = logging.getLogger(__name__)
-
-_GLOBAL_OBJECT_LAYOUT_CACHE_NAMESPACE_8616 = "indexed_global_object_layout"
-_GLOBAL_OBJECT_LAYOUT_CACHE_SCHEMA_8616 = 1
-
 
 class IndexedAliasProgramContextStatus8616(StrEnum):
     """Typed result of preparing one direct-run Alias program context."""
@@ -91,59 +95,8 @@ class _ProjectProgramSurface8616(Protocol):
 
     _inertia_indexed_alias_program_evidence_8616: IndexedAliasProgramEvidence8616
     _inertia_project_global_object_layout_evidence_8616: GlobalObjectLayoutEvidence8616
+    _inertia_project_bounded_global_object_ranges_8616: ProjectBoundedGlobalObjectRangeEvidence8616
     _inertia_global_object_program_requirement_8616: GlobalObjectProgramRequirementEvidence8616
-
-
-def _global_object_layout_cache_key_8616(
-    source_project: object,
-    binary_path: Path | None,
-) -> dict[str, object] | None:
-    """Return semantic identity for one closed whole-program layout artifact."""
-    policy = _display_catalog_cache_policy_8616(cast(angr.Project, source_project))
-    return cast(
-        dict[str, object] | None,
-        _recovery_cache_key(
-            binary_path=binary_path,
-            kind=_GLOBAL_OBJECT_LAYOUT_CACHE_NAMESPACE_8616,
-            extra={
-                "artifact_schema": _GLOBAL_OBJECT_LAYOUT_CACHE_SCHEMA_8616,
-                "ignore_local_sidecar_hints": policy.ignore_local_sidecar_hints,
-                "include_library_functions": policy.include_library_functions,
-                "function_discovery_backend": policy.function_discovery_backend,
-                "pat_backend": policy.pat_backend,
-                "auto_rizin_policy": policy.auto_rizin_policy,
-                "signature_catalog_path": policy.signature_catalog_path,
-                "signature_catalog_size": policy.signature_catalog_size,
-                "signature_catalog_mtime_ns": policy.signature_catalog_mtime_ns,
-            },
-        ),
-    )
-
-
-def _load_global_object_layout_cache_8616(
-    cache_key: dict[str, object],
-) -> GlobalObjectLayoutEvidence8616 | None:
-    """Restore one closed Widening artifact, refusing malformed cache data."""
-    record = _load_cache_json(_GLOBAL_OBJECT_LAYOUT_CACHE_NAMESPACE_8616, cache_key)
-    if record is None:
-        return None
-    try:
-        return global_object_layout_evidence_from_record_8616(record)
-    except ValueError as exc:
-        log.warning("persisted indexed-global Widening artifact refused: %s", exc)
-        return None
-
-
-def _store_global_object_layout_cache_8616(
-    cache_key: dict[str, object],
-    evidence: GlobalObjectLayoutEvidence8616,
-) -> None:
-    """Persist one already-classified closed Widening artifact."""
-    _store_cache_json(
-        _GLOBAL_OBJECT_LAYOUT_CACHE_NAMESPACE_8616,
-        cache_key,
-        global_object_layout_evidence_record_8616(evidence),
-    )
 
 
 def publish_discovered_indexed_alias_program_8616(
@@ -167,11 +120,30 @@ def publish_discovered_indexed_alias_program_8616(
         selections,
     )
     destination = evidence_project if target_project is None else target_project
-    surface = cast(_ProjectProgramSurface8616, destination)
-    surface._inertia_indexed_alias_program_evidence_8616 = program
-    surface._inertia_project_global_object_layout_evidence_8616 = (
-        recover_global_object_layout_evidence_8616(program)
+    layouts = recover_global_object_layout_evidence_8616(program)
+    ranges = recover_program_bounded_global_object_ranges_8616(
+        program,
+        layouts,
     )
+    evidence_surface = cast(_ProjectProgramSurface8616, evidence_project)
+    evidence_surface._inertia_indexed_alias_program_evidence_8616 = program
+    evidence_surface._inertia_project_global_object_layout_evidence_8616 = layouts
+    evidence_surface._inertia_project_bounded_global_object_ranges_8616 = ranges
+    if destination is not evidence_project:
+        destination_surface = cast(_ProjectProgramSurface8616, destination)
+        destination_surface._inertia_indexed_alias_program_evidence_8616 = program
+        destination_surface._inertia_project_global_object_layout_evidence_8616 = layouts
+        destination_surface._inertia_project_bounded_global_object_ranges_8616 = ranges
+    if destination is evidence_project:
+        collect_complete_project_callee_callsites_8616(
+            evidence_project,
+            functions,
+        )
+        collect_complete_project_global_object_sources_8616(
+            evidence_project,
+            functions,
+            layouts,
+        )
     return program
 
 
@@ -216,8 +188,15 @@ def _discover_direct_indexed_alias_program_context_8616(
         _ProjectProgramSurface8616,
         target_project,
     )._inertia_project_global_object_layout_evidence_8616
+    target_ranges = cast(
+        _ProjectProgramSurface8616,
+        target_project,
+    )._inertia_project_bounded_global_object_ranges_8616
     if cache_key is not None:
-        _store_global_object_layout_cache_8616(cache_key, target_layout)
+        store_indexed_global_object_cache_8616(
+            cache_key,
+            PersistedIndexedGlobalObjectEvidence8616(target_layout, target_ranges),
+        )
     return IndexedAliasProgramContextResult8616(
         IndexedAliasProgramContextStatus8616.PUBLISHED,
         program,
@@ -259,22 +238,30 @@ def prepare_direct_indexed_alias_program_context_8616(
             requirement,
         )
     try:
-        transported_layout = (
-            target_surface._inertia_project_global_object_layout_evidence_8616
-        )
+        transported_layout = target_surface._inertia_project_global_object_layout_evidence_8616
     except AttributeError:
         transported_layout = None
-    if transported_layout is not None:
+    try:
+        transported_ranges = target_surface._inertia_project_bounded_global_object_ranges_8616
+    except AttributeError:
+        transported_ranges = None
+    if (transported_layout is None) != (transported_ranges is None):
+        raise ValueError("transported indexed-global Widening bundle is incomplete")
+    if transported_layout is not None and transported_ranges is not None:
         if not isinstance(transported_layout, GlobalObjectLayoutEvidence8616):
             raise TypeError("transported indexed-global Widening artifact has a wrong type")
+        if not isinstance(transported_ranges, ProjectBoundedGlobalObjectRangeEvidence8616):
+            raise TypeError("transported bounded-global Widening artifact has a wrong type")
         if not transported_layout.closed:
             raise ValueError("transported indexed-global Widening artifact is open")
+        if not transported_ranges.closed or transported_ranges.layouts != transported_layout:
+            raise ValueError("transported indexed-global Widening bundle is incoherent")
         return IndexedAliasProgramContextResult8616(
             IndexedAliasProgramContextStatus8616.REUSED_WIDENING,
             None,
             requirement,
         )
-    cache_key = _global_object_layout_cache_key_8616(source_project, binary_path)
+    cache_key = indexed_global_object_cache_key_8616(source_project, binary_path)
     if cache_key is None:
         return _discover_direct_indexed_alias_program_context_8616(
             source_project,
@@ -286,15 +273,19 @@ def prepare_direct_indexed_alias_program_context_8616(
         )
     lock_timeout = max(600.0, float(max(1, timeout)) * 2.0)
     with _cache_key_lock(
-        _GLOBAL_OBJECT_LAYOUT_CACHE_NAMESPACE_8616,
+        INDEXED_GLOBAL_OBJECT_CACHE_NAMESPACE_8616,
         cache_key,
         timeout_seconds=lock_timeout,
     ):
-        persisted_layout = _load_global_object_layout_cache_8616(cache_key)
-        if persisted_layout is not None:
+        persisted = load_indexed_global_object_cache_8616(cache_key)
+        if persisted is not None:
             attach_project_global_object_layout_evidence_8616(
                 target_project,
-                persisted_layout,
+                persisted.layouts,
+            )
+            attach_project_bounded_global_object_ranges_8616(
+                target_project,
+                persisted.ranges,
             )
             return IndexedAliasProgramContextResult8616(
                 IndexedAliasProgramContextStatus8616.REUSED_PERSISTED_WIDENING,

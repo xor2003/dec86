@@ -79,7 +79,9 @@ from .lowering.segmented_global_loads import (
     DwordGlobalZeroTestEvidence8616,
     IndexedGlobalReadCarrierMaterializationRecord8616,
 )
+from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from .pipeline.errors import PipelineHardError
+from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .structuring.canonical_for_loops import canonical_loop_validation_shape_8616
 from .structuring.indexed_stack_ranges import (
     IndexedStackReadProof8616,
@@ -110,6 +112,10 @@ from .tail_validation_fingerprint import (
     _wrap_not_fingerprint,
     build_x86_16_contextual_call_fingerprints,
 )
+from .tail_validation_generation import (
+    TailValidationSummaryInputGeneration8616,
+    tail_validation_summary_input_generation_8616,
+)
 from .tail_validation_routing import build_tail_validation_family_routing
 from .tail_validation_selector_returns import collect_selector_return_fingerprints_8616
 from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
@@ -125,6 +131,7 @@ from .validation_calls import (
     FunctionParameterValidationReport8616,
     FunctionReturnClassValidationReport8616,
     RequiredCallsiteValidationReport8616,
+    build_required_call_validation_surface_8616,
     validate_call_argument_classes_8616,
     validate_call_interfaces_8616,
     validate_function_parameters_8616,
@@ -206,6 +213,7 @@ __all__ = [
     "callsite_resolved_indirect_helper_stack_delta_8616",
     "callsite_stack_arg_slot_alias_condition_delta_8616",
     "callsite_stack_precision_control_delta_8616",
+    "canonicalize_tail_validation_summary_field_values_8616",
     "check_x86_16_tail_validation_surface_consistency",
     "collect_x86_16_tail_validation_summary",
     "compare_x86_16_tail_validation_baseline",
@@ -1454,6 +1462,7 @@ class _TailValidationBoundaryContext8616:
     mode: str
     root_id: int
     boundary_fingerprint: str
+    summary_input_generation: TailValidationSummaryInputGeneration8616
     contextual_call_fingerprints: dict[int, str]
     contextual_call_summaries: dict[int, TailValidationValue]
     contextual_condition_fingerprints: dict[int, str]
@@ -1580,7 +1589,10 @@ def _clear_tail_validation_expr_fingerprint_cache_8616(project: TailValidationVa
         project._inertia_tail_validation_expr_fingerprint_cache_nodes_8616 = {}
 
 
-def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -> set[str]:
+def canonicalize_tail_validation_summary_field_values_8616(
+    field_name: str,
+    values: set[str],
+) -> set[str]:
     """Canonicalize condition/control-flow fingerprint strings for comparison.
 
     Delegates to two IR-layer normalizers:
@@ -2910,6 +2922,7 @@ def _tail_validation_summary_cache_store(codegen: TailValidationValue) -> dict[s
     if not isinstance(stats, dict):
         cache["stats"] = {"hits": 0, "misses": 0}
     cache.setdefault("entries", {})
+    cache.setdefault("boundary_entries", {})
     return cache
 
 
@@ -3340,6 +3353,10 @@ def fingerprint_x86_16_tail_validation_boundary(
             mode=mode,
             root_id=id(root),
             boundary_fingerprint=descriptor.fingerprint,
+            summary_input_generation=tail_validation_summary_input_generation_8616(
+                project,
+                codegen,
+            ),
             contextual_call_fingerprints=contextual_call_fingerprints,
             contextual_call_summaries=contextual_call_summaries,
             contextual_condition_fingerprints=contextual_condition_fingerprints,
@@ -5067,6 +5084,7 @@ def _tail_validation_headline_8616(severity: str, scanned_count: int, changed_fu
 
 def _def_use_call_output_definitions_8616(
     codegen: TailValidationValue,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> dict[int, tuple[DefUseCallOutputDefinition8616, ...]]:
     """Join lowering-owned output facts to exact current structured calls.
 
@@ -5081,6 +5099,8 @@ def _def_use_call_output_definitions_8616(
         root = codegen.cfunc.statements
     except AttributeError:
         return {}
+    if query_index is not None:
+        query_index.require_root(root)
     if not isinstance(summary_map, Mapping):
         return {}
     inventory = callsite_summary_inventory_8616(codegen)
@@ -5094,7 +5114,8 @@ def _def_use_call_output_definitions_8616(
     for fact in facts:
         facts_by_callsite.setdefault(fact.callsite_addr, []).append(fact)
     definitions: dict[int, tuple[DefUseCallOutputDefinition8616, ...]] = {}
-    for node in _iter_c_nodes_deep_8616(root):
+    nodes = query_index.nodes if query_index is not None else _iter_c_nodes_deep_8616(root)
+    for node in nodes:
         if not isinstance(node, CFunctionCall):
             continue
         call_node_id = id(node)
@@ -5241,10 +5262,13 @@ def _validate_final_control_flow_8616(
     project: TailValidationValue,
     codegen: TailValidationValue,
     root: object,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> ControlFlowValidationReport8616:
     """Join final AST reachability checks with binary-proven exit obligations."""
     structured = validate_structured_control_flow_8616(
         root,
+        query_index=query_index,
         loop_branch_facts=loop_branch_guard_facts_8616(codegen),
         condition_fingerprint=lambda condition: _expr_fingerprint(
             condition,
@@ -5258,6 +5282,7 @@ def _validate_final_control_flow_8616(
     branch_conditions = validate_materialized_branch_conditions_8616(
         codegen,
         root,
+        query_index=query_index,
         condition_fingerprint=lambda condition: _expr_fingerprint(
             condition,
             project,
@@ -5349,9 +5374,15 @@ def refresh_x86_16_final_semantic_validation_8616(
             required_memory_effects=required_memory_effect_report,
             software_interrupt_inputs=software_interrupt_input_report,
         )
+    query_index = StructuredAstQueryIndex8616.build(root)
+    required_call_surface = build_required_call_validation_surface_8616(
+        codegen,
+        root,
+        query_index=query_index,
+    )
     def_use_report = validate_structured_def_use_8616(
         root,
-        call_output_definitions=_def_use_call_output_definitions_8616(codegen),
+        call_output_definitions=_def_use_call_output_definitions_8616(codegen, query_index),
         indexed_stack_read_proofs=_def_use_indexed_stack_read_proofs_8616(
             codegen,
             root,
@@ -5364,20 +5395,52 @@ def refresh_x86_16_final_semantic_validation_8616(
         ),
         packed_status_flag_preservation=packed_status_flag_preservation_evidence_8616(project, codegen),
         include_virtual_carriers=include_virtual_carriers,
+        stack_variable_offset_resolver=lambda variable: machine_bp_offset_for_stack_variable_8616(
+            codegen,
+            variable,
+        ),
     )
-    required_call_report = validate_required_callsites_8616(codegen, root)
+    required_call_report = validate_required_callsites_8616(
+        codegen,
+        root,
+        query_index=query_index,
+        surface=required_call_surface,
+    )
     callsite_multiplicity_report = validate_required_callsite_multiplicity_8616(
         codegen,
         root,
     )
-    call_interface_report = validate_call_interfaces_8616(codegen, root)
-    call_argument_class_report = validate_call_argument_classes_8616(codegen, root)
+    call_interface_report = validate_call_interfaces_8616(
+        codegen,
+        root,
+        query_index=query_index,
+        surface=required_call_surface,
+    )
+    call_argument_class_report = validate_call_argument_classes_8616(
+        codegen,
+        root,
+        query_index=query_index,
+        surface=required_call_surface,
+    )
     function_parameter_report = validate_function_parameters_8616(project, codegen)
     function_return_class_report = validate_function_return_class_8616(project, codegen)
-    control_flow_report = _validate_final_control_flow_8616(project, codegen, root)
-    storage_identity_report = validate_storage_identities_8616(codegen, root)
+    control_flow_report = _validate_final_control_flow_8616(
+        project,
+        codegen,
+        root,
+        query_index=query_index,
+    )
+    storage_identity_report = validate_storage_identities_8616(
+        codegen,
+        root,
+        query_index=query_index,
+    )
     required_memory_effect_report = validate_required_memory_effects_8616(project, codegen, root)
-    software_interrupt_input_report = validate_software_interrupt_inputs_8616(codegen, root)
+    software_interrupt_input_report = validate_software_interrupt_inputs_8616(
+        codegen,
+        root,
+        query_index=query_index,
+    )
     report = X86_16FinalSemanticValidationReport8616(
         def_use=def_use_report,
         required_calls=required_call_report,
@@ -5444,13 +5507,73 @@ def collect_x86_16_tail_validation_summary(
         root = _codegen_root(codegen)
         if root is None:
             return X86_16TailValidationSummary((), (), (), (), (), (), (), ())
+
+        def _finish_summary(
+            summary: X86_16TailValidationSummary,
+            *,
+            cache_hit: bool,
+            cache_key: str,
+        ) -> X86_16TailValidationSummary:
+            if os.environ.get("INERTIA_DEBUG_TV_SUMMARY", "").strip().lower() in {"1", "true", "yes", "on"}:
+                import sys
+
+                sys.stderr.write(
+                    "[tail-validation-summary-debug] "
+                    f"cache_hit={cache_hit} "
+                    f"helpers={summary.helper_calls!r} "
+                    f"registers={summary.register_writes!r} "
+                    f"stack={summary.stack_writes!r} "
+                    f"globals={summary.global_writes!r} "
+                    f"segmented={summary.segmented_writes!r} "
+                    f"conditions={summary.conditions!r} "
+                    f"returns={summary.returns!r} "
+                    f"control={summary.control_flow_effects!r} "
+                    f"def_use={summary.def_use_issues!r} "
+                    f"required_calls={summary.missing_required_calls!r} "
+                    f"callsite_multiplicity={summary.callsite_multiplicity_issues!r} "
+                    f"control_flow={summary.control_flow_issues!r} "
+                    f"storage_identities={summary.storage_identity_issues!r}\n"
+                )
+                sys.stderr.flush()
+            stat_name = "hits" if cache_hit else "misses"
+            cache["stats"][stat_name] = int(cache["stats"].get(stat_name, 0) or 0) + 1
+            codegen._inertia_tail_validation_last_summary_cache_hit = cache_hit
+            codegen._inertia_tail_validation_last_summary_cache_key = cache_key
+            return summary
+
+        boundary_context = _consume_tail_validation_boundary_context_8616(
+            codegen,
+            mode=mode,
+            boundary_fingerprint=summary_boundary_fingerprint,
+            root=root,
+        )
+        boundary_entries = cache.get("boundary_entries")
+        boundary_cache_key = (
+            mode,
+            summary_boundary_fingerprint,
+            boundary_context.summary_input_generation,
+        ) if boundary_context is not None else None
+        if isinstance(boundary_entries, dict) and boundary_cache_key is not None:
+            boundary_cached_summary = boundary_entries.get(boundary_cache_key)
+            if isinstance(boundary_cached_summary, X86_16TailValidationSummary):
+                return _finish_summary(
+                    boundary_cached_summary,
+                    cache_hit=True,
+                    cache_key=f"tail_validation.summary.boundary:{summary_boundary_fingerprint}",
+                )
         # Observable fingerprints intentionally canonicalize structural detail,
         # but semantic guards depend on that detail. Include their current
         # results in cache identity so a rewritten definition or callsite cannot
         # reuse a stale failure/success from an observably equivalent tree.
+        query_index = StructuredAstQueryIndex8616.build(root)
+        required_call_surface = build_required_call_validation_surface_8616(
+            codegen,
+            root,
+            query_index=query_index,
+        )
         def_use_report = validate_structured_def_use_8616(
             root,
-            call_output_definitions=_def_use_call_output_definitions_8616(codegen),
+            call_output_definitions=_def_use_call_output_definitions_8616(codegen, query_index),
             indexed_stack_read_proofs=_def_use_indexed_stack_read_proofs_8616(
                 codegen,
                 root,
@@ -5462,24 +5585,52 @@ def collect_x86_16_tail_validation_summary(
                 codegen,
             ),
             packed_status_flag_preservation=packed_status_flag_preservation_evidence_8616(project, codegen),
+            stack_variable_offset_resolver=lambda variable: machine_bp_offset_for_stack_variable_8616(
+                codegen,
+                variable,
+            ),
         )
-        required_call_report = validate_required_callsites_8616(codegen, root)
+        required_call_report = validate_required_callsites_8616(
+            codegen,
+            root,
+            query_index=query_index,
+            surface=required_call_surface,
+        )
         callsite_multiplicity_report = validate_required_callsite_multiplicity_8616(
             codegen,
             root,
         )
-        call_interface_report = validate_call_interfaces_8616(codegen, root)
-        call_argument_class_report = validate_call_argument_classes_8616(codegen, root)
+        call_interface_report = validate_call_interfaces_8616(
+            codegen,
+            root,
+            query_index=query_index,
+            surface=required_call_surface,
+        )
+        call_argument_class_report = validate_call_argument_classes_8616(
+            codegen,
+            root,
+            query_index=query_index,
+            surface=required_call_surface,
+        )
         function_parameter_report = validate_function_parameters_8616(project, codegen)
         function_return_class_report = validate_function_return_class_8616(project, codegen)
-        control_flow_report = _validate_final_control_flow_8616(project, codegen, root)
-        storage_identity_report = validate_storage_identities_8616(codegen, root)
+        control_flow_report = _validate_final_control_flow_8616(
+            project,
+            codegen,
+            root,
+            query_index=query_index,
+        )
+        storage_identity_report = validate_storage_identities_8616(
+            codegen,
+            root,
+            query_index=query_index,
+        )
         descriptor = build_x86_16_validation_cache_descriptor(
             "tail_validation.summary",
             {
                 "mode": mode,
                 "boundary_fingerprint": summary_boundary_fingerprint,
-                "def_use_issues": def_use_report.issue_tokens(),
+                "def_use_issues": def_use_report.semantic_issue_tokens(),
                 "missing_required_calls": required_call_report.missing_calls,
                 "callsite_multiplicity_issues": callsite_multiplicity_report.issue_tokens(),
                 "call_interface_issues": call_interface_report.issue_tokens(),
@@ -5493,12 +5644,6 @@ def collect_x86_16_tail_validation_summary(
         entries = cache.get("entries", {})
 
         def _build_summary() -> X86_16TailValidationSummary:
-            boundary_context = _consume_tail_validation_boundary_context_8616(
-                codegen,
-                mode=mode,
-                boundary_fingerprint=summary_boundary_fingerprint,
-                root=root,
-            )
             helper_calls: list[str] = []
             register_writes: set[str] = set()
             stack_writes: set[str] = set()
@@ -5684,7 +5829,7 @@ def collect_x86_16_tail_validation_summary(
                     control_flow_effects=_sorted_unique(
                         _compact_tail_validation_observables_8616("control_flow_effects", control_flow_effects)
                     ),
-                    def_use_issues=def_use_report.issue_tokens(),
+                    def_use_issues=def_use_report.semantic_issue_tokens(),
                     missing_required_calls=required_call_report.missing_calls,
                     callsite_multiplicity_issues=callsite_multiplicity_report.issue_tokens(),
                     call_interface_issues=call_interface_report.issue_tokens(),
@@ -5714,34 +5859,15 @@ def collect_x86_16_tail_validation_summary(
         summary = cached["value"]
         if not isinstance(summary, X86_16TailValidationSummary):
             raise TypeError("tail-validation summary cache must contain X86_16TailValidationSummary")
-        if os.environ.get("INERTIA_DEBUG_TV_SUMMARY", "").strip().lower() in {"1", "true", "yes", "on"}:
-            import sys
-
-            sys.stderr.write(
-                "[tail-validation-summary-debug] "
-                f"cache_hit={bool(cached.get('cache_hit', False))} "
-                f"helpers={summary.helper_calls!r} "
-                f"registers={summary.register_writes!r} "
-                f"stack={summary.stack_writes!r} "
-                f"globals={summary.global_writes!r} "
-                f"segmented={summary.segmented_writes!r} "
-                f"conditions={summary.conditions!r} "
-                f"returns={summary.returns!r} "
-                f"control={summary.control_flow_effects!r} "
-                f"def_use={summary.def_use_issues!r} "
-                f"required_calls={summary.missing_required_calls!r} "
-                f"callsite_multiplicity={summary.callsite_multiplicity_issues!r} "
-                f"control_flow={summary.control_flow_issues!r} "
-                f"storage_identities={summary.storage_identity_issues!r}\n"
-            )
-            sys.stderr.flush()
-        if bool(cached["cache_hit"]):
-            cache["stats"]["hits"] = int(cache["stats"].get("hits", 0) or 0) + 1
-        else:
-            cache["stats"]["misses"] = int(cache["stats"].get("misses", 0) or 0) + 1
-        codegen._inertia_tail_validation_last_summary_cache_hit = bool(cached["cache_hit"])
-        codegen._inertia_tail_validation_last_summary_cache_key = cached["cache_key"]
-        return summary
+        if isinstance(boundary_entries, dict) and boundary_cache_key is not None:
+            if len(boundary_entries) >= 32:
+                boundary_entries.pop(next(iter(boundary_entries)))
+            boundary_entries[boundary_cache_key] = summary
+        return _finish_summary(
+            summary,
+            cache_hit=bool(cached["cache_hit"]),
+            cache_key=str(cached["cache_key"]),
+        )
 
     return _impl()
 
@@ -5892,10 +6018,10 @@ def compare_x86_16_tail_validation_summaries(
             if missing_callsite_fingerprints:
                 removed = tuple(dict.fromkeys(tuple(removed) + missing_callsite_fingerprints))
         else:
-            before_values = _canonicalize_summary_field_values_8616(
+            before_values = canonicalize_tail_validation_summary_field_values_8616(
                 field_name, _boundary_set_8616(before_field)
             )
-            after_values = _canonicalize_summary_field_values_8616(
+            after_values = canonicalize_tail_validation_summary_field_values_8616(
                 field_name, _boundary_set_8616(after_field)
             )
             added = tuple(sorted(after_values - before_values))
@@ -6370,10 +6496,10 @@ def _suppress_if_else_inverse_guard_structuring_delta_8616(diff: dict[str, TailV
     if not inverted_condition:
         return
 
-    before_conditions = _canonicalize_summary_field_values_8616(
+    before_conditions = canonicalize_tail_validation_summary_field_values_8616(
         "conditions", {str(value) for value in before.get("conditions", ()) or ()}
     )
-    after_conditions = _canonicalize_summary_field_values_8616(
+    after_conditions = canonicalize_tail_validation_summary_field_values_8616(
         "conditions", {str(value) for value in after.get("conditions", ()) or ()}
     )
     if removed_condition not in before_conditions or removed_condition in after_conditions:
@@ -6411,10 +6537,10 @@ def _suppress_if_else_inverse_guard_structuring_delta_8616(diff: dict[str, TailV
     if set(control_added) not in ({expected_added_body}, {f"if:{inverted_condition}", expected_added_body}):
         return
 
-    before_control = _canonicalize_summary_field_values_8616(
+    before_control = canonicalize_tail_validation_summary_field_values_8616(
         "control_flow_effects", {str(value) for value in before.get("control_flow_effects", ()) or ()}
     )
-    after_control = _canonicalize_summary_field_values_8616(
+    after_control = canonicalize_tail_validation_summary_field_values_8616(
         "control_flow_effects", {str(value) for value in after.get("control_flow_effects", ()) or ()}
     )
     if expected_added_body not in after_control:

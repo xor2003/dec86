@@ -56,6 +56,8 @@ class StackIrsb(Protocol):
 class StackLifterInstruction(Protocol):
     """Control-flow jump surface exposed by the x86 lifter instruction."""
 
+    addr: int
+
     def jump(
         self,
         condition: object,
@@ -617,11 +619,17 @@ def _branch_rel(
 ) -> object | None:
     if hasattr(condition, "cast_to"):
         condition = cast(StackExpr, condition).cast_to(Type.int_1)
-    target = (
-        (emu.get_gpreg(reg16_t.IP) if target_width_bits == 16 else emu.get_gpreg(reg32_t.EIP))
-        + emu.constant(displacement, Type.int_16 if target_width_bits == 16 else Type.int_32)
-        + emu.constant(instruction_size, Type.int_16 if target_width_bits == 16 else Type.int_32)
-    )
+    if isinstance(displacement, int):
+        # Relative branch destinations are instruction facts, not runtime IP
+        # reads. Keep the loader's linear address so CFG recovery can identify
+        # direct edges in DOS images loaded above the first 64 KiB.
+        target: object = emu.lifter_instruction.addr + instruction_size + displacement
+    else:
+        target = (
+            (emu.get_gpreg(reg16_t.IP) if target_width_bits == 16 else emu.get_gpreg(reg32_t.EIP))
+            + emu.constant(displacement, Type.int_16 if target_width_bits == 16 else Type.int_32)
+            + emu.constant(instruction_size, Type.int_16 if target_width_bits == 16 else Type.int_32)
+        )
     if isinstance(condition, bool):
         if not condition:
             return None

@@ -17,7 +17,10 @@ from typing import Protocol, cast
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
 
+from ..alias.stack_memory_ssa_contracts import StackMemorySSAAliasArtifact8616
 from ..analysis.stack_frame_ir import FrameAccessArtifact, FrameCoordinateStatus8616
+from ..ir.core import MemSpace
+from ..ir.logical_memory_contracts import IRMemoryAccessKind8616
 from .stack_lowering_from_facts import materialize_stack_cvar_at_offset_from_facts_8616
 from .stack_variable_coordinates import stack_variable_coordinate_registry_8616
 
@@ -145,8 +148,62 @@ def resolve_stack_word_load_projection_8616(
     )
 
 
+def resolve_logical_stack_word_owner_8616(
+    codegen: object,
+    source_alias: StackMemorySSAAliasArtifact8616,
+    low: structured_c.CVariable,
+    high: object,
+) -> StackWordLoadProjectionResult8616:
+    """Resolve an instructionless same-owner word from exact logical Alias IR."""
+    variable = low.variable
+    if (
+        not isinstance(high, structured_c.CVariable)
+        or high is not low
+        or not isinstance(variable, SimStackVariable)
+        or high.variable is not variable
+    ):
+        return StackWordLoadProjectionResult8616(
+            StackWordLoadProjectionStatus8616.VARIABLE_MISMATCH,
+            detail="byte views are not the same canonical stack CVariable",
+        )
+    projection = stack_variable_coordinate_registry_8616(codegen).for_variable(variable)
+    if (
+        projection is None
+        or projection.size != 2
+        or projection.cvar is not low
+        or variable.size != 2
+    ):
+        return StackWordLoadProjectionResult8616(
+            StackWordLoadProjectionStatus8616.PROJECTION_MISMATCH,
+            detail="same-owner byte views lack one exact two-byte stack projection",
+        )
+    matches = tuple(
+        identity
+        for identity in source_alias.logical_storage_identities
+        if identity.source.kind is IRMemoryAccessKind8616.READ
+        and identity.address.space is MemSpace.SS
+        and identity.address.base == ("bp",)
+        and identity.address.offset == projection.bp_offset
+        and identity.address.size == projection.size
+    )
+    if not source_alias.logical_storage_complete or len(matches) != 1:
+        return StackWordLoadProjectionResult8616(
+            StackWordLoadProjectionStatus8616.PROJECTION_MISMATCH,
+            detail=(
+                "logical Alias storage is incomplete"
+                if not source_alias.logical_storage_complete
+                else f"expected one logical word read, found {len(matches)}"
+            ),
+        )
+    return StackWordLoadProjectionResult8616(
+        StackWordLoadProjectionStatus8616.EXISTING,
+        low,
+    )
+
+
 __all__ = [
     "StackWordLoadProjectionResult8616",
     "StackWordLoadProjectionStatus8616",
+    "resolve_logical_stack_word_owner_8616",
     "resolve_stack_word_load_projection_8616",
 ]

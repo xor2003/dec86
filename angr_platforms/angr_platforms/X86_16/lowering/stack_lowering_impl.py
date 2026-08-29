@@ -26,12 +26,17 @@ from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
+from .call_return_stack_bindings import bind_call_return_stack_assignment_8616
 from .segmented_lowering import _SegmentedAccess
 from .stack_c_ast_matching import _match_bp_stack_dereference_8616
 from .stack_variable_binding import (
     StackBaseBpBiasEvidence8616,
     StackVariableBinding,
     stack_binding_from_tags_8616,
+)
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    stack_cvar_for_machine_bp_range_8616,
 )
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -1564,6 +1569,28 @@ def _canonicalize_stack_cvar_expr(
                 if isinstance(offset, int):
                     canonical_offset = _canonical_stack_offset_8616(offset)
                     exact_binding = stack_binding_from_tags_8616(expr.tags)
+                    if exact_binding is not None:
+                        projected = stack_cvar_for_machine_bp_range_8616(
+                            codegen,
+                            exact_binding.bp_offset,
+                            exact_binding.size,
+                        )
+                        if isinstance(projected, structured_c.CVariable):
+                            active_expr_ids.discard(expr_id)
+                            return projected
+                    machine_bp_offset = machine_bp_offset_for_stack_variable_8616(
+                        codegen,
+                        variable,
+                    )
+                    if isinstance(machine_bp_offset, int) and isinstance(variable.size, int):
+                        projected = stack_cvar_for_machine_bp_range_8616(
+                            codegen,
+                            machine_bp_offset,
+                            variable.size,
+                        )
+                        if isinstance(projected, structured_c.CVariable) and projected is not expr:
+                            active_expr_ids.discard(expr_id)
+                            return projected
                     if isinstance(canonical_offset, int) and exact_binding is None:
                         rebased = _resolve_rebased_stack_cvar_8616(canonical_offset, variable.size)
                         if isinstance(rebased, structured_c.CVariable):
@@ -1961,6 +1988,10 @@ def _canonicalize_stack_cvars(
 
     def transform(node: object) -> object:
         nonlocal changed
+        call_return_binding = bind_call_return_stack_assignment_8616(node, codegen)
+        if call_return_binding.changed:
+            changed = True
+            return call_return_binding.node
         canonical = canonicalize_stack_cvar_expr(node, codegen, analysis_context=analysis_context)
         if canonical is not node:
             changed = True

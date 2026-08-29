@@ -32,9 +32,16 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CVariableField,
 )
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
+from angr.sim_variable import (
+    SimMemoryVariable,
+    SimRegisterVariable,
+    SimStackVariable,
+    SimTemporaryVariable,
+    SimVariable,
+)
 
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from ...lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from .dce_purity import PURE_LOCAL_BINARY_OPS_8616, PURE_LOCAL_UNARY_OPS_8616
 from .dce_walk import (
     DceValuePurity8616,
@@ -128,11 +135,12 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             return default
 
     def _var_key(node: CVariable) -> tuple[str, int | str]:
+        """Return a liveness key in the Alias-owned machine-BP coordinate."""
         var = _dynamic_dce_getattr_8616(node, "variable", None)
         if var is None:
             return ("node", id(node))
         if isinstance(var, SimStackVariable) and _dynamic_dce_getattr_8616(var, "base", None) == "bp":
-            offset = _dynamic_dce_getattr_8616(var, "offset", None)
+            offset = machine_bp_offset_for_stack_variable_8616(codegen, var)
             if isinstance(offset, int):
                 return ("stack", int(offset))
         name = _dynamic_dce_getattr_8616(var, "name", None)
@@ -443,7 +451,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 return False
             if isinstance(node, CVariable):
                 var = _dynamic_dce_getattr_8616(node, "variable", None)
-                if isinstance(var, (SimStackVariable, SimRegisterVariable)):
+                if isinstance(var, (SimStackVariable, SimRegisterVariable, SimTemporaryVariable)):
                     continue
                 if isinstance(var, SimMemoryVariable):
                     return False
@@ -556,7 +564,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 return _expr_value_purity_8616(_dynamic_dce_getattr_8616(expr, "expr", None), active)
             if isinstance(expr, CVariable):
                 var = _dynamic_dce_getattr_8616(expr, "variable", None)
-                if isinstance(var, (SimStackVariable, SimRegisterVariable)):
+                if isinstance(var, (SimStackVariable, SimRegisterVariable, SimTemporaryVariable)):
                     return DceValuePurity8616.LOCAL_VALUE
                 if isinstance(var, SimMemoryVariable):
                     return DceValuePurity8616.GLOBAL_MEMORY_READ
@@ -1081,10 +1089,11 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
     ) -> dict[int, frozenset[tuple[str, int | str]]]:
         """Return reads that remain live across each structured loop backedge.
 
-        A write near the end of a loop body may feed a read near the beginning
-        of the next iteration.  Straight-line backward liveness cannot see
-        that edge.  Seed every block owned by the loop with the loop's reads;
-        this conservatively preserves such writes without inventing data flow.
+        A source variable written near the end of a loop body may feed a read
+        near the beginning of the next iteration. Straight-line backward
+        liveness cannot see that edge. AIL virtual values are SSA identities,
+        however, and cannot be loop-carried through a same-identity backedge;
+        preserving them here retains dead post-materialization carrier cycles.
         """
         mutable_reads: dict[int, set[tuple[str, int | str]]] = {}
         for container in _iter_statement_blocks(root):
@@ -1101,7 +1110,9 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                     for body_stmt in tuple(_dynamic_dce_getattr_8616(body_block, "statements", ()) or ()):
                         loop_reads.update(_collect_stmt_reads(body_stmt))
                 for body_block in body_blocks:
-                    mutable_reads.setdefault(id(body_block), set()).update(loop_reads)
+                    mutable_reads.setdefault(id(body_block), set()).update(
+                        key for key in loop_reads if not key[0].startswith("dirty")
+                    )
         return {block_id: frozenset(reads) for block_id, reads in mutable_reads.items()}
 
     def _collect_observable_read_counts_8616(root: object) -> dict[tuple[str, int | str], int]:
@@ -1194,13 +1205,14 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
         return keys, name_keys
 
     def _stack_offset_from_plain_lvalue_8616(lhs: object) -> int | None:
+        """Return the proven machine-BP offset for a plain stack lvalue."""
         lhs_var = _lhs_variable_8616(lhs)
         if lhs_var is None:
             return None
         variable = _dynamic_dce_getattr_8616(lhs_var, "variable", None)
         if not isinstance(variable, SimStackVariable):
             return None
-        offset = _dynamic_dce_getattr_8616(variable, "offset", None)
+        offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
         return int(offset) if isinstance(offset, int) else None
 
     def _has_direct_stack_write_evidence_for_offset_8616(offset: int | None) -> bool:
@@ -1400,25 +1412,29 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 name = cur if isinstance(cur, str) else _dynamic_dce_getattr_8616(cur, "name", None)
                 if isinstance(name, str) and name:
                     protected.add(("name", name))
-        for attr, offset_key in (
-            ("_inertia_direct_stack_move_evidence_8616", "dst_offset"),
-        ):
-            evidence = _dynamic_dce_getattr_8616(codegen, attr, ()) or ()
-            for item in evidence:
-                pairs: tuple[object, ...] = ()
-                if isinstance(item, dict):
-                    pairs = tuple(item.items())
-                elif isinstance(item, (tuple, list)):
-                    pairs = tuple(item)
-                for pair in pairs:
-                    if not isinstance(pair, (tuple, list)) or len(pair) != 2:
-                        continue
-                    key: object
-                    value: object
-                    key, value = pair
-                    if key == offset_key and isinstance(value, int):
-                        protected.add(("stack", int(value)))
         return protected
+
+    def _direct_stack_move_evidence_pairs_8616() -> frozenset[tuple[int, int]]:
+        """Return exact machine-BP and instruction identities for proven moves."""
+        pairs: set[tuple[int, int]] = set()
+        evidence = _dynamic_dce_getattr_8616(
+            codegen,
+            "_inertia_direct_stack_move_evidence_8616",
+            (),
+        ) or ()
+        for item in evidence:
+            values = (
+                dict(item.items())
+                if isinstance(item, dict)
+                else dict(item)
+                if isinstance(item, (tuple, list))
+                else {}
+            )
+            offset = values.get("dst_offset")
+            ins_addr = values.get("ins_addr")
+            if isinstance(offset, int) and isinstance(ins_addr, int):
+                pairs.add((offset, ins_addr))
+        return frozenset(pairs)
 
     def _direct_stack_update_evidence_pairs_8616() -> frozenset[tuple[int, int]]:
         pairs: set[tuple[int, int]] = set()
@@ -1432,7 +1448,19 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 pairs.add((offset, ins_addr))
         return frozenset(pairs)
 
+    direct_stack_move_evidence_pairs = _direct_stack_move_evidence_pairs_8616()
     direct_stack_update_evidence_pairs = _direct_stack_update_evidence_pairs_8616()
+
+    def _stmt_is_direct_stack_move_evidence_8616(stmt: object, lhs: object) -> bool:
+        """Return whether a statement materializes one exact proven stack move."""
+        offset = _stack_offset_from_plain_lvalue_8616(lhs)
+        if not isinstance(offset, int):
+            return False
+        for node in _iter_with_root(stmt):
+            tags = _dynamic_dce_getattr_8616(node, "tags", None)
+            if isinstance(tags, dict) and (offset, tags.get("ins_addr")) in direct_stack_move_evidence_pairs:
+                return True
+        return False
 
     def _stmt_is_direct_stack_update_evidence_8616(stmt: object, lhs: object) -> bool:
         offset = _stack_offset_from_plain_lvalue_8616(lhs)
@@ -1615,6 +1643,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
         standalone_expression_payload=_standalone_expression_payload_8616,
         stmt_is_consumed_boolean_carrier=_stmt_is_consumed_boolean_carrier_8616,
         stmt_is_consumed_call_cleanup_carrier=_stmt_is_consumed_call_cleanup_carrier_8616,
+        stmt_is_direct_stack_move_evidence=_stmt_is_direct_stack_move_evidence_8616,
         stmt_is_direct_stack_update_evidence=_stmt_is_direct_stack_update_evidence_8616,
     )
 

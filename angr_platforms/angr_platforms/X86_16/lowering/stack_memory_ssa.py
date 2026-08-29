@@ -224,7 +224,6 @@ def lower_x86_16_stack_memory_ssa_alias_artifact(
             "stack-memory SSA Alias artifact is incomplete before Lowering",
             layer="stack_lowering",
         )
-    reset_stack_variable_coordinate_registry_8616(codegen)
     object_widening: StackMemoryObjectWideningArtifact8616 | None = None
     if source.accesses or source.logical_accesses or source.logical_refusals:
         try:
@@ -291,6 +290,8 @@ def lower_x86_16_stack_memory_ssa_alias_artifact(
             for candidate in wide_stack.candidates
         )
         boundary._inertia_wide_carry_borrow_stack_artifact = wide_stack
+    if candidates:
+        reset_stack_variable_coordinate_registry_8616(codegen)
     boundary._inertia_semantic_alias_facts = [candidate.storage for candidate in candidates]
     result = (
         lower_stack_accesses_from_alias_facts_8616(

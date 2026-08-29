@@ -15,7 +15,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -56,6 +56,7 @@ __all__ = [
     "DefUseStorageKey8616",
     "DefUseStorageKind8616",
     "DefUseValidationReport8616",
+    "StackVariableOffsetResolver8616",
     "validate_structured_def_use_8616",
 ]
 
@@ -64,6 +65,14 @@ __all__ = [
 # the third-party AST boundary; mypyc cannot import a dataclass field typed as
 # the builtin ``object`` in this package.
 type OpaqueValidationNode8616 = Any
+
+
+class StackVariableOffsetResolver8616(Protocol):
+    """Resolve one angr stack variable to its proven machine-BP offset."""
+
+    def __call__(self, variable: SimStackVariable, /) -> int | None:
+        """Return the machine-BP offset, or refuse an unresolved identity."""
+        ...
 
 
 class DefUseStorageKind8616(StrEnum):
@@ -163,6 +172,10 @@ class DefUseIssue8616:
         """Return a deterministic validation fingerprint for this issue."""
         return f"uninitialized-read:{self.storage.token()}:{self.context}"
 
+    def semantic_token(self) -> str:
+        """Return path-independent storage identity for semantic comparison."""
+        return f"uninitialized-read:{self.storage.token()}"
+
 
 @dataclass(frozen=True, order=True, slots=True)
 class DefUseCallOutputDefinition8616:
@@ -204,6 +217,10 @@ class DefUseValidationReport8616:
         """Return stable issue fingerprints for tail-validation summaries."""
         return tuple(issue.token() for issue in self.issues)
 
+    def semantic_issue_tokens(self) -> tuple[str, ...]:
+        """Return issue identities without representation-specific AST paths."""
+        return tuple(issue.semantic_token() for issue in self.issues)
+
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible closed-loop evidence report."""
         return {
@@ -241,6 +258,7 @@ def _stack_storage_key_8616(
     node: object,
     *,
     include_arguments: bool = False,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return an exact BP-relative value view evaluated by one C variable."""
     if not isinstance(node, CVariable):
@@ -254,7 +272,12 @@ def _stack_storage_key_8616(
         variable = node.variable
     if not isinstance(variable, SimStackVariable):
         return None
-    if not isinstance(variable.offset, int) or (variable.offset >= 0 and not include_arguments):
+    offset = (
+        stack_variable_offset_resolver(variable)
+        if stack_variable_offset_resolver is not None
+        else variable.offset
+    )
+    if not isinstance(offset, int) or (offset >= 0 and not include_arguments):
         return None
     storage_width = variable.size if isinstance(variable.size, int) and variable.size > 0 else 1
     width = storage_width
@@ -267,7 +290,7 @@ def _stack_storage_key_8616(
     name = variable.name if isinstance(variable.name, str) else ""
     return DefUseStorageKey8616(
         kind=DefUseStorageKind8616.STACK_LOCAL,
-        offset=variable.offset,
+        offset=offset,
         width=width,
         display_name=name,
     )
@@ -290,6 +313,7 @@ def _indexed_stack_storage_key_8616(
     node: object,
     *,
     dynamic_array_as_object: bool,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return the exact element or conservative full-object stack identity."""
     if not isinstance(node, CIndexedVariable):
@@ -305,11 +329,16 @@ def _indexed_stack_storage_key_8616(
         variable = base.variable
     if (
         not isinstance(variable, SimStackVariable)
-        or not isinstance(variable.offset, int)
-        or variable.offset >= 0
         or not isinstance(variable.size, int)
         or variable.size <= 0
     ):
+        return None
+    offset = (
+        stack_variable_offset_resolver(variable)
+        if stack_variable_offset_resolver is not None
+        else variable.offset
+    )
+    if not isinstance(offset, int) or offset >= 0:
         return None
     name = variable.name if isinstance(variable.name, str) else ""
     element_width = _type_width_bytes_8616(node.type)
@@ -337,7 +366,7 @@ def _indexed_stack_storage_key_8616(
         if dynamic_array_as_object:
             return DefUseStorageKey8616(
                 kind=DefUseStorageKind8616.STACK_LOCAL,
-                offset=variable.offset,
+                offset=offset,
                 width=object_width or variable.size,
                 definition_trackable=False,
                 display_name=name,
@@ -354,21 +383,20 @@ def _indexed_stack_storage_key_8616(
             if dynamic_array_as_object:
                 return DefUseStorageKey8616(
                     kind=DefUseStorageKind8616.STACK_LOCAL,
-                    offset=variable.offset,
+                    offset=offset,
                     width=object_width or variable.size,
                     definition_trackable=False,
                     display_name=name,
                 )
             return None
-        offset = variable.offset + relative_offset
+        offset = offset + relative_offset
         width = element_width
     elif dynamic_array_as_object and object_width is not None:
-        offset = variable.offset
         width = object_width
     elif dynamic_array_as_object:
         return DefUseStorageKey8616(
             kind=DefUseStorageKind8616.STACK_LOCAL,
-            offset=variable.offset,
+            offset=offset,
             width=object_width or variable.size,
             definition_trackable=False,
             display_name=name,
@@ -435,15 +463,20 @@ def _storage_key_8616(
     *,
     dynamic_array_as_object: bool = False,
     include_virtual_carriers: bool = False,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return one exact architectural or opt-in virtual storage identity."""
     indexed_key = _indexed_stack_storage_key_8616(
         node,
         dynamic_array_as_object=dynamic_array_as_object,
+        stack_variable_offset_resolver=stack_variable_offset_resolver,
     )
     if indexed_key is not None:
         return indexed_key
-    stack_key = _stack_storage_key_8616(node)
+    stack_key = _stack_storage_key_8616(
+        node,
+        stack_variable_offset_resolver=stack_variable_offset_resolver,
+    )
     if stack_key is not None:
         return stack_key
     register_key = _register_storage_key_8616(node, segment_register_offsets)
@@ -467,9 +500,15 @@ def _storage_key_8616(
 def _predicate_storage_key_8616(
     node: object,
     segment_register_offsets: frozenset[int],
+    *,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return exact stack-argument, local, or register identity for a predicate."""
-    stack_key = _stack_storage_key_8616(node, include_arguments=True)
+    stack_key = _stack_storage_key_8616(
+        node,
+        include_arguments=True,
+        stack_variable_offset_resolver=stack_variable_offset_resolver,
+    )
     if stack_key is not None:
         return stack_key
     return _register_storage_key_8616(node, segment_register_offsets)
@@ -522,6 +561,7 @@ def _value_read_keys_8616(
     segment_register_offsets: frozenset[int],
     *,
     include_virtual_carriers: bool = False,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> tuple[_DefUseValueRead8616, ...]:
     """Collect tracked storage views whose stored values are evaluated."""
     if expr is None:
@@ -566,6 +606,7 @@ def _value_read_keys_8616(
             segment_register_offsets,
             dynamic_array_as_object=True,
             include_virtual_carriers=include_virtual_carriers,
+            stack_variable_offset_resolver=stack_variable_offset_resolver,
         )
         if key is None:
             continue
@@ -598,6 +639,8 @@ def _storage_bytes_8616(key: DefUseStorageKey8616) -> frozenset[_DefUseStorageBy
 def _predicate_fact_8616(
     expression: object,
     segment_register_offsets: frozenset[int],
+    *,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> _DefUsePredicate8616 | None:
     """Build an exact non-text predicate identity from structured C expressions."""
     active: set[int] = set()
@@ -607,7 +650,11 @@ def _predicate_fact_8616(
         if node_id in active:
             return None
         if isinstance(node, CVariable):
-            key = _predicate_storage_key_8616(node, segment_register_offsets)
+            key = _predicate_storage_key_8616(
+                node,
+                segment_register_offsets,
+                stack_variable_offset_resolver=stack_variable_offset_resolver,
+            )
             if key is None or not key.definition_trackable:
                 return None
             return (
@@ -757,6 +804,8 @@ def _invalidate_call_affected_guards_8616(
     expression: object,
     state: _DefUseFlowState8616,
     segment_register_offsets: frozenset[int],
+    *,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> None:
     """Invalidate guards when a call can overwrite their predicate storage."""
     value_nodes = _iter_value_nodes_8616(expression)
@@ -766,7 +815,11 @@ def _invalidate_call_affected_guards_8616(
     for node in value_nodes:
         if not isinstance(node, CUnaryOp) or node.op != "Reference":
             continue
-        key = _predicate_storage_key_8616(node.operand, segment_register_offsets)
+        key = _predicate_storage_key_8616(
+            node.operand,
+            segment_register_offsets,
+            stack_variable_offset_resolver=stack_variable_offset_resolver,
+        )
         if key is not None:
             affected.update(_storage_bytes_8616(key))
     for predicate in state.guarded:
@@ -821,6 +874,7 @@ def validate_structured_def_use_8616(
     entry_defined_segment_register_offsets: frozenset[int] = frozenset(),
     packed_status_flag_preservation: PackedStatusFlagPreservationEvidence8616 | None = None,
     include_virtual_carriers: bool = False,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseValidationReport8616:
     """Validate definitely assigned stack and register reads in structured C.
 
@@ -848,10 +902,22 @@ def validate_structured_def_use_8616(
         context: str,
         architectural_live_in_register_offsets: frozenset[int] = frozenset(),
     ) -> None:
+        try:
+            instruction_address = expr.tags.get("ins_addr")
+        except AttributeError:
+            instruction_address = None
+        if (
+            packed_status_flag_preservation is not None
+            and packed_status_flag_preservation.covers_instruction(instruction_address)
+        ):
+            architectural_live_in_register_offsets |= frozenset(
+                {packed_status_flag_preservation.register_offset}
+            )
         reads = _value_read_keys_8616(
             expr,
             segment_register_offsets,
             include_virtual_carriers=include_virtual_carriers,
+            stack_variable_offset_resolver=stack_variable_offset_resolver,
         )
         report.raw_fact_count += len(reads)
         report.normalized_fact_count += len(reads)
@@ -915,6 +981,7 @@ def validate_structured_def_use_8616(
             expr,
             state,
             segment_register_offsets,
+            stack_variable_offset_resolver=stack_variable_offset_resolver,
         )
         for value_node in _iter_value_nodes_8616(expr):
             if not isinstance(value_node, CFunctionCall):
@@ -976,7 +1043,11 @@ def validate_structured_def_use_8616(
                 architectural_live_in_register_offsets=preservation_offsets,
             )
             _apply_call_output_definitions(node.rhs, state, context=f"{context}.rhs")
-            predicate_lhs_key = _predicate_storage_key_8616(node.lhs, segment_register_offsets)
+            predicate_lhs_key = _predicate_storage_key_8616(
+                node.lhs,
+                segment_register_offsets,
+                stack_variable_offset_resolver=stack_variable_offset_resolver,
+            )
             if predicate_lhs_key is not None:
                 _invalidate_guarded_definitions_8616(
                     state,
@@ -986,6 +1057,7 @@ def validate_structured_def_use_8616(
                 node.lhs,
                 segment_register_offsets,
                 include_virtual_carriers=include_virtual_carriers,
+                stack_variable_offset_resolver=stack_variable_offset_resolver,
             )
             if lhs_key is None:
                 _check_lvalue_reads(node.lhs, state.defined, context=f"{context}.lhs")
@@ -1011,7 +1083,11 @@ def validate_structured_def_use_8616(
             branch_predicates: list[_DefUsePredicate8616 | None] = []
             for index, (condition, branch) in enumerate(node.condition_and_nodes):
                 _check_reads(condition, state.defined, context=f"{context}.if{index}.condition")
-                predicate = _predicate_fact_8616(condition, segment_register_offsets)
+                predicate = _predicate_fact_8616(
+                    condition,
+                    segment_register_offsets,
+                    stack_variable_offset_resolver=stack_variable_offset_resolver,
+                )
                 branch_predicates.append(predicate)
                 branch_incoming = state.copy()
                 _activate_guarded_definitions_8616(branch_incoming, predicate)
@@ -1053,7 +1129,11 @@ def validate_structured_def_use_8616(
             body_incoming = initialized.copy()
             _activate_guarded_definitions_8616(
                 body_incoming,
-                _predicate_fact_8616(node.condition, segment_register_offsets),
+                _predicate_fact_8616(
+                    node.condition,
+                    segment_register_offsets,
+                    stack_variable_offset_resolver=stack_variable_offset_resolver,
+                ),
             )
             break_exit_scopes.append([])
             try:
@@ -1071,7 +1151,11 @@ def validate_structured_def_use_8616(
             body_incoming = state.copy()
             _activate_guarded_definitions_8616(
                 body_incoming,
-                _predicate_fact_8616(node.condition, segment_register_offsets),
+                _predicate_fact_8616(
+                    node.condition,
+                    segment_register_offsets,
+                    stack_variable_offset_resolver=stack_variable_offset_resolver,
+                ),
             )
             break_exit_states: list[_DefUseFlowState8616] = []
             break_exit_scopes.append(break_exit_states)

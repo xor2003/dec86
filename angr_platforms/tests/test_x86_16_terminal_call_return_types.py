@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeShort
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
@@ -10,6 +11,10 @@ from angr_platforms.X86_16.callsite_summary import (
     record_caller_return_use_evidence_8616,
 )
 from angr_platforms.X86_16.lowering import terminal_call_return_types
+from angr_platforms.X86_16.lowering.authoritative_function_prototypes import (
+    authoritative_function_prototype_8616,
+    capture_authoritative_function_prototype_8616,
+)
 from angr_platforms.X86_16.lowering.terminal_call_return_types import (
     CalleeResultContract8616,
     TerminalCallReturnTypeSource8616,
@@ -91,13 +96,21 @@ def _project_and_function(
         graph=_Graph((node,), {0x1000: ()}),
         prototype=None,
         calling_convention=None,
+        info={},
         is_prototype_guessed=True,
+        prototype_source=PrototypeSource.NONE,
     )
     functions = {0x1000: function}
     functions[0x2000] = SimpleNamespace(
         addr=0x2000,
+        info={},
         is_prototype_guessed=callee_prototype is None,
         prototype=callee_prototype,
+        prototype_source=(
+            PrototypeSource.CCA_DECOMPILER
+            if callee_prototype is not None
+            else PrototypeSource.NONE
+        ),
     )
     project = SimpleNamespace(
         arch=arch,
@@ -199,6 +212,57 @@ def test_terminal_call_return_type_uses_proven_callee_ax_word_for_observed_resul
     assert result.evidence.sources == (TerminalCallReturnTypeSource8616.CALLEE_TERMINAL_AX_WORD,)
     assert isinstance(function.prototype.returnty, SimTypeShort)
     assert function.prototype.returnty.signed is False
+
+
+def test_terminal_call_return_type_replaces_inferred_void_snapshot() -> None:
+    arch = Arch86_16()
+    callee_prototype = SimTypeFunction([], SimTypeShort(False)).with_arch(arch)
+    project, function = _project_and_function(
+        post_call_instructions=(_Insn(0x1003, "ret"),),
+        callee_prototype=callee_prototype,
+    )
+    function.prototype = SimTypeFunction(
+        [],
+        SimTypeBottom(label="void"),
+    ).with_arch(arch)
+    function.is_prototype_guessed = False
+    function.prototype_source = PrototypeSource.CCA_DECOMPILER
+    capture_authoritative_function_prototype_8616(project, function)
+    _record_used_result(project)
+
+    result = apply_terminal_call_return_type_evidence_8616(project, function)
+
+    assert result.changed
+    assert result.evidence.materialized_count == 1
+    assert isinstance(function.prototype.returnty, SimTypeShort)
+    assert function.prototype_source is PrototypeSource.CCA_DECOMPILER
+    authoritative = authoritative_function_prototype_8616(
+        project,
+        function,
+        argument_count=0,
+    )
+    assert authoritative is not None
+    assert isinstance(authoritative.returnty, SimTypeShort)
+
+
+def test_terminal_call_return_type_preserves_explicit_void_prototype() -> None:
+    arch = Arch86_16()
+    callee_prototype = SimTypeFunction([], SimTypeShort(False)).with_arch(arch)
+    project, function = _project_and_function(
+        post_call_instructions=(_Insn(0x1003, "ret"),),
+        callee_prototype=callee_prototype,
+    )
+    explicit = SimTypeFunction([], SimTypeBottom(label="void")).with_arch(arch)
+    function.prototype = explicit
+    function.is_prototype_guessed = False
+    function.prototype_source = PrototypeSource.SIGNATURES
+    _record_used_result(project)
+
+    result = apply_terminal_call_return_type_evidence_8616(project, function)
+
+    assert not result.changed
+    assert result.evidence.materialized_count == 0
+    assert function.prototype is explicit
 
 
 def test_terminal_call_return_type_refuses_callee_dx_ax_as_word(monkeypatch) -> None:

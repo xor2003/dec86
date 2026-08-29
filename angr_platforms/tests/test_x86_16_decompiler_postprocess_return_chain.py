@@ -440,6 +440,38 @@ def test_prune_duplicate_empty_return_accepts_single_statement_wrapper_before_cf
     assert codegen.cfunc.statements.statements[0] is not wrapped_empty_return
 
 
+def test_duplicate_return_guard_probe_uses_value_only_cfg_evidence(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    root = CStatements(statements=[], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_return_values_8616",
+        lambda _project, _codegen: [1],
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_last_ax_return_value_8616",
+        lambda _project, _codegen: 2,
+    )
+
+    def reject_expression_materialization(_project, _codegen):
+        raise AssertionError("value-only proof must not decode C conditions")
+
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_return_pairs_from_cfg_8616",
+        reject_expression_materialization,
+    )
+
+    assert _prune_duplicate_empty_return_guard_before_cfg_suffix_8616(
+        project,
+        codegen,
+    ) is False
+
+
 def test_cfg_return_chain_delta_accepts_suffix_materialization_with_refused_full_flatten(monkeypatch):
     codegen = SimpleNamespace(
         _inertia_return_chain_flattened_8616=False,

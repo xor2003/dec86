@@ -15,7 +15,9 @@ from typing import Any, Protocol, cast
 
 from ..analysis.alias import storage_of
 from ..analysis.stack_frame_ir import build_x86_16_ir_frame_access_artifact
+from ..frontend_function_boundary import ExactFunctionRangeBoundary8616
 from .block_ownership import canonicalize_ir_block_ownership_8616
+from .condition_cache_relift import ConditionReliftBlock8616
 from .core import (
     AddressStatus,
     IRAddress,
@@ -30,6 +32,7 @@ from .core import (
     MemSpace,
     SegmentOrigin,
 )
+from .function_condition_artifact import build_ir_function_condition_artifact_8616
 from .logical_memory_capture import (
     collect_accesses_for_block,
     collect_accesses_for_function,
@@ -105,6 +108,7 @@ class _BlockBoundary(Protocol):
     """Minimal angr block surface consumed by IR import."""
 
     addr: object
+    size: object
     vex: _VexBlockBoundary | None
 
 
@@ -386,7 +390,16 @@ def _function_graph_successors(
     function: object,
     block_addrs: frozenset[int],
 ) -> dict[int, tuple[int, ...]] | None:
-    """Read exact internal CFG edges from the recovered angr function graph."""
+    """Read exact Frontend or recovered angr in-function CFG edges."""
+    if isinstance(function, ExactFunctionRangeBoundary8616):
+        exact_successors: dict[int, set[int]] = {address: set() for address in block_addrs}
+        for source, target in function.successor_edges:
+            if source in block_addrs and target in block_addrs:
+                exact_successors[source].add(target)
+        return {
+            address: tuple(sorted(targets))
+            for address, targets in sorted(exact_successors.items())
+        }
     try:
         graph = cast(_FunctionBoundary, function).graph
         edges = cast(_FunctionGraphBoundary, graph).edges
@@ -785,6 +798,7 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
     blocks: list[IRBlock] = []
     refusals: list[IRRefusal] = []
     transport_reports: list[VexConditionTransportStats8616] = []
+    condition_blocks: list[ConditionReliftBlock8616] = []
     project_boundary = cast(_ProjectBoundary, project)
     with collect_accesses_for_function(function_addr) as captured:
         for block_addr in _function_block_addrs(function):
@@ -799,6 +813,12 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
                 continue
             ir_block, transport_report = _block_to_ir(block)
             blocks.append(ir_block)
+            condition_blocks.append(
+                ConditionReliftBlock8616(
+                    block_addr_int,
+                    _external_int(cast(_BlockBoundary, block).size),
+                )
+            )
             transport_reports.append(transport_report)
             refusals.extend(ir_block.refusals)
     graph_successors = _function_graph_successors(
@@ -832,6 +852,12 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         tuple(blocks),
         owned_captures,
     )
+    condition_evidence = build_ir_function_condition_artifact_8616(
+        project,
+        function_addr,
+        tuple(condition_blocks),
+        tuple(blocks),
+    )
     transport_stats = aggregate_vex_condition_transport_stats_8616(
         tuple(transport_reports)
     )
@@ -840,6 +866,7 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         blocks=tuple(blocks),
         refusals=tuple(refusals),
         logical_memory=logical_memory,
+        condition_evidence=condition_evidence,
     )
     return IRFunctionArtifact(
         function_addr=artifact.function_addr,
@@ -848,7 +875,13 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         summary={
             **build_x86_16_ir_function_artifact_summary(artifact),
             **ownership.stats.to_summary(),
+            **ownership.successor_stats.to_summary(),
             **transport_stats.to_summary(),
+            **(
+                {}
+                if condition_evidence is None
+                else condition_evidence.to_summary()
+            ),
             **{
                 f"logical_memory_{name}": count
                 for name, count in logical_memory.stats.to_dict().items()
@@ -860,9 +893,8 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
             - len(owned_captures),
         },
         logical_memory=logical_memory,
+        condition_evidence=condition_evidence,
     )
-
-
 def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> dict[str, object]:
     """Summarize typed IR import facts for diagnostics and downstream gates."""
 

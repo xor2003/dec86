@@ -73,11 +73,11 @@ def _signedness_for_storage_8616(
     )
     if len(matching) != 1:
         return None
-    return (
-        StorageTrialSignedness8616.SIGNED
-        if matching[0].signedness is StackArgumentSignedness8616.SIGNED
-        else StorageTrialSignedness8616.UNSIGNED
-    )
+    return {
+        StackArgumentSignedness8616.SIGN_INSENSITIVE: StorageTrialSignedness8616.SIGN_INSENSITIVE,
+        StackArgumentSignedness8616.SIGNED: StorageTrialSignedness8616.SIGNED,
+        StackArgumentSignedness8616.UNSIGNED: StorageTrialSignedness8616.UNSIGNED,
+    }[matching[0].signedness]
 
 
 def _logical_summary_class_8616(

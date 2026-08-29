@@ -103,6 +103,7 @@ class _DceWalkContext8616:
     standalone_expression_payload: Callable[[object], object]
     stmt_is_consumed_boolean_carrier: Callable[[object], bool]
     stmt_is_consumed_call_cleanup_carrier: Callable[[object], bool]
+    stmt_is_direct_stack_move_evidence: Callable[[object, object], bool]
     stmt_is_direct_stack_update_evidence: Callable[[object, object], bool]
 
 
@@ -269,6 +270,7 @@ def _walk_statements_8616(
     _standalone_expression_payload_8616 = context.standalone_expression_payload
     _stmt_is_consumed_boolean_carrier_8616 = context.stmt_is_consumed_boolean_carrier
     _stmt_is_consumed_call_cleanup_carrier_8616 = context.stmt_is_consumed_call_cleanup_carrier
+    _stmt_is_direct_stack_move_evidence_8616 = context.stmt_is_direct_stack_move_evidence
     _stmt_is_direct_stack_update_evidence_8616 = context.stmt_is_direct_stack_update_evidence
 
     duplicate_changed = _prune_adjacent_duplicate_assignments_8616(statements)
@@ -329,8 +331,21 @@ def _walk_statements_8616(
             live.update(_collect_stmt_reads(stmt))
             new_rev.append(stmt)
             continue
-        if _stmt_is_direct_stack_update_evidence_8616(stmt, lhs):
-            _bump_codegen_counter_8616("dce_keep_protected")
+        is_exact_direct_stack_evidence = _stmt_is_direct_stack_move_evidence_8616(
+            stmt,
+            lhs,
+        ) or _stmt_is_direct_stack_update_evidence_8616(stmt, lhs)
+        is_ambiguous_direct_stack_evidence = (
+            not _node_has_instruction_evidence_8616(stmt)
+            and not _is_function_argument_lvalue_8616(lhs, key, name_key)
+            and _has_direct_stack_write_evidence_for_offset_8616(
+                _stack_offset_from_plain_lvalue_8616(lhs)
+            )
+        )
+        if is_exact_direct_stack_evidence or is_ambiguous_direct_stack_evidence:
+            _bump_codegen_counter_8616(
+                "dce_keep_unknown" if is_ambiguous_direct_stack_evidence else "dce_keep_protected"
+            )
             live.discard(key)
             live.update(_collect_stmt_reads(stmt))
             new_rev.append(stmt)
@@ -368,7 +383,7 @@ def _walk_statements_8616(
             continue
         outside_reads = (
             0
-            if key[0] in {"dirty", "dirty_expr"}
+            if _dirty_is_storage_free_temp_8616(lhs)
             else int(total_reads.get(key, 0)) - int(local_reads.get(key, 0))
         )
         if key[0].startswith("dirty") and _stmt_is_consumed_boolean_carrier_8616(stmt):

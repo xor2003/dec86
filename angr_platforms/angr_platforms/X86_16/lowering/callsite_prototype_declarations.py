@@ -36,9 +36,12 @@ from ..analysis_helpers import preferred_known_helper_signature_decl
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..call_target_identity import normalize_x86_16_call_target_addr_8616
 from ..callsite_summary import (
+    CallsiteMachineFrameKind8616,
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
+    callsite_machine_frame_kind_8616,
     callsite_summary_inventory_8616,
+    structured_callsite_addr_8616,
 )
 from ..codegen_metadata import get_codegen_sequence_attr, set_codegen_sequence_attr
 from ..pipeline.errors import PipelineHardError
@@ -67,7 +70,10 @@ from .interprocedural_storage_transaction import (
     accepted_callsite_storage_binding_8616,
     function_storage_resolution_8616,
 )
-from .return_type_evidence import caller_return_use_evidence_proves_unused_8616
+from .return_type_evidence import (
+    caller_return_use_evidence_proves_unused_8616,
+    collect_unobserved_callee_void_evidence_8616,
+)
 
 __all__ = [
     "CallTargetIdentityStats8616",
@@ -128,6 +134,7 @@ class _ProjectSurface8616(Protocol):
 
     arch: Arch
     kb: _KnowledgeBaseSurface8616
+    _inertia_original_linear_delta: object
 
 
 class _PrototypeFunctionSurface8616(Protocol):
@@ -282,14 +289,28 @@ def _summary_for_call_8616(
 
 def _callsite_addr_8616(node: CFunctionCall) -> int | None:
     """Return one exact instruction address from a structured call."""
-    tags = node.tags
-    if not isinstance(tags, Mapping):
-        return None
-    for key in ("ins_addr", "insn_addr", "stmt_addr", "addr"):
-        value = tags.get(key)
-        if isinstance(value, int):
-            return value
-    return None
+    callsite_addr = structured_callsite_addr_8616(node)
+    return callsite_addr if isinstance(callsite_addr, int) else None
+
+
+def _callsite_matches_summary_8616(
+    project: object,
+    node: CFunctionCall,
+    summary: CallsiteSummary8616,
+) -> bool:
+    """Match exact active or rebased instruction identity to one summary."""
+    callsite_addr = _callsite_addr_8616(node)
+    if callsite_addr == summary.callsite_addr:
+        return True
+    try:
+        original_delta = cast(_ProjectSurface8616, project)._inertia_original_linear_delta
+    except AttributeError:
+        return False
+    return (
+        isinstance(callsite_addr, int)
+        and isinstance(original_delta, int)
+        and callsite_addr + original_delta == summary.callsite_addr
+    )
 
 
 def _callee_addr_8616(node: CFunctionCall) -> int | None:
@@ -334,7 +355,7 @@ def canonicalize_callsite_target_identities_8616(
         if summary is None or not isinstance(summary.target_addr, int):
             continue
         stats.raw_fact_count += 1
-        if _callsite_addr_8616(node) != summary.callsite_addr:
+        if not _callsite_matches_summary_8616(project, node, summary):
             stats.failure_count += 1
             decisions.append(
                 (_callee_addr_8616(node), summary.target_addr, "callsite-mismatch")
@@ -345,9 +366,14 @@ def canonicalize_callsite_target_identities_8616(
             stats.normalized_fact_count += 1
             decisions.append((current_addr, summary.target_addr, "already-canonical"))
             continue
-        canonical_addr = normalize_x86_16_call_target_addr_8616(
-            project,
-            current_addr,
+        exact_far_target = (
+            callsite_machine_frame_kind_8616(summary)
+            is CallsiteMachineFrameKind8616.FAR
+        )
+        canonical_addr = (
+            summary.target_addr
+            if exact_far_target
+            else normalize_x86_16_call_target_addr_8616(project, current_addr)
         )
         if canonical_addr != summary.target_addr:
             stats.failure_count += 1
@@ -562,9 +588,8 @@ def _joined_return_type_8616(
             evidence.failure_count if evidence is not None else 0,
         )
     if evidence is not None and caller_return_use_evidence_proves_unused_8616(evidence):
-        # Closed caller evidence disproves a local AX-use heuristic, but an
-        # ignored result does not prove that the callee itself returns void.
-        return "int"
+        void_evidence = collect_unobserved_callee_void_evidence_8616(project, summary.target_addr)
+        return "void" if void_evidence.proves_void else "int"
 
     if isinstance(summary.target_addr, int):
         related = tuple(candidate for candidate in summaries if candidate.target_addr == summary.target_addr)

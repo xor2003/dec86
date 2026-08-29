@@ -37,6 +37,9 @@ from .interprocedural_storage_contracts import (
 from .interprocedural_storage_live_out_contracts import (
     MemoryLiveOutUseDisposition8616,
 )
+from .pointer_parameter_memory_outputs import (
+    join_pointer_parameter_memory_outputs_8616,
+)
 
 
 def _refused_8616(
@@ -96,8 +99,16 @@ def join_memory_output_object_contracts_8616(
     callsites: tuple[CallsiteStorageTrials8616, ...],
 ) -> MemoryOutputObjectJoinEvidence8616:
     """Join complete caller memory effects under canonical Alias owners."""
-    raw_count = sum(len(callsite.memory_effects) for callsite in callsites)
-    normalized_count = 0
+    pointer_join = join_pointer_parameter_memory_outputs_8616(callsites)
+    direct_count = sum(len(callsite.memory_effects) for callsite in callsites)
+    raw_count = direct_count + pointer_join.stats.raw_fact_count
+    normalized_count = pointer_join.stats.normalized_fact_count
+    if not pointer_join.complete:
+        return _refused_8616(
+            MemoryOutputObjectFailure8616.POINTER_OUTPUT_REFUSED,
+            raw_count,
+            normalized_count,
+        )
     grouped: dict[
         tuple[str, int, int],
         tuple[TerminalMemoryAliasFact8616, StorageIdentity8616, list[MemoryOutputViewBinding8616]],
@@ -234,6 +245,7 @@ def join_memory_output_object_contracts_8616(
             raw_count,
             raw_count,
         ),
+        pointer_join.objects,
     )
 
 

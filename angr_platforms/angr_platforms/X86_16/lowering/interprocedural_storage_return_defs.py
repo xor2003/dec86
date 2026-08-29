@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ..call_target_identity import x86_16_call_targets_equivalent_8616
 from ..caller_return_use_contracts import (
     CallerReturnUseFact8616,
     CallerReturnUseVerdict8616,
@@ -146,6 +147,8 @@ def resolve_call_output_definitions_8616(
     callee_addr: int,
     accepted_target_addrs: tuple[int, ...],
     output_storages: tuple[StorageIdentity8616, ...],
+    *,
+    project: object | None = None,
 ) -> CallOutputDefinitionResult8616:
     """Bind exact return carriers to one observed typed CALL producer."""
     raw_count = len(output_storages)
@@ -174,6 +177,7 @@ def resolve_call_output_definitions_8616(
         callee_addr,
         accepted_target_addrs,
         output_storages,
+        project=project,
     )
 
 
@@ -184,6 +188,8 @@ def resolve_storage_call_output_definitions_8616(
     callee_addr: int,
     accepted_target_addrs: tuple[int, ...],
     output_storages: tuple[StorageIdentity8616, ...],
+    *,
+    project: object | None = None,
 ) -> CallOutputDefinitionResult8616:
     """Bind exact register or addressed storage outputs to one typed CALL."""
     raw_count = len(output_storages)
@@ -231,7 +237,14 @@ def resolve_storage_call_output_definitions_8616(
         for address in accepted_target_addrs
         if isinstance(address, int) and not isinstance(address, bool)
     )
-    if not targets or target.const not in targets:
+    target_matches = target.const in targets or (
+        project is not None
+        and any(
+            x86_16_call_targets_equivalent_8616(project, target.const, accepted)
+            for accepted in targets
+        )
+    )
+    if not targets or not target_matches:
         return _refused_result_8616(
             CallOutputDefinitionVerdict8616.CONFLICT,
             CallOutputDefinitionFailure8616.CALL_TARGET_CONFLICT,

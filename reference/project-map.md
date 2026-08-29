@@ -54,18 +54,22 @@ closed:
 
 ## Checks
 
-- `make architecture-check PYTHON=./.venv/bin/python` runs the decompiler architecture and agent-guide guard.
+- `make architecture-check PYTHON=./.venv/bin/python` runs the full decompiler architecture and agent-guide guard.
+- `make architecture-check-fast PYTHON=./.venv/bin/python` runs the startup-critical
+  wrong-layer and semantic-recovery guard for the focused development loop.
 - `make agent-context-check PYTHON=./.venv/bin/python` reports whether the
   codebase-memory MCP graph is available to the agent and prints the fallback
   discovery flow above when it is not confirmed available.
-- `make check-files PYTHON=./.venv/bin/python FILES="path/to/file.py ..."` runs focused linters, the changed-file module/doc/type/dot-access ratchet, architecture/context guards, ownership-manifest validation, and relevant tests for active files.
+- `make check-files PYTHON=./.venv/bin/python FILES="path/to/file.py ..."` runs focused linters, the changed-file module/doc/type/dot-access ratchet, startup architecture/context guards, ownership-manifest validation, and relevant tests for active files.
 - `scripts/check_decompiler_architecture.py` tracks legacy `Responsibility:` header debt explicitly; remove entries from those lists as soon as the owning module docstring is fixed.
 - `scripts/check_decompiler_architecture.py` requires every X86_16 and inertia_decompiler module to be in the promoted typed/ruff gates or explicit promotion debt.
 - `scripts/check_decompiler_architecture.py` also distinguishes full promoted typed files from Pyright-only partial promotions; Pyright-only files must remain explicit full-promotion debt until Ruff/docs/dynamic-attribute cleanup is complete.
 - Full-promotion debt files stay out of `QA_TYPED_FILES` and `QA_RUFF_TARGETS`; only Pyright-only partial promotion debt may appear in `QA_TYPED_FILES`.
 - `make test-ownership-check PYTHON=./.venv/bin/python` validates that changed-file ownership rules point at existing pytest targets.
 - Ownership-manifest tests are fast-only; slower/default/expanded coverage belongs in `scripts/test_pipeline.py` tiers.
-- `make quality-fast PYTHON=./.venv/bin/python` runs linters, the changed-file module/doc/type/dot-access ratchet, architecture/context checks, ownership-manifest validation, and the fast decompiler gate for regular local checks.
+- `make quality-fast PYTHON=./.venv/bin/python` runs linters, the changed-file module/doc/type/dot-access ratchet, startup architecture/context checks, ownership-manifest validation, and the fast decompiler gate for regular local checks.
+- `make quality-hard PYTHON=./.venv/bin/python` adds the full repository
+  architecture scan and remains the mandatory pre-PR/incremental gate.
 - `make test-pipeline-fast PYTHON=./.venv/bin/python` runs the fast curated pipeline tier used by `quality-fast`; it must stay unit-focused so regular local checks do not depend on slow external compiler/decompiler lanes.
 - `make test-pipeline PYTHON=./.venv/bin/python` runs the curated pipeline and writes `angr_platforms/.cache/test_pipeline/summary.json`.
 - `make test-pipeline-expanded PYTHON=./.venv/bin/python` runs the expanded curated tier, including the executable-only sidecar-free SORTD ratchet and the long SORTDEMO status lane.

@@ -53,8 +53,12 @@ def test_failed_assert_exits_with_status_one() -> None:
     assert raised.value.code == 1
 
 
-def test_unsupported_instruction_exits_at_the_real_lifter_boundary() -> None:
+def test_unsupported_instruction_exits_at_the_real_lifter_boundary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Keep unsupported frontend encodings visible to the invoking process."""
     with pytest.raises(SystemExit) as raised:
-        pyvex.lift(bytes.fromhex("66c1c801"), 0x1000, Arch86_16())
+        pyvex.lift(bytes.fromhex("660f00c0"), 0x1000, Arch86_16())
+
     assert raised.value.code == 1
+    assert "not implemented: 0x0f00 /0" in capsys.readouterr().err

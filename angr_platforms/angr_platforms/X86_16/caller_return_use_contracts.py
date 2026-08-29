@@ -12,7 +12,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .semantics.register_value_preservation import (
+    AxValueView8616,
+    ByteReturnExtensionKind8616,
+)
+
 __all__ = [
+    "AxValueView8616",
+    "ByteReturnExtensionKind8616",
     "CallerReturnUseEvidence8616",
     "CallerReturnUseFact8616",
     "CallerReturnUseVerdict8616",
@@ -47,6 +54,20 @@ class CallerReturnUseFact8616:
     kind: CallsiteReturnUseKind8616 | None
     witness_instruction_addr: int | None
     excluded_recursive_passthrough: bool = False
+    byte_extension: ByteReturnExtensionKind8616 | None = None
+    byte_extension_instruction_addr: int | None = None
+    observed_value_view: AxValueView8616 | None = None
+
+    @property
+    def extension_complete(self) -> bool:
+        """Return whether optional byte-extension provenance is internally closed."""
+        if self.byte_extension is None:
+            return self.byte_extension_instruction_addr is None
+        return (
+            isinstance(self.byte_extension_instruction_addr, int)
+            and self.byte_extension_instruction_addr >= 0
+            and self.observed_value_view is AxValueView8616.AX
+        )
 
     @property
     def classified(self) -> bool:
@@ -58,6 +79,7 @@ class CallerReturnUseFact8616:
             and self.verdict is not CallerReturnUseVerdict8616.UNKNOWN
             and isinstance(self.witness_instruction_addr, int)
             and self.witness_instruction_addr >= 0
+            and self.extension_complete
         )
 
 

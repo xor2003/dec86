@@ -42,6 +42,7 @@ TARGET_MODULES: list[str] = [
     "angr_platforms.X86_16.validation_predicates",
     "angr_platforms.X86_16.validation_control_flow",
     "angr_platforms.X86_16.validation_required_memory_effects",
+    "angr_platforms.X86_16.lowering.callee_pointer_contracts",
     "angr_platforms.X86_16.lowering.callee_pointer_evidence",
     "angr_platforms.X86_16.lowering.callee_argument_count_evidence",
     "angr_platforms.X86_16.lowering.callee_argument_width_evidence",

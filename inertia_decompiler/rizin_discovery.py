@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 
 from .cache import _load_cache_json, _recovery_cache_key, _store_cache_json
+from .cache_source_manifest import RecoveryCacheSourceScope8616
 
 _RIZIN_FUNCTION_ANALYSIS_COMMAND = "aa;aflj"
 _RIZIN_DISCOVERY_POLICY_SCHEMA = 4
@@ -94,6 +95,7 @@ def _cache_key(binary_path: Path, *, timeout_sec: int, max_count: int | None) ->
     key = _recovery_cache_key(
         binary_path=binary_path,
         kind="rizin_aflj_function_seeds",
+        source_scope=RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY,
         extra={
             "policy_schema": _RIZIN_DISCOVERY_POLICY_SCHEMA,
             "timeout_sec": timeout_sec,

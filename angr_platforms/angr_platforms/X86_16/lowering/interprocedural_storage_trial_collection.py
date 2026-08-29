@@ -41,16 +41,17 @@ from .interprocedural_storage_contracts import (
     StorageTrialRole8616,
     StorageTrialStats8616,
 )
+from .interprocedural_storage_input_preflight import (
+    classify_callsite_inputs_before_ssa_8616,
+)
 from .interprocedural_storage_reaching_contracts import (
     CallArgumentDefinitionVerdict8616,
 )
 from .interprocedural_storage_reaching_defs import (
-    physical_call_argument_8616,
     resolve_call_argument_reaching_definition_8616,
 )
 from .interprocedural_storage_trial_types import (
     callee_storage_pieces_8616,
-    classify_input_argument_8616,
 )
 
 __all__ = [
@@ -109,9 +110,20 @@ def _callsite_trials_8616(
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.ARGUMENT_STORAGE_UNKNOWN, callee_addr, fact),), False
     if not isinstance(summary.stack_cleanup, int) or summary.stack_cleanup < 0:
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.STACK_DELTA_UNKNOWN, callee_addr, fact),), False
+    preflight = classify_callsite_inputs_before_ssa_8616(
+        callee_addr,
+        fact,
+        summary,
+        argument_storage,
+        signedness_facts,
+        pointer_evidence,
+    )
+    if not preflight.complete:
+        return None, preflight.failures, True
     ssa_resolution = semantic_function_ssa_artifact_at_address_8616(
         fact.evidence_project,
         caller_addr,
+        function=fact.caller_function,
     )
     function_ssa = ssa_resolution.artifact
     if ssa_resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or function_ssa is None:
@@ -125,22 +137,15 @@ def _callsite_trials_8616(
         return None, (failure,), False
     trials: list[StorageTrial8616] = []
     failures: list[StorageTrialCollectionFailure8616] = []
-    for logical_index, storage in enumerate(argument_storage):
-        physical, physical_failure = physical_call_argument_8616(summary, logical_index)
-        if physical_failure is not None or physical is None:
-            failures.append(
-                _failure_8616(
-                    StorageTrialCollectionFailureKind8616.REACHING_DEFINITION_REFUSED,
-                    callee_addr,
-                    fact,
-                    logical_index=logical_index,
-                )
-            )
-            continue
+    for classified_input in preflight.inputs:
+        logical_index = classified_input.logical_index
+        storage = classified_input.storage
         reaching = resolve_call_argument_reaching_definition_8616(
             function_ssa,
             summary,
             logical_index,
+            project=fact.evidence_project,
+            expected_target_addr=fact.evidence_target_addr,
         )
         if reaching.verdict is not CallArgumentDefinitionVerdict8616.PROVEN or reaching.use is None:
             kind = (
@@ -170,29 +175,6 @@ def _callsite_trials_8616(
                 )
             )
             continue
-        classification = classify_input_argument_8616(
-            summary,
-            physical,
-            storage,
-            logical_index,
-            len(argument_storage),
-            signedness_facts,
-            pointer_evidence,
-        )
-        if (
-            classification.failure is not None
-            or classification.signedness is None
-            or classification.value_class is None
-        ):
-            failures.append(
-                _failure_8616(
-                    classification.failure or StorageTrialCollectionFailureKind8616.VALUE_CLASS_UNKNOWN,
-                    callee_addr,
-                    fact,
-                    logical_index=logical_index,
-                )
-            )
-            continue
         piece_count = len(storage_pieces)
         trials.extend(
             StorageTrial8616(
@@ -206,8 +188,8 @@ def _callsite_trials_8616(
                 storage=piece,
                 reaching_definition=definition,
                 use=reaching.use,
-                signedness=classification.signedness,
-                value_class=classification.value_class,
+                signedness=classified_input.signedness,
+                value_class=classified_input.value_class,
             )
             for piece_index, (piece, definition) in enumerate(
                 zip(storage_pieces, reaching.definitions, strict=True)

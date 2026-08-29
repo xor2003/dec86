@@ -19,6 +19,7 @@ from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .ir.core import IRFunctionArtifact
+from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .semantics.software_interrupt_inputs import (
     SoftwareInterruptInputArtifact8616,
     SoftwareInterruptInputFact8616,
@@ -169,7 +170,7 @@ def _actual_value_fingerprint_8616(node: object) -> str | None:
 def _validate_fact_8616(
     fact: SoftwareInterruptInputFact8616,
     calls: tuple[structured_c.CFunctionCall, ...],
-    root: object,
+    nodes: tuple[object, ...],
 ) -> tuple[bool, list[SoftwareInterruptValidationIssue8616]]:
     """Validate one fact against one exact final callsite."""
     matches = tuple(call for call in calls if _callsite_addr_8616(call) == fact.callsite_addr)
@@ -218,7 +219,7 @@ def _validate_fact_8616(
                 )
             )
     if fact.result_register is not None and _has_stale_selector_return_8616(
-        root,
+        nodes,
         fact,
         matches[0],
     ):
@@ -235,14 +236,14 @@ def _validate_fact_8616(
 
 
 def _has_stale_selector_return_8616(
-    root: object,
+    nodes: tuple[object, ...],
     fact: SoftwareInterruptInputFact8616,
     call: structured_c.CFunctionCall,
 ) -> bool:
     """Detect a call result discarded for its pre-call selector constant."""
     assigned = any(
         isinstance(node, structured_c.CAssignment) and node.rhs is call
-        for node in _iter_c_nodes_deep_8616(root)
+        for node in nodes
     )
     if not assigned:
         return False
@@ -250,15 +251,19 @@ def _has_stale_selector_return_8616(
         isinstance(node, structured_c.CReturn)
         and isinstance(node.retval, structured_c.CConstant)
         and node.retval.value == fact.selector_value
-        for node in _iter_c_nodes_deep_8616(root)
+        for node in nodes
     )
 
 
 def validate_software_interrupt_inputs_8616(
     codegen: object,
     root: object,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> SoftwareInterruptValidationReport8616:
     """Require every known binary-proven interrupt input on final C calls."""
+    if query_index is not None:
+        query_index.require_root(root)
     artifact = _artifact_8616(codegen)
     if artifact is None:
         return SoftwareInterruptValidationReport8616()
@@ -271,14 +276,15 @@ def validate_software_interrupt_inputs_8616(
         )
         for callsite_addr, kind, detail in artifact.refusals
     ]
+    nodes = query_index.nodes if query_index is not None else tuple(_iter_c_nodes_deep_8616(root))
     calls = tuple(
         node
-        for node in _iter_c_nodes_deep_8616(root)
+        for node in nodes
         if isinstance(node, structured_c.CFunctionCall)
     )
     materialized_count = 0
     for fact in artifact.facts:
-        materialized, fact_issues = _validate_fact_8616(fact, calls, root)
+        materialized, fact_issues = _validate_fact_8616(fact, calls, nodes)
         materialized_count += int(materialized)
         issues.extend(fact_issues)
     return SoftwareInterruptValidationReport8616(

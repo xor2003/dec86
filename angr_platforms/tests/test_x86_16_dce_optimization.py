@@ -11,6 +11,9 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _dead_code_elimination_final_cleanup_8616,
     _postprocess_runtime_config_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.postprocess.optimization.dce import (
     _dead_code_elimination_8616,
 )
@@ -623,6 +626,55 @@ def test_dce_deletes_overwritten_local_dirty_setup_before_read():
     assert getattr(codegen, "dce_overwritten_local_deleted", 0) == 1
 
 
+def test_dce_uses_projected_machine_bp_identity_for_stack_store_and_return():
+    codegen = _mk_codegen_with_statements([])
+    frame_carrier = structured_c.CVariable(
+        SimStackVariable(-2, 1, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    projected_local = structured_c.CVariable(
+        SimStackVariable(-6, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected_local.variable,
+        cvar=projected_local,
+        bp_offset=-2,
+        entry_sp_offset=-6,
+        size=2,
+    )
+    stale_frame_setup = structured_c.CAssignment(
+        frame_carrier,
+        _const(codegen, 9),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    initializer = structured_c.CAssignment(
+        projected_local,
+        _const(codegen, 1),
+        codegen=codegen,
+        tags={"ins_addr": 0x4014},
+    )
+    ret = structured_c.CReturn(frame_carrier, codegen=codegen)
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (("dst_offset", -2), ("width", 2), ("ins_addr", 0x4014)),
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [stale_frame_setup, initializer, ret],
+        codegen=codegen,
+    )
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [initializer, ret]
+    assert codegen.dce_overwritten_local_deleted == 1
+    assert codegen.dce_keep_protected >= 1
+
+
 def test_dce_refuses_overwritten_local_side_effecting_rhs():
     codegen = _mk_codegen_with_statements([])
     local = structured_c.CVariable(
@@ -1031,7 +1083,7 @@ def test_dce_keeps_unread_stack_assignment_with_direct_stack_move_evidence():
     assert changed is False
     assert list(codegen.cfunc.statements.statements) == [stmt]
     assert getattr(codegen, "dce_deleted", 0) == 0
-    assert getattr(codegen, "dce_keep_protected", 0) == 1
+    assert getattr(codegen, "dce_keep_unknown", 0) == 1
 
 
 def test_dce_deletes_unproven_dirty_register_overwrite_of_live_argument():

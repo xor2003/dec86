@@ -95,12 +95,12 @@ class InstructionBpStackAccessIndex8616:
         """Return logical machine address, BP range, and kind diagnostics."""
         return tuple(
             (
-                access.source.key.insn_addr,
-                access.address.offset,
-                access.address.size,
-                access.source.kind,
+                identity.source.key.insn_addr,
+                identity.address.offset,
+                identity.address.size,
+                identity.source.kind,
             )
-            for access in self.source_alias.logical_accesses
+            for identity in self.source_alias.logical_storage_identities
         )
 
 
@@ -160,7 +160,7 @@ def build_instruction_bp_stack_access_index_8616(
     source: StackMemorySSAAliasArtifact8616,
 ) -> InstructionBpStackAccessIndex8616:
     """Project direct stable BP accesses from one exact Alias artifact."""
-    candidates = [
+    candidates: list[tuple[int, int, IRAddress, StackMemoryAliasFactKind8616]] = [
         (fact.block_addr, fact.instr_index, fact.address, fact.kind)
         for fact in source.facts
         if fact.kind is not StackMemoryAliasFactKind8616.PHI
@@ -179,12 +179,12 @@ def build_instruction_bp_stack_access_index_8616(
     )
     logical_candidates = tuple(
         (
-            access.source.key.insn_addr,
-            access.address,
-            _logical_access_kind_8616(access.source.kind),
+            identity.source.key.insn_addr,
+            identity.address,
+            _logical_access_kind_8616(identity.source.kind),
         )
-        for access in source.logical_accesses
-        if _is_direct_stable_bp_address_8616(access.address)
+        for identity in source.logical_storage_identities
+        if _is_direct_stable_bp_address_8616(identity.address)
     )
     collected: dict[int, set[InstructionBpStackAccess8616]] = {}
     refusals: list[InstructionBpStackAccessRefusal8616] = []
@@ -257,6 +257,36 @@ def ensure_instruction_bp_stack_access_index_8616(
     return built
 
 
+def select_instruction_bp_stack_access_8616(
+    index: InstructionBpStackAccessIndex8616,
+    instruction_addrs: frozenset[int],
+    *,
+    displacement: int,
+    size: int,
+) -> InstructionBpStackAccess8616 | None:
+    """Prefer the shaped range, or return the site's sole proven BP range."""
+    candidates = {
+        fact
+        for instruction_addr in instruction_addrs
+        for fact in index.by_instruction_addr.get(instruction_addr, ())
+    }
+    exact = tuple(
+        fact
+        for fact in candidates
+        if fact.displacement == displacement and fact.size == size
+    )
+    if exact:
+        return min(exact, key=lambda fact: fact.kind.value)
+    ranges = {(fact.displacement, fact.size) for fact in candidates}
+    if len(ranges) != 1:
+        return None
+    sole_range = next(iter(ranges))
+    return min(
+        (fact for fact in candidates if (fact.displacement, fact.size) == sole_range),
+        key=lambda fact: fact.kind.value,
+    )
+
+
 __all__ = [
     "InstructionBpStackAccess8616",
     "InstructionBpStackAccessIndex8616",
@@ -265,4 +295,5 @@ __all__ = [
     "InstructionBpStackAccessStats8616",
     "build_instruction_bp_stack_access_index_8616",
     "ensure_instruction_bp_stack_access_index_8616",
+    "select_instruction_bp_stack_access_8616",
 ]

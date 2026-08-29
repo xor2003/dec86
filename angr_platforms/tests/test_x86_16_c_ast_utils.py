@@ -11,12 +11,14 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
+from angr_platforms.X86_16 import c_ast_utils
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.c_ast_utils import (
     _c_ast_cycle_path_8616,
     _clone_c_ast_tree_8616,
     _iter_c_nodes_deep_8616,
     _iter_c_statement_nodes_8616,
+    _replace_c_children_8616,
 )
 
 
@@ -93,3 +95,55 @@ def test_deep_walk_visits_shared_nodes_once_and_refuses_cycles() -> None:
     nodes = tuple(_iter_c_nodes_deep_8616(root))
 
     assert nodes == (root, expression, constant)
+
+
+def test_deep_walk_bypasses_container_helper_for_direct_and_scalar_slots(
+    monkeypatch,
+) -> None:
+    """Direct node and scalar slots must not enter recursive container logic."""
+    codegen = _DummyCodegen()
+    lhs = CConstant(1, SimTypeShort(False), codegen=codegen)
+    rhs = CConstant(2, SimTypeShort(False), codegen=codegen)
+    expression = CBinaryOp("Or", lhs, rhs, codegen=codegen)
+
+    def refuse_container_walk(*_args, **_kwargs):
+        raise AssertionError("direct and scalar slots must bypass container walk")
+
+    monkeypatch.setattr(
+        c_ast_utils,
+        "_iter_c_node_children_8616",
+        refuse_container_walk,
+    )
+
+    assert tuple(_iter_c_nodes_deep_8616(expression)) == (expression, rhs, lhs)
+
+
+def test_replace_c_children_only_reads_declared_child_slots() -> None:
+    """Replacement must not probe unrelated third-party node descriptors."""
+
+    class _SyntheticStructuredNode:
+        __module__ = "angr.analyses.decompiler.structured_codegen.synthetic"
+        __slots__ = ("lhs", "rhs_read_count")
+
+        def __init__(self, lhs: object) -> None:
+            self.lhs = lhs
+            self.rhs_read_count = 0
+
+        @property
+        def rhs(self) -> None:
+            self.rhs_read_count += 1
+            return None
+
+    codegen = _DummyCodegen()
+    original = CConstant(1, SimTypeShort(False), codegen=codegen)
+    replacement = CConstant(2, SimTypeShort(False), codegen=codegen)
+    root = _SyntheticStructuredNode(original)
+
+    changed = _replace_c_children_8616(
+        root,
+        lambda node: replacement if node is original else node,
+    )
+
+    assert changed is True
+    assert root.lhs is replacement
+    assert root.rhs_read_count == 0

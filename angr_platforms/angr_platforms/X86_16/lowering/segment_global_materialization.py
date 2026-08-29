@@ -10,11 +10,18 @@ Dynamic boundary: project and codegen are third-party angr plugin objects.
 
 from __future__ import annotations
 
+import os
+import sys
+import time
 from dataclasses import dataclass
 from typing import Any, cast
 
 from ..widening.segmented_load_widening import apply_segmented_load_widening_8616
+from .direct_global_register_updates import materialize_direct_global_register_updates_8616
 from .dos_interrupt_aggregate_globals import materialize_dos_interrupt_aggregate_globals_8616
+from .logical_word_memory_copy_materialization import (
+    materialize_logical_word_memory_copies_8616,
+)
 from .segmented_global_loads import (
     materialize_compare_register_global_carriers_8616,
     materialize_direct_global_symbol_stores_8616,
@@ -28,9 +35,38 @@ type CodegenBoundary8616 = Any
 
 __all__ = [
     "SegmentGlobalMaterializationResult8616",
+    "SegmentGlobalMaterializationTiming8616",
     "cod_metadata_for_codegen_8616",
     "run_segment_global_materialization_8616",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentGlobalMaterializationTiming8616:
+    """Inclusive component timings for one Lowering replay request."""
+
+    named_global_seconds: float
+    compare_register_seconds: float
+    indexed_global_seconds: float
+    direct_global_store_seconds: float
+    dos_interrupt_aggregate_seconds: float
+    segmented_load_widening_seconds: float
+    runtime_segment_seconds: float
+
+    @property
+    def total_seconds(self) -> float:
+        """Return the sum of all component timings."""
+        return sum(
+            (
+                self.named_global_seconds,
+                self.compare_register_seconds,
+                self.indexed_global_seconds,
+                self.direct_global_store_seconds,
+                self.dos_interrupt_aggregate_seconds,
+                self.segmented_load_widening_seconds,
+                self.runtime_segment_seconds,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +131,7 @@ def run_segment_global_materialization_8616(
     include_runtime_segment: bool = False,
 ) -> SegmentGlobalMaterializationResult8616:
     """Run proven segment/global materializers in Types/Lowering-owned order."""
+    component_started = time.perf_counter()
     named_global_changed = bool(
         materialize_named_segmented_global_loads_8616(
             project,
@@ -103,6 +140,13 @@ def run_segment_global_materialization_8616(
             cod_metadata=cod_metadata,
         )
     )
+    named_global_changed = bool(
+        materialize_logical_word_memory_copies_8616(codegen).changed
+        or materialize_direct_global_register_updates_8616(project, codegen, synthetic_globals)
+        or named_global_changed
+    )
+    named_global_seconds = time.perf_counter() - component_started
+    component_started = time.perf_counter()
     compare_register_global_changed = bool(
         materialize_compare_register_global_carriers_8616(
             project,
@@ -111,9 +155,13 @@ def run_segment_global_materialization_8616(
             cod_metadata=cod_metadata,
         )
     )
+    compare_register_seconds = time.perf_counter() - component_started
+    component_started = time.perf_counter()
     indexed_global_changed = bool(
         materialize_indexed_segmented_global_loads_8616(project, codegen, cod_metadata=cod_metadata)
     )
+    indexed_global_seconds = time.perf_counter() - component_started
+    component_started = time.perf_counter()
     direct_global_store_changed = bool(
         materialize_direct_global_symbol_stores_8616(
             project,
@@ -122,14 +170,45 @@ def run_segment_global_materialization_8616(
             cod_metadata=cod_metadata,
         )
     )
+    direct_global_store_seconds = time.perf_counter() - component_started
+    component_started = time.perf_counter()
     dos_interrupt_aggregate_changed = bool(
         materialize_dos_interrupt_aggregate_globals_8616(codegen)
     )
+    dos_interrupt_aggregate_seconds = time.perf_counter() - component_started
+    component_started = time.perf_counter()
     segmented_load_widening_changed = bool(apply_segmented_load_widening_8616(codegen))
+    segmented_load_widening_seconds = time.perf_counter() - component_started
     target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat")
+    component_started = time.perf_counter()
     runtime_segment_changed = (
         bool(apply_runtime_segment_lowering_8616(codegen, target=target)) if include_runtime_segment else False
     )
+    timing = SegmentGlobalMaterializationTiming8616(
+        named_global_seconds=named_global_seconds,
+        compare_register_seconds=compare_register_seconds,
+        indexed_global_seconds=indexed_global_seconds,
+        direct_global_store_seconds=direct_global_store_seconds,
+        dos_interrupt_aggregate_seconds=dos_interrupt_aggregate_seconds,
+        segmented_load_widening_seconds=segmented_load_widening_seconds,
+        runtime_segment_seconds=time.perf_counter() - component_started,
+    )
+    codegen._inertia_segment_global_materialization_timing_8616 = timing
+    timing_enabled = os.environ.get("INERTIA_DEBUG_TIMING", "").strip().lower()
+    if timing_enabled not in {"", "0", "false", "no", "off"}:
+        print(
+            "segment/global components: "
+            f"named={timing.named_global_seconds:.3f} "
+            f"compare={timing.compare_register_seconds:.3f} "
+            f"indexed={timing.indexed_global_seconds:.3f} "
+            f"direct={timing.direct_global_store_seconds:.3f} "
+            f"aggregate={timing.dos_interrupt_aggregate_seconds:.3f} "
+            f"widening={timing.segmented_load_widening_seconds:.3f} "
+            f"runtime={timing.runtime_segment_seconds:.3f} "
+            f"total={timing.total_seconds:.3f}",
+            file=sys.stderr,
+            flush=True,
+        )
     result = SegmentGlobalMaterializationResult8616(
         runtime_segment_changed=runtime_segment_changed,
         segmented_load_widening_changed=segmented_load_widening_changed,

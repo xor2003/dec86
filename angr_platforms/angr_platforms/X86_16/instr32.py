@@ -549,6 +549,13 @@ class Instr32(InstrBase):
 
     def loop(self) -> None:
         """Execute LOOP using CX or ECX according to the effective address size."""
+        lifter_instruction = self.emu.lifter_instruction
+        if lifter_instruction is None:
+            raise RuntimeError("LOOP condition publication requires an active lifter instruction")
+        counter_name, counter_size = ("ecx", 4) if self.instr.address_bits == 32 else ("cx", 2)
+        lifter_instruction.record_loop_counter_condition_8616(
+            counter_name, counter_size, self.instr.imm8, self.instr.size
+        )
         branch_rel8(
             self._active_stack_emulator(),
             self._loop_counter_nonzero(),
@@ -1493,7 +1500,7 @@ class Instr32(InstrBase):
         rm32 = self.get_rm32()
         count = _vex_expr(masked_shift_count(self.emu, self.instr.imm8, 32)).cast_to(Type.int_8)
         self.set_rm32(rm32 << count)
-        self.emu.update_eflags_shl(rm32, count)
+        self.emu.update_eflags_shl(rm32, self.instr.imm8)
 
     def _rotate32(self, *, left: bool, count: VexExpr | int) -> None:
         """Rotate a 32-bit r/m operand and update defined ROL/ROR flags."""
@@ -1605,21 +1612,21 @@ class Instr32(InstrBase):
         rm32 = self.get_rm32()
         count = _vex_expr(masked_shift_count(self.emu, self.instr.imm8, 32)).cast_to(Type.int_8)
         self.set_rm32(rm32 >> count)
-        self.emu.update_eflags_shr(rm32, count)
+        self.emu.update_eflags_shr(rm32, self.instr.imm8)
 
     def sal_rm32_imm8(self) -> None:
         """Execute decoded ``SAL_RM32_IMM8`` semantics through frontend emulator effects."""
         rm32_s = self.get_rm32()
         count = _vex_expr(masked_shift_count(self.emu, self.instr.imm8, 32)).cast_to(Type.int_8)
         self.set_rm32(rm32_s << count)
-        self.emu.update_eflags_shl(rm32_s, count)
+        self.emu.update_eflags_shl(rm32_s, self.instr.imm8)
 
     def sar_rm32_imm8(self) -> None:
         """Execute decoded ``SAR_RM32_IMM8`` semantics through frontend emulator effects."""
         rm32_s = _vex_expr(self.get_rm32())
         count = _vex_expr(masked_shift_count(self.emu, self.instr.imm8, 32)).cast_to(Type.int_8)
         self.set_rm32(rm32_s.sar(count))
-        self.emu.update_eflags_sar(rm32_s, count)
+        self.emu.update_eflags_sar(rm32_s, self.instr.imm8)
 
     def shl_rm32_cl(self) -> None:
         """Execute decoded ``SHL_RM32_CL`` semantics through frontend emulator effects."""

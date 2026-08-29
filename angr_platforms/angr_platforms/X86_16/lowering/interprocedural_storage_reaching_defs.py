@@ -13,16 +13,20 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from ..call_target_identity import x86_16_call_targets_equivalent_8616
 from ..callsite_summary import (
     CallsitePushSourceKind8616,
     CallsiteSummary8616,
     logical_argument_widths_from_callsite_8616,
 )
-from ..ir import IRValue
+from ..ir import IRValue, ScalarAffineExpression8616
 from ..ir.ssa_function import SSAFunctionArtifact
 from .interprocedural_storage_contracts import (
     StorageReachingDefinition8616,
     StorageUseEvidence8616,
+)
+from .interprocedural_storage_expression_defs import (
+    resolve_expression_argument_definitions_8616,
 )
 from .interprocedural_storage_physical_defs import (
     reaching_definition_width_8616,
@@ -93,6 +97,9 @@ def _sites_8616(
 def _call_use_8616(
     sites: tuple[SSAInstructionSite8616, ...],
     summary: CallsiteSummary8616,
+    *,
+    project: object | None,
+    expected_target_addr: int | None,
 ) -> tuple[
     StorageUseEvidence8616 | None,
     CallArgumentDefinitionFailure8616 | None,
@@ -105,11 +112,28 @@ def _call_use_8616(
         return None, CallArgumentDefinitionFailure8616.CALLSITE_CONFLICT
     site = calls[0]
     target = site.instr.args[0] if site.instr.args else None
-    if (
-        not isinstance(summary.target_addr, int)
-        or not isinstance(target, IRValue)
-        or target.const != summary.target_addr
-    ):
+    expected_target = (
+        expected_target_addr
+        if isinstance(expected_target_addr, int)
+        else summary.target_addr
+    )
+    if not isinstance(target, IRValue) or not isinstance(expected_target, int):
+        return None, CallArgumentDefinitionFailure8616.CALL_TARGET_CONFLICT
+    if project is None:
+        target_matches = target.const == expected_target
+        summary_matches = summary.target_addr in {None, expected_target}
+    else:
+        target_matches = x86_16_call_targets_equivalent_8616(
+            project,
+            target.const,
+            expected_target,
+        )
+        summary_matches = summary.target_addr is None or x86_16_call_targets_equivalent_8616(
+            project,
+            summary.target_addr,
+            expected_target,
+        )
+    if not target_matches or not summary_matches:
         return None, CallArgumentDefinitionFailure8616.CALL_TARGET_CONFLICT
     return (
         StorageUseEvidence8616(
@@ -196,10 +220,18 @@ def resolve_call_argument_reaching_definition_8616(
     function_ssa: SSAFunctionArtifact,
     summary: CallsiteSummary8616,
     logical_index: int,
+    *,
+    project: object | None = None,
+    expected_target_addr: int | None = None,
 ) -> CallArgumentDefinitionResolution8616:
     """Resolve one source-order call argument without inventing missing proof."""
     sites = _sites_8616(function_ssa)
-    use, call_failure = _call_use_8616(sites, summary)
+    use, call_failure = _call_use_8616(
+        sites,
+        summary,
+        project=project,
+        expected_target_addr=expected_target_addr,
+    )
     if call_failure is not None or use is None:
         failure = call_failure or CallArgumentDefinitionFailure8616.CALLSITE_NOT_FOUND
         return _refusal_8616(
@@ -218,9 +250,30 @@ def resolve_call_argument_reaching_definition_8616(
             normalized=False,
         )
     resolved_definitions: list[StorageReachingDefinition8616] = []
+    affine_expression: ScalarAffineExpression8616 | None = None
+    single_piece = len(fact.pieces) == 1
     for piece in fact.pieces:
         source_kind = piece.source[0] if piece.source else None
+        piece_affine = None
         if source_kind in {
+            CallsitePushSourceKind8616.EXPR,
+            CallsitePushSourceKind8616.EXPR.value,
+        } or (
+            single_piece
+            and source_kind
+            in {
+                CallsitePushSourceKind8616.IMMEDIATE,
+                CallsitePushSourceKind8616.IMMEDIATE.value,
+            }
+        ):
+            definitions, piece_affine, source_failure = (
+                resolve_expression_argument_definitions_8616(
+                    function_ssa,
+                    sites,
+                    piece,
+                )
+            )
+        elif source_kind in {
             CallsitePushSourceKind8616.IMMEDIATE,
             CallsitePushSourceKind8616.IMMEDIATE.value,
             CallsitePushSourceKind8616.BP_ADDRESS,
@@ -245,6 +298,8 @@ def resolve_call_argument_reaching_definition_8616(
                     CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_CONFLICT,
                     CallArgumentDefinitionFailure8616.SOURCE_SHAPE_CONFLICT,
                     CallArgumentDefinitionFailure8616.SOURCE_WIDTH_CONFLICT,
+                    CallArgumentDefinitionFailure8616.EXPRESSION_DEFINITION_CONFLICT,
+                    CallArgumentDefinitionFailure8616.EXPRESSION_SOURCE_MISMATCH,
                 },
             )
         logical_failure = logical_source_definitions_failure_8616(
@@ -261,6 +316,8 @@ def resolve_call_argument_reaching_definition_8616(
                 is CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_CONFLICT,
             )
         resolved_definitions.extend(definitions)
+        if single_piece and piece_affine is not None:
+            affine_expression = piece_affine
     definitions = tuple(resolved_definitions)
     if sum(reaching_definition_width_8616(definition) for definition in definitions) != fact.width:
         return _refusal_8616(
@@ -280,4 +337,5 @@ def resolve_call_argument_reaching_definition_8616(
             materialized_count=1,
             failure_count=0,
         ),
+        affine_expression=affine_expression,
     )

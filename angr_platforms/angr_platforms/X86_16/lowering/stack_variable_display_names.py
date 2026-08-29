@@ -11,18 +11,25 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import logging
+import os
+from collections.abc import Mapping, Sequence
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from .stack_coordinate_rebinding import rebind_restored_stack_coordinate_registry_8616
 from .stack_variable_coordinates import (
     StackVariableCoordinateRegistry8616,
+    bind_stack_variable_coordinate_cvar_8616,
+    machine_bp_offset_for_stack_variable_8616,
     stack_variable_coordinate_registry_8616,
 )
 
 _GENERATED_STACK_NAME_PREFIXES_8616 = ("arg_", "local_", "s_", "stack_", "var_")
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class _CVariableBoundary8616(Protocol):
@@ -35,6 +42,7 @@ class _CVariableBoundary8616(Protocol):
 class _CFunctionBoundary8616(Protocol):
     """Third-party CFunction surfaces containing stack projections."""
 
+    arg_list: object
     variables_in_use: object
     unified_local_vars: object
     statements: object
@@ -56,9 +64,84 @@ def generated_stack_variable_name_8616(name: object) -> bool:
     )
 
 
+def publish_stack_variable_projection_display_names_8616(
+    codegen: object,
+    names_by_bp_offset: Mapping[int, str],
+) -> int:
+    """Publish proven names onto unique machine-BP stack projections."""
+    published = 0
+    for bp_offset, display_name in names_by_bp_offset.items():
+        if not display_name:
+            continue
+        registry = stack_variable_coordinate_registry_8616(codegen)
+        matches = tuple(
+            projection
+            for projection in registry.projections
+            if projection.bp_offset == bp_offset
+        )
+        if len(matches) != 1:
+            continue
+        projection = matches[0]
+        rebound = bind_stack_variable_coordinate_cvar_8616(
+            codegen,
+            bp_offset=projection.bp_offset,
+            size=projection.size,
+            cvar=projection.cvar,
+            display_name=display_name,
+        )
+        if rebound is not None:
+            published += 1
+    return published
+
+
+def publish_prototype_argument_projection_names_8616(
+    codegen: object,
+    names: Sequence[str],
+) -> int:
+    """Keep exact stack-coordinate projections coherent with argument renames."""
+    boundary = cast(_CodegenBoundary8616, codegen)
+    try:
+        arguments = boundary.cfunc.arg_list
+    except AttributeError:
+        return 0
+    if not isinstance(arguments, (list, tuple)):
+        return 0
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    published = 0
+    for cvar, display_name in zip(arguments, names, strict=False):
+        try:
+            variable = cast(_CVariableBoundary8616, cvar).variable
+        except AttributeError:
+            continue
+        if not isinstance(variable, SimStackVariable):
+            continue
+        projection = registry.for_variable(variable)
+        if projection is None:
+            continue
+        rebound = bind_stack_variable_coordinate_cvar_8616(
+            codegen,
+            bp_offset=projection.bp_offset,
+            size=projection.size,
+            cvar=cvar,
+            display_name=display_name,
+        )
+        if rebound is not None:
+            published += 1
+    return published
+
+
 def _rename_generated_stack_variable_8616(variable: object, name: str) -> None:
-    """Rename one exact stack projection without overriding evidence names."""
-    if isinstance(variable, SimStackVariable) and generated_stack_variable_name_8616(variable.name):
+    """Rename a generated or collision-suffixed exact stack projection."""
+    if not isinstance(variable, SimStackVariable):
+        return
+    current_name = variable.name
+    collision_prefix = f"{name}_"
+    collision_suffix = (
+        current_name[len(collision_prefix) :]
+        if isinstance(current_name, str) and current_name.startswith(collision_prefix)
+        else ""
+    )
+    if generated_stack_variable_name_8616(current_name) or collision_suffix.isdigit():
         variable.name = name
 
 
@@ -98,13 +181,21 @@ def apply_stack_variable_projection_name_8616(
         cfunc = boundary.cfunc
     except AttributeError:
         return
-    if isinstance(cfunc.variables_in_use, dict):
-        for variable, candidate in cfunc.variables_in_use.items():
+    try:
+        variables_in_use = cfunc.variables_in_use
+    except AttributeError:
+        variables_in_use = None
+    if isinstance(variables_in_use, dict):
+        for variable, candidate in variables_in_use.items():
             if _matches_entry_sp_range_8616(variable, entry_sp_offset, size):
                 _rename_generated_stack_variable_8616(variable, name)
                 _rename_projected_cvariable_8616(candidate, name)
-    if isinstance(cfunc.unified_local_vars, dict):
-        for variable, entries in cfunc.unified_local_vars.items():
+    try:
+        unified_local_vars = cfunc.unified_local_vars
+    except AttributeError:
+        unified_local_vars = None
+    if isinstance(unified_local_vars, dict):
+        for variable, entries in unified_local_vars.items():
             if not _matches_entry_sp_range_8616(variable, entry_sp_offset, size):
                 continue
             _rename_generated_stack_variable_8616(variable, name)
@@ -120,7 +211,9 @@ def _projected_display_name_8616(
     variable: SimStackVariable,
 ) -> str | None:
     """Select a durable name for one exact or colliding stack projection."""
-    projection = registry.for_entry_sp_range(variable.offset, variable.size)
+    projection = registry.for_variable(variable)
+    if projection is None:
+        projection = registry.for_entry_sp_range(variable.offset, variable.size)
     if projection is not None:
         return projection.display_name or None
     if variable.name in target_names and generated_stack_variable_name_8616(variable.name):
@@ -146,6 +239,14 @@ def _reapply_cvariable_name_8616(
     return bool(variable.name != previous_name)
 
 
+def _stack_variable_debug_key_8616(value: object) -> tuple[int, int, str | None] | None:
+    """Return a compact debug key for one structured stack argument."""
+    if not isinstance(value, CVariable) or not isinstance(value.variable, SimStackVariable):
+        return None
+    variable = value.variable
+    return variable.offset, variable.size, variable.name
+
+
 def reapply_stack_variable_projection_names_8616(codegen: object) -> bool:
     """Restore durable projected names across maps and regenerated AST clones."""
     registry = stack_variable_coordinate_registry_8616(codegen)
@@ -155,9 +256,29 @@ def reapply_stack_variable_projection_names_8616(codegen: object) -> bool:
         cfunc = boundary.cfunc
     except AttributeError:
         return False
+    if os.environ.get("INERTIA_DEBUG_STACK_COORDINATES") == "1":
+        arguments = cfunc.arg_list if isinstance(cfunc.arg_list, (list, tuple)) else ()
+        logger.warning(
+            "[stack-coordinate-names] projections=%r arguments=%r",
+            tuple(
+                (
+                    item.bp_offset,
+                    item.entry_sp_offset,
+                    item.size,
+                    item.display_name,
+                    item.variable.name,
+                )
+                for item in registry.projections
+            ),
+            tuple(_stack_variable_debug_key_8616(argument) for argument in arguments),
+        )
     changed = False
-    if isinstance(cfunc.variables_in_use, dict):
-        for cvar in cfunc.variables_in_use.values():
+    try:
+        variables_in_use = cfunc.variables_in_use
+    except AttributeError:
+        variables_in_use = None
+    if isinstance(variables_in_use, dict):
+        for cvar in variables_in_use.values():
             if isinstance(cvar, CVariable):
                 changed = _reapply_cvariable_name_8616(registry, target_names, cvar) or changed
     try:
@@ -173,5 +294,9 @@ def reapply_stack_variable_projection_names_8616(codegen: object) -> bool:
 __all__ = [
     "apply_stack_variable_projection_name_8616",
     "generated_stack_variable_name_8616",
+    "machine_bp_offset_for_stack_variable_8616",
+    "publish_prototype_argument_projection_names_8616",
+    "publish_stack_variable_projection_display_names_8616",
     "reapply_stack_variable_projection_names_8616",
+    "rebind_restored_stack_coordinate_registry_8616",
 ]

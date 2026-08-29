@@ -23,6 +23,7 @@ from angr_platforms.X86_16.semantics.carry_borrow_contracts import (
     CarryBorrowKind8616,
 )
 from angr_platforms.X86_16.semantics.carry_borrow_links import analyze_carry_borrow_links_8616
+from angr_platforms.X86_16.semantics.carry_borrow_ssa import single_source_8616
 from angr_platforms.X86_16.widening.carry_borrow_pipeline import (
     CarryBorrowWideningPipeline8616,
     apply_carry_borrow_widening_pipeline_8616,
@@ -72,16 +73,15 @@ def _replace_link(evidence: CarryBorrowEvidence8616, **changes: object) -> Carry
 
 
 @pytest.mark.parametrize(
-    ("code", "kind", "flags_version"),
+    ("code", "kind"),
     (
-        (bytes.fromhex("01 d8 11 ca c3"), CarryBorrowKind8616.ADD_WITH_CARRY, 1),
-        (bytes.fromhex("29 d8 19 ca c3"), CarryBorrowKind8616.SUB_WITH_BORROW, 6),
+        (bytes.fromhex("01 d8 11 ca c3"), CarryBorrowKind8616.ADD_WITH_CARRY),
+        (bytes.fromhex("29 d8 19 ca c3"), CarryBorrowKind8616.SUB_WITH_BORROW),
     ),
 )
 def test_real_lifter_carry_borrow_links_widen_exact_register_pairs(
     code: bytes,
     kind: CarryBorrowKind8616,
-    flags_version: int,
 ) -> None:
     artifact = _lift_ssa(code)
     temporary_destinations = tuple(
@@ -99,7 +99,9 @@ def test_real_lifter_carry_borrow_links_widen_exact_register_pairs(
     link = semantics.links[0]
     assert link.kind is kind
     assert link.flags_definition.instruction.dst is not None
-    assert link.flags_definition.instruction.dst.version == flags_version
+    assert link.flags_definition.instruction.addr == 0x1000
+    assert link.flags_read.instruction.addr == 0x1002
+    assert single_source_8616(link.flags_read) == link.flags_definition.instruction.dst
 
     aliases = project_carry_borrow_aliases_8616(semantics)
     assert aliases.complete

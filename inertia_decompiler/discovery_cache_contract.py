@@ -10,12 +10,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from angr_platforms.X86_16.caller_return_use_contracts import (
+    AxValueView8616,
+    ByteReturnExtensionKind8616,
+)
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
+    CallerReturnUseFact8616,
     CallerReturnUseVerdict8616,
+    CallsiteReturnUseKind8616,
 )
 
-DISPLAY_CATALOG_CACHE_PAYLOAD_SCHEMA_8616: int = 1
+DISPLAY_CATALOG_CACHE_PAYLOAD_SCHEMA_8616: int = 3
 
 
 def _nonnegative_int_8616(value: object) -> int:
@@ -84,10 +90,78 @@ class DisplayCatalogCachePayload8616:
         return dict(self.caller_return_use)
 
 
+def _caller_return_use_fact_record_8616(fact: CallerReturnUseFact8616) -> dict[str, object]:
+    """Serialize one exact caller-return fact without discarding its witness."""
+    return {
+        "caller_addr": fact.caller_addr,
+        "callsite_addr": fact.callsite_addr,
+        "verdict": fact.verdict.value,
+        "kind": None if fact.kind is None else fact.kind.value,
+        "witness_instruction_addr": fact.witness_instruction_addr,
+        "excluded_recursive_passthrough": fact.excluded_recursive_passthrough,
+        "byte_extension": (
+            None if fact.byte_extension is None else fact.byte_extension.value
+        ),
+        "byte_extension_instruction_addr": fact.byte_extension_instruction_addr,
+        "observed_value_view": (
+            None if fact.observed_value_view is None else fact.observed_value_view.value
+        ),
+    }
+
+
+def _caller_return_use_fact_from_record_8616(record: object) -> CallerReturnUseFact8616:
+    """Validate and restore one exact caller-return fact."""
+    if not isinstance(record, dict):
+        raise ValueError("caller-return fact must be an object")
+    try:
+        verdict = CallerReturnUseVerdict8616(record.get("verdict"))
+        raw_kind = record.get("kind")
+        kind = None if raw_kind is None else CallsiteReturnUseKind8616(raw_kind)
+        raw_extension = record.get("byte_extension")
+        byte_extension = (
+            None
+            if raw_extension is None
+            else ByteReturnExtensionKind8616(raw_extension)
+        )
+        raw_view = record.get("observed_value_view")
+        observed_value_view = (
+            None if raw_view is None else AxValueView8616(raw_view)
+        )
+    except (TypeError, ValueError) as ex:
+        raise ValueError("caller-return fact has an invalid typed classification") from ex
+    raw_witness = record.get("witness_instruction_addr")
+    witness = None if raw_witness is None else _nonnegative_int_8616(raw_witness)
+    raw_extension_addr = record.get("byte_extension_instruction_addr")
+    extension_addr = (
+        None
+        if raw_extension_addr is None
+        else _nonnegative_int_8616(raw_extension_addr)
+    )
+    excluded = record.get("excluded_recursive_passthrough")
+    if type(excluded) is not bool:
+        raise ValueError("caller-return recursive exclusion must be boolean")
+    fact = CallerReturnUseFact8616(
+        caller_addr=_nonnegative_int_8616(record.get("caller_addr")),
+        callsite_addr=_nonnegative_int_8616(record.get("callsite_addr")),
+        verdict=verdict,
+        kind=kind,
+        witness_instruction_addr=witness,
+        excluded_recursive_passthrough=excluded,
+        byte_extension=byte_extension,
+        byte_extension_instruction_addr=extension_addr,
+        observed_value_view=observed_value_view,
+    )
+    if not fact.extension_complete:
+        raise ValueError("caller-return byte extension is incomplete")
+    return fact
+
+
 def caller_return_use_evidence_record_8616(
     evidence: CallerReturnUseEvidence8616,
 ) -> dict[str, object]:
     """Serialize one owned caller-return evidence contract without inference."""
+    if evidence.raw_fact_count and not evidence.fact_census_complete:
+        raise ValueError("caller-return retained facts do not close their counters")
     return {
         "target_addr": evidence.target_addr,
         "verdict": evidence.verdict.value,
@@ -100,6 +174,7 @@ def caller_return_use_evidence_record_8616(
         "unused_callsite_count": evidence.unused_callsite_count,
         "excluded_callsite_count": evidence.excluded_callsite_count,
         "callsite_addrs": list(evidence.callsite_addrs),
+        "facts": [_caller_return_use_fact_record_8616(fact) for fact in evidence.facts],
     }
 
 
@@ -126,6 +201,10 @@ def caller_return_use_evidence_from_record_8616(record: object) -> CallerReturnU
         record.get("excluded_callsite_count", 0)
     )
     callsite_addrs = _nonnegative_int_tuple_8616(record.get("callsite_addrs"), field_name="callsite_addrs")
+    raw_facts = record.get("facts")
+    if not isinstance(raw_facts, list):
+        raise ValueError("caller-return facts must be a list")
+    facts = tuple(_caller_return_use_fact_from_record_8616(item) for item in raw_facts)
     if counts["normalized_fact_count"] > counts["raw_fact_count"]:
         raise ValueError("caller-return normalized facts exceed raw facts")
     if counts["classified_fact_count"] > counts["normalized_fact_count"]:
@@ -147,7 +226,7 @@ def caller_return_use_evidence_from_record_8616(record: object) -> CallerReturnU
         != counts["normalized_fact_count"]
     ):
         raise ValueError("unused caller-return verdict is not fully classified")
-    return CallerReturnUseEvidence8616(
+    evidence = CallerReturnUseEvidence8616(
         target_addr=target_addr,
         verdict=verdict,
         raw_fact_count=counts["raw_fact_count"],
@@ -159,7 +238,13 @@ def caller_return_use_evidence_from_record_8616(record: object) -> CallerReturnU
         unused_callsite_count=counts["unused_callsite_count"],
         callsite_addrs=callsite_addrs,
         excluded_callsite_count=counts["excluded_callsite_count"],
+        facts=facts,
     )
+    if counts["raw_fact_count"] and not evidence.fact_census_complete:
+        raise ValueError("caller-return retained facts do not close their counters")
+    if tuple(fact.callsite_addr for fact in facts) != callsite_addrs:
+        raise ValueError("caller-return fact addresses do not match the census")
+    return evidence
 
 
 def _source_region_record_8616(evidence: SourceRegionCatalogEvidence8616) -> dict[str, object]:

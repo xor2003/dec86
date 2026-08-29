@@ -88,6 +88,7 @@ class LSTMetadata:
     data_labels: dict[int, str]
     code_labels: dict[int, str]
     code_ranges: dict[int, tuple[int, int]] = field(default_factory=dict)
+    function_entry_addrs: frozenset[int] = field(default_factory=frozenset)
     signature_code_addrs: frozenset[int] = field(default_factory=frozenset)
     absolute_addrs: bool = False
     source_format: str = "generic_lst"

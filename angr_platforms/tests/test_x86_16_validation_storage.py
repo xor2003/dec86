@@ -34,6 +34,9 @@ from angr_platforms.X86_16.lowering.stack_aggregate_objects import (
     StackAggregateObjectFact8616,
     stack_aggregate_object_facts_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.lowering.storage_identity_facts import (
     GlobalStorageIdentityFact8616,
     StorageIdentityEvidenceKind8616,
@@ -651,6 +654,33 @@ def test_storage_validation_accepts_exact_stack_aggregate_shape() -> None:
 def test_storage_validation_accepts_array_type_over_stale_narrow_backing_view() -> None:
     codegen = _Codegen()
     array = _stack_array(codegen, storage_width=1)
+    codegen.cfunc.statements.statements.append(array)
+    codegen._inertia_stack_aggregate_object_facts_8616 = (
+        _stack_aggregate_fact(),
+    )
+
+    report = validate_storage_identities_8616(
+        codegen,
+        codegen.cfunc.statements,
+    )
+
+    assert report.passed
+    assert report.materialized_count == 1
+    assert report.issue_tokens() == ()
+
+
+def test_storage_validation_accepts_projected_stack_aggregate_shape() -> None:
+    codegen = _Codegen()
+    array = _stack_array(codegen, base_offset=-10, storage_width=1)
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=array.variable,
+        cvar=array,
+        bp_offset=-8,
+        entry_sp_offset=-10,
+        size=8,
+        display_name="items",
+    )
     codegen.cfunc.statements.statements.append(array)
     codegen._inertia_stack_aggregate_object_facts_8616 = (
         _stack_aggregate_fact(),

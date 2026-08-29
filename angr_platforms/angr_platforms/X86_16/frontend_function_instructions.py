@@ -1,8 +1,9 @@
-"""Collect exact per-function instruction inventories from the angr CFG.
+"""Collect exact and bounded per-function instruction evidence.
 
 Layer: Frontend.
 Responsibility: bind decoded Capstone instructions to one explicit function
-entry and its CFG-owned block addresses without assigning semantic effects.
+entry through CFG-owned blocks or an explicit bounded sequential window,
+without assigning semantic effects.
 """
 
 from __future__ import annotations
@@ -15,8 +16,11 @@ from typing import Protocol, cast
 from .frontend_instruction_reachability import decoded_block_instructions_8616
 
 __all__ = [
+    "BoundedLinearInstructionInventory8616",
+    "BoundedLinearInstructionStatus8616",
     "FunctionInstructionInventory8616",
     "FunctionInstructionInventoryStatus8616",
+    "collect_bounded_linear_instruction_inventory_8616",
     "collect_function_instruction_inventory_8616",
 ]
 
@@ -31,6 +35,8 @@ class _InstructionBoundary8616(Protocol):
     """Capstone instruction identity consumed at the Frontend boundary."""
 
     address: int
+    mnemonic: str
+    size: int
 
 
 class _FunctionManagerBoundary8616(Protocol):
@@ -65,6 +71,43 @@ class FunctionInstructionInventoryStatus8616(Enum):
     MISSING_FUNCTION = "missing_function"
     MISSING_BLOCKS = "missing_blocks"
     DECODE_REFUSED = "decode_refused"
+
+
+class BoundedLinearInstructionStatus8616(Enum):
+    """Typed termination reason for one bounded sequential decode."""
+
+    TERMINAL_REACHED = "terminal_reached"
+    WINDOW_EXHAUSTED = "window_exhausted"
+    DECODE_REFUSED = "decode_refused"
+    INVALID_WIDTH = "invalid_width"
+    MISSING_ENTRY = "missing_entry"
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedLinearInstructionInventory8616:
+    """Immutable bounded instruction evidence merged with exact CFG evidence."""
+
+    function_entry: int | None
+    max_bytes: int
+    base_surface: tuple[tuple[int, int, str], ...]
+    instructions: tuple[object, ...]
+    sequential_instructions: tuple[object, ...]
+    status: BoundedLinearInstructionStatus8616
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+    @property
+    def closed(self) -> bool:
+        """Return whether every classified fact materialized or failed."""
+        return bool(
+            self.raw_fact_count == self.normalized_fact_count
+            and self.normalized_fact_count == self.classified_fact_count
+            and self.classified_fact_count
+            == self.materialized_count + self.failure_count
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,5 +229,117 @@ def collect_function_instruction_inventory_8616(
         normalized_fact_count=fact_count,
         classified_fact_count=fact_count,
         materialized_count=materialized_count,
+        failure_count=failure_count,
+    )
+
+
+def _instruction_surface_8616(
+    instructions: tuple[object, ...],
+) -> tuple[tuple[int, int, str], ...]:
+    """Project immutable decode fields used to validate bounded-cache reuse."""
+    return tuple(
+        (
+            int(cast(_InstructionBoundary8616, instruction).address),
+            int(cast(_InstructionBoundary8616, instruction).size),
+            str(cast(_InstructionBoundary8616, instruction).mnemonic).lower(),
+        )
+        for instruction in instructions
+    )
+
+
+def collect_bounded_linear_instruction_inventory_8616(
+    project: object,
+    *,
+    function_entry: int | None,
+    base_instructions: tuple[object, ...],
+    previous: BoundedLinearInstructionInventory8616 | None = None,
+    max_bytes: int = 0x800,
+) -> BoundedLinearInstructionInventory8616:
+    """Decode one bounded sequential stream and merge exact base evidence.
+
+    This Frontend owner records instruction bytes and order only. It does not
+    classify control flow, conditions, storage, types, or C-AST semantics.
+    """
+    bounded_bytes = max(1, int(max_bytes))
+    base_surface = _instruction_surface_8616(base_instructions)
+    if (
+        previous is not None
+        and previous.function_entry == function_entry
+        and previous.max_bytes == bounded_bytes
+        and previous.base_surface == base_surface
+    ):
+        return previous
+    if not isinstance(function_entry, int):
+        return BoundedLinearInstructionInventory8616(
+            function_entry=None,
+            max_bytes=bounded_bytes,
+            base_surface=base_surface,
+            instructions=base_instructions,
+            sequential_instructions=(),
+            status=BoundedLinearInstructionStatus8616.MISSING_ENTRY,
+            raw_fact_count=len(base_instructions) + 1,
+            normalized_fact_count=len(base_instructions) + 1,
+            classified_fact_count=len(base_instructions) + 1,
+            materialized_count=len(base_instructions),
+            failure_count=1,
+        )
+
+    sequential: list[object] = []
+    address = int(function_entry)
+    end_address = address + bounded_bytes
+    status = BoundedLinearInstructionStatus8616.WINDOW_EXHAUSTED
+    while address < end_address:
+        try:
+            decoded = decoded_block_instructions_8616(
+                project,
+                address,
+                num_inst=1,
+                opt_level=0,
+            )
+        except Exception:
+            status = BoundedLinearInstructionStatus8616.DECODE_REFUSED
+            break
+        if not decoded:
+            status = BoundedLinearInstructionStatus8616.DECODE_REFUSED
+            break
+        instruction = decoded[0]
+        sequential.append(instruction)
+        boundary = cast(_InstructionBoundary8616, instruction)
+        width = int(boundary.size)
+        mnemonic = str(boundary.mnemonic).lower()
+        if mnemonic in {"ret", "retf", "iret"}:
+            status = BoundedLinearInstructionStatus8616.TERMINAL_REACHED
+            break
+        if width <= 0:
+            status = BoundedLinearInstructionStatus8616.INVALID_WIDTH
+            break
+        address += width
+
+    by_address = {
+        int(cast(_InstructionBoundary8616, instruction).address): instruction
+        for instruction in base_instructions
+    }
+    for instruction in sequential:
+        by_address[int(cast(_InstructionBoundary8616, instruction).address)] = instruction
+    instructions = tuple(by_address[item_address] for item_address in sorted(by_address))
+    failure_count = int(
+        status
+        in {
+            BoundedLinearInstructionStatus8616.DECODE_REFUSED,
+            BoundedLinearInstructionStatus8616.INVALID_WIDTH,
+        }
+    )
+    fact_count = len(instructions) + failure_count
+    return BoundedLinearInstructionInventory8616(
+        function_entry=int(function_entry),
+        max_bytes=bounded_bytes,
+        base_surface=base_surface,
+        instructions=instructions,
+        sequential_instructions=tuple(sequential),
+        status=status,
+        raw_fact_count=fact_count,
+        normalized_fact_count=fact_count,
+        classified_fact_count=fact_count,
+        materialized_count=len(instructions),
         failure_count=failure_count,
     )

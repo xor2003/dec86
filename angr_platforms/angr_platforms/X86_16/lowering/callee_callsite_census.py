@@ -11,18 +11,22 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterable
 from types import SimpleNamespace
 from typing import Protocol, cast
 
-from capstone.x86_const import X86_OP_IMM
-
 from ..analysis_helpers import (
-    canonicalize_x86_16_padding_call_target_8616,
     collect_neighbor_call_targets,
 )
-from ..callsite_summary import CallsiteSummary8616, summarize_x86_16_callsite
+from ..callsite_summary import summarize_x86_16_callsite
+from .callee_callsite_contracts import (
+    CalleeCallsiteCensus8616,
+    CalleeCallsiteFact8616,
+    callee_callsite_censuses_by_addr_8616,
+)
+from .callee_range_callsite_facts import (
+    collect_range_callsite_facts_for_target_8616,
+)
 
 __all__ = [
     "CalleeCallsiteCensus8616",
@@ -31,41 +35,10 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class CalleeCallsiteFact8616:
-    """One direct call with its exact runtime evidence owner."""
-
-    evidence_project: object = field(compare=False, repr=False)
-    evidence_target_addr: int
-    caller_addr: int | None
-    callsite_addr: int
-    summary: CallsiteSummary8616 | None = field(compare=False)
-
-
-@dataclass(frozen=True, slots=True)
-class CalleeCallsiteCensus8616:
-    """Closed normalization accounting for all discovered direct callers."""
-
-    target_addr: int
-    facts: tuple[CalleeCallsiteFact8616, ...]
-    raw_fact_count: int
-    normalized_fact_count: int
-    failure_count: int
-
-    @property
-    def complete(self) -> bool:
-        """Return whether every discovered call has one typed summary."""
-        return (
-            self.raw_fact_count > 0
-            and self.normalized_fact_count == self.raw_fact_count
-            and self.failure_count == 0
-        )
-
-
 class _FunctionManager8616(Protocol):
     """Third-party angr function-manager surface used for discovery."""
 
-    def values(self) -> Iterable[SimpleNamespace]:
+    def values(self) -> Iterable[object]:
         """Return discovered functions and stubs."""
         ...
 
@@ -86,59 +59,6 @@ class _ProjectSurface8616(Protocol):
     _inertia_caller_target_aliases_8616: tuple[int, ...]
     _inertia_caller_evidence_project_8616: object
     _inertia_caller_evidence_target_8616: int
-    _inertia_callee_callsite_census_8616: dict[int, CalleeCallsiteCensus8616]
-
-
-class _InstructionOperand8616(Protocol):
-    """Capstone operand fields consumed at the disassembly boundary."""
-
-    type: int
-    imm: int
-
-
-class _Instruction8616(Protocol):
-    """Capstone instruction fields consumed for direct-call discovery."""
-
-    address: int
-    mnemonic: str
-    operands: Sequence[_InstructionOperand8616]
-
-
-class _Disassembler8616(Protocol):
-    """Capstone engine surface used to decode proven caller ranges."""
-
-    detail: bool
-
-    def disasm(self, code: bytes, address: int) -> Iterable[_Instruction8616]:
-        """Decode one bounded caller range."""
-        ...
-
-
-class _Memory8616(Protocol):
-    """angr loader-memory surface used by the range decoder."""
-
-    def load(self, address: int, size: int) -> bytes:
-        """Read bytes from mapped binary memory."""
-        ...
-
-
-class _ArchSurface8616(Protocol):
-    """angr architecture fields used by the range decoder."""
-
-    capstone: _Disassembler8616
-
-
-class _LoaderSurface8616(Protocol):
-    """angr loader fields used by the range decoder."""
-
-    memory: _Memory8616
-
-
-class _RangeProjectSurface8616(Protocol):
-    """angr project fields needed to summarize raw caller ranges."""
-
-    arch: _ArchSurface8616
-    loader: _LoaderSurface8616
 
 
 def _function_addr_8616(function: object) -> int | None:
@@ -208,85 +128,12 @@ def _caller_function_ranges_8616(project: object) -> tuple[tuple[int, int], ...]
     )
 
 
-def _direct_call_target_8616(instruction: _Instruction8616) -> int | None:
-    """Return one immediate near-call target from typed Capstone fields."""
-    if instruction.mnemonic.lower() not in {"call", "lcall"}:
-        return None
-    operands = tuple(instruction.operands)
-    if len(operands) != 1 or operands[0].type != X86_OP_IMM:
-        return None
-    return operands[0].imm
-
-
-def _range_callsite_facts_8616(
-    project: object,
-    target_addr: int,
-    function_ranges: tuple[tuple[int, int], ...],
-) -> tuple[CalleeCallsiteFact8616, ...]:
-    """Summarize matching direct calls from independently framed ranges."""
-    surface = cast(_RangeProjectSurface8616, project)
-    try:
-        disassembler = surface.arch.capstone
-        memory = surface.loader.memory
-    except AttributeError:
-        return ()
-    disassembler.detail = True
-    facts: list[CalleeCallsiteFact8616] = []
-    for start, end in function_ranges:
-        try:
-            instructions = tuple(disassembler.disasm(bytes(memory.load(start, end - start)), start))
-        except (KeyError, TypeError, ValueError):
-            continue
-        caller = SimpleNamespace(
-            project=project,
-            addr=start,
-            size=end - start,
-            block_addrs_set={start},
-        )
-        for instruction in instructions:
-            direct_target = _direct_call_target_8616(instruction)
-            if direct_target is None:
-                continue
-            canonical_target = canonicalize_x86_16_padding_call_target_8616(
-                project,
-                direct_target,
-            )
-            if canonical_target != target_addr:
-                continue
-            summary = summarize_x86_16_callsite(caller, instruction.address)
-            if summary is None or summary.stack_probe_helper:
-                continue
-            facts.append(
-                CalleeCallsiteFact8616(
-                    evidence_project=project,
-                    evidence_target_addr=target_addr,
-                    caller_addr=start,
-                    callsite_addr=instruction.address,
-                    summary=summary,
-                )
-            )
-    return tuple(facts)
-
-
-def _census_cache_8616(project: object) -> dict[int, CalleeCallsiteCensus8616]:
-    """Return the owned per-project direct-caller census cache."""
-    surface = cast(_ProjectSurface8616, project)
-    try:
-        cache = surface._inertia_callee_callsite_census_8616
-    except AttributeError:
-        cache = {}
-        surface._inertia_callee_callsite_census_8616 = cache
-    if not isinstance(cache, dict):
-        raise TypeError("callee callsite census cache must be a dict")
-    return cache
-
-
 def collect_callee_callsite_census_8616(
     project: object,
     target_addr: int,
 ) -> CalleeCallsiteCensus8616:
     """Collect every direct caller while retaining exact ownership facts."""
-    cache = _census_cache_8616(project)
+    cache = callee_callsite_censuses_by_addr_8616(project)
     cached = cache.get(target_addr)
     if cached is not None:
         return cached
@@ -321,12 +168,13 @@ def collect_callee_callsite_census_8616(
                     summary = None
                 facts[callsite_key] = CalleeCallsiteFact8616(
                     evidence_project=evidence_project,
+                    caller_function=function,
                     evidence_target_addr=evidence_target,
                     caller_addr=_function_addr_8616(function),
                     callsite_addr=target.callsite_addr,
                     summary=summary,
                 )
-        for fact in _range_callsite_facts_8616(
+        for fact in collect_range_callsite_facts_for_target_8616(
             evidence_project,
             evidence_target,
             function_ranges,
@@ -334,7 +182,6 @@ def collect_callee_callsite_census_8616(
             callsite_key = (id(evidence_project), fact.callsite_addr)
             raw_callsites.add(callsite_key)
             facts[callsite_key] = fact
-
     ordered = tuple(facts[key] for key in sorted(raw_callsites, key=lambda item: (item[1], item[0])))
     normalized_count = sum(fact.summary is not None for fact in ordered)
     census = CalleeCallsiteCensus8616(
@@ -344,5 +191,7 @@ def collect_callee_callsite_census_8616(
         normalized_fact_count=normalized_count,
         failure_count=len(raw_callsites) - normalized_count,
     )
-    cache[target_addr] = census
+    census.validate()
+    if census.complete:
+        cache[target_addr] = census
     return census

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import (
     SimStruct,
@@ -49,6 +50,9 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_transaction import (
     apply_program_storage_resolution_8616,
 )
 from angr_platforms.X86_16.lowering.near_pointer_type import near_pointer_type_8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    publish_selected_stack_cvar_projection_8616,
+)
 
 
 class _Codegen:
@@ -201,15 +205,19 @@ def test_application_updates_callee_and_callsite_from_same_contract() -> None:
     codegen = _Codegen(project)
     arguments = [
         CVariable(
-            SimStackVariable(offset, 4, base="bp", name=name, region=0x2000),
+            SimStackVariable(offset, 2, base="bp", name=name, region=0x2000),
             variable_type=variable_type,
             codegen=codegen,
         )
         for offset, name, variable_type in (
-            (4, "count", wide),
-            (6, "item", pointer_type),
+            (2, "count", wide),
+            (4, "item", pointer_type),
         )
     ]
+    for argument, bp_offset in zip(arguments, (4, 6), strict=True):
+        publish_selected_stack_cvar_projection_8616(
+            codegen, argument, bp_offset=bp_offset, size=2
+        )
     codegen.cfunc = SimpleNamespace(
         addr=0x2000,
         arg_list=arguments,
@@ -242,6 +250,66 @@ def test_application_updates_callee_and_callsite_from_same_contract() -> None:
         ),
         (),
     ) == "unsigned short"
+
+
+@pytest.mark.parametrize(
+    ("piece_offsets", "expected_verdict"),
+    [
+        ((4, 5), FunctionStoragePrototypeApplicationVerdict8616.APPLIED),
+        ((4, 6), FunctionStoragePrototypeApplicationVerdict8616.TYPE_REFUSED),
+    ],
+)
+def test_application_requires_contiguous_byte_pieces_for_one_stack_word(
+    piece_offsets: tuple[int, int],
+    expected_verdict: FunctionStoragePrototypeApplicationVerdict8616,
+) -> None:
+    arch = Arch86_16()
+    old_type = SimTypeShort(False).with_arch(arch)
+    old_prototype = SimTypeFunction([old_type], old_type).with_arch(arch)
+    function = SimpleNamespace(prototype=old_prototype, is_prototype_guessed=True)
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda *, addr, create=False: function)
+        ),
+    )
+    input_slot = StorageSlotContract8616(
+        role=StorageTrialRole8616.INPUT,
+        logical_index=0,
+        pieces=tuple(_identity(1, offset=offset) for offset in piece_offsets),
+        signedness=StorageTrialSignedness8616.UNSIGNED,
+        value_class=StorageTrialValueClass8616.VALUE,
+    )
+    pointer_output = _slot(
+        StorageTrialRole8616.RETURN,
+        0,
+        2,
+        StorageTrialSignedness8616.NOT_APPLICABLE,
+        StorageTrialValueClass8616.POINTER,
+        register="ax",
+    )
+    _publish(project, _contract(inputs=(input_slot,), outputs=(pointer_output,)))
+    codegen = _Codegen(project)
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="value", region=0x2000),
+        variable_type=old_type,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x2000,
+        arg_list=[argument],
+        functy=old_prototype,
+    )
+
+    result = apply_accepted_function_storage_prototype_8616(project, codegen)
+
+    assert result.verdict is expected_verdict
+    if expected_verdict is FunctionStoragePrototypeApplicationVerdict8616.APPLIED:
+        assert isinstance(codegen.cfunc.functy.returnty, SimTypePointer)
+        assert function.prototype == codegen.cfunc.functy
+    else:
+        assert result.type_failures == (StorageSimTypeFailureKind8616.INVALID_LOGICAL_ORDER,)
+        assert codegen.cfunc.functy is old_prototype
 
 
 def test_unsupported_output_refuses_without_partial_mutation() -> None:

@@ -63,9 +63,15 @@ from ..callsite_summary import (
 from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue, MemSpace
 from ..pipeline.errors import PipelineHardError
-from ..widening.stack_widening import prove_adjacent_storage_slices
+from .condition_stack_projection_contracts import (
+    ConditionStackProjectionFact8616,
+    condition_stack_projection_fact_8616,
+)
 from .semantic_cast import CSemanticCast8616
-from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    stack_variable_coordinate_registry_8616,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -342,45 +348,61 @@ def _wide_condition_stack_cvar_8616(
     codegen: _CallOutputCodegen8616,
     high_expr: CExpression,
     low_expr: CExpression,
+    high_stack: IRValue,
+    low_stack: IRValue,
 ) -> CVariable | None:
     """Return the existing four-byte stack object proven by adjacent word views."""
-    high_expr = _strip_condition_casts_8616(high_expr)
-    low_expr = _strip_condition_casts_8616(low_expr)
-    if not isinstance(low_expr, CVariable) or not isinstance(high_expr, CVariable):
+    low_offset = low_stack.offset
+    high_offset = high_stack.offset
+    if not isinstance(low_offset, int) or not isinstance(high_offset, int) or high_offset != low_offset + 2:
         return None
-    low_variable = low_expr.variable
-    high_variable = high_expr.variable
-    if not (
-        isinstance(low_variable, SimStackVariable)
-        and low_variable.base == "bp"
-        and isinstance(high_variable, SimStackVariable)
-        and high_variable.base == "bp"
-        and high_variable.size == 2
+
+    def matches_projection(
+        expression: CExpression,
+        expected_offset: int,
+        *,
+        allow_owner: bool,
+    ) -> bool:
+        """Match one expression through typed projection or exact stack identity."""
+        projection = condition_stack_projection_fact_8616(expression)
+        expected_projection = ConditionStackProjectionFact8616(
+            base="bp",
+            owner_offset=low_offset,
+            owner_size=4,
+            view_offset=expected_offset,
+            view_size=2,
+        )
+        if isinstance(projection, ConditionStackProjectionFact8616):
+            return bool(projection == expected_projection)
+        direct = _strip_condition_casts_8616(expression)
+        if not isinstance(direct, CVariable) or not isinstance(direct.variable, SimStackVariable):
+            return False
+        variable = direct.variable
+        return (
+            variable.base == "bp"
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == expected_offset
+            and variable.size in ({2, 4} if allow_owner else {2})
+        )
+
+    if not matches_projection(low_expr, low_offset, allow_owner=True) or not matches_projection(
+        high_expr,
+        high_offset,
+        allow_owner=False,
     ):
         return None
-    low_offset = machine_bp_offset_for_stack_variable_8616(codegen, low_variable)
-    high_offset = machine_bp_offset_for_stack_variable_8616(codegen, high_variable)
-    if not isinstance(low_offset, int) or high_offset != low_offset + 2:
+    candidates = tuple(
+        cvar
+        for variable, cvar in codegen.cfunc.variables_in_use.items()
+        if isinstance(variable, SimStackVariable)
+        and variable.base == "bp"
+        and machine_bp_offset_for_stack_variable_8616(codegen, variable) == low_offset
+        and variable.size == 4
+        and isinstance(cvar, CVariable)
+    )
+    unique_candidates = tuple({id(candidate): candidate for candidate in candidates}.values())
+    if len(unique_candidates) != 1:
         return None
-    if low_variable.size == 4:
-        wide_cvar = low_expr
-    else:
-        proof = prove_adjacent_storage_slices(low_expr, high_expr)
-        if not proof.ok:
-            return None
-        candidates = tuple(
-            cvar
-            for variable, cvar in codegen.cfunc.variables_in_use.items()
-            if isinstance(variable, SimStackVariable)
-            and variable.base == "bp"
-            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == low_offset
-            and variable.size == 4
-            and isinstance(cvar, CVariable)
-        )
-        unique_candidates = tuple({id(candidate): candidate for candidate in candidates}.values())
-        if len(unique_candidates) != 1:
-            return None
-        wide_cvar = unique_candidates[0]
+    wide_cvar = unique_candidates[0]
     wide_type = SimTypeLong(True).with_arch(codegen.project.arch)
     for variable, cvar in codegen.cfunc.variables_in_use.items():
         if (
@@ -448,7 +470,10 @@ def _wide_condition_call_8616(
         if not isinstance(node, CFunctionCall) or tuple(node.args or ()):
             continue
         tags = node.tags
-        tagged_callsite = tags.get("ins_addr") if isinstance(tags, dict) else None
+        try:
+            tagged_callsite = tags.get("ins_addr")
+        except AttributeError:
+            tagged_callsite = None
         summary = summary_map.get(id(node))
         if summary is None and isinstance(tagged_callsite, int):
             summary = inventory.get(tagged_callsite)
@@ -577,6 +602,8 @@ def lower_wide_call_return_condition_chain_8616(
             boundary,
             expression_parts[0],
             expression_parts[1],
+            ir_pair[0],
+            ir_pair[1],
         )
         if call is not None and wide_stack is not None:
             classified_count = 1
@@ -629,7 +656,16 @@ def _stack_cvar_at_base_offset_8616(
     codegen: _CallOutputCodegen8616,
     base_offset: int,
 ) -> CVariable | None:
-    """Return one unambiguous BP stack variable rooted at ``base_offset``."""
+    """Return the authoritative projected owner rooted at ``base_offset``."""
+    projected = {
+        id(projection.variable): projection.cvar
+        for projection in stack_variable_coordinate_registry_8616(codegen).projections
+        if projection.bp_offset == base_offset and isinstance(projection.cvar, CVariable)
+    }
+    if len(projected) == 1:
+        return next(iter(projected.values()))
+    if projected:
+        return None
     candidates: dict[int, CVariable] = {}
     for variable, cvar in codegen.cfunc.variables_in_use.items():
         if (
@@ -639,9 +675,7 @@ def _stack_cvar_at_base_offset_8616(
             and isinstance(cvar, CVariable)
         ):
             candidates[id(variable)] = cvar
-    if len(candidates) > 1:
-        raise PipelineHardError(f"ambiguous stack-object base at BP{base_offset:+#x}")
-    if not candidates:
+    if len(candidates) != 1:
         return None
     return next(iter(candidates.values()))
 
@@ -665,7 +699,10 @@ def _callsite_inventory_8616(
     codegen: _CallOutputCodegen8616,
 ) -> dict[int, CallsiteSummary8616]:
     """Return or build typed binary callsite summaries before AST arguments exist."""
-    inventory = callsite_summary_inventory_8616(codegen)
+    inventory = cast(
+        dict[int, CallsiteSummary8616],
+        callsite_summary_inventory_8616(codegen),
+    )
     if inventory:
         return inventory
     try:
@@ -682,7 +719,10 @@ def _callsite_inventory_8616(
     if not isinstance(raw_callsites, Iterable):
         return {}
     callsite_addrs = tuple(item for item in raw_callsites if isinstance(item, int))
-    inventory = build_callsite_summary_inventory_8616(function_value, callsite_addrs)
+    inventory = cast(
+        dict[int, CallsiteSummary8616],
+        build_callsite_summary_inventory_8616(function_value, callsite_addrs),
+    )
     codegen._inertia_callsite_summary_inventory_8616 = inventory
     return inventory
 

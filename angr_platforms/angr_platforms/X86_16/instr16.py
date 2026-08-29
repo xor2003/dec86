@@ -303,6 +303,13 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
 
     def loop16(self) -> None:
         """Execute decoded ``LOOP16`` semantics through frontend emulator effects."""
+        lifter_instruction = self.emu.lifter_instruction
+        if lifter_instruction is None:
+            raise RuntimeError("LOOP condition publication requires an active lifter instruction")
+        counter_name, counter_size = ("ecx", 4) if self.instr.address_bits == 32 else ("cx", 2)
+        lifter_instruction.record_loop_counter_condition_8616(
+            counter_name, counter_size, self.instr.imm8, self.instr.size
+        )
         branch_rel8(
             self._active_stack_emulator(), self._loop_counter_nonzero(), self.instr.imm8, self.instr.size
         )
@@ -792,7 +799,7 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         string_advance_indices(self._active_string_emulator(), 1, si_reg, di_reg)
 
         if repeat_cond is not None:
-            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond, zf_sensitive=True)
+            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
 
     def stosb_m8_al(self) -> None:
         """Execute decoded ``STOSB_M8_AL`` semantics through frontend emulator effects."""
@@ -1642,21 +1649,21 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         rm16 = _vex_expr(self.get_rm16())
         count = self._shift_count(self.instr.imm8)
         self.set_rm16(rm16 >> count)
-        self.emu.update_eflags_shr(rm16, count)
+        self.emu.update_eflags_shr(rm16, self.instr.imm8)
 
     def sal_rm16_imm8(self) -> None:
         """Execute decoded ``SAL_RM16_IMM8`` semantics through frontend emulator effects."""
         rm16 = _vex_expr(self.get_rm16())
         count = self._shift_count(self.instr.imm8)
         self.set_rm16(rm16 << count)
-        self.emu.update_eflags_shl(rm16, count)
+        self.emu.update_eflags_shl(rm16, self.instr.imm8)
 
     def sar_rm16_imm8(self) -> None:
         """Execute decoded ``SAR_RM16_IMM8`` semantics through frontend emulator effects."""
         rm16 = _vex_expr(self.get_rm16())
         count = self._shift_count(self.instr.imm8)
         self.set_rm16(rm16.sar(count))
-        self.emu.update_eflags_sar(rm16, count)
+        self.emu.update_eflags_sar(rm16, self.instr.imm8)
 
     def shl_rm16_1(self) -> None:
         """Execute decoded ``SHL_RM16_1`` semantics through frontend emulator effects."""
@@ -1697,7 +1704,9 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
 
     def _shift_count(self, count: VexExpr | int) -> VexExpr:
         """Normalize a shift count at the PyVEX expression boundary."""
-        count_v = _vex_expr(self.emu.constant(count, Type.int_8)) if isinstance(count, int) else count
+        if isinstance(count, int):
+            return _vex_expr(self.emu.constant(count & 0x1F, Type.int_8))
+        count_v = count
         return count_v.cast_to(Type.int_8) & _vex_expr(self.emu.constant(0x1F, Type.int_8))
 
     def _set_rotate_cf(self, cf: VexExpr) -> None:
@@ -1726,7 +1735,7 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         """Execute decoded ``SHL`` semantics through frontend emulator effects."""
         count = self._shift_count(b)
         self.set_rm16(a << count)
-        self.emu.update_eflags_shl(a, count)
+        self.emu.update_eflags_shl(a, b)
 
     def rol_rm16_imm8(self) -> None:
         """Execute decoded ``ROL_RM16_IMM8`` semantics through frontend emulator effects."""
@@ -1834,7 +1843,7 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         """Execute decoded ``SHR`` semantics through frontend emulator effects."""
         count = self._shift_count(b)
         self.set_rm16(a >> count)
-        self.emu.update_eflags_shr(a, count)
+        self.emu.update_eflags_shr(a, b)
 
     def sal_rm16_1(self) -> None:
         """Execute decoded ``SAL_RM16_1`` semantics through frontend emulator effects."""

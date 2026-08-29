@@ -153,6 +153,22 @@ def _project(*function_addrs: int) -> SimpleNamespace:
 
 def _install_collectors(monkeypatch, collections: dict[int, FunctionInputStorageTrialCollection8616]) -> None:
     """Install deterministic typed collection results at the lifecycle boundary."""
+    caller_targets = object()
+
+    def _returns(_project, _function, inputs, _evidence, **kwargs):
+        assert kwargs["pointer_targets"] is caller_targets
+        return _return_collection(inputs)
+
+    monkeypatch.setattr(
+        storage_pipeline,
+        "publish_pointer_parameter_outputs_8616",
+        lambda _project, _function_addr, *, function: object(),
+    )
+    monkeypatch.setattr(
+        storage_pipeline,
+        "publish_pointer_parameter_caller_targets_8616",
+        lambda _project, _function_addr, *, function, outputs: caller_targets,
+    )
     monkeypatch.setattr(
         storage_pipeline,
         "collect_function_input_storage_trials_8616",
@@ -161,7 +177,7 @@ def _install_collectors(monkeypatch, collections: dict[int, FunctionInputStorage
     monkeypatch.setattr(
         storage_pipeline,
         "collect_function_return_storage_trials_8616",
-        lambda _project, _function, inputs, _evidence, **_kwargs: _return_collection(inputs),
+        _returns,
     )
 
 
@@ -217,8 +233,6 @@ def test_incomplete_collection_does_not_replace_atomic_program_payload(monkeypat
     assert refused.verdict is FunctionStoragePublicationVerdict8616.INPUT_REFUSED
     assert refused.published is False
     assert program_storage_resolution_8616(project) is before
-
-
 def test_complete_conflicting_trials_publish_typed_refusal(monkeypatch) -> None:
     project = _project(0x2000)
     collections = {
@@ -237,6 +251,37 @@ def test_complete_conflicting_trials_publish_typed_refusal(monkeypatch) -> None:
     assert function_result is not None
     assert function_result.contract is None
     assert function_result.stats.failure_count > 0
+
+
+def test_pointer_outputs_publish_before_input_collection_refusal(monkeypatch) -> None:
+    events: list[str] = []
+    project = _project(0x2000)
+    monkeypatch.setattr(
+        storage_pipeline,
+        "publish_pointer_parameter_outputs_8616",
+        lambda _project, _function_addr, *, function: events.append("pointer-output")
+        or "outputs",
+    )
+    monkeypatch.setattr(
+        storage_pipeline,
+        "publish_pointer_parameter_caller_targets_8616",
+        lambda _project, _function_addr, *, function, outputs: events.append(f"caller-target:{outputs}"),
+    )
+    monkeypatch.setattr(
+        storage_pipeline,
+        "collect_function_input_storage_trials_8616",
+        lambda _project, _codegen, _function_addr: (
+            events.append("input") or _input_collection(0x2000, complete=False)
+        ),
+    )
+
+    result = collect_and_publish_function_storage_contract_8616(
+        project,
+        SimpleNamespace(cfunc=SimpleNamespace(addr=0x2000)),
+    )
+
+    assert result.verdict is FunctionStoragePublicationVerdict8616.INPUT_REFUSED
+    assert events == ["pointer-output", "caller-target:outputs", "input"]
 
 
 def test_lifecycle_applies_storage_prototype_before_legacy_consumers(monkeypatch) -> None:

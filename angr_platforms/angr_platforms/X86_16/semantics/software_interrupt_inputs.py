@@ -25,6 +25,12 @@ from ..ir.core import (
     IRValue,
     MemSpace,
 )
+from ..ir.logical_memory_contracts import IRLogicalMemoryArtifact8616
+from ..ir.logical_memory_scalar_projection import project_logical_stack_word_value_8616
+from ..ir.scalar_definitions import (
+    ScalarDefinitionIndex8616,
+    build_scalar_definition_index_8616,
+)
 
 type IRScalarValue8616 = IRValue | IRBinaryValue
 
@@ -163,12 +169,29 @@ def _record_definition_8616(
     instr: IRInstr,
     temp_values: dict[int, IRScalarValue8616],
     register_values: dict[str, IRScalarValue8616],
+    definitions: ScalarDefinitionIndex8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
+    *,
+    function_addr: int,
+    block_addr: int,
+    instr_index: int,
 ) -> None:
     """Apply one supported typed-IR definition to same-block value state."""
     temp_id = _tmp_id_8616(instr.dst)
     stack_value = _stack_load_value_8616(instr)
     if temp_id is not None and stack_value is not None:
         temp_values[temp_id] = stack_value
+        return
+    logical_word = project_logical_stack_word_value_8616(
+        instr,
+        definitions,
+        logical_memory,
+        function_addr=function_addr,
+        block_addr=block_addr,
+        before_index=instr_index,
+    )
+    if temp_id is not None and logical_word is not None:
+        temp_values[temp_id] = logical_word
         return
     if temp_id is not None and instr.op in _BINARY_OPS_8616 and len(instr.args) == 2:
         lhs = _resolve_value_8616(instr.args[0], temp_values, register_values)
@@ -227,6 +250,10 @@ def _matching_spec_8616(
 
 def _facts_from_block_8616(
     block: IRBlock,
+    definitions: ScalarDefinitionIndex8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
+    *,
+    function_addr: int,
 ) -> tuple[list[SoftwareInterruptInputFact8616], list[tuple[int, SoftwareInterruptRefusalKind8616, str]], int, int, int]:
     """Recover interrupt facts and counters from one typed IR block."""
     temp_values: dict[int, IRScalarValue8616] = {}
@@ -236,10 +263,19 @@ def _facts_from_block_8616(
     raw_count = 0
     normalized_count = 0
     classified_count = 0
-    for instr in block.instrs:
+    for instr_index, instr in enumerate(block.instrs):
         call_target = _interrupt_call_target_8616(instr)
         if call_target is None:
-            _record_definition_8616(instr, temp_values, register_values)
+            _record_definition_8616(
+                instr,
+                temp_values,
+                register_values,
+                definitions,
+                logical_memory,
+                function_addr=function_addr,
+                block_addr=block.addr,
+                instr_index=instr_index,
+            )
             continue
         raw_count += 1
         normalized_count += 1
@@ -279,11 +315,17 @@ def build_software_interrupt_input_artifact_8616(
     artifact: IRFunctionArtifact,
 ) -> SoftwareInterruptInputArtifact8616:
     """Build typed software-interrupt inputs from exact same-block IR facts."""
+    definitions = build_scalar_definition_index_8616(artifact)
     facts: list[SoftwareInterruptInputFact8616] = []
     refusals: list[tuple[int, SoftwareInterruptRefusalKind8616, str]] = []
     raw_count = normalized_count = classified_count = 0
     for block in artifact.blocks:
-        block_facts, block_refusals, raw, normalized, classified = _facts_from_block_8616(block)
+        block_facts, block_refusals, raw, normalized, classified = _facts_from_block_8616(
+            block,
+            definitions,
+            artifact.logical_memory,
+            function_addr=artifact.function_addr,
+        )
         facts.extend(block_facts)
         refusals.extend(block_refusals)
         raw_count += raw

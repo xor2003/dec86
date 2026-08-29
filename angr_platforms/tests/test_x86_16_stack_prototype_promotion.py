@@ -2215,6 +2215,68 @@ def test_classify_return_shape_promotes_scalar_returns_from_void_prototypes(monk
     assert func.prototype.returnty.size == 16
 
 
+def test_return_shape_classification_preserves_provisional_codegen_arguments(monkeypatch):
+    monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
+    arch = Arch86_16()
+    word_type = SimTypeShort(False).with_arch(arch)
+    authoritative = SimTypeFunction(
+        [word_type, word_type],
+        SimTypeBottom(),
+        arg_names=("first", "second"),
+    ).with_arch(arch)
+    provisional = SimTypeFunction(
+        [word_type, word_type, word_type],
+        SimTypeBottom(),
+        arg_names=("first", "contained", "second"),
+    ).with_arch(arch)
+    func = SimpleNamespace(
+        addr=0x1000,
+        prototype=authoritative,
+        is_prototype_guessed=True,
+        info={},
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: func if addr == 0x1000 else None
+            )
+        ),
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        next_idx=lambda _name: 1,
+        next_ident=lambda name: f"{name}_0",
+        next_node_idx=lambda: 1,
+    )
+    arguments = [
+        structured_c.CVariable(
+            SimStackVariable(offset, 2, base="bp", region=0x1000),
+            variable_type=word_type,
+            codegen=codegen,
+        )
+        for offset in (4, 5, 6)
+    ]
+    ret = structured_c.CReturn(
+        structured_c.CConstant(0, word_type, codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=arguments,
+        functy=provisional,
+        prototype=provisional,
+        statements=structured_c.CStatements([ret], codegen=codegen),
+    )
+
+    assert postprocess._classify_return_shape_8616(project, codegen) is True
+    assert tuple(codegen.cfunc.arg_list) == tuple(arguments)
+    assert len(codegen.cfunc.functy.args) == 3
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeShort)
+    assert len(func.prototype.args) == 2
+    assert isinstance(func.prototype.returnty, SimTypeShort)
+
+
 def test_classify_return_shape_does_not_treat_unused_callers_as_void():
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     ret = structured_c.CReturn(

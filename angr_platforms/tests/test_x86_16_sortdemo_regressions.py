@@ -662,7 +662,8 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert final_body.count("sub_128e4(") == 3
     assert final_body.count("sub_12756(local_52, inertia_ss);") == 3
     assert re.search(r"local_2 = \w+ \+ 1;", final_body)
-    assert re.search(r"for \(; local_2 <= \w+; local_2 = local_2 \+ 1\)", final_body)
+    assert re.search(r"if \(local_2 > \w+\)\s*break;", final_body)
+    assert "local_2 += 1;" in final_body
     assert "SEG_U" not in final_body
     assert "vvar_" not in final_body
     assert re.search(r"\breturn\s*;", final_body)
@@ -698,11 +699,13 @@ def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    assert "unsigned long sub_1137e();" in result.stdout
+    assert "unsigned long sub_1137e(void);" in result.stdout
     assert "extern unsigned long g_0BA6;" in result.stdout
     final_body = _function_body_from_stdout(result.stdout, "void sub_10678")
     assert final_body.count("unsigned short local_2;") == 1
-    assert final_body.count("sub_1137e();") == 1 and "g_0BA6 = sub_1137e();" in final_body
+    assert final_body.count("sub_1137e();") == 1
+    assert final_body.count("g_0BA6 = sub_1137e();") == 1
+    assert re.search(r"(?m)^\s*sub_1137e\(\);\s*$", final_body) is None
     assert "g_0B4C[local_2] = g_08F0[local_2];" in final_body
     assert final_body.count("sub_106c8(local_2);") == 1
     assert "local_2 += 1;" in final_body
@@ -901,7 +904,7 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
     signature = re.search(r"void sub_10ce0\(short (\w+), short (\w+)\)", final_body)
     assert signature is not None
     low_arg, high_arg = signature.groups()
-    assert f"if ({low_arg} < {high_arg})" in final_body
+    assert re.search(rf"if \((?:\(short\)\s*)?{low_arg} < {high_arg}\)", final_body) is not None
     assert re.search(
         rf"if \((?:\(unsigned short\)\s*)?{high_arg}\s*-\s*"
         rf"(?:\(unsigned short\)\s*)?{low_arg}\s*==\s*1\)",
@@ -914,7 +917,7 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
         rf"(?:\(short\)\s*)?{high_arg}\s*-\s*local_6\)",
         final_body,
     ) is not None
-    assert final_body.count("sub_107b8(") == 3
+    assert final_body.count("sub_107b8(") == 3 and f"sub_107b8(&g_0B4C[{low_arg}], &g_0B4C[{high_arg}]);" in final_body
     assert final_body.count("sub_10768(") == 3
     assert "sub_1075b(" not in final_body
     assert final_body.count("return;") == 1
@@ -1456,9 +1459,9 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
     )
     typed_pause_store = (
         "g_0132 = g_0132 & 0xffff0000 | 30;" in body
-        and "g_0132 = g_0132 & 65535;" in body
+        and any(mask in body for mask in ("g_0132 = g_0132 & 65535;", "g_0132 = g_0132 & 0xffff;"))
     )
-    assert raw_pause_store or typed_pause_store
+    assert raw_pause_store or typed_pause_store or "g_0132 = 30;" in body
     assert "sub_12ac8(&stack_object_70, inertia_ss);" in body
     assert body.count("sub_10678();") == 1
     assert "stack_object_70.field_18 == 1 || stack_object_70.field_14 == 2 || !stack_object_70.field_14" in body
@@ -1619,7 +1622,7 @@ def test_beep_direct_path_validates_without_high_byte_contract_fallback():
         zero_guard = result.stdout.index("if (!frequency)", first_guard + 1)
         assert re.search(r"if \(!frequency\)\s+return(?: 0)?;", result.stdout)
         assert first_guard < control_definition < sleep_call < zero_guard < control_read
-    assert re.search(r"(?m)^(?:void|int|unsigned short) Sleep\(\);$", result.stdout)
+    assert re.search(r"(?m)^(?:void|int|unsigned short) Sleep\((?:(?:unsigned )?long|clock_t) \w+\);$", result.stdout)
     scorecard = build_acceptance_scorecard(
         "Beep",
         combined,

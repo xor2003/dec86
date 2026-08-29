@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr.ailment import Expr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
@@ -24,7 +25,12 @@ def _codegen() -> SimpleNamespace:
 
     return SimpleNamespace(
         project=project,
-        cfunc=SimpleNamespace(addr=0x4010, statements=None),
+        cfunc=SimpleNamespace(
+            addr=0x4010,
+            statements=None,
+            variables_in_use={},
+            unified_local_vars={},
+        ),
         next_idx=next_idx,
     next_ident = lambda name: f"{name}_0", next_node_idx = lambda: 0)
 
@@ -101,6 +107,10 @@ def test_call_return_selector_binding_materializes_one_structured_identity() -> 
     assert assignment_variable.ident == "call-return-1048"
     assert assignment_variable.name == "ax"
     assert assignment_variable.region == 0x4010
+    assert codegen.cfunc.variables_in_use[assignment_variable] is assignment.lhs
+    assert codegen.cfunc.unified_local_vars[assignment_variable] == {
+        (assignment.lhs, assignment.lhs.variable_type)
+    }
     assert codegen._inertia_call_return_selector_replayer_8616 is replay_call_return_switch_selectors_8616
     assert validate_structured_def_use_8616(root).passed
 
@@ -112,6 +122,10 @@ def test_call_return_selector_binding_materializes_one_structured_identity() -> 
     assert not repeated.changed
     assert assignment.lhs.variable is assignment_variable
     assert switch.switch.variable is assignment_variable
+    assert codegen.cfunc.variables_in_use == {assignment_variable: assignment.lhs}
+    assert codegen.cfunc.unified_local_vars == {
+        assignment_variable: {(assignment.lhs, assignment.lhs.variable_type)}
+    }
 
 
 def test_call_return_selector_binding_refuses_intervening_ax_clobber() -> None:
@@ -170,3 +184,32 @@ def test_call_return_selector_binding_refuses_unproven_return_shape() -> None:
     assert result.changed_count == 0
     assert assignment.lhs.variable.ident is None
     assert switch.switch.variable.ident is None
+
+
+def test_call_return_selector_binding_materializes_raw_ail_register_selector() -> None:
+    """Join Structuring's raw AIL switch register to the typed AX call return."""
+    codegen = _codegen()
+    call = _call(codegen)
+    assignment = structured_c.CAssignment(_ax(codegen, name="ax_2"), call, codegen=codegen)
+    raw_selector = structured_c.CRegister(
+        Expr.Register(None, 0, 16, reg_name="ax"),
+        codegen=codegen,
+    )
+    switch = structured_c.CSwitchCase(raw_selector, [], None, codegen=codegen)
+    root = structured_c.CStatements([assignment, switch], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen._inertia_callsite_summaries = {id(call): _summary()}
+
+    result = bind_call_return_switch_selectors_8616(codegen)
+
+    assert result.raw_fact_count == 1
+    assert result.normalized_fact_count == 1
+    assert result.classified_fact_count == 1
+    assert result.materialized_count == 1
+    assert result.failure_count == 0
+    assert result.changed_count == 1
+    assert isinstance(switch.switch, structured_c.CVariable)
+    assert switch.switch.variable is assignment.lhs.variable
+    assert switch.switch.name == "ax"
+    assert codegen.cfunc.variables_in_use[assignment.lhs.variable] is assignment.lhs
+    assert validate_structured_def_use_8616(root).passed

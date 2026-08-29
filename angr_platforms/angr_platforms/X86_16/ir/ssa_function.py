@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .core import IRFunctionArtifact, IRRefusal, IRValue, MemSpace
+from .function_condition_artifact import IRFunctionConditionArtifact8616
 from .logical_memory_contracts import IRLogicalMemoryArtifact8616
 from .ssa import SSABlock, build_x86_16_block_local_ssa
 from .ssa_memory import build_x86_16_function_memory_ssa
@@ -90,6 +91,7 @@ class SSAFunctionArtifact:
     predecessor_map: dict[int, tuple[int, ...]] = field(default_factory=dict)
     summary: dict[str, object] = field(default_factory=dict)
     logical_memory: IRLogicalMemoryArtifact8616 | None = None
+    condition_evidence: IRFunctionConditionArtifact8616 | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -116,6 +118,11 @@ class SSAFunctionArtifact:
             "summary": dict(self.summary),
             "logical_memory": (
                 None if self.logical_memory is None else self.logical_memory.to_dict()
+            ),
+            "condition_evidence": (
+                None
+                if self.condition_evidence is None
+                else self.condition_evidence.to_dict()
             ),
         }
 
@@ -239,6 +246,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             predecessor_map=pred_map,
             summary=summary,
             logical_memory=memory_ssa.logical_memory,
+            condition_evidence=artifact.condition_evidence,
         )
 
     return _impl()

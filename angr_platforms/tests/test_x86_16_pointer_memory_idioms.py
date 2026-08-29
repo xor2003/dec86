@@ -13,9 +13,14 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypePointer, SimTypeShort
+from angr.knowledge_plugins.functions.function import PrototypeSource
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering.authoritative_function_prototypes import (
+    authoritative_function_prototype_8616,
+    capture_authoritative_function_prototype_8616,
+)
 from angr_platforms.X86_16.lowering.pointer_memory_idioms import (
     PointerMemoryIdiomCallbacks8616,
     PointerMemoryIdiomKind8616,
@@ -107,6 +112,51 @@ def test_pointer_memory_idiom_dispatch_refuses_without_instruction_evidence() ->
     )
 
     assert materialize_pointer_memory_idioms_from_evidence_8616(object(), object(), callbacks) is False
+
+
+def test_pointer_memory_idiom_publishes_materialized_pointer_interface() -> None:
+    stale = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False))
+    recovered = SimTypeFunction(
+        [SimTypePointer(SimTypeChar(False))],
+        SimTypeShort(False),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        prototype=stale,
+        prototype_source=PrototypeSource.CCA_DECOMPILER,
+        info={},
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda *, addr, create: function if addr == function.addr and not create else None
+            )
+        )
+    )
+    capture_authoritative_function_prototype_8616(project, function)
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr, functy=stale))
+    insns = (SimpleNamespace(address=0x1000),)
+
+    def materialize(*_args: object) -> bool:
+        codegen.cfunc.functy = recovered
+        return True
+
+    callbacks = PointerMemoryIdiomCallbacks8616(
+        linear_function_insns=lambda _project, _codegen: insns,
+        byte_pointer_fill_loop=lambda *_args: False,
+        word_pointer_sum_loop=lambda *_args: False,
+        word_pair_pointer_accumulation_loop=lambda *_args: False,
+        word_pointer_first_gt_loop=materialize,
+        word_pointer_rotate3=lambda *_args: False,
+        pointer_swap=lambda *_args: False,
+    )
+
+    assert materialize_pointer_memory_idioms_from_evidence_8616(project, codegen, callbacks)
+    assert authoritative_function_prototype_8616(
+        project,
+        function,
+        argument_count=1,
+    ) == recovered
 
 
 def test_pointer_memory_idiom_normalizes_byte_fill_as_for_loop_with_return() -> None:
@@ -202,6 +252,8 @@ def test_pointer_swap_validation_accepts_only_symbolic_write_precision_delta() -
         classified_fact_count=1,
         materialized_count=1,
         failure_count=0,
+        left_machine_bp_offset=4,
+        right_machine_bp_offset=6,
     )
     validation: dict[str, object] = {
         "delta": {

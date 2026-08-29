@@ -84,9 +84,13 @@ def _raw_fact_count_8616(contract: FunctionStorageContract8616) -> int:
     return (
         len(contract.callsites)
         + len(contract.memory_outputs)
+        + len(contract.pointer_memory_outputs)
         + sum(len(item.views) for item in contract.memory_outputs)
+        + sum(len(item.views) for item in contract.pointer_memory_outputs)
         + sum(
-            len(callsite.memory_effects) + len(callsite.live_outs)
+            len(callsite.memory_effects)
+            + len(callsite.pointer_effects)
+            + len(callsite.live_outs)
             for callsite in contract.callsites
         )
     )
@@ -131,6 +135,7 @@ def validate_memory_output_transaction_8616(
         )
 
     consumed_effects: set[tuple[int, int, int]] = set()
+    consumed_pointer_effects: set[tuple[int, int, int]] = set()
     consumed_trials: set[tuple[int, int, int]] = set()
     view_keys: set[tuple[object, ...]] = set()
     for memory_object in contract.memory_outputs:
@@ -188,6 +193,70 @@ def validate_memory_output_transaction_8616(
                 raw_count,
             )
 
+    pointer_source_keys: set[tuple[object, ...]] = set()
+    for pointer_object in contract.pointer_memory_outputs:
+        source = pointer_object.source
+        source_view = source.output_view
+        source_key = (
+            source.logical_index,
+            source.argument_storage.offset,
+            source.argument_storage.size,
+            source_view.segment.value,
+            source_view.relative_offset,
+            source_view.width,
+        )
+        if source_key in pointer_source_keys:
+            return _refused_8616(
+                MemoryOutputTransactionFailure8616.DUPLICATE_OWNER,
+                raw_count,
+            )
+        pointer_source_keys.add(source_key)
+        for pointer_view in pointer_object.views:
+            callsite_key = (pointer_view.caller_addr, pointer_view.callsite_addr)
+            callsite = callsites.get(callsite_key)
+            if callsite is None or pointer_view.callee_addr != contract.function_addr:
+                return _refused_8616(
+                    (
+                        MemoryOutputTransactionFailure8616.CALLSITE_MISSING
+                        if callsite is None
+                        else MemoryOutputTransactionFailure8616.CALLSITE_CONFLICT
+                    ),
+                    raw_count,
+                )
+            view_key = (*callsite_key, "pointer", pointer_view.effect.logical_index)
+            if view_key in view_keys:
+                return _refused_8616(
+                    MemoryOutputTransactionFailure8616.DUPLICATE_VIEW,
+                    raw_count,
+                )
+            view_keys.add(view_key)
+            effect_indices = tuple(
+                index
+                for index, effect in enumerate(callsite.pointer_effects)
+                if effect == pointer_view.effect
+            )
+            if not effect_indices:
+                return _refused_8616(
+                    MemoryOutputTransactionFailure8616.EFFECT_MISSING,
+                    raw_count,
+                )
+            if len(effect_indices) != 1:
+                return _refused_8616(
+                    MemoryOutputTransactionFailure8616.EFFECT_CONFLICT,
+                    raw_count,
+                )
+            consumed_pointer_effects.add((*callsite_key, effect_indices[0]))
+            if not pointer_view.complete:
+                return _refused_8616(
+                    MemoryOutputTransactionFailure8616.OBJECT_INCOMPLETE,
+                    raw_count,
+                )
+        if not pointer_object.complete:
+            return _refused_8616(
+                MemoryOutputTransactionFailure8616.OBJECT_INCOMPLETE,
+                raw_count,
+            )
+
     for callsite_key, callsite in callsites.items():
         if any(
             (*callsite_key, index) not in consumed_effects
@@ -203,6 +272,14 @@ def validate_memory_output_transaction_8616(
         ):
             return _refused_8616(
                 MemoryOutputTransactionFailure8616.ORPHAN_TRIAL,
+                raw_count,
+            )
+        if any(
+            (*callsite_key, index) not in consumed_pointer_effects
+            for index in range(len(callsite.pointer_effects))
+        ):
+            return _refused_8616(
+                MemoryOutputTransactionFailure8616.ORPHAN_EFFECT,
                 raw_count,
             )
 

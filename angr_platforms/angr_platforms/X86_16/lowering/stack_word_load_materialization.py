@@ -24,15 +24,26 @@ from ..alias.stack_memory_ssa_contracts import (
     StackMemoryAliasFactKind8616,
     StackMemorySSAAliasArtifact8616,
 )
-from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
+from ..c_ast_utils import _replace_c_children_8616
 from .instruction_bp_stack_access import (
     InstructionBpStackAccess8616,
     InstructionBpStackAccessIndex8616,
     ensure_instruction_bp_stack_access_index_8616,
 )
 from .segment_access_policy import instruction_addrs_from_node_8616
-from .stack_word_load_projection import resolve_stack_word_load_projection_8616
+from .stack_prototype_layout import stack_prototype_cvar_for_machine_bp_range_8616
+from .stack_variable_coordinates import stack_cvar_for_machine_bp_range_8616
+from .stack_word_load_candidate import (
+    direct_machine_bp_word_owner_8616,
+    stack_word_byte_pair_matches_machine_bp_view_8616,
+    stack_word_load_expression_has_side_effect_8616,
+)
+from .stack_word_load_projection import (
+    resolve_logical_stack_word_owner_8616,
+    resolve_stack_word_load_projection_8616,
+)
 from .stack_word_projection import stack_word_projection_owner_8616
+from .stack_word_recomposition import recognize_stack_word_recomposition_8616
 
 _LOG = logging.getLogger(__name__)
 
@@ -116,89 +127,6 @@ class _CodegenBoundary8616(Protocol):
     )
 
 
-def _strip_casts_8616(node: object) -> object:
-    """Remove syntax-only C casts from one expression boundary."""
-    while isinstance(node, structured_c.CTypeCast):
-        node = node.expr
-    return node
-
-
-def _constant_value_8616(node: object) -> int | None:
-    """Return one exact C integer constant."""
-    stripped = _strip_casts_8616(node)
-    return (
-        stripped.value
-        if isinstance(stripped, structured_c.CConstant)
-        and isinstance(stripped.value, int)
-        else None
-    )
-
-
-def _masked_operand_8616(node: object, mask: int) -> object | None:
-    """Return the non-constant operand of one exact bit mask."""
-    stripped = _strip_casts_8616(node)
-    if not isinstance(stripped, structured_c.CBinaryOp) or stripped.op != "And":
-        return None
-    if _constant_value_8616(stripped.lhs) == mask:
-        return cast(object, stripped.rhs)
-    if _constant_value_8616(stripped.rhs) == mask:
-        return cast(object, stripped.lhs)
-    return None
-
-
-def _low_stack_cvar_8616(node: object) -> structured_c.CVariable | None:
-    """Return the CVariable carrying an exact low-byte projection."""
-    stripped = _strip_casts_8616(node)
-    if isinstance(stripped, structured_c.CVariable):
-        return stripped
-    masked = _masked_operand_8616(stripped, 0xFF)
-    masked = _strip_casts_8616(masked)
-    return masked if isinstance(masked, structured_c.CVariable) else None
-
-
-def _high_dereference_8616(node: object) -> structured_c.CUnaryOp | None:
-    """Return the dereference shifted into the high byte."""
-    shifted = _strip_casts_8616(node)
-    if (
-        not isinstance(shifted, structured_c.CBinaryOp)
-        or shifted.op != "Shl"
-        or _constant_value_8616(shifted.rhs) != 8
-    ):
-        return None
-    high = _strip_casts_8616(shifted.lhs)
-    masked = _masked_operand_8616(high, 0xFF)
-    if masked is not None:
-        high = _strip_casts_8616(masked)
-    return (
-        high
-        if isinstance(high, structured_c.CUnaryOp) and high.op == "Dereference"
-        else None
-    )
-
-
-def _word_projection_parts_8616(
-    node: object,
-) -> tuple[structured_c.CVariable, structured_c.CUnaryOp] | None:
-    """Recognize one syntax-level low/high word recomposition candidate."""
-    stripped = _strip_casts_8616(node)
-    if not isinstance(stripped, structured_c.CBinaryOp) or stripped.op != "Or":
-        return None
-    low = _low_stack_cvar_8616(stripped.lhs)
-    high = _high_dereference_8616(stripped.rhs)
-    if low is None or high is None:
-        return None
-    return low, high
-
-
-def _has_side_effect_8616(node: object) -> bool:
-    """Reject expression forms that cannot be discarded by materialization."""
-    return any(
-        isinstance(candidate, structured_c.CFunctionCall)
-        or type(candidate).__name__ in {"CAssignment", "CMultiStatementExpression"}
-        for candidate in _iter_c_nodes_deep_8616(node)
-    )
-
-
 def _word_load_candidates_8616(
     index: InstructionBpStackAccessIndex8616,
     instruction_addrs: frozenset[int],
@@ -252,12 +180,12 @@ def materialize_stack_word_load_recompositions_8616(
             raw_fact_count += 1
             materialized_count += 1
             return projected_owner
-        parts = _word_projection_parts_8616(node)
-        if parts is None:
+        recomposition = recognize_stack_word_recomposition_8616(node)
+        if recomposition is None:
             return node
         raw_fact_count += 1
-        low, high = parts
-        if _has_side_effect_8616(high):
+        low, high = recomposition.low, recomposition.high
+        if stack_word_load_expression_has_side_effect_8616(high):
             _refuse(StackWordLoadRefusalKind8616.SIDE_EFFECTFUL_HIGH)
             return node
         if source_alias is None:
@@ -267,7 +195,19 @@ def materialize_stack_word_load_recompositions_8616(
         if not instruction_addrs:
             instruction_addrs = instruction_addrs_from_node_8616(node)
         if not instruction_addrs:
-            _refuse(StackWordLoadRefusalKind8616.NO_INSTRUCTION_PROVENANCE)
+            logical_owner = resolve_logical_stack_word_owner_8616(
+                codegen,
+                source_alias,
+                low,
+                high,
+            )
+            if logical_owner.resolved and logical_owner.cvar is not None:
+                materialized_count += 1
+                return logical_owner.cvar
+            _refuse(
+                StackWordLoadRefusalKind8616.NO_INSTRUCTION_PROVENANCE,
+                detail=logical_owner.detail,
+            )
             return node
         if index is None:
             index = ensure_instruction_bp_stack_access_index_8616(
@@ -288,6 +228,38 @@ def materialize_stack_word_load_recompositions_8616(
             )
             return node
         load = loads[0]
+        canonical_owner = stack_cvar_for_machine_bp_range_8616(
+            codegen,
+            load.displacement,
+            load.size,
+        )
+        if canonical_owner is None:
+            canonical_owner = stack_prototype_cvar_for_machine_bp_range_8616(
+                codegen,
+                load.displacement,
+                load.size,
+            )
+        if isinstance(canonical_owner, structured_c.CVariable):
+            materialized_count += 1
+            return canonical_owner
+        if not stack_word_byte_pair_matches_machine_bp_view_8616(low, high):
+            _refuse(
+                StackWordLoadRefusalKind8616.STACK_PROJECTION_MISMATCH,
+                instruction_addrs,
+                detail="low and high byte variables are not adjacent stack views",
+            )
+            return node
+        direct_owner = direct_machine_bp_word_owner_8616(low, load)
+        if direct_owner is not None:
+            materialized_count += 1
+            return direct_owner
+        if not isinstance(low, structured_c.CVariable):
+            _refuse(
+                StackWordLoadRefusalKind8616.STACK_PROJECTION_MISMATCH,
+                instruction_addrs,
+                detail="tagged byte-load recomposition has no canonical BP projection",
+            )
+            return node
         variable = low.variable
         if not isinstance(variable, SimStackVariable):
             _refuse(

@@ -128,6 +128,26 @@ def test_target_comparison_does_not_flatten_to_low_16_bits() -> None:
     assert result.stats.classified_fact_count == result.stats.materialized_count == 0
 
 
+def test_real_mode_offset_target_matches_linked_target_with_project_evidence() -> None:
+    project = SimpleNamespace(
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x10000, max_addr=0xFFFF)
+        )
+    )
+
+    result = resolve_call_output_definitions_8616(
+        _lift_ssa(bytes.fromhex("e80000")),
+        _fact(),
+        0x11003,
+        (0x11003,),
+        (_register("ax"),),
+        project=project,
+    )
+
+    assert result.verdict is CallOutputDefinitionVerdict8616.PROVEN
+    assert result.complete
+
+
 def test_unknown_return_use_refuses_before_call_materialization() -> None:
     fact = CallerReturnUseFact8616(
         caller_addr=0x1000,

@@ -9,7 +9,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CDirtyExpression,
     CExpressionStatement,
     CFunctionCall,
-    CIfElse,
     CStatements,
     CTypeCast,
     CUnaryOp,
@@ -48,13 +47,17 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _PostprocessValidationDeltaKind8616,
     _record_postprocess_validation_blocking_reason_8616,
     _record_unchanged_postprocess_validation_skip_8616,
-    _repair_missing_cnode_codegen_metadata_8616,
     _restore_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
     _snapshot_codegen_inertia_metadata_8616,
     _try_accept_failed_postprocess_validation_8616,
 )
 from angr_platforms.X86_16.lowering.real_mode_linear import DirectStackMoveSourceKind8616
+from angr_platforms.X86_16.postprocess.pass_validation_policy import (
+    LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616,
+    MANDATORY_VALIDATION_PASS_NAMES_8616,
+    PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616,
+)
 
 
 class _FakeCodegen:
@@ -189,9 +192,9 @@ def test_positive_bp_arg_unifier_is_validated_and_locally_rejectable():
         "_unify_positive_bp_arg_stack_variables_final_8616",
     }
 
-    assert pass_names <= post_stage._LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
-    assert pass_names <= post_stage._MANDATORY_VALIDATION_PASS_NAMES_8616
-    assert pass_names <= post_stage._PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+    assert pass_names <= LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
+    assert pass_names <= MANDATORY_VALIDATION_PASS_NAMES_8616
+    assert pass_names <= PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
 
 
 def test_after_ss_callsite_materialization_disables_consumed_store_prune(monkeypatch):
@@ -213,9 +216,9 @@ def test_after_ss_callsite_materialization_disables_consumed_store_prune(monkeyp
 def test_after_ss_callsite_dce_is_validated_and_locally_rejectable():
     pass_name = "_dead_code_elimination_after_ss_callsite_stack_arguments_8616"
 
-    assert pass_name in post_stage._LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
-    assert pass_name in post_stage._MANDATORY_VALIDATION_PASS_NAMES_8616
-    assert pass_name in post_stage._PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+    assert pass_name in LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
+    assert pass_name in MANDATORY_VALIDATION_PASS_NAMES_8616
+    assert pass_name in PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
 
 
 def test_pre_validation_callsite_prime_materializes_arguments_before_baseline(monkeypatch):
@@ -333,7 +336,13 @@ def test_unchanged_postprocess_pass_skips_validation_summary_collection(monkeypa
         post_stage.DecompilerPostprocessPassSpec("stable_pass", lambda _project, _codegen: False, True),
         post_stage.DecompilerPostprocessPassSpec("changed_pass", lambda _project, _codegen: True, True),
     )
+    cycle_scans: list[object] = []
 
+    monkeypatch.setattr(
+        post_stage,
+        "_c_ast_cycle_path_8616",
+        lambda root: cycle_scans.append(root) or (),
+    )
     monkeypatch.setattr(post_stage, "_decompiler_postprocess_passes_for_function", lambda _project, _codegen: pass_specs)
     monkeypatch.setattr(
         post_stage,
@@ -385,6 +394,7 @@ def test_unchanged_postprocess_pass_skips_validation_summary_collection(monkeypa
     assert len(collected_summaries) == 1
     assert compared_summaries == [(baseline_summary, collected_summaries[0])]
     assert any("changed_pass:validation" in context for context in regenerated_contexts)
+    assert len(cycle_scans) == 4
 
 
 def test_records_unchanged_postprocess_validation_skip():
@@ -977,66 +987,6 @@ class _CodegenWithIndexes:
         return self.next_idx("")
     def next_ident(self, name: str) -> str:
         return name
-
-
-class _VariableManagerWithUnified:
-    def __init__(self, unified_by_variable):
-        self._unified_by_variable = dict(unified_by_variable)
-
-    def unified_variable(self, variable):
-        return self._unified_by_variable.get(variable)
-
-
-def test_repair_metadata_registers_live_register_variables_for_declarations():
-    codegen = _CodegenWithIndexes()
-    cfunc = SimpleNamespace(addr=0x1000, variables_in_use={}, unified_local_vars={})
-    codegen.cfunc = cfunc
-
-    word_type = SimTypeShort(False)
-    ax_var = SimRegisterVariable(0, 2, name="ax")
-    ax = CVariable(ax_var, variable_type=word_type, codegen=codegen)
-    cond = CBinaryOp("CmpLT", ax, CConstant(3, word_type, codegen=codegen), codegen=codegen)
-    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
-    cfunc.statements = CStatements([if_stmt], codegen=codegen)
-    cfunc.body = cfunc.statements
-    ax.codegen = None
-
-    repaired = _repair_missing_cnode_codegen_metadata_8616(cfunc, codegen)
-
-    assert repaired > 0
-    assert cfunc.variables_in_use[ax_var] is ax
-    assert cfunc.unified_local_vars[ax_var] == {(ax, word_type)}
-    assert ax.codegen is codegen
-    stats = codegen._inertia_live_register_declaration_repair_stats_8616
-    assert stats.raw_fact_count == 1
-    assert stats.classified_fact_count == 1
-    assert stats.materialized_count == 1
-    assert stats.failure_count == 0
-
-
-def test_repair_metadata_binds_live_register_to_unified_declaration_identity():
-    codegen = _CodegenWithIndexes()
-    word_type = SimTypeShort(False)
-    ax_var = SimRegisterVariable(0, 2, name="ax")
-    unified_ax = SimRegisterVariable(0, 2, name="v19")
-    cfunc = SimpleNamespace(
-        addr=0x1000,
-        variables_in_use={},
-        unified_local_vars={},
-        variable_manager=_VariableManagerWithUnified({ax_var: unified_ax}),
-    )
-    codegen.cfunc = cfunc
-
-    ax = CVariable(ax_var, variable_type=word_type, codegen=codegen)
-    cond = CBinaryOp("CmpLT", ax, CConstant(3, word_type, codegen=codegen), codegen=codegen)
-    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
-    cfunc.statements = CStatements([if_stmt], codegen=codegen)
-    cfunc.body = cfunc.statements
-
-    _repair_missing_cnode_codegen_metadata_8616(cfunc, codegen)
-
-    assert ax.unified_variable is unified_ax
-    assert cfunc.unified_local_vars[unified_ax] == {(ax, word_type)}
 
 
 def _jcc_condition_materialization_validation(*, helper="addr:0x11222", global_token="global:0xbab"):
@@ -2965,6 +2915,20 @@ def test_postprocess_metadata_restore_removes_rejected_return_chain_evidence():
         )
         is _PostprocessValidationDeltaKind8616.BLOCKING
     )
+
+
+def test_postprocess_metadata_restore_invalidates_ast_replay_generations():
+    codegen = _FakeCodegen(_FakeCFunc([]))
+    codegen._inertia_direct_stack_replay_stable_generation_8616 = object()
+    codegen._inertia_direct_stack_ownership_replay_stable_generation_8616 = object()
+    codegen._inertia_direct_stack_move_ownership_replayed_8616 = True
+
+    snapshot = _snapshot_codegen_inertia_metadata_8616(codegen)
+    _restore_codegen_inertia_metadata_8616(codegen, snapshot)
+
+    assert codegen._inertia_direct_stack_replay_stable_generation_8616 is None
+    assert codegen._inertia_direct_stack_ownership_replay_stable_generation_8616 is None
+    assert codegen._inertia_direct_stack_move_ownership_replayed_8616 is None
 
 
 def test_postprocess_metadata_snapshot_rolls_back_top_level_containers_without_deepcopying_objects():

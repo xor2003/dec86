@@ -29,6 +29,9 @@ from .interprocedural_storage_live_out_contracts import (
     MemoryLiveOutUseDisposition8616,
     MemoryLiveOutUseFact8616,
 )
+from .pointer_parameter_memory_output_contracts import (
+    PointerParameterMemoryOutputObject8616,
+)
 
 
 class MemoryOutputObjectJoinVerdict8616(StrEnum):
@@ -51,6 +54,7 @@ class MemoryOutputObjectFailure8616(StrEnum):
     VALUE_CLASS_CONFLICT = "value_class_conflict"
     OWNER_CONFLICT = "owner_conflict"
     OWNER_OVERLAP = "owner_overlap"
+    POINTER_OUTPUT_REFUSED = "pointer_output_refused"
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +160,7 @@ class MemoryOutputObjectJoinEvidence8616:
     objects: tuple[MemoryOutputObjectContract8616, ...]
     failure: MemoryOutputObjectFailure8616 | None
     stats: MemoryOutputObjectStats8616
+    pointer_objects: tuple[PointerParameterMemoryOutputObject8616, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -164,9 +169,13 @@ class MemoryOutputObjectJoinEvidence8616:
             self.verdict is MemoryOutputObjectJoinVerdict8616.PROVEN
             and self.failure is None
             and self.stats.complete
-            and sum(len(item.views) for item in self.objects)
+            and (
+                sum(len(item.views) for item in self.objects)
+                + sum(len(item.views) for item in self.pointer_objects)
+            )
             == self.stats.materialized_count
             and all(item.complete for item in self.objects)
+            and all(item.complete for item in self.pointer_objects)
         )
 
     @property

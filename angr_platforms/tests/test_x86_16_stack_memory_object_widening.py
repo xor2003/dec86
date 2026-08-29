@@ -224,10 +224,14 @@ def test_stack_memory_lowering_materializes_non_laminar_unique_owner_atomically(
     assert artifact is not None and artifact.complete is True
     assert artifact.refusals == ()
     assert len(artifact.candidates) == 1
+    assert (
+        artifact.candidates[0].address.offset,
+        artifact.candidates[0].entry_sp_offset,
+    ) == (-8, -10)
     stack_variables = [
         variable for variable in codegen.cfunc.variables_in_use if isinstance(variable, SimStackVariable)
     ]
-    assert [(variable.offset, variable.size) for variable in stack_variables] == [(-8, 4)]
+    assert [(variable.offset, variable.size) for variable in stack_variables] == [(-10, 4)]
 
 
 def test_stack_memory_object_widening_consumes_every_byte_phi() -> None:

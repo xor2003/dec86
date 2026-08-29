@@ -255,3 +255,106 @@ def test_recovers_nested_loop_from_current_switch_case_list() -> None:
     assert recover_canonical_for_loops_8616(codegen) is True
     assert len(case_body.statements) == 1
     assert isinstance(case_body.statements[0], CForLoop)
+
+
+def test_attaches_adjacent_initializer_to_existing_for_loop() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(3, codegen), codegen=codegen)
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp("Sub", _local(-4, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    loop = CForLoop(
+        None,
+        _local(-4, codegen),
+        iterator,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is True
+    assert root.statements == [loop]
+    assert loop.initializer is initializer
+    stats = codegen._inertia_canonical_for_loop_recovery_stats_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 1, 1, 0)
+
+
+def test_attaches_initializer_to_existing_for_with_nonzero_comparison() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(3, codegen), codegen=codegen)
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp("Sub", _local(-4, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    loop = CForLoop(
+        None,
+        CBinaryOp("CmpNE", _local(-4, codegen), _const(0, codegen), codegen=codegen),
+        iterator,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([CStatements([initializer], codegen=codegen), loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is True
+    assert loop.initializer is initializer
+    assert root.statements[0].statements == []
+
+
+def test_refuses_zero_comparison_as_for_continuation_condition() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(3, codegen), codegen=codegen)
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp("Sub", _local(-4, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    loop = CForLoop(
+        None,
+        CBinaryOp("CmpEQ", _local(-4, codegen), _const(0, codegen), codegen=codegen),
+        iterator,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is False
+    assert root.statements == [initializer, loop]
+    assert loop.initializer is None
+
+
+def test_refuses_adjacent_initializer_for_different_for_induction() -> None:
+    codegen = _Codegen()
+    initializer = CAssignment(_local(-6, codegen), _const(3, codegen), codegen=codegen)
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp("Sub", _local(-4, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    loop = CForLoop(
+        None,
+        _local(-4, codegen),
+        iterator,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is False
+    assert root.statements == [initializer, loop]
+    assert loop.initializer is None

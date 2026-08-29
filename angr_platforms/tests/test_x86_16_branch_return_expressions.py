@@ -4,8 +4,23 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from angr.analyses.decompiler.structured_codegen.c import CConstant, CReturn, CStatements
-from angr.sim_type import SimTypeShort
+from angr.analyses.decompiler.structured_codegen.c import (
+    CConstant,
+    CReturn,
+    CStatements,
+    CVariable,
+)
+from angr.knowledge_plugins.functions.function import PrototypeSource
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeShort
+from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.annotations import ANNOTATION_KEY
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
+    materialize_annotated_stack_prototype_8616,
+)
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.structuring import branch_return_expressions
 from angr_platforms.X86_16.structuring.branch_return_expressions import (
     recover_branch_target_return_expression_8616,
@@ -88,6 +103,121 @@ def test_branch_target_return_expression_refuses_value_before_conditional_branch
     )
 
     assert recover_branch_target_return_expression_8616(project, codegen, 0x1000) is None
+
+
+def test_branch_target_return_expression_uses_projected_machine_bp_argument() -> None:
+    """Resolve BP+4 return evidence to an entry-SP+2 C argument."""
+    arch = Arch86_16()
+    codegen = _Codegen()
+    codegen.project = SimpleNamespace(arch=arch)
+    word_type = SimTypeShort(False).with_arch(arch)
+    argument = CVariable(
+        SimStackVariable(2, 2, base="bp", name="a", region=0x1000),
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=[argument],
+        variables_in_use={argument.variable: argument},
+        unified_local_vars={},
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=argument.variable,
+        cvar=argument,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    memory = SimpleNamespace(base=3, index=0, disp=4)
+    project = _project(_Insn("mov", (_Operand(1, reg=1), _Operand(3, mem=memory))))
+
+    expression = recover_branch_target_return_expression_8616(project, codegen, 0x1000)
+
+    assert isinstance(expression, CVariable)
+    assert expression.variable is argument.variable
+
+
+def test_narrow_arguments_keep_word_storage_for_branch_returns() -> None:
+    """Keep logical byte types distinct from physical 16-bit argument slots."""
+    arch = Arch86_16()
+    byte_type = SimTypeChar(False).with_arch(arch)
+    word_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction(
+        [byte_type, byte_type, word_type],
+        word_type,
+        arg_names=("a", "b", "which"),
+    ).with_arch(arch)
+    function = SimpleNamespace(
+        addr=0x1000,
+        prototype=prototype,
+        prototype_source=PrototypeSource.GUESSED,
+        is_prototype_guessed=True,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {
+                    2: {"name": "a"},
+                    4: {"name": "b"},
+                    6: {"name": "which"},
+                }
+            }
+        },
+    )
+    codegen = _Codegen()
+    codegen.project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: function if addr == 0x1000 else None
+            )
+        ),
+    )
+    arguments = tuple(
+        CVariable(
+            SimStackVariable(offset, size, base="bp", name=name, region=0x1000),
+            variable_type=type_,
+            codegen=codegen,
+        )
+        for offset, size, name, type_ in (
+            (2, 1, "a", byte_type),
+            (4, 1, "b", byte_type),
+            (6, 2, "which", word_type),
+        )
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=list(arguments),
+        variables_in_use={arg.variable: arg for arg in arguments},
+        unified_local_vars={},
+        functy=prototype,
+        prototype=prototype,
+        statements=CStatements([], codegen=codegen),
+    )
+    for argument, bp_offset in zip(arguments, (4, 6, 8), strict=True):
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=argument.variable,
+            cvar=argument,
+            bp_offset=bp_offset,
+            entry_sp_offset=argument.variable.offset,
+            size=argument.variable.size,
+        )
+
+    assert materialize_annotated_stack_prototype_8616(codegen.project, codegen)
+    assert [arg.variable.offset for arg in codegen.cfunc.arg_list] == [2, 4, 6]
+    assert [arg.variable.size for arg in codegen.cfunc.arg_list] == [2, 2, 2]
+
+    for expected, bp_offset in zip(arguments[:2], (4, 6), strict=True):
+        memory = SimpleNamespace(base=3, index=0, disp=bp_offset)
+        project = _project(_Insn("mov", (_Operand(1, reg=1), _Operand(3, mem=memory))))
+        expression = recover_branch_target_return_expression_8616(
+            project,
+            codegen,
+            0x1000,
+        )
+        assert isinstance(expression, CVariable)
+        assert expression.variable is expected.variable
 
 
 def test_branch_target_return_expression_combines_adjacent_dx_ax_stack_slices(

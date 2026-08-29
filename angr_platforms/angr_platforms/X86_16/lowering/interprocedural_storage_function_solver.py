@@ -64,7 +64,7 @@ class FunctionStorageTrialJoin8616:
     @property
     def function_addr(self) -> int:
         """Return the exact function address owning this joined census."""
-        return self.trials.function_addr
+        return int(self.trials.function_addr)
 
     @property
     def direct_output_seed(self) -> tuple[StorageSlotContract8616, ...] | None:
@@ -109,16 +109,25 @@ def join_function_storage_trials_8616(
     memory_effects = tuple(
         effect for callsite in trials.callsites for effect in callsite.memory_effects
     )
+    pointer_effects = tuple(
+        effect for callsite in trials.callsites for effect in callsite.pointer_effects
+    )
     interface_trials = tuple(
         trial
         for callsite in trials.callsites
         for trial in (*callsite.arguments, *callsite.returns)
     )
-    raw_count = len(interface_trials) + len(passthroughs) + len(memory_effects)
+    raw_count = (
+        len(interface_trials)
+        + len(passthroughs)
+        + len(memory_effects)
+        + len(pointer_effects)
+    )
     normalized_count = (
         sum(item.is_complete for item in interface_trials)
         + sum(item.is_complete for item in passthroughs)
         + sum(item.complete for item in memory_effects)
+        + sum(item.complete for item in pointer_effects)
     )
     failures: list[StorageTrialFailureKind8616] = []
     expected = tuple(sorted(set(trials.expected_callsite_addrs)))
@@ -126,6 +135,8 @@ def join_function_storage_trials_8616(
     if not trials.caller_census_complete:
         failures.append(StorageTrialFailureKind8616.INCOMPLETE_CALLER_CENSUS)
     if len(expected) != len(trials.expected_callsite_addrs) or observed != expected:
+        failures.append(StorageTrialFailureKind8616.CALLSITE_SET_CONFLICT)
+    if any(callsite.callee_addr != trials.function_addr for callsite in trials.callsites):
         failures.append(StorageTrialFailureKind8616.CALLSITE_SET_CONFLICT)
     if any(
         not _trial_matches_callsite_8616(trial, callsite)
@@ -245,6 +256,7 @@ def resolve_joined_function_storage_trials_8616(
             stack_delta=joined.stack_delta,
             live_outs=ordered_storage_trials_8616(callsite, StorageTrialRole8616.LIVE_OUT),
             memory_effects=callsite.memory_effects,
+            pointer_effects=callsite.pointer_effects,
             return_passthroughs=callsite.return_passthroughs,
         )
         for callsite in sorted(joined.trials.callsites, key=lambda item: item.callsite_addr)
@@ -256,6 +268,7 @@ def resolve_joined_function_storage_trials_8616(
         stack_delta=joined.stack_delta,
         callsites=bindings,
         memory_outputs=joined.memory_output_join.objects,
+        pointer_memory_outputs=joined.memory_output_join.pointer_objects,
     )
     stats = StorageTrialStats8616(
         raw_fact_count=joined.raw_count,

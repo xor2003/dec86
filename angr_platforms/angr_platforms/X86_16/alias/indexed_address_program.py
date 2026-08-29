@@ -23,6 +23,9 @@ from ..ir.indexed_address_copy_evidence import (
     collect_indexed_address_copy_evidence_8616,
 )
 from ..ir.indexed_address_evidence import collect_indexed_address_evidence_8616
+from ..ir.indexed_address_range_candidates import (
+    collect_indexed_loop_ranges_from_ssa_8616,
+)
 from .indexed_address_access_classification import (
     classify_indexed_alias_accesses_8616,
 )
@@ -31,6 +34,8 @@ from .indexed_address_contracts import IndexedAddressAliasEvidence8616
 from .indexed_address_copy_contracts import IndexedAliasCopyEvidence8616
 from .indexed_address_copy_projection import project_indexed_address_copies_8616
 from .indexed_address_projection import project_indexed_address_aliases_8616
+from .indexed_address_range_contracts import IndexedAliasLoopRangeEvidence8616
+from .indexed_address_range_projection import project_indexed_loop_ranges_to_alias_8616
 
 
 class IndexedAliasProgramFailureKind8616(StrEnum):
@@ -62,6 +67,7 @@ class IndexedAliasFunctionEvidence8616:
     addresses: IndexedAddressAliasEvidence8616
     accesses: IndexedAliasAccessEvidence8616
     copies: IndexedAliasCopyEvidence8616
+    ranges: IndexedAliasLoopRangeEvidence8616
 
     @property
     def complete(self) -> bool:
@@ -71,13 +77,16 @@ class IndexedAliasFunctionEvidence8616:
             and self.addresses.closed
             and self.accesses.closed
             and self.copies.closed
+            and self.ranges.closed
             and self.function_addr == self.addresses.function_addr
             == self.accesses.function_addr
             == self.copies.function_addr
+            == self.ranges.function_addr
             and self.accesses.source == self.addresses
             and self.copies.aliases == self.addresses
             and self.copies.accesses == self.accesses
             and self.copies.source.source == self.addresses.source
+            and self.ranges.accesses == self.accesses
         )
 
 
@@ -190,16 +199,22 @@ def _build_function_evidence_8616(
     )
     aliases = project_indexed_address_aliases_8616(ir_evidence)
     accesses = classify_indexed_alias_accesses_8616(aliases)
+    ir_ranges = collect_indexed_loop_ranges_from_ssa_8616(
+        function_ssa,
+        ir_evidence,
+    )
     copies = project_indexed_address_copies_8616(
         ir_copies,
         aliases,
         accesses,
     )
+    ranges = project_indexed_loop_ranges_to_alias_8616(ir_ranges, accesses)
     result = IndexedAliasFunctionEvidence8616(
         selection.function_addr,
         aliases,
         accesses,
         copies,
+        ranges,
     )
     if not result.complete:
         raise ValueError("indexed-address function Alias artifacts are incoherent")

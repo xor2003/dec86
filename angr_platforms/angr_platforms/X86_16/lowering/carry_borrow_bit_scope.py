@@ -42,6 +42,17 @@ class CarryBitOccurrence8616:
 
 
 @dataclass(frozen=True)
+class InlinedCarryBitOccurrence8616:
+    """One low carry projection inlined into an exact high-instruction expression."""
+
+    root: object
+    container: structured_c.CStatements
+    statement_index: int
+    node: structured_c.CBinaryOp
+    high_node: structured_c.CBinaryOp
+
+
+@dataclass(frozen=True)
 class CarryBitDefinitionSelection8616:
     """Definitions proven to reach one use directly or through exclusive arms."""
 
@@ -57,11 +68,11 @@ def variable_key_8616(variable: structured_c.CVariable) -> VariableKey8616 | Non
     return ("variable", id(carrier)) if carrier is not None else None
 
 
-def node_instruction_site_8616(
+def _tagged_instruction_site_8616(
     node: object,
     ownership: CFGOwnershipArtifact,
 ) -> CFGInstructionSite8616 | CFGInstructionReachability8616:
-    """Resolve one dynamic C-AST node to a unique pre-join instruction owner."""
+    """Read one exact instruction tag at the dynamic third-party C-AST boundary."""
     if not hasattr(node, "tags"):
         return CFGInstructionReachability8616.OWNER_MISSING
     tags = cast(dict[str, object], node.tags)
@@ -78,8 +89,92 @@ def node_instruction_site_8616(
         if len(sites) != 1:
             return CFGInstructionReachability8616.OWNER_AMBIGUOUS
         site = sites[0]
+    return site
+
+
+def node_instruction_site_8616(
+    node: object,
+    ownership: CFGOwnershipArtifact,
+) -> CFGInstructionSite8616 | CFGInstructionReachability8616:
+    """Resolve one dynamic C-AST node to a unique instruction or split-region owner."""
+    site = _tagged_instruction_site_8616(node, ownership)
+    if isinstance(site, CFGInstructionReachability8616):
+        return site
     owner_status = ownership.instruction_reachability(site, site)
-    return site if owner_status is CFGInstructionReachability8616.REACHES else owner_status
+    if owner_status is CFGInstructionReachability8616.REACHES:
+        return site
+    if owner_status is not CFGInstructionReachability8616.OWNER_MISSING:
+        return owner_status
+    if ownership.instruction_sites(site.ins_addr):
+        return owner_status
+    region_id = _snapshot_region_id_8616(site.block_addr, ownership)
+    return site if isinstance(region_id, int) else region_id
+
+
+def _snapshot_region_id_8616(
+    block_addr: int,
+    ownership: CFGOwnershipArtifact,
+) -> int | CFGInstructionReachability8616:
+    """Resolve one block address to a unique published CFG region."""
+    owners = tuple(node for node in ownership.snapshot.nodes if node.block_addr == block_addr)
+    if not owners:
+        return CFGInstructionReachability8616.OWNER_MISSING
+    if len(owners) != 1:
+        return CFGInstructionReachability8616.OWNER_AMBIGUOUS
+    return owners[0].region_id
+
+
+def _snapshot_region_reachability_8616(
+    source_region_id: int,
+    target_region_id: int,
+    ownership: CFGOwnershipArtifact,
+) -> CFGInstructionReachability8616:
+    """Prove reachability through unique immutable CFG region identities."""
+    nodes_by_id = {node.region_id: node for node in ownership.snapshot.nodes}
+    if len(nodes_by_id) != len(ownership.snapshot.nodes):
+        return CFGInstructionReachability8616.OWNER_AMBIGUOUS
+    if source_region_id not in nodes_by_id or target_region_id not in nodes_by_id:
+        return CFGInstructionReachability8616.OWNER_MISSING
+    if source_region_id == target_region_id:
+        return CFGInstructionReachability8616.REACHES
+
+    pending = [source_region_id]
+    visited: set[int] = set()
+    while pending:
+        region_id = pending.pop()
+        if region_id in visited:
+            continue
+        visited.add(region_id)
+        for successor_id in nodes_by_id[region_id].successor_ids:
+            if successor_id == target_region_id:
+                return CFGInstructionReachability8616.REACHES
+            if successor_id in nodes_by_id and successor_id not in visited:
+                pending.append(successor_id)
+    return CFGInstructionReachability8616.DOES_NOT_REACH
+
+
+def _instruction_reachability_8616(
+    source_site: CFGInstructionSite8616,
+    target_site: CFGInstructionSite8616,
+    ownership: CFGOwnershipArtifact,
+) -> CFGInstructionReachability8616:
+    """Prove instruction order, including exact tags projected onto split regions."""
+    reachability = ownership.instruction_reachability(source_site, target_site)
+    if reachability is not CFGInstructionReachability8616.OWNER_MISSING:
+        return reachability
+    if ownership.instruction_sites(source_site.ins_addr) or ownership.instruction_sites(target_site.ins_addr):
+        return reachability
+    source_region_id = _snapshot_region_id_8616(source_site.block_addr, ownership)
+    if isinstance(source_region_id, CFGInstructionReachability8616):
+        return source_region_id
+    target_region_id = _snapshot_region_id_8616(target_site.block_addr, ownership)
+    if isinstance(target_region_id, CFGInstructionReachability8616):
+        return target_region_id
+    if source_region_id == target_region_id:
+        if source_site.ins_addr > target_site.ins_addr:
+            return CFGInstructionReachability8616.ORDER_CONFLICT
+        return CFGInstructionReachability8616.REACHES
+    return _snapshot_region_reachability_8616(source_region_id, target_region_id, ownership)
 
 
 def node_matches_instruction_site_8616(
@@ -87,8 +182,24 @@ def node_matches_instruction_site_8616(
     site: CFGInstructionSite8616,
     ownership: CFGOwnershipArtifact,
 ) -> bool:
-    """Return whether one C-AST node has one exact pre-join instruction owner."""
-    return node_instruction_site_8616(node, ownership) == site
+    """Return whether one C-AST node has one exact or proven split-region owner."""
+    projected = _tagged_instruction_site_8616(node, ownership)
+    if not isinstance(projected, CFGInstructionSite8616) or projected.ins_addr != site.ins_addr:
+        return False
+    if projected.block_addr == site.block_addr:
+        return not isinstance(_snapshot_region_id_8616(site.block_addr, ownership), CFGInstructionReachability8616)
+    if ownership.instruction_sites(site.ins_addr) or projected.block_addr != projected.ins_addr:
+        return False
+    source_region_id = _snapshot_region_id_8616(site.block_addr, ownership)
+    if isinstance(source_region_id, CFGInstructionReachability8616):
+        return False
+    target_region_id = _snapshot_region_id_8616(projected.block_addr, ownership)
+    if isinstance(target_region_id, CFGInstructionReachability8616):
+        return target_region_id is CFGInstructionReachability8616.OWNER_MISSING
+    return (
+        _snapshot_region_reachability_8616(source_region_id, target_region_id, ownership)
+        is CFGInstructionReachability8616.REACHES
+    )
 
 
 def statement_containers_8616(root: object) -> tuple[structured_c.CStatements, ...]:
@@ -259,18 +370,26 @@ def select_cfg_reaching_definitions_8616(
 ) -> CarryBitDefinitionSelection8616 | CarryBorrowBitLoweringFailure8616:
     """Select exact low-site definitions that can execute before the high use."""
     low_site = CFGInstructionSite8616(fact.low_block_addr, fact.low_ins_addr)
-    high_site = CFGInstructionSite8616(fact.high_block_addr, fact.high_ins_addr)
+    typed_high_site = CFGInstructionSite8616(fact.high_block_addr, fact.high_ins_addr)
+    high_site = node_instruction_site_8616(occurrence.node, ownership)
+    if isinstance(high_site, CFGInstructionReachability8616):
+        return _ownership_failure_8616(high_site)
+    if not node_matches_instruction_site_8616(occurrence.node, typed_high_site, ownership):
+        return CarryBorrowBitLoweringFailure8616.EXECUTION_OWNER_AMBIGUOUS
     candidates: list[structured_c.CAssignment] = []
     for definition in definitions:
         site = node_instruction_site_8616(definition, ownership)
         if isinstance(site, CFGInstructionReachability8616):
-            return _ownership_failure_8616(site)
-        reachability = ownership.instruction_reachability(site, high_site)
+            if node_matches_instruction_site_8616(definition, low_site, ownership):
+                site = low_site
+            else:
+                return _ownership_failure_8616(site)
+        reachability = _instruction_reachability_8616(site, high_site, ownership)
         if reachability is CFGInstructionReachability8616.DOES_NOT_REACH:
             continue
         if reachability is not CFGInstructionReachability8616.REACHES:
             return _ownership_failure_8616(reachability)
-        if site != low_site:
+        if not node_matches_instruction_site_8616(definition, low_site, ownership):
             return CarryBorrowBitLoweringFailure8616.CARRIER_ASSIGNMENT_AMBIGUOUS
         candidates.append(definition)
     if not candidates:
@@ -282,6 +401,7 @@ def select_cfg_reaching_definitions_8616(
 __all__ = [
     "CarryBitDefinitionSelection8616",
     "CarryBitOccurrence8616",
+    "InlinedCarryBitOccurrence8616",
     "VariableKey8616",
     "assignment_map_8616",
     "node_instruction_site_8616",

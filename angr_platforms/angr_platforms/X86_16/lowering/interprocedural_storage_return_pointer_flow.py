@@ -16,12 +16,17 @@ from __future__ import annotations
 from ..alias.domains import AX, DomainKey
 from ..caller_return_use_contracts import CallerReturnUseFact8616
 from ..ir.ssa_function import SSAFunctionArtifact, SSAPhiNode
+from ..widening.stack_word_register_transfers import StackWordStorageVersion8616
 from .interprocedural_storage_return_pointer_block import (
     PointerCarrier8616,
     append_unique_pointer_proofs_8616,
     full_word_pointer_domain_8616,
     pointer_witness_seed_values_8616,
     scan_pointer_carriers_in_block_8616,
+)
+from .interprocedural_storage_return_pointer_stack import (
+    build_pointer_stack_transfer_context_8616,
+    join_pointer_stack_carriers_8616,
 )
 from .interprocedural_storage_return_type_contracts import (
     ReturnPointerAliasStep8616,
@@ -120,6 +125,14 @@ def _join_carriers_8616(
             aliases=aliases,
             cfg_edges=edges,
             phis=phis,
+            stack_transfers=append_unique_pointer_proofs_8616(
+                (),
+                tuple(
+                    transfer
+                    for carrier in incoming_carriers
+                    for transfer in carrier.stack_transfers
+                ),
+            ),
         )
     return joined, join_conflict, phi_conflict
 
@@ -213,6 +226,7 @@ def scan_pointer_return_flow_8616(
     seeds = pointer_witness_seed_values_8616(block, witness)
     if len(seeds) != 1:
         return ReturnPointerFlowScan8616(failure=ReturnStorageTypeFailure8616.POINTER_WITNESS_CONFLICT)
+    stack_context = build_pointer_stack_transfer_context_8616(artifact)
     start_indices = tuple(index for index, instruction in enumerate(block.instrs) if instruction.addr == witness)
     if not start_indices:
         return ReturnPointerFlowScan8616(failure=ReturnStorageTypeFailure8616.POINTER_WITNESS_NOT_FOUND)
@@ -220,6 +234,8 @@ def scan_pointer_return_flow_8616(
         block,
         fact,
         {AX: PointerCarrier8616(seeds[0])},
+        {},
+        stack_context.by_instruction_addr,
         start_indices[0],
         witness,
     )
@@ -240,6 +256,10 @@ def scan_pointer_return_flow_8616(
         return ReturnPointerFlowScan8616(failure=ReturnStorageTypeFailure8616.POINTER_CFG_CYCLE)
 
     outputs = {block.addr: start.carriers}
+    stack_outputs: dict[
+        int,
+        dict[StackWordStorageVersion8616, PointerCarrier8616],
+    ] = {block.addr: start.stack_carriers}
     pending = reachable - {block.addr}
     evidence: list[ReturnPointerUseEvidence8616] = []
     ambiguous = start.saw_ambiguous_address
@@ -259,17 +279,24 @@ def scan_pointer_return_flow_8616(
                 predecessors,
                 outputs,
             )
+            stack_entry, stack_join_bad = join_pointer_stack_carriers_8616(
+                predecessors,
+                stack_outputs,
+            )
             scan = scan_pointer_carriers_in_block_8616(
                 block_by_addr[block_addr],
                 fact,
                 entry,
+                stack_entry,
+                stack_context.by_instruction_addr,
                 0,
                 witness,
             )
             outputs[block_addr] = scan.carriers
+            stack_outputs[block_addr] = scan.stack_carriers
             pending.remove(block_addr)
             progress = True
-            join_conflict = join_conflict or joined_bad
+            join_conflict = join_conflict or joined_bad or stack_join_bad
             phi_conflict = phi_conflict or phi_bad
             ambiguous = ambiguous or scan.saw_ambiguous_address
             unknown = unknown or scan.saw_unknown_address
@@ -287,6 +314,10 @@ def scan_pointer_return_flow_8616(
             ),
         )
         return ReturnPointerFlowScan8616(evidence=chosen)
+    if not stack_context.complete:
+        return ReturnPointerFlowScan8616(
+            failure=ReturnStorageTypeFailure8616.POINTER_STACK_EVIDENCE_INCOMPLETE
+        )
     return ReturnPointerFlowScan8616(
         failure=_failure_8616(
             ambiguous=ambiguous,

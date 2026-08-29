@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from inertia_decompiler.function_worker_policy import (
     CleanProcessOverride8616,
     FunctionWorkerMode8616,
     clean_process_override_8616,
+    prioritize_clean_function_work_8616,
     select_function_worker_policy_8616,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkItem:
+    """Minimal deterministic clean-worker scheduling fixture."""
+
+    index: int
+    function: object
 
 
 def _policy(**overrides: object):
@@ -71,3 +82,25 @@ def test_clean_process_override_parser_returns_typed_states() -> None:
     assert clean_process_override_8616("yes") is CleanProcessOverride8616.ENABLED
     assert clean_process_override_8616("0") is CleanProcessOverride8616.DISABLED
     assert clean_process_override_8616("unexpected") is CleanProcessOverride8616.DEFAULT
+
+
+def test_clean_function_work_prioritizes_complexity_and_stable_index() -> None:
+    costs = {
+        "small": (2, 40),
+        "large": (42, 320),
+        "tie_late": (20, 180),
+        "tie_early": (20, 180),
+    }
+    items = (
+        _WorkItem(4, "small"),
+        _WorkItem(3, "tie_late"),
+        _WorkItem(1, "large"),
+        _WorkItem(2, "tie_early"),
+    )
+
+    scheduled = prioritize_clean_function_work_8616(
+        items,
+        function_complexity=lambda function: costs[str(function)],
+    )
+
+    assert tuple(item.index for item in scheduled) == (1, 2, 3, 4)

@@ -31,7 +31,7 @@ from .interprocedural_storage_simtypes import (
     storage_contract_return_type_8616,
     storage_slot_simtype_8616,
 )
-from .stack_lowering_from_facts import canonical_stack_offset_8616
+from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 __all__ = [
     "FunctionStoragePrototypeApplicationResult8616",
@@ -128,21 +128,34 @@ def _existing_pointer_candidate_8616(
 def _slot_matches_cvar_8616(
     slot: StorageSlotContract8616,
     cvar: structured_c.CVariable,
+    codegen: object,
 ) -> bool:
-    """Verify the exact accepted ``SS:BP`` slot behind one C argument."""
-    if len(slot.pieces) != 1:
-        return False
-    piece = slot.pieces[0]
-    address = piece.address
+    """Verify one C argument against contiguous machine-BP storage pieces."""
+    pieces = slot.pieces
     variable = cvar.variable
-    return bool(
-        slot.role is StorageTrialRole8616.INPUT
-        and piece.kind is StorageIdentityKind8616.STACK
-        and address is not None
-        and address.base == ("bp",)
-        and isinstance(variable, SimStackVariable)
-        and canonical_stack_offset_8616(variable.offset) == address.offset
-    )
+    if (
+        slot.role is not StorageTrialRole8616.INPUT
+        or not pieces
+        or not isinstance(variable, SimStackVariable)
+    ):
+        return False
+    first_address = pieces[0].address
+    if first_address is None:
+        return False
+    expected_offset = first_address.offset
+    for piece in pieces:
+        address = piece.address
+        if (
+            piece.kind is not StorageIdentityKind8616.STACK
+            or not piece.is_exact
+            or address is None
+            or address.base != ("bp",)
+            or address.offset != expected_offset
+        ):
+            return False
+        expected_offset += piece.width
+    variable_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    return isinstance(variable_offset, int) and variable_offset == first_address.offset
 
 
 def storage_prototype_with_types_8616(
@@ -167,6 +180,7 @@ def preflight_storage_prototype_types_8616(
     function_prototype: SimTypeFunction,
     cvars: tuple[structured_c.CVariable, ...],
     arch: Arch,
+    codegen: object,
 ) -> FunctionStoragePrototypeTypes8616:
     """Preflight every parameter and any proven return before mutation."""
     cfunc_args = _prototype_arguments_8616(cfunc_prototype)
@@ -179,7 +193,7 @@ def preflight_storage_prototype_types_8616(
         or len(cvars) != len(contract.inputs)
         or tuple(slot.logical_index for slot in contract.inputs) != expected_indices
         or any(
-            not _slot_matches_cvar_8616(slot, cvar)
+            not _slot_matches_cvar_8616(slot, cvar, codegen)
             for slot, cvar in zip(contract.inputs, cvars, strict=True)
         )
     ):

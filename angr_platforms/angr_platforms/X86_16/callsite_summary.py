@@ -16,6 +16,7 @@ from enum import Enum, StrEnum
 from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimTypeBottom, SimTypeFunction
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
@@ -25,6 +26,10 @@ from .alias.callsite_stack_merge import (
     CallsiteRegisterJoinTrace8616,
     merge_callsite_predecessor_stack_traces_8616,
     merge_callsite_register_join_traces_8616,
+)
+from .alias.partial_register_address_break import (
+    PartialRegisterAddressBreakEvidence8616,
+    collect_partial_register_address_break_8616,
 )
 from .alias.register_reaching_source import RegisterReachingSourceVerdict8616
 from .analysis_helpers import collect_neighbor_call_targets, resolve_direct_call_target_from_block
@@ -42,6 +47,7 @@ from .compiler_helpers import (
     is_x86_16_registered_stack_probe_target_8616,
     is_x86_16_stack_probe_name_8616,
 )
+from .frontend_direct_callsite_index import build_decoded_direct_callsite_index_8616
 from .frontend_instruction_kinds import is_x86_16_call_mnemonic_8616
 from .helper_abi import (
     known_helper_is_variadic_8616 as _catalog_helper_is_variadic_8616,
@@ -54,6 +60,9 @@ from .semantics.call_register_effects import (
     MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616,
 )
 from .semantics.register_value_preservation import (
+    ByteReturnExtensionKind8616,
+    decoded_ax_read_view_8616,
+    decoded_byte_return_extension_8616,
     decoded_instruction_preserves_register_value_8616,
     decoded_instruction_self_clears_register_8616,
     register_value_family_8616,
@@ -317,6 +326,9 @@ class CallsiteSummary8616:
     stack_cleanup_instruction_addr: int | None = None
     predecessor_stack_merge: CallsitePredecessorStackMerge8616 | None = field(default=None, compare=False)
     return_store_instruction_addr: int | None = None
+    push_arg_address_break_evidence: tuple[
+        PartialRegisterAddressBreakEvidence8616 | None, ...
+    ] = field(default=(), compare=False)
 
     def brief(self) -> str:
         """Return a compact diagnostic rendering of the callsite summary."""
@@ -470,9 +482,10 @@ def build_callsite_summary_inventory_8616(
 ) -> dict[int, CallsiteSummary8616]:
     """Build the authoritative typed summary inventory for exact callsites."""
     typed_function = cast(SimpleNamespace, function)
-    target_inventory = CallsiteTargetInventory8616.collect(function)
+    callsite_addrs = tuple(sorted(set(callsite_addrs)))
+    target_inventory = CallsiteTargetInventory8616.collect(function, callsite_addrs)
     inventory: dict[int, CallsiteSummary8616] = {}
-    for callsite_addr in sorted(set(callsite_addrs)):
+    for callsite_addr in callsite_addrs:
         if not isinstance(callsite_addr, int):
             raise TypeError("callsite summary inventory addresses must be integers")
         summary = summarize_x86_16_callsite(
@@ -993,7 +1006,12 @@ def _decode_linear_insns_at_8616(function: object, addr: int, *, limit: int) -> 
     except Exception as ex:
         log.debug("callsite follow decode failed addr=%#x: %s", addr, ex)
         return ()
-    insns = tuple(_dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(block, "capstone", None), "insns", ()) or ())
+    try:
+        capstone_block = _dynamic_callsite_getattr_8616(block, "capstone", None)
+        insns = tuple(_dynamic_callsite_getattr_8616(capstone_block, "insns", ()) or ())
+    except Exception as ex:
+        log.debug("callsite follow decode bytes unavailable addr=%#x: %s", addr, ex)
+        return ()
     if os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"):
         rendered = ", ".join(
             f"{_instruction_address_8616(insn):#x}:{_mnemonic(insn)} {_instruction_op_str_8616(insn)}"
@@ -2856,6 +2874,18 @@ def _return_value_feeds_divide_8616(insns: tuple[object, ...]) -> bool:
     return _return_value_divide_witness_8616(insns) is not None
 
 
+def _caller_has_explicit_void_return_8616(function: object) -> bool:
+    """Accept only strong upstream provenance as a void-result override."""
+    prototype = _dynamic_callsite_getattr_8616(function, "prototype", None)
+    return_type = _dynamic_callsite_getattr_8616(prototype, "returnty", None)
+    if not isinstance(return_type, SimTypeBottom) or return_type.label != "void":
+        return False
+    source = _dynamic_callsite_getattr_8616(function, "prototype_source", None)
+    if source is None:
+        return True
+    return isinstance(source, PrototypeSource) and source >= PrototypeSource.SIGNATURES
+
+
 def _return_use_after_call(
     function: object,
     insns: tuple[object, ...],
@@ -2864,11 +2894,7 @@ def _return_use_after_call(
 ) -> tuple[str | None, bool | None, CallsiteReturnUseKind8616 | None]:
     """Classify the first bounded AX-family use after a call."""
 
-    prototype = _dynamic_callsite_getattr_8616(function, "prototype", None)
-    return_type = _dynamic_callsite_getattr_8616(prototype, "returnty", None)
-    caller_returns_explicit_void = (
-        isinstance(return_type, SimTypeBottom) and return_type.label == "void"
-    )
+    caller_returns_explicit_void = _caller_has_explicit_void_return_8616(function)
     follow_insns = _follow_insns_after_call_8616(function, insns, idx, callsite_addr, limit=8)
     if any(_wide_return_condition_use_8616(follow_insns, follow_index) for follow_index in range(len(follow_insns))):
         return "ax", True, CallsiteReturnUseKind8616.CONDITION
@@ -2885,6 +2911,8 @@ def _return_use_after_call(
             continue
         if _wide_return_condition_use_8616(bounded_follow_insns, follow_index):
             return "ax", True, CallsiteReturnUseKind8616.CONDITION
+        if decoded_byte_return_extension_8616(insn) is not None:
+            continue
         reads_return = _instruction_reads_return_reg(insn, {"ax", "al", "ah"})
         writes_return = _instruction_writes_return_reg(insn, {"ax", "al", "ah"})
         self_clearing_write = decoded_instruction_self_clears_register_8616(insn, "ax")
@@ -2945,6 +2973,8 @@ def _linear_return_use_after_call_8616(
     pending = [call_idx + 1]
     visited: set[int] = set()
     examined = 0
+    byte_extension: ByteReturnExtensionKind8616 | None = None
+    byte_extension_instruction_addr: int | None = None
     divide_witness = _return_value_divide_witness_8616(
         insns[call_idx + 1 : call_idx + 9]
     )
@@ -2977,7 +3007,22 @@ def _linear_return_use_after_call_8616(
                 CallerReturnUseVerdict8616.USED,
                 CallsiteReturnUseKind8616.CONDITION,
                 witness_addr,
+                observed_value_view=decoded_ax_read_view_8616(insn),
             )
+        current_extension = decoded_byte_return_extension_8616(insn)
+        if current_extension is not None:
+            if byte_extension is not None and current_extension is not byte_extension:
+                return CallerReturnUseFact8616(
+                    caller_addr,
+                    callsite_addr,
+                    CallerReturnUseVerdict8616.UNKNOWN,
+                    None,
+                    witness_addr,
+                )
+            byte_extension = current_extension
+            byte_extension_instruction_addr = witness_addr
+            pending.append(index + 1)
+            continue
         return_registers = {"ax", "al", "ah"}
         self_clearing_write = decoded_instruction_self_clears_register_8616(insn, "ax")
         if not self_clearing_write and _instruction_reads_return_reg(insn, return_registers):
@@ -2988,6 +3033,9 @@ def _linear_return_use_after_call_8616(
                 CallerReturnUseVerdict8616.USED,
                 kind,
                 witness_addr,
+                byte_extension=byte_extension,
+                byte_extension_instruction_addr=byte_extension_instruction_addr,
+                observed_value_view=decoded_ax_read_view_8616(insn),
             )
         if mnemonic not in {"cmp", "test"} and _instruction_writes_return_reg(insn, return_registers):
             return CallerReturnUseFact8616(
@@ -3079,6 +3127,11 @@ def collect_caller_return_use_evidence_8616(
             continue
         decoded_ranges[(start, end)] = insns
 
+    direct_callsite_index = build_decoded_direct_callsite_index_8616(
+        decoded_ranges,
+        direct_target_resolver=_linear_call_target_8616,
+        instruction_address_resolver=_instruction_address_8616,
+    )
     callsite_cache: dict[int, dict[int, CallerReturnUseFact8616]] = {}
 
     def _callsites_for_target(
@@ -3090,20 +3143,13 @@ def collect_caller_return_use_evidence_8616(
         if cached is not None:
             return cached
         facts: dict[int, CallerReturnUseFact8616] = {}
-        for (caller_start, _caller_end), insns in decoded_ranges.items():
-            for index, insn in enumerate(insns):
-                call_target = _linear_call_target_8616(insn)
-                if not isinstance(call_target, int) or (call_target & 0xFFFF) != normalized_target:
-                    continue
-                callsite_addr = _instruction_address_8616(insn)
-                if not isinstance(callsite_addr, int):
-                    continue
-                facts[callsite_addr] = _linear_return_use_after_call_8616(
-                    insns,
-                    index,
-                    caller_start,
-                    callsite_addr,
-                )
+        for callsite in direct_callsite_index.for_target(normalized_target):
+            facts[callsite.callsite_addr] = _linear_return_use_after_call_8616(
+                callsite.instructions,
+                callsite.instruction_index,
+                callsite.caller_start,
+                callsite.callsite_addr,
+            )
         callsite_cache[normalized_target] = facts
         return facts
 
@@ -3305,6 +3351,11 @@ def summarize_x86_16_callsite(
                 None,
             )
         )
+        if seed is None and target_inventory is None:
+            seed = CallsiteTargetInventory8616.collect(
+                function,
+                (callsite_addr,),
+            ).seed_for_callsite(callsite_addr)
         target_addr: int | None = None
         return_addr: int | None = None
         kind: str | None = None
@@ -3477,6 +3528,20 @@ def summarize_x86_16_callsite(
             raw_push_instruction_addrs,
             argument_byte_limit,
         )
+        push_arg_address_break_evidence = (
+            tuple(
+                None
+                if source is not None
+                else collect_partial_register_address_break_8616(insns, push_addr)
+                for source, push_addr in zip(
+                    push_arg_sources,
+                    push_arg_instruction_addrs,
+                    strict=True,
+                )
+            )
+            if len(push_arg_sources) == len(push_arg_instruction_addrs)
+            else ()
+        )
         arg_count = len(arg_widths)
         logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = ()
         if helper_abi_widths is not None:
@@ -3561,6 +3626,7 @@ def summarize_x86_16_callsite(
             stack_cleanup_instruction_addr=cleanup_instruction_addr,
             predecessor_stack_merge=predecessor_stack_merge,
             return_store_instruction_addr=return_store_instruction_addr,
+            push_arg_address_break_evidence=push_arg_address_break_evidence,
         )
 
     return _impl()

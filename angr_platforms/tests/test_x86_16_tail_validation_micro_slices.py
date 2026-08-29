@@ -648,6 +648,58 @@ def test_tail_validation_canonicalizes_proven_pretest_while_and_for() -> None:
     assert diff["changed"] is False
 
 
+def test_tail_validation_canonicalizes_external_for_initializer_materialization() -> None:
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_i = _stack(-6, before_codegen, name="i")
+    after_i = _stack(-6, after_codegen, name="i")
+    before_init = CAssignment(before_i, _const(4, before_codegen), codegen=before_codegen)
+    after_init = CAssignment(after_i, _const(4, after_codegen), codegen=after_codegen)
+    before_iterator = CAssignment(
+        before_i,
+        CBinaryOp("Sub", before_i, _const(1, before_codegen), codegen=before_codegen),
+        codegen=before_codegen,
+    )
+    after_iterator = CAssignment(
+        after_i,
+        CBinaryOp("Sub", after_i, _const(1, after_codegen), codegen=after_codegen),
+        codegen=after_codegen,
+    )
+    before = _codegen(
+        [
+            CStatements([before_init], codegen=before_codegen),
+            CForLoop(
+                None,
+                CBinaryOp("CmpNE", before_i, _const(0, before_codegen), codegen=before_codegen),
+                before_iterator,
+                CStatements([], codegen=before_codegen),
+                codegen=before_codegen,
+            ),
+        ],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CForLoop(
+                after_init,
+                CBinaryOp("CmpNE", after_i, _const(0, after_codegen), codegen=after_codegen),
+                after_iterator,
+                CStatements([], codegen=after_codegen),
+                codegen=after_codegen,
+            )
+        ],
+        after_codegen,
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is False
+
+
 def test_tail_validation_refuses_while_for_equivalence_with_continue() -> None:
     project = _project()
     before_codegen = _DummyCodegen()

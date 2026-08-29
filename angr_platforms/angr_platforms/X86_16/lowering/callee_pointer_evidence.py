@@ -11,7 +11,6 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from angr.sim_type import SimType, SimTypeFunction
@@ -27,6 +26,20 @@ from capstone.x86_const import (
 )
 
 from .callee_argument_interface import materialize_callee_pointer_prefix_prototype_8616
+from .callee_pointer_contracts import (
+    CalleePointerArgumentEvidence8616,
+    callee_pointer_argument_evidence_by_addr_8616,
+    record_callee_pointer_argument_evidence_8616,
+)
+
+__all__ = [
+    "CalleePointerArgumentEvidence8616",
+    "apply_callee_pointer_argument_evidence_at_address_8616",
+    "callee_pointer_argument_evidence_at_address_8616",
+    "callee_pointer_argument_indices_at_address_8616",
+    "callee_pointer_argument_is_proven_8616",
+    "recover_callee_pointer_argument_evidence_at_address_8616",
+]
 
 
 class _FunctionBoundary8616(Protocol):
@@ -53,54 +66,6 @@ class _ProjectFunctionBoundary8616(Protocol):
     """Third-party project surface used for exact function lookup."""
 
     kb: _KnowledgeBaseBoundary8616
-
-
-@dataclass(frozen=True, slots=True)
-class CalleePointerArgumentEvidence8616:
-    """Closed evidence loop for one callee's near-pointer parameter classes."""
-
-    target_addr: int
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-    pointer_stack_offsets: tuple[int, ...]
-    pointer_argument_indices: tuple[int, ...]
-    ambiguous_displaced_stack_offsets: tuple[int, ...]
-
-    @property
-    def closes_classification(self) -> bool:
-        """Return whether every normalized pointer slot was materialized."""
-        return bool(
-            self.failure_count == 0
-            and self.classified_fact_count > 0
-            and self.normalized_fact_count == self.classified_fact_count
-            and self.materialized_count == self.classified_fact_count
-            and len(self.pointer_argument_indices) == self.classified_fact_count
-        )
-
-
-class _ProjectEvidenceCarrier8616(Protocol):
-    """Owned lowering evidence registry carried across one angr project."""
-
-    _inertia_callee_pointer_argument_evidence_8616: dict[
-        int,
-        CalleePointerArgumentEvidence8616,
-    ]
-
-
-def _project_evidence_registry_8616(
-    project: object,
-) -> dict[int, CalleePointerArgumentEvidence8616]:
-    """Return the active project's owned typed pointer-evidence registry."""
-    carrier = cast(_ProjectEvidenceCarrier8616, project)
-    try:
-        return carrier._inertia_callee_pointer_argument_evidence_8616
-    except AttributeError:
-        registry: dict[int, CalleePointerArgumentEvidence8616] = {}
-        carrier._inertia_callee_pointer_argument_evidence_8616 = registry
-        return registry
 
 
 def _instruction(value: object) -> object:
@@ -299,7 +264,7 @@ def apply_callee_pointer_argument_evidence_at_address_8616(
         typed_function,
         evidence.pointer_argument_indices,
     )
-    _project_evidence_registry_8616(project)[typed_function.addr] = evidence
+    record_callee_pointer_argument_evidence_8616(project, evidence)
     return evidence.closes_classification
 
 
@@ -317,7 +282,7 @@ def callee_pointer_argument_is_proven_8616(
     if function is None:
         return False
     function_addr = cast(_FunctionBoundary8616, function).addr
-    registry = _project_evidence_registry_8616(project)
+    registry = callee_pointer_argument_evidence_by_addr_8616(project)
     evidence = registry.get(function_addr)
     if evidence is None:
         apply_callee_pointer_argument_evidence_at_address_8616(
@@ -325,7 +290,9 @@ def callee_pointer_argument_is_proven_8616(
             function,
             function_addr,
         )
-        evidence = registry.get(function_addr)
+        evidence = callee_pointer_argument_evidence_by_addr_8616(project).get(
+            function_addr
+        )
     return (
         isinstance(evidence, CalleePointerArgumentEvidence8616)
         and argument_index in evidence.pointer_argument_indices
@@ -348,7 +315,7 @@ def callee_pointer_argument_evidence_at_address_8616(
     function_addr: int,
 ) -> CalleePointerArgumentEvidence8616 | None:
     """Return retained binary pointer evidence, including typed ambiguities."""
-    registry = _project_evidence_registry_8616(project)
+    registry = callee_pointer_argument_evidence_by_addr_8616(project)
     evidence = registry.get(function_addr)
     if evidence is None:
         try:
@@ -365,5 +332,7 @@ def callee_pointer_argument_evidence_at_address_8616(
             function,
             function_addr,
         )
-        evidence = registry.get(cast(_FunctionBoundary8616, function).addr)
+        evidence = callee_pointer_argument_evidence_by_addr_8616(project).get(
+            cast(_FunctionBoundary8616, function).addr
+        )
     return evidence if isinstance(evidence, CalleePointerArgumentEvidence8616) else None

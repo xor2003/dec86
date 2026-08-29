@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ..widening.global_object_layout_codec import (
+    global_object_layout_evidence_from_record_8616,
+    global_object_layout_evidence_record_8616,
+)
 from .callee_global_object_evidence import CalleeGlobalObjectSourceFamilyFact8616
 from .callee_global_object_sources import GlobalObjectSourceEvidence8616
 
@@ -123,6 +127,11 @@ def global_object_source_evidence_record_8616(
         "materialized_count": evidence.materialized_count,
         "failure_count": evidence.failure_count,
         "pointer_target_addrs": list(evidence.pointer_target_addrs),
+        "layout_evidence": (
+            None
+            if evidence.layout_evidence is None
+            else global_object_layout_evidence_record_8616(evidence.layout_evidence)
+        ),
     }
 
 
@@ -148,6 +157,12 @@ def global_object_source_evidence_from_record_8616(
     )
     if len(pointer_targets) != len(raw_targets):
         raise ValueError("global source pointer targets must contain only integers")
+    raw_layout = record.get("layout_evidence")
+    layout_evidence = (
+        None
+        if raw_layout is None
+        else global_object_layout_evidence_from_record_8616(raw_layout)
+    )
     evidence = GlobalObjectSourceEvidence8616(
         scope_addr=scope_addr,
         source_facts=tuple(_fact_from_record_8616(fact) for fact in raw_facts),
@@ -157,6 +172,7 @@ def global_object_source_evidence_from_record_8616(
         materialized_count=_required_int_8616(record, "materialized_count"),
         failure_count=_required_int_8616(record, "failure_count"),
         pointer_target_addrs=pointer_targets,
+        layout_evidence=layout_evidence,
     )
     evidence.validate()
     return evidence

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
@@ -13,7 +14,10 @@ from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseVerdict8616,
     record_caller_return_use_evidence_8616,
 )
-from angr_platforms.X86_16.lowering import unused_void_return_types
+from angr_platforms.X86_16.lowering import return_type_evidence, unused_void_return_types
+from angr_platforms.X86_16.lowering.return_type_evidence import (
+    collect_unobserved_callee_void_evidence_8616,
+)
 from angr_platforms.X86_16.lowering.unused_void_return_types import (
     TerminalReturnValueEvidence8616,
     UnusedVoidReturnTypeStats8616,
@@ -63,6 +67,7 @@ def _function_fixture(*, explicit: bool = False) -> tuple[Arch86_16, SimpleNames
         info={ANNOTATION_KEY: {"prototype": prototype}} if explicit else {},
         is_prototype_guessed=not explicit,
         prototype=prototype,
+        prototype_source=PrototypeSource.USER if explicit else PrototypeSource.GUESSED,
     )
     return arch, function, prototype
 
@@ -172,6 +177,7 @@ def test_final_codegen_replays_closed_empty_return_evidence() -> None:
     assert result.stats == UnusedVoidReturnTypeStats8616(3, 3, 3, 2, 0)
     assert isinstance(codegen.cfunc.functy.returnty, SimTypeBottom)
     assert isinstance(function.prototype.returnty, SimTypeBottom)
+    assert function.prototype_source is PrototypeSource.CCA_DECOMPILER
     assert codegen.cfunc.statements.statements[0].retval is None
 
 
@@ -241,3 +247,35 @@ def test_exact_empty_terminal_storage_refuses_effectful_return(
 
     with pytest.raises(PipelineHardError, match="non-synthetic C return values"):
         materialize_unused_caller_void_codegen_type_8616(project, codegen)
+
+
+@pytest.mark.parametrize(
+    ("storage", "expected_void"),
+    [
+        (TerminalReturnStorage8616.NONE, True),
+        (TerminalReturnStorage8616.CALL_OUTPUT, True),
+        (TerminalReturnStorage8616.AX, False),
+    ],
+)
+def test_callee_void_evidence_joins_unused_callers_with_terminal_storage(
+    monkeypatch: pytest.MonkeyPatch,
+    storage: TerminalReturnStorage8616,
+    expected_void: bool,
+) -> None:
+    arch, function, _prototype = _function_fixture()
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(functions=_FunctionManager(function)),
+    )
+    _record_caller_result(project, CallerReturnUseVerdict8616.UNUSED)
+    monkeypatch.setattr(
+        return_type_evidence,
+        "terminal_return_storage_8616",
+        lambda _project, _function: storage,
+    )
+
+    evidence = collect_unobserved_callee_void_evidence_8616(project, function.addr)
+
+    assert evidence.proves_void is expected_void
+    assert evidence.raw_fact_count == evidence.materialized_count == 2
+    assert evidence.failure_count == 0

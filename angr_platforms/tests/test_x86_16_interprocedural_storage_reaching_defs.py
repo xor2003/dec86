@@ -92,6 +92,8 @@ def test_immediate_argument_resolves_exact_store_and_call_use() -> None:
     assert tuple(definition.value.size for definition in result.definitions) == (1, 1)
     assert result.definitions[0].value.const == 5
     assert tuple(definition.instr_addr for definition in result.definitions) == (0x1000, 0x1000)
+    assert result.affine_expression is not None
+    assert result.affine_expression.constant == 5
     assert result.use is not None
     assert result.use.callsite_addr == 0x1002
 
@@ -124,6 +126,7 @@ def test_wide_logical_argument_resolves_two_physical_push_definitions() -> None:
     assert result.stats.raw_fact_count == result.stats.materialized_count == 1
     assert tuple(definition.value.size for definition in result.definitions) == (1, 1, 1, 1)
     assert tuple(definition.value.const for definition in result.definitions) == (1, None, 2, None)
+    assert result.affine_expression is None
     assert tuple(definition.instr_addr for definition in result.definitions) == (
         0x1002,
         0x1002,
@@ -310,3 +313,32 @@ def test_call_target_conflict_refuses_before_source_classification() -> None:
     assert result.failure is CallArgumentDefinitionFailure8616.CALL_TARGET_CONFLICT
     assert result.stats.normalized_fact_count == 0
     assert result.stats.classified_fact_count == result.stats.materialized_count == 0
+
+
+def test_real_mode_offset_target_matches_linked_census_target() -> None:
+    ssa = _lift_ssa(bytes.fromhex("6a05e80000"))
+    project = SimpleNamespace(
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x10000, max_addr=0xFFFF)
+        )
+    )
+    summary = replace(
+        _summary(
+            callsite_addr=0x1002,
+            target_addr=0x11005,
+            push_addr=0x1000,
+            source=(CallsitePushSourceKind8616.IMMEDIATE.value, 5),
+        ),
+        target_addr=None,
+    )
+
+    result = resolve_call_argument_reaching_definition_8616(
+        ssa,
+        summary,
+        0,
+        project=project,
+        expected_target_addr=0x11005,
+    )
+
+    assert result.verdict is CallArgumentDefinitionVerdict8616.PROVEN
+    assert result.stats.complete

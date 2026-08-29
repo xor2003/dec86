@@ -21,6 +21,10 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.caller_return_use_contracts import (
+    CallerReturnUseFact8616,
+    CallsiteReturnUseKind8616,
+)
 from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_listing_metadata
 from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
 from angr_platforms.X86_16.compiler_helpers import (
@@ -34,6 +38,18 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import SegmentedGloba
 from angr_platforms.X86_16.lowering.segmented_lowering import _SegmentedAccess
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
+from angr_platforms.X86_16.widening.global_object_layout import (
+    GlobalObjectLayoutEvidence8616,
+)
+from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import (
+    ProjectBoundedGlobalObjectRangeEvidence8616,
+    ProjectBoundedGlobalObjectRangeSource8616,
+    ProjectBoundedGlobalObjectRangeSourceKind8616,
+    ProjectBoundedGlobalObjectRangeSourceStatus8616,
+)
+from angr_platforms.X86_16.widening.indexed_global_object_ranges import (
+    BoundedGlobalObjectRangeStats8616,
+)
 from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
@@ -3785,6 +3801,114 @@ def test_recover_candidate_function_pair_retries_richer_bounded_region_when_exac
     assert recovered_cfg.region == bounded_region
     assert decompile._function_recovery_score(recovered_function) == (5, 0x78)
     assert recovered_function.info["x86_16_recovery_truncated"] is False
+
+
+def test_recover_candidate_function_pair_keeps_explicit_exact_region_when_truncated(monkeypatch):
+    candidate_addr = 0x1000
+    exact_region = (candidate_addr, candidate_addr + 0xBB)
+    candidate_project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(
+                capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)])
+            )
+        )
+    )
+
+    def _function(sizes):
+        return SimpleNamespace(
+            addr=candidate_addr,
+            blocks=tuple(SimpleNamespace(size=size) for size in sizes),
+            is_plt=False,
+            is_simprocedure=False,
+            info={},
+        )
+
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda _project, _addr, *, regions, **_kwargs: (
+            SimpleNamespace(region=regions[0]),
+            _function((8, 8)),
+        ),
+    )
+    stitch_calls = []
+
+    def _stitch(_project, function, region):
+        stitch_calls.append(region)
+        return function, False
+
+    monkeypatch.setattr(decompile, "_stitch_x86_16_exact_function_8616", _stitch)
+    observed_regions = []
+
+    def _pick_function(_project, _addr, *, regions, **_kwargs):
+        observed_regions.append(regions[0])
+        return SimpleNamespace(region=regions[0]), _function((0x18, 0x18, 0x18))
+
+    monkeypatch.setattr(decompile, "_pick_function", _pick_function)
+    monkeypatch.setattr(
+        decompile,
+        "_richest_bounded_recovery_region",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("explicit region must not broaden")),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_repair_x86_16_function_graph_8616",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("explicit region must not run unbounded repair")),
+    )
+
+    recovered_cfg, _recovered_function = decompile._recover_candidate_function_pair(
+        candidate_project,
+        candidate_addr=candidate_addr,
+        image_end=0x2000,
+        metadata=None,
+        project_entry=0x1100,
+        region_span=0x200,
+        exact_region=exact_region,
+    )
+
+    assert recovered_cfg.region == exact_region
+    assert observed_regions == [exact_region, exact_region]
+    assert stitch_calls == [exact_region, exact_region]
+
+
+def test_stitched_exact_region_replaces_function_with_escaping_block():
+    function = SimpleNamespace(
+        blocks=(SimpleNamespace(addr=0x1000, size=0x120, bytes=b"x" * 0x120),),
+    )
+    reachable = {
+        0x1000: SimpleNamespace(addr=0x1000, size=0x20, bytes=b"x" * 0x20),
+        0x1020: SimpleNamespace(addr=0x1020, size=0x20, bytes=b"x" * 0x20),
+    }
+
+    assert decompile._should_replace_function_with_stitched_graph_8616(
+        function,
+        reachable,
+        (0x1000, 0x10BB),
+    )
+
+
+def test_cap_stitched_blocks_respects_exact_region_end():
+    requested_sizes = []
+
+    def _block(addr, *, size, opt_level):
+        requested_sizes.append((addr, size, opt_level))
+        return SimpleNamespace(addr=addr, size=size, bytes=b"x" * size)
+
+    project = SimpleNamespace(factory=SimpleNamespace(block=_block))
+    reachable = {
+        0x1000: SimpleNamespace(addr=0x1000, size=0x10, bytes=b"x" * 0x10),
+        0x10B5: SimpleNamespace(addr=0x10B5, size=0x50, bytes=b"x" * 0x50),
+    }
+
+    capped = decompile._cap_stitched_blocks_to_leaders_8616(
+        project,
+        reachable,
+        region_end=0x10BB,
+    )
+
+    assert capped[0x1000] is reachable[0x1000]
+    assert capped[0x10B5].size == 6
+    assert requested_sizes == [(0x10B5, 6, 0)]
 
 
 def test_rank_function_cfg_pairs_for_display_prefers_body_seed_and_its_callees(monkeypatch):
@@ -7730,6 +7854,7 @@ def test_rank_exe_function_seeds_uses_persistent_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project, **_kwargs: [(0x1000, 0x1004)])
     monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: {0x1003})
     monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "collect_neighbor_call_targets", lambda _function: [])
     monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
 
@@ -7785,7 +7910,7 @@ def test_rank_exe_function_seeds_cache_key_changes_when_recovery_metadata_change
     monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project, **_kwargs: [(0x1100, 0x1240)])
     monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: set())
     monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick)
-    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "collect_neighbor_call_targets", lambda _function: [])
     monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
 
@@ -11050,6 +11175,15 @@ def test_fresh_primary_work_item_uses_requested_catalog_boundary(monkeypatch, tm
         used_callsite_count=0,
         unused_callsite_count=1,
         callsite_addrs=(0x1010,),
+        facts=(
+            CallerReturnUseFact8616(
+                0x1000,
+                0x1010,
+                decompile.CallerReturnUseVerdict8616.UNUSED,
+                CallsiteReturnUseKind8616.CLOBBERED,
+                0x1013,
+            ),
+        ),
     )
     decompile.record_caller_return_use_evidence_8616(
         parent_project,
@@ -11340,16 +11474,46 @@ def test_serial_clean_worker_evidence_protocol_round_trips_and_hydrates(monkeypa
         used_callsite_count=0,
         unused_callsite_count=2,
         callsite_addrs=(0x1010, 0x1020),
+        facts=(
+            CallerReturnUseFact8616(
+                0x1000, 0x1010, decompile.CallerReturnUseVerdict8616.UNUSED, CallsiteReturnUseKind8616.CLOBBERED, 0x1013
+            ),
+            CallerReturnUseFact8616(
+                0x1000, 0x1020, decompile.CallerReturnUseVerdict8616.UNUSED, CallsiteReturnUseKind8616.CLOBBERED, 0x1023
+            ),
+        ),
     )
     source_project = SimpleNamespace()
     decompile.record_caller_return_use_evidence_8616(source_project, 0x10CE0, evidence)
-    layout_evidence = decompile.GlobalObjectLayoutEvidence8616((), 0, 0, 0, 0)
+    layout_evidence = GlobalObjectLayoutEvidence8616((), 0, 0, 0, 0)
+    range_evidence = ProjectBoundedGlobalObjectRangeEvidence8616(
+        (),
+        (),
+        BoundedGlobalObjectRangeStats8616(),
+        ProjectBoundedGlobalObjectRangeSource8616(
+            ProjectBoundedGlobalObjectRangeSourceKind8616.LIVE_ALIAS_PROGRAM,
+            ProjectBoundedGlobalObjectRangeSourceStatus8616.COMPLETE,
+            0,
+            0,
+            0,
+            0,
+        ),
+        layout_evidence,
+    )
     source_project._inertia_project_global_object_layout_evidence_8616 = layout_evidence
+    source_project._inertia_project_bounded_global_object_ranges_8616 = range_evidence
 
     assert decompile._write_serial_clean_worker_evidence_8616(source_project, evidence_path) == 1
     transported = decompile._read_serial_clean_worker_evidence_8616(evidence_path)
     assert transported.caller_return_use_by_addr == {0x10CE0: evidence}
+    assert transported.caller_return_use_by_addr[0x10CE0].fact_census_complete
     assert transported.global_object_layout == layout_evidence
+    assert transported.bounded_global_ranges is not None
+    assert transported.bounded_global_ranges.closed
+    assert (
+        transported.bounded_global_ranges.source.kind
+        is ProjectBoundedGlobalObjectRangeSourceKind8616.TRANSPORTED_RECORD
+    )
     source_project._inertia_caller_return_use_evidence_by_addr_8616 = {}
     assert (
         decompile._write_serial_clean_worker_evidence_8616(
@@ -11362,12 +11526,14 @@ def test_serial_clean_worker_evidence_protocol_round_trips_and_hydrates(monkeypa
     transported = decompile._read_serial_clean_worker_evidence_8616(evidence_path)
     assert transported.caller_return_use_by_addr == {0x10CE0: evidence}
     assert transported.global_object_layout == layout_evidence
+    assert transported.bounded_global_ranges is not None
 
     destination_project = SimpleNamespace()
     monkeypatch.setenv(decompile._SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616, str(evidence_path))
     assert decompile._hydrate_serial_clean_worker_evidence_8616(destination_project) == 1
     assert decompile.caller_return_use_evidence_by_addr_8616(destination_project) == {0x10CE0: evidence}
     assert destination_project._inertia_project_global_object_layout_evidence_8616 == layout_evidence
+    assert destination_project._inertia_project_bounded_global_object_ranges_8616.closed
 
 
 def test_serial_clean_worker_evidence_protocol_refuses_unknown_schema(tmp_path):
@@ -11437,6 +11603,15 @@ def test_serial_clean_worker_uses_single_process_and_protocol_overhead(monkeypat
         used_callsite_count=0,
         unused_callsite_count=1,
         callsite_addrs=(0x1010,),
+        facts=(
+            CallerReturnUseFact8616(
+                0x1000,
+                0x1010,
+                decompile.CallerReturnUseVerdict8616.UNUSED,
+                CallsiteReturnUseKind8616.CLOBBERED,
+                0x1013,
+            ),
+        ),
     )
     project = SimpleNamespace()
     decompile.record_caller_return_use_evidence_8616(project, 0x10CE0, return_use_evidence)
@@ -11482,6 +11657,7 @@ def test_serial_clean_worker_uses_single_process_and_protocol_overhead(monkeypat
         "_canonicalize_direct_addr_from_sidecar_padding_8616",
         lambda *_args: decompile.DirectAddrCanonicalization8616(0x10CD4, 0x10CE0, (0x10CD4, 0x10E5D), None),
     )
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args: (0x10CE0, 0x10D20))
 
     result = decompile._run_serial_clean_process_work_item_8616(context, item, timeout=2)
 
@@ -11497,6 +11673,8 @@ def test_serial_clean_worker_uses_single_process_and_protocol_overhead(monkeypat
     assert seen["command"][1:3] == ["-m", "inertia_decompiler.serial_clean_worker_cli"]
     assert "--ignore-local-sidecar-hints" in seen["command"]
     assert seen["command"][seen["command"].index("--addr") + 1] == "0x10ce0"
+    assert seen["command"][seen["command"].index("--window") + 1] == "0x40"
+    assert seen["command"][seen["command"].index("--exact-region-end") + 1] == "0x10d20"
 
 
 def test_serial_clean_worker_debug_output_decodes_timeout_bytes_without_c_marker():
@@ -14256,7 +14434,7 @@ def test_segmented_ida_lst_does_not_publish_raw_offset_duplicate(tmp_path):
     code_labels: dict[int, str] = {}
     source_formats: list[str] = []
 
-    sidecar_metadata._load_lst_sidecar(
+    function_entry_addrs = sidecar_metadata._load_lst_sidecar(
         binary,
         load_base_linear=0x10000,
         segment_offsets={"seg03f9": 0x3F90},
@@ -14267,6 +14445,7 @@ def test_segmented_ida_lst_does_not_publish_raw_offset_duplicate(tmp_path):
     )
 
     assert code_labels == {0x13F93: "main"}
+    assert function_entry_addrs == {0x13F93}
     assert source_formats == ["ida_lst"]
 
 
@@ -14550,6 +14729,7 @@ def test_rank_labeled_function_entries_cached_reuses_recovery_cache(monkeypatch,
     )
     metadata = SimpleNamespace(
         source_format="codeview_nb00",
+        function_entry_addrs=frozenset(),
         code_ranges={
             0x10000: (0x10000, 0x10010),
             0x10010: (0x10010, 0x10147),
@@ -15149,13 +15329,11 @@ def test_decompile_cli_reports_monoprin_partial_validation_without_source_fallba
 
 
 def test_decompile_cli_can_extract_and_name_cod_procedure():
-    result = subprocess.run(
-        [sys.executable, str(CLI_PATH), str(NHORZ_COD), "--proc", "_ChangeWeather", "--timeout", "10"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+    result = _run_decompile_proc(
+        NHORZ_COD,
+        "_ChangeWeather",
+        analysis_timeout=10,
+        subprocess_timeout=30,
     )
 
     assert result.returncode == 0, result.stderr + result.stdout

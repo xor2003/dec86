@@ -23,13 +23,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIfElse,
     CStatements,
-    CVariable,
 )
-from angr.sim_variable import SimRegisterVariable
 
-from ..c_ast_utils import _iter_c_nodes_deep_8616
-from ..callsite_summary import structured_callsite_addr_8616
-from ..structured_tags import copy_structured_tags_8616
+from .call_return_register_index import (
+    CallReturnRegisterIndex8616,
+    build_call_return_register_index_8616,
+)
 
 
 class CallReturnRegisterPlacementVerdict8616(StrEnum):
@@ -53,6 +52,7 @@ class CallReturnRegisterPlacement8616:
     assignment_container: CStatements | None = None
     assignment_index: int | None = None
     redundant_assignments: tuple[CallReturnRegisterAssignment8616, ...] = ()
+    source_index: CallReturnRegisterIndex8616 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,15 +81,6 @@ class _StructuredStatementChildren8616(Protocol):
 
     body: object
     default: object
-
-
-def _assignment_ins_addr_8616(assignment: CAssignment) -> int | None:
-    """Return the exact instruction tag carried by one assignment."""
-    tags = copy_structured_tags_8616(assignment.tags)
-    if tags is None:
-        return None
-    ins_addr = tags.get("ins_addr")
-    return ins_addr if isinstance(ins_addr, int) else None
 
 
 def _case_statement_blocks_8616(statement: object) -> tuple[CStatements, ...]:
@@ -184,12 +175,11 @@ def _sequence_paths_are_adjacent_8616(
 
 
 def _unique_adjacent_owner_8616(
-    root: object,
+    positions: tuple[_StatementPosition8616, ...],
     assignment: CAssignment,
     condition_owner: object,
 ) -> tuple[CStatements, int] | None:
     """Return the direct owner after exact same-path adjacency proof."""
-    positions = _statement_positions_8616(root)
     assignment_positions = tuple(position for position in positions if position.statement is assignment)
     condition_positions = tuple(position for position in positions if position.statement is condition_owner)
     if len(assignment_positions) != 1 or len(condition_positions) != 1:
@@ -210,31 +200,29 @@ def classify_call_return_register_placement_8616(
     callsite_addr: int,
     condition_producer_insn: int,
     register_slice: tuple[int, int],
+    assignment_index: CallReturnRegisterIndex8616 | None = None,
 ) -> CallReturnRegisterPlacement8616:
     """Classify the unique exact call assignment feeding one condition."""
+    register_index = (
+        assignment_index
+        if assignment_index is not None and assignment_index.matches_root(root)
+        else build_call_return_register_index_8616(root)
+    )
     candidates: dict[int, tuple[CAssignment, CFunctionCall]] = {}
     bound_assignments: dict[int, tuple[CAssignment, CFunctionCall]] = {}
-    for node in _iter_c_nodes_deep_8616(root):
-        if not isinstance(node, CAssignment):
+    for record in register_index.assignments:
+        if (
+            record.register_slice != register_slice
+            or record.callsite_addr != callsite_addr
+        ):
             continue
-        lhs = node.lhs
-        if not isinstance(lhs, CVariable) or not isinstance(lhs.variable, SimRegisterVariable):
-            continue
-        variable = lhs.variable
-        if (int(variable.reg), int(variable.size)) != register_slice:
-            continue
-        calls = tuple(
-            {id(call): call for call in _iter_c_nodes_deep_8616(node.rhs) if isinstance(call, CFunctionCall)}.values()
-        )
-        if len(calls) != 1:
-            continue
-        call = calls[0]
-        bound_addr = structured_callsite_addr_8616(call)
-        if bound_addr != callsite_addr:
-            continue
+        node = record.assignment
+        call = record.call
         bound_assignments[id(node)] = (node, call)
-        assignment_addr = _assignment_ins_addr_8616(node)
-        if assignment_addr != condition_producer_insn:
+        assignment_addr = record.assignment_ins_addr
+        if assignment_addr == callsite_addr and not record.rhs_is_call:
+            continue
+        if assignment_addr not in {callsite_addr, condition_producer_insn}:
             continue
         candidates[id(node)] = (node, call)
     if not candidates:
@@ -242,9 +230,10 @@ def classify_call_return_register_placement_8616(
             CallReturnRegisterPlacementVerdict8616.MISSING,
             0,
         )
+    positions = _statement_positions_8616(root)
     adjacent: list[tuple[CAssignment, CFunctionCall, CStatements, int]] = []
     for assignment, call in candidates.values():
-        owner = _unique_adjacent_owner_8616(root, assignment, condition_owner)
+        owner = _unique_adjacent_owner_8616(positions, assignment, condition_owner)
         if owner is not None:
             adjacent.append((assignment, call, owner[0], owner[1]))
     if len(adjacent) == 1:
@@ -253,7 +242,11 @@ def classify_call_return_register_placement_8616(
         for duplicate, duplicate_call in bound_assignments.values():
             if duplicate is assignment:
                 continue
-            duplicate_owner = _unique_adjacent_owner_8616(root, duplicate, condition_owner)
+            duplicate_owner = _unique_adjacent_owner_8616(
+                positions,
+                duplicate,
+                condition_owner,
+            )
             if duplicate_owner is None:
                 return CallReturnRegisterPlacement8616(
                     CallReturnRegisterPlacementVerdict8616.CONFLICT,
@@ -275,6 +268,7 @@ def classify_call_return_register_placement_8616(
             owner,
             index,
             tuple(redundant),
+            register_index,
         )
     if len(candidates) != 1 or adjacent:
         return CallReturnRegisterPlacement8616(
@@ -325,6 +319,8 @@ def consume_exact_call_return_register_placement_8616(
                 return False
             del mutable_statements[index]
         container.statements = mutable_statements
+    if placement.source_index is not None:
+        placement.source_index.invalidate()
     return True
 
 

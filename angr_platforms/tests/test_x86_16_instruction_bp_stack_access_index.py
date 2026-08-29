@@ -31,6 +31,11 @@ from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.lowering.instruction_bp_stack_access import (
     InstructionBpStackAccess8616,
     ensure_instruction_bp_stack_access_index_8616,
+    select_instruction_bp_stack_access_8616,
+)
+from angr_platforms.X86_16.lowering.stack_storage_evidence import (
+    alias_excludes_stack_range_8616,
+    alias_proves_stack_range_8616,
 )
 
 
@@ -161,3 +166,53 @@ def test_instruction_bp_stack_index_preserves_logical_word_over_byte_execution()
         2,
         StackMemoryAliasFactKind8616.LOAD,
     ) in index.by_instruction_addr[0x1010]
+
+
+def test_instruction_bp_stack_index_selects_exact_byte_among_sibling_views() -> None:
+    index = ensure_instruction_bp_stack_access_index_8616(
+        SimpleNamespace(),
+        _byte_split_logical_alias_artifact(),
+    )
+
+    selected = select_instruction_bp_stack_access_8616(
+        index,
+        frozenset({0x1010}),
+        displacement=-1,
+        size=1,
+    )
+
+    assert selected == InstructionBpStackAccess8616(
+        -1,
+        1,
+        StackMemoryAliasFactKind8616.LOAD,
+    )
+
+
+def test_instruction_bp_stack_index_uses_sole_range_to_correct_shaped_offset() -> None:
+    index = ensure_instruction_bp_stack_access_index_8616(
+        SimpleNamespace(),
+        _alias_artifact(),
+    )
+
+    selected = select_instruction_bp_stack_access_8616(
+        index,
+        frozenset({0x1010}),
+        displacement=-4,
+        size=2,
+    )
+
+    assert selected == InstructionBpStackAccess8616(
+        -2,
+        2,
+        StackMemoryAliasFactKind8616.LOAD,
+    )
+
+
+def test_complete_alias_artifact_proves_contained_execution_byte_range() -> None:
+    artifact = _byte_split_logical_alias_artifact()
+    codegen = SimpleNamespace(_inertia_stack_memory_ssa_alias_artifact=artifact)
+
+    assert alias_proves_stack_range_8616(codegen, -1, 1) is True
+    assert alias_proves_stack_range_8616(codegen, -1, 2) is False
+    assert alias_excludes_stack_range_8616(codegen, -4, 2) is True
+    assert alias_excludes_stack_range_8616(codegen, -2, 2) is False

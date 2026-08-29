@@ -17,7 +17,7 @@ import os
 import re
 import typing
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 from types import SimpleNamespace
@@ -41,7 +41,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariableField,
 )
 from angr.sim_type import SimStruct, SimType, SimTypeChar, SimTypeLong, SimTypePointer, SimTypeShort, TypeRef
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
+from angr.sim_variable import (
+    SimMemoryVariable,
+    SimRegisterVariable,
+    SimStackVariable,
+    SimVariable,
+)
 from capstone import CS_AC_READ
 from capstone.x86_const import (
     X86_INS_ADD,
@@ -89,6 +94,10 @@ from ..function_evidence_inventory import (
 from ..ir.core import IRAddress, MemSpace
 from ..ir.segment_contract import SegmentAccessKind
 from ..pipeline.errors import PipelineHardError
+from ..pipeline.structured_ast_query_index import (
+    StructuredAstQueryIndex8616,
+    StructuredAstQuerySession8616,
+)
 from ..semantics.direct_call_result_storage import recover_direct_call_result_storage_facts_8616
 from ..structuring.simple_loop_recovery import InsnSummary8616, _function_instruction_summaries_8616
 from ..widening.global_object_layout import GlobalObjectLayout8616, GlobalObjectLayoutEvidence8616
@@ -97,6 +106,9 @@ from ..widening.segmented_load_identity import (
     segmented_load_tags_8616,
 )
 from .annotated_global_refs import collect_annotated_direct_global_refs_8616
+from .bounded_global_array_declarations import (
+    materialize_project_bounded_global_arrays_8616,
+)
 from .callee_global_object_interface import (
     materialize_callee_global_object_interface_8616,
 )
@@ -266,7 +278,7 @@ class _CapstoneWrapperBoundary8616(typing.Protocol):
 class _TaggedCNodeBoundary8616(typing.Protocol):
     """Dynamic tags field exposed by third-party angr C AST nodes."""
 
-    tags: object
+    tags: Mapping[str, object]
 
 
 class _CAssignmentBoundary8616(typing.Protocol):
@@ -1745,30 +1757,46 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
                 stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
                 changed = True
                 root_changed = True
-        if isinstance(root, CStatements) and _materialize_direct_global_boolean_stores_8616(
-            root,
-            codegen,
-            direct_by_offset,
-            direct_boolean_by_offset,
-            stats,
+        query_session = (
+            StructuredAstQuerySession8616(root) if isinstance(root, CStatements) else None
+        )
+        if query_session is not None and query_session.record_mutation(
+            _materialize_direct_global_boolean_stores_8616(
+                root,
+                codegen,
+                direct_by_offset,
+                direct_boolean_by_offset,
+                stats,
+                query_index=query_session.current(),
+            )
         ):
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _remove_duplicate_direct_global_boolean_store_artifacts_8616(
-            root,
-            direct_boolean_by_offset,
-            stats,
+        if query_session is not None and query_session.record_mutation(
+            _remove_duplicate_direct_global_boolean_store_artifacts_8616(
+                root,
+                direct_boolean_by_offset,
+                stats,
+            )
         ):
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _remove_direct_global_boolean_store_high_byte_merges_8616(
-            root,
-            direct_boolean_by_offset,
-            stats,
+        if query_session is not None and query_session.record_mutation(
+            _remove_direct_global_boolean_store_high_byte_merges_8616(
+                root,
+                direct_boolean_by_offset,
+                stats,
+            )
         ):
             changed = True
             root_changed = True
-        for stmt in _iter_c_nodes_deep_8616(root):
+        direct_assignment_changed = False
+        nodes = (
+            query_session.current().nodes
+            if query_session is not None
+            else _iter_c_nodes_deep_8616(root)
+        )
+        for stmt in nodes:
             assignment = _assignment_statement_8616(stmt)
             if assignment is None:
                 continue
@@ -1797,39 +1825,53 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
             stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _remove_materialized_direct_global_call_return_carriers_8616(
-            root,
-            codegen,
-            direct_call_return_stores,
-            stats,
+            direct_assignment_changed = True
+        if query_session is not None:
+            query_session.record_mutation(direct_assignment_changed)
+        if query_session is not None and query_session.record_mutation(
+            _remove_materialized_direct_global_call_return_carriers_8616(
+                root,
+                codegen,
+                direct_call_return_stores,
+                stats,
+            )
         ):
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _materialize_direct_global_dword_update_from_scalar_preserve_8616(
-            root,
-            codegen,
-            direct_by_offset,
-            direct_update_by_offset,
-            stats,
+        if query_session is not None and query_session.record_mutation(
+            _materialize_direct_global_dword_update_from_scalar_preserve_8616(
+                root,
+                codegen,
+                direct_by_offset,
+                direct_update_by_offset,
+                stats,
+            )
         ):
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _remove_direct_global_redundant_high_byte_stores_8616(
-            root,
-            codegen,
-            direct_by_offset,
-            stats,
+        if query_session is not None and query_session.record_mutation(
+            _remove_direct_global_redundant_high_byte_stores_8616(
+                root,
+                codegen,
+                direct_by_offset,
+                stats,
+            )
         ):
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _remove_segment_pointer_helper_self_assignments_8616(root, stats):
+        if query_session is not None and query_session.record_mutation(
+            _remove_segment_pointer_helper_self_assignments_8616(root, stats)
+        ):
             changed = True
             root_changed = True
-        if isinstance(root, CStatements) and _materialize_direct_global_single_byte_stores_8616(
-            root,
-            codegen,
-            direct_by_offset,
-            stats,
+        if query_session is not None and query_session.record_mutation(
+            _materialize_direct_global_single_byte_stores_8616(
+                root,
+                codegen,
+                direct_by_offset,
+                stats,
+                query_index=query_session.current(),
+            )
         ):
             changed = True
             root_changed = True
@@ -3237,11 +3279,16 @@ def _materialize_direct_global_boolean_stores_8616(
     direct_by_offset: dict[tuple[int, int], DirectGlobalSymbolRef8616],
     direct_boolean_by_offset: dict[tuple[int, int], list[DirectGlobalBooleanStoreEvidence8616]],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     consumed: set[DirectGlobalBooleanStoreEvidence8616] = set()
     changed = False
+    if query_index is not None:
+        query_index.require_root(root)
 
-    for stmt in _iter_c_nodes_deep_8616(root):
+    nodes = query_index.nodes if query_index is not None else _iter_c_nodes_deep_8616(root)
+    for stmt in nodes:
         assignment = _assignment_statement_8616(stmt)
         if assignment is None:
             continue
@@ -4398,10 +4445,12 @@ def _statement_ins_addr_8616(stmt: object) -> int | None:
     Dynamic boundary: angr codegen statement nodes expose ``tags`` at runtime.
     """
 
-    tags = getattr(stmt, "tags", None)
-    if not isinstance(tags, dict):
+    try:
+        tags = typing.cast(_TaggedCNodeBoundary8616, stmt).tags
+        get_tag = tags.get
+    except AttributeError:
         return None
-    ins_addr = tags.get("ins_addr")
+    ins_addr = get_tag("ins_addr")
     return int(ins_addr) if isinstance(ins_addr, int) else None
 
 
@@ -5048,9 +5097,14 @@ def _materialize_direct_global_single_byte_stores_8616(
     codegen: CodegenBoundary8616,
     direct_by_offset: dict[tuple[int, int], DirectGlobalSymbolRef8616],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     changed = False
-    for stmt in _iter_c_nodes_deep_8616(root):
+    if query_index is not None:
+        query_index.require_root(root)
+    nodes = query_index.nodes if query_index is not None else _iter_c_nodes_deep_8616(root)
+    for stmt in nodes:
         assignment = _assignment_statement_8616(stmt)
         if assignment is None:
             continue
@@ -5342,9 +5396,12 @@ def _materialize_direct_global_load_pair_expr_8616(
     *,
     dirty_assignments: dict[tuple[str, int | str], object] | None = None,
 ) -> CExpression | None:
+    candidate = _resolve_dirty_global_carrier_8616(node, dirty_assignments)
+    if not isinstance(candidate, CBinaryOp) or candidate.op not in {"Add", "Or"}:
+        return None
     direct_expr = _materialize_direct_ref_load_pair_expr_8616(
         codegen,
-        node,
+        candidate,
         direct_by_offset,
         stats,
         dirty_assignments=dirty_assignments,
@@ -5365,7 +5422,7 @@ def _materialize_direct_global_load_pair_expr_8616(
                 width=width,
                 max_relative_disp=0,
             )
-            if not predicate(node, ref, dirty_assignments):
+            if not predicate(candidate, ref, dirty_assignments):
                 continue
             expr = _make_direct_global_symbol_expr_8616(codegen, ref, width)
             if expr is None:
@@ -5411,6 +5468,7 @@ def _remove_direct_global_redundant_high_byte_stores_8616(
 
     changed = False
     visited_nodes: set[int] = set()
+    comparison_expr_by_ref: dict[DirectGlobalSymbolRef8616, CExpression | None] = {}
 
     def process_statements(node: object) -> None:
         """Walk a dynamic boundary: angr codegen statement-node attributes."""
@@ -5429,6 +5487,7 @@ def _remove_direct_global_redundant_high_byte_stores_8616(
                     statements[index],
                     codegen,
                     direct_by_offset,
+                    comparison_expr_by_ref=comparison_expr_by_ref,
                 )
                 if word_ref is None or not _is_direct_global_high_byte_projection_store_8616(
                     statements[index + 1],
@@ -5478,6 +5537,8 @@ def _direct_global_word_assignment_8616(
     stmt: object,
     codegen: CodegenBoundary8616,
     direct_by_offset: dict[tuple[int, int], DirectGlobalSymbolRef8616],
+    *,
+    comparison_expr_by_ref: dict[DirectGlobalSymbolRef8616, CExpression | None] | None = None,
 ) -> tuple[DirectGlobalSymbolRef8616 | None, object | None]:
     """Resolve one direct word store, preferring its exact storage identity."""
 
@@ -5491,10 +5552,17 @@ def _direct_global_word_assignment_8616(
         if ref is not None and int(ref.width) == 2:
             return ref, assignment.rhs
         return None, None
+    if isinstance(lhs, CExpression) and not isinstance(lhs, CVariable | CIndexedVariable):
+        return None, None
     for ref in direct_by_offset.values():
         if int(ref.width) != 2:
             continue
-        replacement = _make_direct_global_symbol_expr_8616(codegen, ref, 2)
+        if comparison_expr_by_ref is None:
+            replacement = _make_direct_global_symbol_expr_8616(codegen, ref, 2)
+        else:
+            if ref not in comparison_expr_by_ref:
+                comparison_expr_by_ref[ref] = _make_direct_global_symbol_expr_8616(codegen, ref, 2)
+            replacement = comparison_expr_by_ref[ref]
         if replacement is not None and _same_c_expression_8616(lhs, replacement):
             return ref, assignment.rhs
     return None, None
@@ -6048,6 +6116,11 @@ def materialize_indexed_segmented_global_loads_8616(
         layout_evidence,
         _two_byte_global_struct_type_8616,
     ))
+    changed |= bool(materialize_project_bounded_global_arrays_8616(
+        project,
+        codegen,
+        evidence,
+    ))
     if consumed_load_sites:
         # Dynamic angr codegen boundary: retain typed Lowering proof across rebuilds.
         previous_read_record = getattr(
@@ -6444,14 +6517,11 @@ def recover_far_pointer_segmented_load_evidence_8616(
     function: object,
 ) -> tuple[FarPointerSegmentedLoadEvidence8616, ...]:
     """Recover or reuse exact LES/LDS-backed segmented-load evidence."""
-    return cast(
-        tuple[FarPointerSegmentedLoadEvidence8616, ...],
-        collect_function_binary_evidence_8616(
-            project,
-            function,
-            kind=FunctionEvidenceKind8616.FAR_POINTER_SEGMENTED_LOADS,
-            builder=_recover_far_pointer_segmented_load_evidence_uncached_8616,
-        ),
+    return collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.FAR_POINTER_SEGMENTED_LOADS,
+        builder=_recover_far_pointer_segmented_load_evidence_uncached_8616,
     )
 
 
@@ -6748,12 +6818,15 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
 
         return transform(node, access_kind=SegmentAccessKind.WRITE)
 
-    def transform_assignment_lvalues(root: object) -> bool:
+    def transform_assignment_lvalues(
+        root: object,
+        query_index: StructuredAstQueryIndex8616,
+    ) -> bool:
         """Transform every assignment destination without losing its write role."""
 
+        query_index.require_root(root)
         lvalues_changed = False
-        assignments = tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CAssignment))
-        for assignment in assignments:
+        for assignment in query_index.assignments:
             lhs = assignment.lhs
             replacement = transform_write(lhs)
             if replacement is not lhs:
@@ -6772,59 +6845,90 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
     for root in tuple(_cfunc_roots_8616(cfunc)):
         if root not in _cfunc_roots_8616(cfunc):
             continue
+        query_session = StructuredAstQuerySession8616(root)
         root_changed = False
         new_root = transform(root)
         if new_root is not root:
             changed = True
             root_changed = True
-        if _materialize_indexed_global_word_store_pairs_8616(
+            query_session.record_mutation(True)
+        word_pairs_changed = _materialize_indexed_global_word_store_pairs_8616(
             root,
             project,
             codegen,
             evidence_by_base,
             store_evidence,
             stats,
-        ):
+            query_index=query_session.current(),
+        )
+        query_session.record_mutation(word_pairs_changed)
+        if word_pairs_changed:
             changed = True
             root_changed = True
-        if _materialize_indexed_global_store_assignments_from_instruction_evidence_8616(
+        instruction_stores_changed = (
+            _materialize_indexed_global_store_assignments_from_instruction_evidence_8616(
+                root,
+                codegen,
+                evidence_by_base,
+                store_evidence,
+                stats,
+                query_index=query_session.current(),
+            )
+        )
+        query_session.record_mutation(instruction_stores_changed)
+        if instruction_stores_changed:
+            changed = True
+            root_changed = True
+        assignment_lvalues_changed = transform_assignment_lvalues(
             root,
-            codegen,
-            evidence_by_base,
-            store_evidence,
-            stats,
-        ):
+            query_session.current(),
+        )
+        query_session.record_mutation(assignment_lvalues_changed)
+        if assignment_lvalues_changed:
             changed = True
             root_changed = True
-        if transform_assignment_lvalues(root):
-            changed = True
-            root_changed = True
-        if isinstance(root, CStatements) and _replace_c_children_8616(
+        read_children_changed = isinstance(root, CStatements) and _replace_c_children_8616(
             root,
             transform,
             should_process_child=is_read_child,
-        ):
+        )
+        query_session.record_mutation(read_children_changed)
+        if read_children_changed:
             changed = True
             root_changed = True
-        if _materialize_indexed_global_word_store_lvalues_8616(
+        word_lvalues_changed = _materialize_indexed_global_word_store_lvalues_8616(
             root,
             codegen,
             evidence_by_base,
             store_evidence,
             stats,
-        ):
+            query_index=query_session.current(),
+        )
+        query_session.record_mutation(word_lvalues_changed)
+        if word_lvalues_changed:
             changed = True
             root_changed = True
-        if _materialize_indexed_global_byte_store_lvalues_8616(
+        byte_lvalues_changed = _materialize_indexed_global_byte_store_lvalues_8616(
             root,
             codegen,
             evidence_by_base,
             store_evidence,
             stats,
-        ):
+            query_index=query_session.current(),
+        )
+        query_session.record_mutation(byte_lvalues_changed)
+        if byte_lvalues_changed:
             changed = True
             root_changed = True
-        if _remove_indexed_global_store_source_carriers_8616(root, evidence_by_base, store_evidence, stats):
+        source_carriers_changed = _remove_indexed_global_store_source_carriers_8616(
+            root,
+            evidence_by_base,
+            store_evidence,
+            stats,
+            query_index=query_session.current(),
+        )
+        query_session.record_mutation(source_carriers_changed)
+        if source_carriers_changed:
             changed = True
             root_changed = True
         aggregate_promoted_count = _promote_stack_assignment_aggregate_types_8616(
@@ -6841,6 +6945,10 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
             stats.indexed_stack_aggregate_byte_cast_projected_count += aggregate_byte_cast_projected_count
             changed = True
             root_changed = True
+        query_session.record_mutation(
+            bool(aggregate_promoted_count or aggregate_byte_cast_projected_count)
+        )
+        query_session.stats()
         if root_changed:
             _sync_cfunc_statement_roots_8616(cfunc, root)
     if (
@@ -7418,10 +7526,22 @@ def _materialize_indexed_global_word_store_pairs_8616(
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     changed = False
     runtime_context = build_runtime_segment_access_context_8616(codegen)
-    statement_roots = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CStatements)]
+    if query_index is not None:
+        query_index.require_root(root)
+    statement_roots = list(
+        query_index.statement_blocks
+        if query_index is not None
+        else (
+            node
+            for node in _iter_c_statement_nodes_8616(root)
+            if isinstance(node, CStatements)
+        )
+    )
     if isinstance(root, CStatements) and root not in statement_roots:
         statement_roots.append(root)
 
@@ -7713,9 +7833,21 @@ def _materialize_indexed_global_byte_store_lvalues_8616(
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     changed = False
-    statement_roots = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CStatements)]
+    if query_index is not None:
+        query_index.require_root(root)
+    statement_roots = list(
+        query_index.statement_blocks
+        if query_index is not None
+        else (
+            node
+            for node in _iter_c_statement_nodes_8616(root)
+            if isinstance(node, CStatements)
+        )
+    )
     if isinstance(root, CStatements) and root not in statement_roots:
         statement_roots.append(root)
 
@@ -7760,6 +7892,8 @@ def _materialize_indexed_global_store_assignments_from_instruction_evidence_8616
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     """Materialize raw store assignments joined to one exact decoded instruction.
 
@@ -7778,10 +7912,19 @@ def _materialize_indexed_global_store_assignments_from_instruction_evidence_8616
     if not facts_by_ins_addr:
         return False
 
+    if query_index is not None:
+        query_index.require_root(root)
     assignments_by_ins_addr: dict[int, list[CAssignment]] = {}
-    for node in _iter_c_nodes_deep_8616(root):
-        if not isinstance(node, CAssignment):
-            continue
+    assignment_nodes = (
+        query_index.assignments
+        if query_index is not None
+        else (
+            node
+            for node in _iter_c_nodes_deep_8616(root)
+            if isinstance(node, CAssignment)
+        )
+    )
+    for node in assignment_nodes:
         ins_addr = _statement_ins_addr_8616(node)
         if ins_addr not in facts_by_ins_addr:
             continue
@@ -8086,6 +8229,8 @@ def _materialize_indexed_global_word_store_lvalues_8616(
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     if not store_evidence:
         return False
@@ -8102,10 +8247,19 @@ def _materialize_indexed_global_word_store_lvalues_8616(
     if not facts_by_name:
         return False
 
+    if query_index is not None:
+        query_index.require_root(root)
     changed = False
-    for stmt in _iter_c_nodes_deep_8616(root):
-        if not isinstance(stmt, CAssignment):
-            continue
+    assignments = (
+        query_index.assignments
+        if query_index is not None
+        else (
+            node
+            for node in _iter_c_nodes_deep_8616(root)
+            if isinstance(node, CAssignment)
+        )
+    )
+    for stmt in assignments:
         lhs = stmt.lhs
         if not isinstance(lhs, CIndexedVariable):
             continue
@@ -8233,6 +8387,8 @@ def _remove_indexed_global_store_source_carriers_8616(
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
     stats: SegmentedGlobalLoadStats8616,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
 ) -> bool:
     pairs_by_source_key: dict[tuple[int, int], list[tuple[str, str]]] = {}
     for fact in store_evidence:
@@ -8254,8 +8410,18 @@ def _remove_indexed_global_store_source_carriers_8616(
     if not pairs_by_source_key:
         return False
 
+    if query_index is not None:
+        query_index.require_root(root)
     changed = False
-    statement_roots = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CStatements)]
+    statement_roots = list(
+        query_index.statement_blocks
+        if query_index is not None
+        else (
+            node
+            for node in _iter_c_nodes_deep_8616(root)
+            if isinstance(node, CStatements)
+        )
+    )
     if isinstance(root, CStatements) and root not in statement_roots:
         statement_roots.append(root)
     for statements_node in statement_roots:
@@ -9980,7 +10146,8 @@ def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, ro
     """
 
     projected = 0
-    for assignment in _iter_c_nodes_deep_8616(root):
+    nodes = tuple(_iter_c_nodes_deep_8616(root))
+    for assignment in nodes:
         if not isinstance(assignment, CAssignment):
             continue
         cast_expr = assignment.rhs
@@ -10001,7 +10168,7 @@ def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, ro
             cast_expr.src_type,
             cast_expr.dst_type,
         )
-    for node in _iter_c_nodes_deep_8616(root):
+    for node in nodes:
         if not isinstance(node, CTypeCast) or not isinstance(node.dst_type, SimTypeChar):
             continue
         aggregate_expr = node.expr
@@ -10021,7 +10188,7 @@ def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, ro
             codegen=codegen,
         )
         projected += 1
-    for node in _iter_c_nodes_deep_8616(root):
+    for node in nodes:
         if not isinstance(node, CBinaryOp) or node.op != "And":
             continue
         masked_aggregate_expr: CExpression | None = None
@@ -10882,6 +11049,32 @@ def _collect_direct_global_boolean_store_evidence_8616(
     return tuple(dict.fromkeys(evidence))
 
 
+def _build_direct_global_instruction_views_8616(
+    project: object | None,
+    function: object,
+) -> tuple[CapstoneInstructionView8616, ...]:
+    """Snapshot ordered binary instructions for direct-global consumers."""
+    if project is None:
+        return ()
+    return tuple(
+        _capstone_instruction_view_8616(insn)
+        for insn in _direct_global_update_ordered_insns_8616(project, function)
+    )
+
+
+def _direct_global_instruction_views_8616(
+    project: ProjectBoundary8616,
+    function: object,
+) -> tuple[CapstoneInstructionView8616, ...]:
+    """Return request-cached immutable instruction views for one function."""
+    return collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.DIRECT_GLOBAL_INSTRUCTION_VIEWS,
+        builder=_build_direct_global_instruction_views_8616,
+    )
+
+
 def _collect_direct_global_call_return_store_evidence_8616(
     project: ProjectBoundary8616,
     function: object,
@@ -10891,8 +11084,8 @@ def _collect_direct_global_call_return_store_evidence_8616(
 
     if project is None or function is None:
         return ()
-    insns = _direct_global_update_ordered_insns_8616(project, function)
-    views = tuple(_capstone_instruction_view_8616(insn) for insn in insns)
+    views = _direct_global_instruction_views_8616(project, function)
+    insns = tuple(view.raw for view in views)
     evidence: list[DirectGlobalCallReturnStoreEvidence8616] = []
     callsite_addrs = tuple(
         view.address

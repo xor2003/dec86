@@ -6,9 +6,15 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from angr_platforms.X86_16.caller_return_use_contracts import (
+    AxValueView8616,
+    ByteReturnExtensionKind8616,
+)
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
+    CallerReturnUseFact8616,
     CallerReturnUseVerdict8616,
+    CallsiteReturnUseKind8616,
     caller_return_use_evidence_by_addr_8616,
     record_caller_return_use_evidence_8616,
 )
@@ -63,6 +69,26 @@ def _return_use_evidence() -> CallerReturnUseEvidence8616:
         unused_callsite_count=1,
         callsite_addrs=(0x1010, 0x1040),
         excluded_callsite_count=1,
+        facts=(
+            CallerReturnUseFact8616(
+                0x1000,
+                0x1010,
+                CallerReturnUseVerdict8616.UNUSED,
+                CallsiteReturnUseKind8616.CLOBBERED,
+                0x1013,
+                byte_extension=ByteReturnExtensionKind8616.ZERO_EXTEND_AL_TO_AX,
+                byte_extension_instruction_addr=0x1011,
+                observed_value_view=AxValueView8616.AX,
+            ),
+            CallerReturnUseFact8616(
+                0x1000,
+                0x1040,
+                CallerReturnUseVerdict8616.UNKNOWN,
+                CallsiteReturnUseKind8616.FUNCTION_RETURN,
+                0x1043,
+                True,
+            ),
+        ),
     )
 
 
@@ -271,4 +297,18 @@ def test_display_catalog_cache_refuses_unmaterialized_classified_evidence():
     evidence_record["materialized_count"] = 0
 
     with pytest.raises(ValueError, match="materialized facts do not close"):
+        display_catalog_cache_payload_from_record_8616(record)
+
+
+def test_display_catalog_cache_refuses_counter_only_caller_evidence() -> None:
+    """Raw caller facts must survive the persistence boundary as typed facts."""
+    evidence = _return_use_evidence()
+    record = display_catalog_cache_record_8616((0x10560,), {0x10560: evidence}, None)
+    caller_records = record["caller_return_use"]
+    assert isinstance(caller_records, list)
+    evidence_record = caller_records[0]["evidence"]
+    assert isinstance(evidence_record, dict)
+    evidence_record["facts"] = []
+
+    with pytest.raises(ValueError, match="retained facts do not close"):
         display_catalog_cache_payload_from_record_8616(record)

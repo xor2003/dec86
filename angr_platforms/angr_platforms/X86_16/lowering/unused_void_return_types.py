@@ -25,6 +25,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CVariableField,
 )
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimTypeBottom, SimTypeFunction
 from archinfo import Arch
 
@@ -132,8 +133,8 @@ class _FunctionSurface8616(Protocol):
 
     addr: int
     info: object
-    is_prototype_guessed: bool
     prototype: object | None
+    prototype_source: PrototypeSource
 
 
 class _FunctionManagerSurface8616(Protocol):
@@ -331,7 +332,7 @@ def materialize_unused_caller_void_codegen_type_8616(
     ).with_arch(project_surface.arch)
     cfunc.functy = rebuilt
     function.prototype = rebuilt
-    function.is_prototype_guessed = False
+    function.prototype_source = PrototypeSource.CCA_DECOMPILER
     changed_returns = 0
     for node in return_nodes:
         if node.retval is not None:

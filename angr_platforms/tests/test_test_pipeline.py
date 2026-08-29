@@ -46,7 +46,8 @@ def test_unit_lane_promotes_type_object_recovery_contracts():
 def test_repository_architecture_guard_runs_as_a_separate_hard_gate():
     assert "angr_platforms/tests/test_decompiler_architecture_check.py" not in test_pipeline.FOCUSED_PYTEST_TARGETS
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    assert "decompiler-check-fast: architecture-check" in makefile
+    assert "decompiler-check-fast: architecture-check-fast" in makefile
+    assert "quality-hard: linters-hard type-ratchet-changed architecture-check" in makefile
     assert 'pytest -q $(PYTEST_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)"' in makefile
 
 
@@ -57,7 +58,7 @@ def test_unit_lane_promotes_pipeline_self_contract():
 def test_repository_ownership_manifest_runs_as_a_separate_hard_gate():
     assert "angr_platforms/tests/test_test_ownership_manifest.py" not in test_pipeline.FOCUSED_PYTEST_TARGETS
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    assert "decompiler-check-fast: architecture-check agent-context-check test-ownership-check" in makefile
+    assert "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check" in makefile
     assert 'pytest_profile.py $(PYTEST_PROFILE_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)"' in makefile
 
 
@@ -157,7 +158,8 @@ def test_makefile_exposes_fast_quality_target_with_linters():
 
     assert "quality-fast: linters type-ratchet-changed decompiler-check-fast" in makefile
     assert "\ntype-ratchet-changed:\n" in makefile
-    assert "decompiler-check-fast: architecture-check agent-context-check test-ownership-check test-pipeline-fast" in makefile
+    assert "decompiler-check-fast: architecture-check-fast agent-context-check test-ownership-check test-pipeline-fast" in makefile
+    assert "\narchitecture-check-fast:\n\t$(PYTHON) scripts/check_decompiler_architecture.py --startup-only" in makefile
     assert "\ntest-ownership-check:\n\t$(PYTHON) scripts/test_ownership_manifest.py --check" in makefile
 
 
@@ -177,7 +179,7 @@ def test_makefile_default_decompiler_check_validates_test_ownership_manifest():
 def test_makefile_focused_check_runs_architecture_guard():
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    assert "check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files" in makefile
+    assert "check-files: linters-files architecture-check-fast agent-context-check test-ownership-check pytest-files" in makefile
 
 
 def test_makefile_focused_check_unions_explicit_and_owned_tests():
@@ -257,7 +259,7 @@ def test_unit_lane_reports_slow_pytest_durations(monkeypatch):
 
     assert result.status == test_pipeline.LaneStatus.PASSED
     assert captured
-    assert "--durations=25" in captured[0]
+    assert "--durations=10" in captured[0]
     assert captured[0][captured[0].index("-n") + 1] == "7"
     assert captured[0][captured[0].index("--dist") + 1] == "loadgroup"
     assert "--durations-min=1.0" in captured[0]

@@ -1,28 +1,38 @@
 """Classify whether recovered callers consume a function result.
 
 Layer: Types/lowering.
-Responsibility: require a value-returning ABI when binary callers consume it.
-Consumes alias, widening, and typed facts from typed caller-use evidence.
-An ignored result does not prove that the callee returns void.
+Responsibility: classify caller result observation and join it with complete
+terminal-storage evidence when an unobserved callee result is proven void.
+Consumes alias, widening, and typed facts from caller/terminal-return evidence.
+An ignored result alone does not prove that the callee returns void.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 Do not inspect function names or postprocess output.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
 
+from ..call_target_identity import resolve_x86_16_canonical_call_target_function_8616
 from ..callsite_summary import (
     CallerReturnUseEvidence8616,
     CallerReturnUseVerdict8616,
     caller_return_use_evidence_by_addr_8616,
 )
+from ..frontend_function_boundary_index import exact_function_entry_boundary_8616
+from ..semantics.terminal_return_storage import (
+    TerminalReturnStorage8616,
+    terminal_return_storage_8616,
+)
 
 __all__ = [
     "FunctionReturnClass8616",
+    "UnobservedCalleeVoidEvidence8616",
     "caller_return_use_evidence_proves_unused_8616",
     "caller_return_use_evidence_proves_used_8616",
+    "collect_unobserved_callee_void_evidence_8616",
     "function_result_is_proven_unobserved_8616",
     "proven_function_result_observation_8616",
     "proven_function_return_class_8616",
@@ -34,11 +44,57 @@ class _ProjectReturnTypeSurface8616(Protocol):
     _inertia_original_linear_delta: int
 
 
+class _FunctionProjectSurface8616(Protocol):
+    """Third-party function field identifying its evidence project."""
+
+    project: object
+
+
+class _FunctionBlocksSurface8616(Protocol):
+    """Third-party function block ownership used to reject empty stubs."""
+
+    block_addrs_set: object
+
+
+class _ProjectFunctionRangesSurface8616(Protocol):
+    """Owned Frontend range inventory carried by the project boundary."""
+
+    _inertia_caller_function_ranges_8616: tuple[tuple[int, int], ...]
+
+
 class FunctionReturnClass8616(StrEnum):
     """Logical class of a materialized function result surface."""
 
     VOID = "void"
     VALUE = "value"
+
+
+@dataclass(frozen=True, slots=True)
+class UnobservedCalleeVoidEvidence8616:
+    """Closed join of caller observation and terminal return storage."""
+
+    target_addr: int
+    caller_observation: CallerReturnUseVerdict8616 | None
+    terminal_storage: TerminalReturnStorage8616 | None
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+    @property
+    def proves_void(self) -> bool:
+        """Return whether both complete facts prove an empty C result."""
+        return (
+            self.caller_observation is CallerReturnUseVerdict8616.UNUSED
+            and self.terminal_storage
+            in {TerminalReturnStorage8616.NONE, TerminalReturnStorage8616.CALL_OUTPUT}
+            and self.raw_fact_count == 2
+            and self.normalized_fact_count == self.raw_fact_count
+            and self.classified_fact_count == self.raw_fact_count
+            and self.materialized_count == self.classified_fact_count
+            and self.failure_count == 0
+        )
 
 
 def caller_return_use_evidence_proves_used_8616(
@@ -134,6 +190,45 @@ def proven_function_result_observation_8616(
     if caller_return_use_evidence_proves_unused_8616(evidence):
         return CallerReturnUseVerdict8616.UNUSED
     return None
+
+
+def collect_unobserved_callee_void_evidence_8616(
+    project: object,
+    function_addr: int,
+) -> UnobservedCalleeVoidEvidence8616:
+    """Join closed caller-use and terminal-storage facts for one callee."""
+    observation = proven_function_result_observation_8616(project, function_addr)
+    function = resolve_x86_16_canonical_call_target_function_8616(project, function_addr)
+    try:
+        has_blocks = bool(cast(_FunctionBlocksSurface8616, function).block_addrs_set)
+    except AttributeError:
+        has_blocks = False
+    if not has_blocks:
+        try:
+            ranges = cast(_ProjectFunctionRangesSurface8616, project)._inertia_caller_function_ranges_8616
+        except AttributeError:
+            ranges = ()
+        function = exact_function_entry_boundary_8616(project, function_addr, ranges)
+    try:
+        evidence_project = cast(_FunctionProjectSurface8616, function).project
+    except AttributeError:
+        evidence_project = project
+    terminal_storage = (
+        terminal_return_storage_8616(evidence_project, function)
+        if function is not None
+        else None
+    )
+    normalized_count = int(observation is not None) + int(terminal_storage is not None)
+    return UnobservedCalleeVoidEvidence8616(
+        target_addr=function_addr,
+        caller_observation=observation,
+        terminal_storage=terminal_storage,
+        raw_fact_count=2,
+        normalized_fact_count=normalized_count,
+        classified_fact_count=normalized_count,
+        materialized_count=normalized_count,
+        failure_count=2 - normalized_count,
+    )
 
 
 def function_result_is_proven_unobserved_8616(

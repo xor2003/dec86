@@ -122,6 +122,21 @@ def _visible_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     return {addr: name for addr, name in code_labels.items() if addr not in skipped or addr in cod_proc_addrs}
 
 
+def _function_discovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
+    """Return labels that are valid whole-binary function discovery seeds.
+
+    Explicit procedure declarations are stronger evidence than permissive IDA
+    name exports. Keep every label available to semantic consumers, but do not
+    schedule strings and data objects as functions when procedure evidence is
+    present.
+    """
+    labels = _visible_code_labels(metadata)
+    if metadata is None or not metadata.function_entry_addrs:
+        return labels
+    entry_addrs = metadata.function_entry_addrs
+    return {addr: name for addr, name in labels.items() if addr in entry_addrs}
+
+
 def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     if metadata is None:
         return {}
@@ -175,11 +190,14 @@ def _load_lst_sidecar(
     data_labels: dict[int, str],
     code_ranges: dict[int, tuple[int, int]],
     source_formats: list[str],
-) -> None:
-    def _impl() -> None:
+) -> set[int]:
+    """Load LST labels and return procedure entry addresses owned by that sidecar."""
+
+    def _impl() -> set[int]:
+        function_entry_addrs: set[int] = set()
         lst_path = _find_sibling_sidecar(binary, ".lst")
         if lst_path is None:
-            return
+            return function_entry_addrs
         try:
             metadata = extract_lst_metadata(lst_path)
             if metadata.code_labels or metadata.data_labels:
@@ -212,9 +230,11 @@ def _load_lst_sidecar(
             )
             if ida_proc_labels:
                 code_labels.update(ida_proc_labels)
+                function_entry_addrs.update(ida_proc_labels)
                 source_formats.append("ida_lst")
         except Exception as exc:
             print(f"[dbg] failed to parse IDA proc listing {lst_path}: {exc}")
+        return function_entry_addrs
 
     return _impl()
 
@@ -827,7 +847,7 @@ def _load_lst_metadata(
             data_labels=data_labels,
             source_formats=source_formats,
         )
-        _load_lst_sidecar(
+        function_entry_addrs = _load_lst_sidecar(
             binary,
             load_base_linear=load_base_linear,
             segment_offsets=segment_offsets,
@@ -900,6 +920,7 @@ def _load_lst_metadata(
             signature_catalog=signature_catalog,
             cod_proc_kinds=cod_proc_kinds,
         )
+        function_entry_addrs.update(cod_proc_kinds)
 
         if (
             not code_labels
@@ -932,6 +953,7 @@ def _load_lst_metadata(
             data_labels=data_labels,
             code_labels=code_labels,
             code_ranges=code_ranges,
+            function_entry_addrs=frozenset(function_entry_addrs),
             signature_code_addrs=frozenset(signature_code_addrs),
             absolute_addrs=True,
             source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",

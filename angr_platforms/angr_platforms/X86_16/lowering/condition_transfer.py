@@ -44,6 +44,7 @@ from ..alias.condition_register_liveness import (
     normalize_condition_register_liveness_8616,
 )
 from ..condition_trace import record_classified_conditions_trace_8616
+from ..frontend_function_boundary import ExactFunctionRangeBoundary8616
 from ..ir.condition_cache_relift import (
     ConditionCacheReliftStats8616,
     ConditionReliftBlock8616,
@@ -62,6 +63,10 @@ from ..ir.condition_ir import (
     deduplicate_conditions_8616,
 )
 from ..ir.core import IRValue, MemSpace
+from ..ir.function_ssa_registry import (
+    FunctionSSAArtifactVerdict8616,
+    registered_function_ssa_artifact_8616,
+)
 from .condition_fact_arbitration import resolve_condition_fact_conflicts_8616
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -128,6 +133,42 @@ _INVERTED_JCC_MNEMONICS_8616: dict[str, str] = {
     "jnle": "jle",
 }
 
+_DIRECT_COUNTER_CONDITION_OPS_8616: dict[str, str] = {"loop": "nonzero"}
+_REP_COUNTER_ONLY_MNEMONICS_8616: frozenset[str] = frozenset(
+    {
+        "insb",
+        "insd",
+        "insw",
+        "lodsb",
+        "lodsd",
+        "lodsw",
+        "movsb",
+        "movsd",
+        "movsw",
+        "outsb",
+        "outsd",
+        "outsw",
+        "stosb",
+        "stosd",
+        "stosw",
+    }
+)
+
+
+def _direct_counter_condition_op_8616(mnemonic: str) -> str | None:
+    """Return the exact counter-only condition implied by LOOP or plain REP."""
+    direct = _DIRECT_COUNTER_CONDITION_OPS_8616.get(mnemonic)
+    if direct is not None:
+        return direct
+    parts = mnemonic.split()
+    if (
+        len(parts) == 2
+        and parts[0] in {"rep", "repe", "repz", "repne", "repnz"}
+        and parts[1] in _REP_COUNTER_ONLY_MNEMONICS_8616
+    ):
+        return "nonzero"
+    return None
+
 
 def _current_function_condition_ownership_8616(func: object) -> _ConditionFunctionOwnership8616:
     """Decode exact current-function block terminators for condition ownership."""
@@ -160,11 +201,17 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
             not isinstance(terminal_addr, int)
             or not isinstance(terminal_size, int)
             or terminal_size <= 0
-            or mnemonic not in JCC_TO_COND_8616
+            or (
+                mnemonic not in JCC_TO_COND_8616
+                and _direct_counter_condition_op_8616(mnemonic) is None
+            )
         ):
             continue
         operands = tuple(_dynamic_boundary_attr_8616(terminal, "operands", ()) or ())
-        target = _dynamic_boundary_attr_8616(operands[-1], "imm", None) if operands else None
+        if mnemonic != "loop" and _direct_counter_condition_op_8616(mnemonic) is not None:
+            target = terminal_addr
+        else:
+            target = _dynamic_boundary_attr_8616(operands[-1], "imm", None) if operands else None
         owner = _ConditionBlockOwner8616(
             block_addr=block_addr,
             terminal_insn=terminal_addr,
@@ -181,7 +228,11 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
             owners[block_addr] = owner
 
     graph = _dynamic_boundary_attr_8616(func, "graph", None)
-    predecessors_by_block: dict[int, frozenset[int]] = {}
+    predecessors_by_block = (
+        func.predecessors_by_block
+        if isinstance(func, ExactFunctionRangeBoundary8616)
+        else {}
+    )
     condition_only_blocks: set[int] = set()
     for block in blocks:
         block_addr = _dynamic_boundary_attr_8616(block, "addr", None)
@@ -200,7 +251,10 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
             ).strip().lower()
             for wrapper in wrappers
         )
-        if all(item in JCC_TO_COND_8616 for item in mnemonics) or (
+        if all(
+            item in JCC_TO_COND_8616 or _direct_counter_condition_op_8616(item) is not None
+            for item in mnemonics
+        ) or (
             len(mnemonics) >= 2
             and mnemonics[-1] in JCC_TO_COND_8616
             and mnemonics[-2] == "cmp"
@@ -211,31 +265,32 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
             and mnemonics[1] in JCC_TO_COND_8616
         ):
             condition_only_blocks.add(block_addr)
-    try:
-        graph_nodes = tuple(graph.nodes())
-    except (AttributeError, TypeError):
-        graph_nodes = ()
-    for node in graph_nodes:
-        node_addr = node if isinstance(node, int) else _dynamic_boundary_attr_8616(node, "addr", None)
-        if not isinstance(node_addr, int):
-            continue
+    if not isinstance(func, ExactFunctionRangeBoundary8616):
         try:
-            predecessor_nodes = tuple(graph.predecessors(node))
+            graph_nodes = tuple(graph.nodes())
         except (AttributeError, TypeError):
-            continue
-        predecessor_addrs = frozenset(
-            predecessor_addr
-            for predecessor in predecessor_nodes
-            if isinstance(
-                predecessor_addr := (
-                    predecessor
-                    if isinstance(predecessor, int)
-                    else _dynamic_boundary_attr_8616(predecessor, "addr", None)
-                ),
-                int,
+            graph_nodes = ()
+        for node in graph_nodes:
+            node_addr = node if isinstance(node, int) else _dynamic_boundary_attr_8616(node, "addr", None)
+            if not isinstance(node_addr, int):
+                continue
+            try:
+                predecessor_nodes = tuple(graph.predecessors(node))
+            except (AttributeError, TypeError):
+                continue
+            predecessor_addrs = frozenset(
+                predecessor_addr
+                for predecessor in predecessor_nodes
+                if isinstance(
+                    predecessor_addr := (
+                        predecessor
+                        if isinstance(predecessor, int)
+                        else _dynamic_boundary_attr_8616(predecessor, "addr", None)
+                    ),
+                    int,
+                )
             )
-        )
-        predecessors_by_block[node_addr] = predecessor_addrs
+            predecessors_by_block[node_addr] = predecessor_addrs
 
     return _ConditionFunctionOwnership8616(
         decoded_block_addrs=frozenset(decoded_block_addrs),
@@ -253,6 +308,9 @@ def _expected_condition_op_for_owner_8616(
     owner: _ConditionBlockOwner8616,
 ) -> str | None:
     """Return the condition operator implied by the current decoded JCC."""
+    direct = _direct_counter_condition_op_8616(owner.mnemonic)
+    if direct is not None:
+        return direct
     expected = typing.cast(str | None, JCC_TO_COND_8616.get(owner.mnemonic))
     if expected is None:
         return None
@@ -546,6 +604,8 @@ def _collect_pending_fallthrough_conditions_8616(
 def _collect_typed_condition_artifacts_8616(
     project: object,
     func_addr: int,
+    *,
+    function: object | None = None,
 ) -> tuple[
     list[ConditionIR],
     list[ConditionEdgeEvidence],
@@ -571,7 +631,7 @@ def _collect_typed_condition_artifacts_8616(
         if kb is None:
             return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0), None
 
-        func = kb.functions.function(addr=func_addr, create=False)
+        func = function or kb.functions.function(addr=func_addr, create=False)
         if func is None:
             return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0), None
 
@@ -599,11 +659,27 @@ def _collect_typed_condition_artifacts_8616(
 
         condition_block_addrs = sorted(ownership.conditional_owners) or block_addrs
 
+        registered = registered_function_ssa_artifact_8616(project, func_addr)
+        registered_condition_evidence = (
+            registered.artifact.condition_evidence
+            if registered.verdict is FunctionSSAArtifactVerdict8616.PROVEN
+            and registered.artifact is not None
+            else None
+        )
         relift_stats: ConditionCacheReliftStats8616 | None = None
-        relift_artifact = relift_function_condition_cache_8616(
-            project,
-            ownership.relift_blocks,
-            frozenset(condition_block_addrs),
+        relift_artifact = (
+            registered_condition_evidence.source
+            if registered_condition_evidence is not None
+            and registered_condition_evidence.complete
+            and registered_condition_evidence.function_addr == func_addr
+            and registered_condition_evidence.block_ranges == ownership.relift_blocks
+            and registered_condition_evidence.expected_condition_blocks
+            == tuple(condition_block_addrs)
+            else relift_function_condition_cache_8616(
+                project,
+                ownership.relift_blocks,
+                frozenset(condition_block_addrs),
+            )
         )
         if relift_artifact is not None:
             module_cache = relift_artifact.condition_cache()
@@ -695,10 +771,14 @@ def collect_typed_conditions_from_emulator_8616(
 def collect_typed_condition_artifacts_8616(
     project: object,
     func_addr: int,
+    *,
+    function: object | None = None,
 ) -> tuple[list[ConditionIR], list[ConditionEdgeEvidence]]:
-    """Collect typed condition and edge-condition artifacts for a function."""
+    """Collect typed conditions for an exact boundary or the project function."""
     conditions, edge_evidence, _ownership_stats, _relift_stats = _collect_typed_condition_artifacts_8616(
-        project, func_addr
+        project,
+        func_addr,
+        function=function,
     )
     return conditions, edge_evidence
 

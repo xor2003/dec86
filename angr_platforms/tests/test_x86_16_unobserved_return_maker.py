@@ -37,7 +37,6 @@ def test_proven_unobserved_return_keeps_binary_ax_value(monkeypatch) -> None:
     arch = Arch86_16()
     ax = ailment.Expr.Register(
         1,
-        None,
         arch.registers["ax"][0],
         16,
         reg_name="ax",
@@ -46,7 +45,7 @@ def test_proven_unobserved_return_keeps_binary_ax_value(monkeypatch) -> None:
     assignment = ailment.Stmt.Assignment(
         2,
         ax,
-        ailment.Expr.Const(3, None, 75, 16, ins_addr=0x10517),
+        ailment.Expr.Const(3, 75, 16, ins_addr=0x10517),
         ins_addr=0x10517,
     )
     ret_stmt = ailment.Stmt.Return(4, [], ins_addr=0x1051F)

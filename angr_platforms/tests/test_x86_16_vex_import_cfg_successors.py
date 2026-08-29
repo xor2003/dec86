@@ -10,6 +10,7 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir import IRBlock, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.block_ownership import (
     IRBlockOwnershipFailure8616,
+    IRBlockSuccessorRewriteFailure8616,
     canonicalize_ir_block_ownership_8616,
 )
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
@@ -106,4 +107,45 @@ def test_overlap_without_exact_owner_decode_is_refused_and_preserved() -> None:
     assert (
         evidence.refusals[0].failure
         is IRBlockOwnershipFailure8616.CANONICAL_OWNER_MISSING_INSTRUCTION
+    )
+
+
+def test_overlap_prefix_retargets_identical_branch_to_canonical_suffix() -> None:
+    """Make the suffix owner, not its update prefix, own branch polarity."""
+    update = IRInstr("Iop_Add16", None, (), addr=0x1000)
+    guard = IRInstr("CJMP", None, (), addr=0x1003)
+    evidence = canonicalize_ir_block_ownership_8616(
+        (
+            IRBlock(0x1000, (update, guard), successor_addrs=(0x1010, 0x1020)),
+            IRBlock(0x1003, (guard,), successor_addrs=(0x1010, 0x1020)),
+            IRBlock(0x1010),
+            IRBlock(0x1020),
+        )
+    )
+
+    assert evidence.complete
+    assert evidence.blocks[0].instrs == (update,)
+    assert evidence.blocks[0].successor_addrs == (0x1003,)
+    assert evidence.successor_stats.materialized_count == 1
+    assert evidence.successor_stats.failure_count == 0
+    assert evidence.successor_rewrites[0].canonical_block_addr == 0x1003
+
+
+def test_overlap_prefix_keeps_conflicting_successors_with_typed_refusal() -> None:
+    """Refuse CFG rewiring when source and suffix edges are not identical."""
+    update = IRInstr("Iop_Add16", None, (), addr=0x1000)
+    guard = IRInstr("CJMP", None, (), addr=0x1003)
+    evidence = canonicalize_ir_block_ownership_8616(
+        (
+            IRBlock(0x1000, (update, guard), successor_addrs=(0x1010, 0x1030)),
+            IRBlock(0x1003, (guard,), successor_addrs=(0x1010, 0x1020)),
+        )
+    )
+
+    assert evidence.complete
+    assert evidence.blocks[0].successor_addrs == (0x1010, 0x1030)
+    assert evidence.successor_stats.materialized_count == 0
+    assert evidence.successor_stats.failure_count == 1
+    assert evidence.successor_refusals[0].failure is (
+        IRBlockSuccessorRewriteFailure8616.SUCCESSOR_CONFLICT
     )

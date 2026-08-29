@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from importlib.machinery import EXTENSION_SUFFIXES
+from pathlib import Path
+
+import pytest
 from angr_platforms.X86_16.quality import (
     format_x86_16_quality_report_8616,
     measure_x86_16_codegen_quality_8616,
@@ -7,6 +11,70 @@ from angr_platforms.X86_16.quality import (
 )
 
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_final_generated_c_text
+from scripts.benchmark_optimization_quality_guard import (
+    _disable_repo_extension_modules,
+    _iter_repo_extension_modules,
+)
+
+
+def test_makefile_serializes_mypyc_artifact_mutators() -> None:
+    makefile = (Path(__file__).parents[2] / "Makefile").read_text(encoding="utf-8")
+
+    assert "MYPYC_ARTIFACT_LOCK ?= /tmp/vextest-mypyc-artifacts.lock" in makefile
+    assert (
+        makefile.count(
+            'flock "$(MYPYC_ARTIFACT_LOCK)" $(PYTHON) scripts/build_mypyc.py'
+        )
+        == 2
+    )
+    assert (
+        makefile.count(
+            'flock "$(MYPYC_ARTIFACT_LOCK)" $(PYTHON) scripts/benchmark_optimization_quality_guard.py'
+        )
+        == 3
+    )
+
+
+def test_quality_guard_scopes_and_restores_python_extensions(tmp_path) -> None:
+    suffix = EXTENSION_SUFFIXES[0]
+    root_extension = tmp_path / f"root{suffix}"
+    package_extension = tmp_path / "inertia_decompiler" / f"package{suffix}"
+    cache_extension = tmp_path / ".cache" / "mypyc" / "lib" / f"cached{suffix}"
+    unrelated_library = tmp_path / "borrow" / "libcapstone.so"
+    stale_neighbor = root_extension.with_name(f"{root_extension.name}.disabled")
+    for path in (root_extension, package_extension, cache_extension, unrelated_library):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(path.name.encode())
+    stale_neighbor.write_bytes(b"stale")
+
+    assert _iter_repo_extension_modules(tmp_path) == (
+        cache_extension,
+        package_extension,
+        root_extension,
+    )
+    with _disable_repo_extension_modules(tmp_path):
+        assert not root_extension.exists()
+        assert not package_extension.exists()
+        assert not cache_extension.exists()
+        assert unrelated_library.exists()
+        assert stale_neighbor.read_bytes() == b"stale"
+
+    assert root_extension.exists()
+    assert package_extension.exists()
+    assert cache_extension.exists()
+    assert unrelated_library.exists()
+    assert stale_neighbor.read_bytes() == b"stale"
+
+
+def test_quality_guard_restores_python_extensions_after_exception(tmp_path) -> None:
+    extension = tmp_path / f"module{EXTENSION_SUFFIXES[0]}"
+    extension.write_bytes(b"extension")
+
+    with pytest.raises(RuntimeError, match="stop"), _disable_repo_extension_modules(tmp_path):
+        assert not extension.exists()
+        raise RuntimeError("stop")
+
+    assert extension.read_bytes() == b"extension"
 
 
 def test_x86_16_quality_metrics_count_raw_patterns_and_score() -> None:

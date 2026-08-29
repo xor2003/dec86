@@ -2033,6 +2033,7 @@ def _finalize_callsite_arguments_after_noncall_regen_8616(codegen: object) -> bo
     segment_surface_changed = _replay_runtime_segment_lowering_after_regen_8616(codegen) or segment_surface_changed
     if segment_surface_changed:
         _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
+    _recover_canonical_for_loops_after_regen_8616(codegen)
     return True
 
 
@@ -2131,6 +2132,15 @@ def _replay_call_return_selector_lowering_after_regen_8616(codegen: object) -> b
     return bool(replayer(codegen))
 
 
+def _recover_canonical_for_loops_after_regen_8616(codegen: object) -> bool:
+    """Invoke Structuring only when the dynamic codegen exposes a live AST root."""
+    try:
+        typing.cast(typing.Any, codegen).cfunc.statements  # noqa: B018
+    except AttributeError:
+        return False
+    return bool(recover_structuring_canonical_for_loops_8616(codegen))
+
+
 def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     """Restore call identity before replaying widening and late cleanup."""
     project = getattr(codegen, "project", None)
@@ -2146,7 +2156,7 @@ def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     indexed_global_changed = _replay_indexed_segmented_global_lowering_after_regen_8616(
         codegen
     )
-    canonical_for_changed = recover_structuring_canonical_for_loops_8616(codegen)
+    canonical_for_changed = _recover_canonical_for_loops_after_regen_8616(codegen)
     return canonical_for_changed or indexed_global_changed or cleanup_result.changed or changed
 
 
@@ -2163,7 +2173,8 @@ def _finalize_regenerated_noncall_ast_8616(codegen: object) -> bool:
         changed = _replay_indexed_segmented_global_lowering_after_regen_8616(codegen) or changed
     project = getattr(codegen, "project", None)
     final_occurrence_changed = finalize_shared_call_occurrences_8616(project, codegen)
-    return bool(final_occurrence_changed or changed or late_ast_changed or segment_surface_changed)
+    canonical_for_changed = _recover_canonical_for_loops_after_regen_8616(codegen)
+    return bool(canonical_for_changed or final_occurrence_changed or changed or late_ast_changed or segment_surface_changed)
 
 
 def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[str, bool]:
@@ -2326,8 +2337,8 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
 
         def _render_text_or_none(tag: str) -> str | None:
             require_codegen_render_integrity_8616(codegen, context=context)
-            _finalize_typed_call_interfaces_before_render_8616(codegen)
             _normalize_stack_identifiers_before_render_8616()
+            _finalize_typed_call_interfaces_before_render_8616(codegen)
             # Dynamic third-party angr/codegen boundary.
             render_text = typing.cast(typing.Any, codegen).render_text
             rendered = render_text(getattr(codegen, "cfunc", None))
@@ -2347,12 +2358,12 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
             ):
                 with contextlib.suppress(Exception):
                     _finalize_callsite_arguments_after_noncall_regen_8616(codegen)
+            _normalize_stack_identifiers_before_render_8616()
             _finalize_typed_call_interfaces_before_render_8616(codegen)
             cfunc = getattr(codegen, "cfunc", None)
             c_repr = getattr(cfunc, "c_repr", None)
             if not callable(c_repr):
                 return None
-            _normalize_stack_identifiers_before_render_8616()
             text = _normalize_text_payload_8616(c_repr())
             if not text:
                 return None
@@ -5407,11 +5418,10 @@ def _decompile_function(
             getattr(dec.codegen, "_inertia_postprocess_changed", False)
             or getattr(dec.codegen, "_inertia_pointer_memory_materialized_8616", None)
         )
-        declaration_repairs = _repair_missing_cnode_codegen_metadata_8616(
+        metadata_repairs = _repair_missing_cnode_codegen_metadata_8616(
             getattr(dec.codegen, "cfunc", None), dec.codegen
         )
-        declaration_stats = getattr(dec.codegen, "_inertia_live_register_declaration_repair_stats_8616", None)
-        if declaration_repairs or int(getattr(declaration_stats, "materialized_count", 0) or 0) > 0:
+        if metadata_repairs:
             typing.cast(typing.Any, dec.codegen)._inertia_codegen_decl_refresh_required_8616 = True
         typed_switch_finalize_result = finalize_typed_edge_switch_replacement_if_enabled_8616(
             project,
@@ -5489,6 +5499,7 @@ def _decompile_function(
         ):
             changed = True
             postprocess_semantic_changed = False
+        changed = _finalize_typed_call_interfaces_before_render_8616(dec.codegen) or changed
         render_refresh_required = bool(
             changed
             or postprocess_semantic_changed

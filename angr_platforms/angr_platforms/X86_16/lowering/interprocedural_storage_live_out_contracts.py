@@ -37,6 +37,10 @@ from .interprocedural_storage_contracts import (
     StorageUseEvidence8616,
 )
 from .interprocedural_storage_return_defs import CallOutputDefinitionFailure8616
+from .pointer_parameter_caller_target_contracts import (
+    PointerParameterCallerTarget8616,
+    PointerParameterCallerTargetFailure8616,
+)
 
 
 class MemoryLiveOutCollectionVerdict8616(StrEnum):
@@ -73,6 +77,8 @@ class MemoryLiveOutFailureKind8616(StrEnum):
     CONDITION_CONFLICT = "condition_conflict"
     CONDITION_UNSUPPORTED = "condition_unsupported"
     SIGNEDNESS_CONFLICT = "signedness_conflict"
+    POINTER_TARGET_REFUSED = "pointer_target_refused"
+    POINTER_TARGET_CONFLICT = "pointer_target_conflict"
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +161,7 @@ class CallsiteMemoryLiveOutEvidence8616:
     callsite_addr: int
     facts: tuple[MemoryLiveOutUseFact8616, ...] = ()
     trials: tuple[StorageTrial8616, ...] = ()
+    pointer_effects: tuple[PointerParameterCallerTarget8616, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +178,7 @@ class MemoryLiveOutFailure8616:
     alias_failure: TerminalMemoryAliasFailure8616 | None = None
     view_failure: TerminalMemoryOutputViewFailure8616 | None = None
     definition_failure: CallOutputDefinitionFailure8616 | None = None
+    pointer_failure: PointerParameterCallerTargetFailure8616 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +199,9 @@ class FunctionMemoryLiveOutCollection8616:
             and self.stats.complete
             and all(fact.complete for site in self.callsites for fact in site.facts)
             and all(trial.is_complete for site in self.callsites for trial in site.trials)
+            and all(
+                effect.complete for site in self.callsites for effect in site.pointer_effects
+            )
         )
 
 

@@ -3,8 +3,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.frontend_function_boundary import (
+    ExactFunctionRangeBoundary8616,
+)
+from angr_platforms.X86_16.frontend_function_boundary_index import (
+    ExactFunctionRangeInventory8616,
+)
 from angr_platforms.X86_16.lowering import callee_argument_count_evidence as count_module
 from angr_platforms.X86_16.lowering import callee_callsite_census as census_module
+from angr_platforms.X86_16.lowering import callee_range_callsite_facts as range_module
 from angr_platforms.X86_16.lowering.callee_argument_count_evidence import (
     CalleeArgumentCountVerdict8616,
     collect_callee_argument_count_evidence_8616,
@@ -58,6 +65,10 @@ def test_callee_argument_count_evidence_proves_zero_from_all_callers(monkeypatch
     assert evidence.failure_count == 0
     assert evidence.closes_census is True
     assert tuple(fact.caller_addr for fact in evidence.callsite_facts) == (0x100, 0x120)
+    assert tuple(fact.caller_function.name for fact in evidence.callsite_facts) == (
+        "caller_a",
+        "caller_b",
+    )
 
 
 def test_callee_argument_count_evidence_refuses_incomplete_caller_census(monkeypatch) -> None:
@@ -247,23 +258,36 @@ def test_range_census_canonicalizes_padding_target_before_matching(monkeypatch) 
         arch=SimpleNamespace(capstone=disassembler),
         loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _addr, size: bytes(size))),
     )
+    caller = ExactFunctionRangeBoundary8616(
+        project=project,
+        addr=0x100,
+        size=0x20,
+        block_addrs_set=frozenset({0x100, 0x110}),
+        reachable_instruction_addrs=frozenset({0x100, 0x110}),
+        successor_edges=((0x100, 0x110),),
+    )
     monkeypatch.setattr(
-        census_module,
+        range_module,
+        "exact_function_range_inventory_8616",
+        lambda _project, ranges: ExactFunctionRangeInventory8616(ranges, (caller,)),
+    )
+    monkeypatch.setattr(
+        range_module,
         "_direct_call_target_8616",
         lambda _instruction: 0x1F0,
     )
     monkeypatch.setattr(
-        census_module,
+        range_module,
         "canonicalize_x86_16_padding_call_target_8616",
         lambda _project, target: 0x200 if target == 0x1F0 else target,
     )
     monkeypatch.setattr(
-        census_module,
+        range_module,
         "summarize_x86_16_callsite",
         lambda _function, _addr: _summary(0x110, 0x200, 2),
     )
 
-    facts = census_module._range_callsite_facts_8616(
+    facts = range_module.collect_range_callsite_facts_for_target_8616(
         project,
         0x200,
         ((0x100, 0x120),),
@@ -271,3 +295,61 @@ def test_range_census_canonicalizes_padding_target_before_matching(monkeypatch) 
 
     assert tuple(fact.callsite_addr for fact in facts) == (0x110,)
     assert tuple(fact.caller_addr for fact in facts) == (0x100,)
+    assert facts[0].caller_function.addr == 0x100
+    assert facts[0].caller_function.size == 0x20
+    assert facts[0].caller_function.project is project
+    assert facts[0].caller_function.block_addrs_set == frozenset({0x100, 0x110})
+
+
+def test_range_census_builds_boundaries_only_for_matching_callers(monkeypatch) -> None:
+    calls_by_addr = {
+        0x100: SimpleNamespace(address=0x110, mnemonic="call", operands=()),
+        0x300: SimpleNamespace(address=0x310, mnemonic="call", operands=()),
+    }
+    disassembler = SimpleNamespace(
+        detail=False,
+        disasm=lambda _code, address: (calls_by_addr[address],),
+    )
+    project = SimpleNamespace(
+        arch=SimpleNamespace(capstone=disassembler),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _addr, size: bytes(size))),
+    )
+    caller = ExactFunctionRangeBoundary8616(
+        project=project,
+        addr=0x100,
+        size=0x20,
+        block_addrs_set=frozenset({0x100}),
+        reachable_instruction_addrs=frozenset({0x110}),
+        successor_edges=(),
+    )
+    observed_ranges: list[tuple[tuple[int, int], ...]] = []
+
+    def inventory(_project, ranges):
+        observed_ranges.append(ranges)
+        return ExactFunctionRangeInventory8616(ranges, (caller,))
+
+    monkeypatch.setattr(range_module, "exact_function_range_inventory_8616", inventory)
+    monkeypatch.setattr(
+        range_module,
+        "_direct_call_target_8616",
+        lambda instruction: 0x200 if instruction.address == 0x110 else 0x400,
+    )
+    monkeypatch.setattr(
+        range_module,
+        "canonicalize_x86_16_padding_call_target_8616",
+        lambda _project, target: target,
+    )
+    monkeypatch.setattr(
+        range_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _addr: _summary(0x110, 0x200, 1),
+    )
+
+    facts = range_module.collect_range_callsite_facts_for_target_8616(
+        project,
+        0x200,
+        ((0x100, 0x120), (0x300, 0x320)),
+    )
+
+    assert observed_ranges == [((0x100, 0x120),)]
+    assert tuple(fact.callsite_addr for fact in facts) == (0x110,)

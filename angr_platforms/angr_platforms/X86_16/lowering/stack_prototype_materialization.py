@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import (
     SimType,
     SimTypeBottom,
@@ -36,6 +37,7 @@ from ..annotations import ANNOTATION_KEY
 from ..calling_convention_compat import collect_wide_stack_argument_width_evidence_8616
 from ..widening.stack_argument_widths import WideStackArgumentWidthEvidence8616
 from ..widening.widening_rules import collect_bp_stack_access_widths_from_instructions_8616
+from .authoritative_function_prototypes import authoritative_function_prototype_8616
 from .callee_argument_width_evidence import (
     CalleeArgumentWidthEvidence8616,
     CalleeArgumentWidthVerdict8616,
@@ -45,7 +47,12 @@ from .interprocedural_storage_transaction import (
     accepted_stack_input_layout_8616,
     function_storage_resolution_8616,
 )
+from .stack_frame_projection import entry_sp_offset_for_machine_bp_range_8616
 from .stack_lowering_from_facts import canonical_stack_offset_8616
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    publish_selected_stack_cvar_projection_8616,
+)
 
 __all__ = [
     "FunctionParameterWidthFact8616",
@@ -85,7 +92,39 @@ class _PrototypeFunction8616(Protocol):
 
     info: object
     prototype: object
+    prototype_source: PrototypeSource
     is_prototype_guessed: bool
+
+
+def _prototype_source_8616(function: _PrototypeFunction8616) -> PrototypeSource:
+    """Read provenance across legacy third-party Function test adapters."""
+    try:
+        return function.prototype_source
+    except AttributeError:
+        return (
+            PrototypeSource.GUESSED
+            if function.is_prototype_guessed
+            else PrototypeSource.USER
+        )
+
+
+def _raise_prototype_source_8616(
+    function: _PrototypeFunction8616,
+    source: PrototypeSource,
+) -> bool:
+    """Raise explicit provenance without invoking angr's legacy bool setter."""
+    try:
+        current = function.prototype_source
+        legacy_adapter = False
+    except AttributeError:
+        current = _prototype_source_8616(function)
+        legacy_adapter = True
+    if current >= source:
+        return False
+    function.prototype_source = source
+    if legacy_adapter:
+        function.is_prototype_guessed = source < PrototypeSource.CCA_DECOMPILER
+    return True
 
 
 class _StackPrototypeCodegen8616(Protocol):
@@ -208,8 +247,8 @@ def _function_for_codegen_8616(project: object, codegen: object) -> object | Non
     return None
 
 
-def _positive_stack_specs_8616(func: object) -> tuple[tuple[int, str | None], ...]:
-    """Read stack annotations through the dynamic third-party angr metadata boundary."""
+def positive_stack_specs_8616(func: object) -> tuple[tuple[int, str | None], ...]:
+    """Return positive stack annotations in canonical machine-BP coordinates."""
     info = cast(_PrototypeFunction8616, func).info
     annotations = info.get(ANNOTATION_KEY) if isinstance(info, Mapping) else None
     if not isinstance(annotations, Mapping):
@@ -246,10 +285,13 @@ def _existing_stack_cvars_by_offset_8616(codegen: object) -> dict[int, structure
     cvars: dict[int, structured_c.CVariable] = {}
     variables_in_use = typed_cfunc.variables_in_use
     if isinstance(variables_in_use, Mapping):
-        for variable, cvar in variables_in_use.items():
-            if not isinstance(variable, SimStackVariable) or not isinstance(cvar, structured_c.CVariable):
+        for cvar in variables_in_use.values():
+            if not isinstance(cvar, structured_c.CVariable):
                 continue
-            offset = variable.offset
+            variable = cvar.variable
+            if not isinstance(variable, SimStackVariable):
+                continue
+            offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
             if isinstance(offset, int):
                 cvars.setdefault(offset, cvar)
     for cvar in typed_cfunc.arg_list or ():
@@ -258,7 +300,7 @@ def _existing_stack_cvars_by_offset_8616(codegen: object) -> dict[int, structure
         variable = cvar.variable
         if not isinstance(variable, SimStackVariable):
             continue
-        offset = variable.offset
+        offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
         if isinstance(offset, int):
             cvars.setdefault(offset, cvar)
     return cvars
@@ -278,7 +320,10 @@ def _iter_existing_stack_cvars_at_offset_8616(codegen: object, offset: int) -> t
         if not isinstance(cvar, structured_c.CVariable):
             return
         variable = cvar.variable
-        if not isinstance(variable, SimStackVariable) or variable.offset != offset:
+        if (
+            not isinstance(variable, SimStackVariable)
+            or machine_bp_offset_for_stack_variable_8616(codegen, variable) != offset
+        ):
             return
         identity = id(cvar)
         if identity in seen:
@@ -543,7 +588,8 @@ def _normalized_header_arg_widths_8616(
             or variable.size <= 0
         ):
             return ()
-        widths.append(_exact_typed_cvar_width_8616(cvar, arch) or variable.size)
+        logical_width = _exact_typed_cvar_width_8616(cvar, arch) or 0
+        widths.append(max(2, variable.size, logical_width))
     return tuple(widths)
 
 
@@ -600,13 +646,30 @@ def _ensure_arg_cvar_8616(
         return None, False
     typed_cfunc = cast(_StackPrototypeCFunction8616, cfunc)
     cvars_by_offset = _existing_stack_cvars_by_offset_8616(codegen)
+    entry_sp_offset = entry_sp_offset_for_machine_bp_range_8616(
+        codegen,
+        offset,
+        width,
+    )
     cvar = cvars_by_offset.get(offset)
+    if (
+        cvar is not None
+        and isinstance(entry_sp_offset, int)
+        and cvar.variable.offset != entry_sp_offset
+    ):
+        cvar = None
     changed = False
     if cvar is None:
         if not callable(typed_codegen.next_ident) or not callable(typed_codegen.next_node_idx):
             return None, False
         func_addr = typed_cfunc.addr
-        stack_var = SimStackVariable(offset, width, base="bp", name=name, region=func_addr)
+        stack_var = SimStackVariable(
+            entry_sp_offset if isinstance(entry_sp_offset, int) else offset,
+            width,
+            base="bp",
+            name=name,
+            region=func_addr,
+        )
         cvar = structured_c.CVariable(stack_var, variable_type=variable_type, codegen=codegen)
         variables_in_use = typed_cfunc.variables_in_use
         if isinstance(variables_in_use, dict):
@@ -620,6 +683,13 @@ def _ensure_arg_cvar_8616(
         variable.size = width
         changed = True
     changed = _apply_arg_cvar_surface_8616(cvar, name=name, variable_type=variable_type) or changed
+    publish_selected_stack_cvar_projection_8616(
+        codegen,
+        cvar,
+        bp_offset=offset,
+        size=width,
+        entry_sp_offset=entry_sp_offset,
+    )
     return cvar, changed
 
 
@@ -791,8 +861,7 @@ def _materialize_annotated_zero_arg_prototype_8616(
     if not _prototype_equivalent_8616(typed_func.prototype, new_proto):
         typed_func.prototype = new_proto
         changed = True
-    if typed_func.is_prototype_guessed:
-        typed_func.is_prototype_guessed = False
+    if _raise_prototype_source_8616(typed_func, PrototypeSource.USER):
         changed = True
     if not _prototype_equivalent_8616(typed_cfunc.functy, new_proto):
         typed_cfunc.functy = new_proto
@@ -1029,8 +1098,10 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
         ):
             typed_func.prototype = new_prototype
             changed = True
-        if typed_func.is_prototype_guessed:
-            typed_func.is_prototype_guessed = False
+        if _raise_prototype_source_8616(
+            typed_func,
+            PrototypeSource.CCA_DECOMPILER,
+        ):
             changed = True
     if changed:
         typed_codegen._inertia_codegen_decl_refresh_required_8616 = True
@@ -1080,7 +1151,7 @@ def materialize_annotated_stack_prototype_8616(
             func=func,
             prototype=annotated_prototype,
         )
-    entries = _positive_stack_specs_8616(func)
+    entries = positive_stack_specs_8616(func)
     if not entries:
         if not fallback_to_positive_bp:
             return False
@@ -1089,13 +1160,20 @@ def materialize_annotated_stack_prototype_8616(
         return bool(materialize_positive_bp_arguments_8616(project, codegen))
     arch = cast(_ProjectArch8616, project).arch
     typed_func = cast(_PrototypeFunction8616, func)
-    current_proto = typed_cfunc.functy or typed_func.prototype
+    authoritative_prototype = authoritative_function_prototype_8616(
+        project,
+        func,
+        argument_count=len(entries),
+    )
+    current_proto = authoritative_prototype or typed_cfunc.functy or typed_func.prototype
     if isinstance(current_proto, SimTypeFunction):
         current_args = list(current_proto.args or ())
+        current_arg_names = tuple(current_proto.arg_names or ())
         return_type = current_proto.returnty
         variadic = current_proto.variadic
     else:
         current_args = []
+        current_arg_names = ()
         return_type = None
         variadic = False
     if return_type is None or (isinstance(return_type, SimTypeBottom) and return_type.label != "void"):
@@ -1109,9 +1187,36 @@ def materialize_annotated_stack_prototype_8616(
     width_facts: list[FunctionParameterWidthFact8616] = []
     normalized_header_widths = _normalized_header_arg_widths_8616(codegen, entries, arch=arch)
     annotated_object_widths = _annotated_stack_object_widths_8616(entries)
+    annotated_names = tuple(name for _offset, name in entries)
     changed = False
     for index, (offset, maybe_name) in enumerate(entries):
-        name = maybe_name or f"arg_{offset:x}"
+        prototype_name = (
+            current_arg_names[index] if index < len(current_arg_names) else None
+        )
+        prototype_name_is_unique = bool(
+            isinstance(prototype_name, str)
+            and prototype_name
+            and prototype_name != "local"
+            and not prototype_name.startswith("local_")
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prototype_name)
+            is not None
+            and current_arg_names.count(prototype_name) == 1
+        )
+        annotated_name_is_unique = bool(
+            isinstance(maybe_name, str)
+            and maybe_name
+            and maybe_name != "local"
+            and not maybe_name.startswith("local_")
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", maybe_name) is not None
+            and annotated_names.count(maybe_name) == 1
+        )
+        name: str
+        if prototype_name_is_unique:
+            name = cast(str, prototype_name)
+        elif annotated_name_is_unique:
+            name = cast(str, maybe_name)
+        else:
+            name = f"arg_{offset:x}"
         arg_type = current_args[index] if index < len(current_args) else SimTypeShort(False)
         if arch is not None:
             arg_type = _with_arch_8616(arg_type, arch)
@@ -1171,11 +1276,26 @@ def materialize_annotated_stack_prototype_8616(
         )
         if cvar is None:
             continue
+        variable = cvar.variable
+        if isinstance(variable, SimStackVariable):
+            name = _reconciled_positive_arg_name_8616(
+                variable,
+                prototype_name if prototype_name_is_unique else None,
+            )
+        if name in arg_names:
+            name = f"arg_{offset:x}"
+        cvar_changed = (
+            _apply_arg_cvar_surface_8616(
+                cvar,
+                name=name,
+                variable_type=arg_type,
+            )
+            or cvar_changed
+        )
         for sibling_cvar in _iter_existing_stack_cvars_at_offset_8616(codegen, offset):
             cvar_changed = _apply_arg_cvar_surface_8616(sibling_cvar, name=name, variable_type=arg_type) or cvar_changed
         changed = cvar_changed or changed
         owned_ranges[offset] = width
-        variable = cvar.variable
         if isinstance(variable, SimStackVariable):
             owner_variables.add(variable)
         arg_cvars.append(cvar)
@@ -1203,7 +1323,10 @@ def materialize_annotated_stack_prototype_8616(
         new_proto = _with_arch_8616(new_proto, arch)
     if not _prototype_equivalent_8616(typed_func.prototype, new_proto):
         typed_func.prototype = new_proto
-        typed_func.is_prototype_guessed = False
+        _raise_prototype_source_8616(
+            typed_func,
+            PrototypeSource.CCA_DECOMPILER,
+        )
         changed = True
     if not _prototype_equivalent_8616(typed_cfunc.functy, new_proto):
         typed_cfunc.functy = new_proto

@@ -6,6 +6,9 @@ from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CReturn, CS
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.structuring.terminal_register_values import (
     TerminalReturnValueMaterializationRefusal8616,
     TerminalReturnValueMaterializationStatus8616,
@@ -157,3 +160,84 @@ def test_linear_terminal_return_consumer_replaces_plausible_stale_return() -> No
     assert refused.status is TerminalReturnValueMaterializationStatus8616.REFUSED
     assert refused.refusal is TerminalReturnValueMaterializationRefusal8616.PROVEN_VALUE_NOT_EXTENSION
     assert return_node.retval is proven_value
+
+
+def test_linear_terminal_return_replaces_narrow_projected_stack_carrier() -> None:
+    codegen = _DummyCodegen()
+    stale_carrier = CVariable(
+        SimStackVariable(-2, 1, base="bp", name="stack_sp_m2", region=0x1000),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    projected_local = CVariable(
+        SimStackVariable(-6, 2, base="bp", name="local_2", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected_local.variable,
+        cvar=projected_local,
+        bp_offset=-2,
+        entry_sp_offset=-6,
+        size=2,
+    )
+    return_node = CReturn(stale_carrier, codegen=codegen)
+    root = CStatements([return_node], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=root,
+        functy=SimpleNamespace(returnty=SimTypeShort(False).with_arch(codegen.project.arch)),
+    )
+    function = SimpleNamespace(prototype=None)
+
+    def recover_proven_value(*_args: object) -> CVariable:
+        codegen._inertia_missing_terminal_ax_return_terminal_value_block_count_8616 = 1
+        return projected_local
+
+    result = materialize_linear_terminal_return_value_8616(
+        codegen.project,
+        codegen,
+        function,
+        recover_proven_value=recover_proven_value,
+        expressions_equivalent=lambda current, proven: current is proven,
+    )
+
+    assert result.status is TerminalReturnValueMaterializationStatus8616.MATERIALIZED
+    assert return_node.retval is projected_local
+
+
+def test_linear_terminal_return_refuses_narrow_stack_carrier_without_projection() -> None:
+    codegen = _DummyCodegen()
+    stale_carrier = CVariable(
+        SimStackVariable(-2, 1, base="bp", name="stack_sp_m2", region=0x1000),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    unproven_local = CVariable(
+        SimStackVariable(-6, 2, base="bp", name="local_2", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    return_node = CReturn(stale_carrier, codegen=codegen)
+    root = CStatements([return_node], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=root,
+        functy=SimpleNamespace(returnty=SimTypeShort(False).with_arch(codegen.project.arch)),
+    )
+    function = SimpleNamespace(prototype=None)
+
+    def recover_proven_value(*_args: object) -> CVariable:
+        codegen._inertia_missing_terminal_ax_return_terminal_value_block_count_8616 = 1
+        return unproven_local
+
+    result = materialize_linear_terminal_return_value_8616(
+        codegen.project,
+        codegen,
+        function,
+        recover_proven_value=recover_proven_value,
+        expressions_equivalent=lambda current, proven: current is proven,
+    )
+
+    assert result.status is TerminalReturnValueMaterializationStatus8616.REFUSED
+    assert result.refusal is TerminalReturnValueMaterializationRefusal8616.PROVEN_VALUE_NOT_EXTENSION
+    assert return_node.retval is stale_carrier

@@ -5896,7 +5896,7 @@ def test_materialize_direct_stack_mov_reload_does_not_duplicate_existing_stack_s
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
-    assert changed is True
+    assert changed is False
     assert len(codegen.cfunc.statements.statements) == 2
     assignment = codegen.cfunc.statements.statements[0]
     assert isinstance(assignment, CAssignment)
@@ -5904,6 +5904,8 @@ def test_materialize_direct_stack_mov_reload_does_not_duplicate_existing_stack_s
     assert assignment.rhs is src_cvar
     assert codegen.cfunc.statements.statements[1] is use
     stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["reload_materialized_count"] == 0
+    assert stats["reload_already_materialized_count"] == 1
     assert stats["reload_stack_slot_visible_guard_already_present_count"] == 1
     assert stats["reload_failure_count"] == 0
 
@@ -6671,7 +6673,8 @@ def test_materialize_direct_stack_mov_signed_idiv_reload_accepts_existing_stack_
     stats = codegen._inertia_direct_stack_move_lowering_8616
     assert stats["idiv_duplicate_store_pruned_count"] == 1
     assert stats["reload_stack_slot_visible_guard_already_present_count"] == 1
-    assert stats["reload_materialized_count"] == 1
+    assert stats["reload_materialized_count"] == 0
+    assert stats["reload_already_materialized_count"] == 1
     assert stats["reload_failure_count"] == 0
 
 
@@ -10847,6 +10850,25 @@ def test_lower_runtime_segment_address_rewrites_to_mk_fp():
     assert lowered.callee_target == "MK_FP"
     assert lowered.args[0].variable.name == "ds"
     assert lowered.args[1] is bx
+
+
+def test_runtime_segment_entrypoints_refuse_container_before_matching(monkeypatch):
+    """Container visits must leave nested expression matching to child traversal."""
+    project, codegen = _project()
+    nested_address = _seg_linear(project, "ds", _const(0x160, codegen), codegen)
+    destination = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        codegen=codegen,
+    )
+    assignment = CAssignment(destination, nested_address, codegen=codegen)
+
+    def fail_on_nested_probe(*_args, **_kwargs):
+        raise AssertionError("container matching reached the segmented-expression matcher")
+
+    monkeypatch.setattr(segmented_memory_lowering, "_match_segmented_memory_expr_8616", fail_on_nested_probe)
+
+    assert lower_runtime_segment_access_8616(assignment, target="portable-flat") is None
+    assert lower_runtime_segment_address_8616(assignment, target="portable-flat") is None
 
 
 def test_apply_runtime_segment_lowering_rewrites_nested_ds_accesses():

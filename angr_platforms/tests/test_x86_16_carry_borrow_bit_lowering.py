@@ -84,6 +84,69 @@ def _source() -> WideCarryBorrowValue8616:
     return cast(WideCarryBorrowValue8616, object())
 
 
+def _addition_fact() -> CarryBorrowBitLoweringFact8616:
+    """Create one exact ADD_WITH_CARRY fact for split-region tests."""
+    return CarryBorrowBitLoweringFact8616(
+        function_addr=0x10498,
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        low_block_addr=_BLOCK_ADDR,
+        low_ins_addr=_LOW_ADDR,
+        high_block_addr=_BLOCK_ADDR,
+        high_ins_addr=_HIGH_ADDR,
+    )
+
+
+def _inlined_addition_fixture() -> tuple[
+    structured_c.CStatements,
+    structured_c.CAssignment,
+    structured_c.CAssignment,
+]:
+    """Build one low result plus a high-region inlined carry projection."""
+    codegen = _FakeCodegen()
+    lhs = _vvar(codegen, "ax", "lhs", 10)
+    rhs = _vvar(codegen, "bx", "rhs", 11)
+    low_result = _vvar(codegen, "ax", "low_result", 12)
+    low_tags = {"ins_addr": _LOW_ADDR, "vex_block_addr": _BLOCK_ADDR}
+    low_arithmetic = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, tags=low_tags)
+    low_assignment = structured_c.CAssignment(
+        low_result,
+        low_arithmetic,
+        codegen=codegen,
+        tags=low_tags,
+    )
+    inlined_addition = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, tags=low_tags)
+    low_projection = structured_c.CBinaryOp(
+        "Shr",
+        inlined_addition,
+        _constant(codegen, 16),
+        codegen=codegen,
+        tags=low_tags,
+    )
+    high_tags = {"ins_addr": _HIGH_ADDR, "vex_block_addr": _HIGH_ADDR}
+    high_sum = structured_c.CBinaryOp(
+        "Add",
+        _vvar(codegen, "dx", "high_lhs", 20),
+        low_projection,
+        codegen=codegen,
+        tags=high_tags,
+    )
+    high_projection = structured_c.CBinaryOp(
+        "Shr",
+        high_sum,
+        _constant(codegen, 16),
+        codegen=codegen,
+        tags=high_tags,
+    )
+    high_assignment = structured_c.CAssignment(
+        _vvar(codegen, "dx", "high_result", 21),
+        high_projection,
+        codegen=codegen,
+        tags=high_tags,
+    )
+    root = structured_c.CStatements([low_assignment, high_assignment], codegen=codegen)
+    return root, low_assignment, high_assignment
+
+
 def _fixture(
     *,
     duplicate_low_definition: bool = False,
@@ -333,6 +396,37 @@ def test_materialization_keeps_cross_container_carrier_with_another_live_read() 
 
     assert resolution.verdict is CarryBorrowBitLoweringVerdict8616.MATERIALIZED
     assert low_container.statements == [low_assignment]
+
+
+def test_materialization_accepts_inlined_carry_in_owned_split_region() -> None:
+    """Exact instruction tags may project through a uniquely owned split region."""
+    root, low_assignment, high_assignment = _inlined_addition_fixture()
+    ownership = build_test_cfg_ownership_8616(
+        {_BLOCK_ADDR: (), _HIGH_ADDR: ()},
+        ((_BLOCK_ADDR, _HIGH_ADDR),),
+    )
+
+    resolution = materialize_carry_borrow_bit_value_8616(root, _source(), _addition_fact(), ownership)
+
+    assert resolution.verdict is CarryBorrowBitLoweringVerdict8616.MATERIALIZED
+    assert resolution.changed is True
+    assert root.statements[0] is low_assignment
+    assert isinstance(high_assignment.rhs, structured_c.CBinaryOp)
+    assert high_assignment.rhs.op == "CmpLT"
+    assert high_assignment.rhs.tags["inertia_x86_16_carry_borrow_bit_lowering"] == _addition_fact()
+
+
+def test_materialization_refuses_inlined_carry_without_owned_split_region() -> None:
+    """Instruction-shaped tags alone cannot authorize a missing CFG region."""
+    root, _low_assignment, high_assignment = _inlined_addition_fixture()
+    original_rhs = high_assignment.rhs
+    ownership = build_test_cfg_ownership_8616({_BLOCK_ADDR: ()})
+
+    resolution = materialize_carry_borrow_bit_value_8616(root, _source(), _addition_fact(), ownership)
+
+    assert resolution.verdict is CarryBorrowBitLoweringVerdict8616.UNKNOWN_REFUSE
+    assert resolution.failure is CarryBorrowBitLoweringFailure8616.CARRY_USE_MISSING
+    assert high_assignment.rhs is original_rhs
 
 
 def test_refusal_diagnostic_projects_exact_typed_instruction_identity() -> None:

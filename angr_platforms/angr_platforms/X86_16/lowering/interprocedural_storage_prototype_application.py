@@ -169,6 +169,7 @@ def apply_accepted_function_storage_prototype_8616(
         function_prototype,
         cvars,
         project_surface.arch,
+        codegen,
     )
     if not preflight.accepted or preflight.argument_types is None:
         return _record_result_8616(

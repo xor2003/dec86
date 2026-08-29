@@ -5144,7 +5144,7 @@ def test_direct_global_symbol_store_pairs_fold_wide_call_return_scalar_store():
     assert codegen._inertia_global_declaration_specs_8616 == (("unsigned long", "clFinish", None),)
 
 
-def test_collect_direct_global_call_return_store_evidence_from_instruction_triple():
+def test_collect_direct_global_call_return_store_evidence_from_instruction_triple(monkeypatch):
     class _Functions:
         def function(self, *, addr=None, create=False, **_kwargs):
             return None
@@ -5171,10 +5171,24 @@ def test_collect_direct_global_call_return_store_evidence_from_instruction_tripl
     )
     duplicate_block = SimpleNamespace(capstone=SimpleNamespace(insns=(call, low_store, high_store)))
     function = SimpleNamespace(blocks=(duplicate_block, duplicate_block))
+    original_collector = segmented_global_loads_module._direct_global_update_ordered_insns_8616
+    collector_calls = 0
+
+    def counted_collector(*args, **kwargs):
+        nonlocal collector_calls
+        collector_calls += 1
+        return original_collector(*args, **kwargs)
+
+    monkeypatch.setattr(
+        segmented_global_loads_module,
+        "_direct_global_update_ordered_insns_8616",
+        counted_collector,
+    )
 
     evidence = _collect_direct_global_call_return_store_evidence_8616(project, function)
+    repeated_evidence = _collect_direct_global_call_return_store_evidence_8616(project, function)
 
-    assert evidence == (
+    expected = (
         DirectGlobalCallReturnStoreEvidence8616(
             offset=0xB48,
             width=4,
@@ -5185,6 +5199,9 @@ def test_collect_direct_global_call_return_store_evidence_from_instruction_tripl
             high_store_ins_addr=0x104A5,
         ),
     )
+    assert evidence == expected
+    assert repeated_evidence == expected
+    assert collector_calls == 1
 
 
 def test_collect_scalar_call_return_global_store_after_stack_cleanup(monkeypatch):
@@ -5593,6 +5610,8 @@ def test_direct_global_call_return_store_folds_evidenced_nested_carrier_group():
         ],
         codegen=codegen,
     )
+    clock_call.tags = SimpleNamespace(get={"ins_addr": 0x1049F}.get)
+    call_group.statements[0].tags = SimpleNamespace(get={"ins_addr": 0x1049F}.get)
     stale_stack_read = CAssignment(
         _reg(project, codegen, "dx"),
         CVariable(SimStackVariable(-2, 2, base="bp", name="local_2"), codegen=codegen),
@@ -5708,6 +5727,8 @@ def test_sidecar_free_dword_call_return_store_materializes_generic_global():
         ],
         codegen=codegen,
     )
+    clock_call.tags = SimpleNamespace(get={"ins_addr": 0x10683}.get)
+    call_group.statements[0].tags = SimpleNamespace(get={"ins_addr": 0x10683}.get)
     stale_low = CVariable(
         SimStackVariable(-2, 2, base="bp", name="local_2"),
         codegen=codegen,
@@ -7353,7 +7374,7 @@ def test_direct_global_high_byte_cleanup_visits_shared_ast_node_once(monkeypatch
     )
     visits = 0
 
-    def record_visit(stmt, _codegen, _direct_by_offset):
+    def record_visit(stmt, _codegen, _direct_by_offset, **_kwargs):
         nonlocal visits
         if stmt is shared_statement:
             visits += 1
@@ -7374,6 +7395,43 @@ def test_direct_global_high_byte_cleanup_visits_shared_ast_node_once(monkeypatch
 
     assert changed is False
     assert visits == 1
+
+
+def test_direct_global_high_byte_cleanup_reuses_comparison_expressions(monkeypatch):
+    codegen = _DummyCodegen()
+    lhs = SimpleNamespace()
+    root = CStatements(
+        [
+            CAssignment(lhs, _const(1, codegen), codegen=codegen),
+            SimpleNamespace(),
+            CAssignment(lhs, _const(2, codegen), codegen=codegen),
+            SimpleNamespace(),
+        ],
+        codegen=codegen,
+    )
+    ref = DirectGlobalSymbolRef8616(0xBAA, "iCompares", 0, 2, 0)
+    constructions = 0
+
+    def make_comparison(*_args, **_kwargs):
+        nonlocal constructions
+        constructions += 1
+        return SimpleNamespace()
+
+    monkeypatch.setattr(
+        segmented_global_loads_module,
+        "_make_direct_global_symbol_expr_8616",
+        make_comparison,
+    )
+
+    changed = segmented_global_loads_module._remove_direct_global_redundant_high_byte_stores_8616(
+        root,
+        codegen,
+        {(0xBAA, 2): ref},
+        SegmentedGlobalLoadStats8616(),
+    )
+
+    assert changed is False
+    assert constructions == 1
 
 
 def test_direct_global_word_assignment_uses_exact_identity_before_expression_fallback(monkeypatch):

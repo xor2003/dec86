@@ -29,6 +29,7 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
 from ..callsite_summary import CallsiteReturnUseKind8616, CallsiteSummary8616
+from ..lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 __all__ = ("materialize_stored_call_result_assignments_8616",)
 
@@ -192,6 +193,7 @@ def _stored_stack_destination_8616(summary: CallsiteSummary8616) -> tuple[int, i
 
 
 def _stack_destination_variable_8616(
+    codegen: object,
     root: object,
     destination: tuple[int, int],
 ) -> CVariable | None:
@@ -204,23 +206,25 @@ def _stack_destination_variable_8616(
         variable = node.variable
         if (
             variable.base == "bp"
-            and isinstance(variable.offset, int)
-            and _canonical_stack_offset_8616(variable.offset) == offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == offset
             and int(variable.size) == width
         ):
             matches.append(node)
     return matches[0] if matches else None
 
 
-def _is_exact_stack_destination_8616(expression: object, destination: tuple[int, int]) -> bool:
+def _is_exact_stack_destination_8616(
+    codegen: object,
+    expression: object,
+    destination: tuple[int, int],
+) -> bool:
     """Return whether one C lvalue owns the exact BP storage identity."""
     if not isinstance(expression, CVariable) or not isinstance(expression.variable, SimStackVariable):
         return False
     variable = expression.variable
     return (
         variable.base == "bp"
-        and isinstance(variable.offset, int)
-        and _canonical_stack_offset_8616(variable.offset) == destination[0]
+        and machine_bp_offset_for_stack_variable_8616(codegen, variable) == destination[0]
         and int(variable.size) == destination[1]
     )
 
@@ -286,11 +290,11 @@ def materialize_stored_call_result_assignments_8616(
         destination = _stored_stack_destination_8616(summary)
         if destination is None or (
             isinstance(occurrence.statement, CAssignment)
-            and _is_exact_stack_destination_8616(occurrence.statement.lhs, destination)
+            and _is_exact_stack_destination_8616(codegen, occurrence.statement.lhs, destination)
         ):
             continue
         stats.raw_fact_count += 1
-        destination_variable = _stack_destination_variable_8616(root, destination)
+        destination_variable = _stack_destination_variable_8616(codegen, root, destination)
         if destination_variable is None:
             _refuse_8616(
                 stats,

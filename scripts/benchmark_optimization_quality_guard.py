@@ -21,6 +21,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -170,39 +171,45 @@ def _collect_function_artifacts(
 
 
 def _iter_repo_extension_modules(repo_root: Path) -> tuple[Path, ...]:
-    """List local extension modules that can skew mode comparisons."""
-    candidate: list[Path] = []
-    for path in repo_root.rglob("*.so"):
-        rel_parts = path.relative_to(repo_root).parts
-        if "build" in rel_parts or ".venv" in rel_parts:
-            continue
-        candidate.append(path)
-    return tuple(sorted(candidate))
+    """List importable project Python extensions that can skew comparisons."""
+    search_roots = (
+        repo_root / "inertia_decompiler",
+        repo_root / "angr_platforms" / "angr_platforms",
+        repo_root / ".cache" / "mypyc" / "lib",
+    )
+    candidates = set(repo_root.glob("*.so"))
+    for search_root in search_roots:
+        if search_root.is_dir():
+            candidates.update(search_root.rglob("*.so"))
+    suffixes = tuple(EXTENSION_SUFFIXES)
+    return tuple(sorted(path for path in candidates if path.name.endswith(suffixes)))
 
 
 @contextlib.contextmanager
 def _disable_repo_extension_modules(repo_root: Path) -> Iterator[None]:
-    """Temporarily rename local .so files so pure-Python imports are used."""
+    """Temporarily park project Python extensions and restore every file."""
     modules = _iter_repo_extension_modules(repo_root)
     moved: list[tuple[Path, Path]] = []
     try:
-        for path in modules:
-            disabled = path.with_name(f"{path.name}.disabled")
-            if disabled.exists():
-                if not path.exists():
-                    continue
-                collision_backup = path.with_name(f"{path.name}.purepy-temp")
-                path.rename(collision_backup)
-                moved.append((collision_backup, path))
-                continue
-            if path.exists():
-                path.rename(disabled)
-                moved.append((disabled, path))
+        for index, path in enumerate(modules):
+            parked = path.with_name(f".{path.name}.pure-python-{os.getpid()}-{index}")
+            if parked.exists():
+                raise FileExistsError(f"pure-Python extension parking path exists: {parked}")
+            path.replace(parked)
+            moved.append((parked, path))
         yield
     finally:
-        for path, disabled in reversed(moved):
-            if disabled.exists():
-                disabled.replace(path)
+        conflicts: list[Path] = []
+        for parked, original in reversed(moved):
+            if not parked.exists():
+                continue
+            if original.exists():
+                conflicts.append(original)
+                continue
+            parked.replace(original)
+        if conflicts:
+            paths = ", ".join(str(path) for path in sorted(conflicts))
+            raise FileExistsError(f"cannot restore parked Python extensions: {paths}")
 
 
 def _run_decompile(

@@ -187,6 +187,42 @@ def test_terminal_storage_excludes_call_derived_high_lane_after_al_write(monkeyp
     assert consistent_terminal_return_storage_8616(evidence) is TerminalReturnStorage8616.AL
 
 
+def test_balanced_entry_push_and_epilogue_pop_preserve_ax_return_storage(monkeypatch) -> None:
+    register_ax = 1
+
+    def _register_insn(address: int, mnemonic: str) -> object:
+        return SimpleNamespace(
+            address=address,
+            size=1,
+            mnemonic=mnemonic,
+            operands=(SimpleNamespace(type=1, reg=register_ax),),
+            reg_name=lambda reg: "ax" if reg == register_ax else "",
+        )
+
+    push_ax = _register_insn(0x1000, "push")
+    write_ax = _register_insn(0x1001, "mov")
+    pop_ax = _register_insn(0x1002, "pop")
+    terminal = _insn(0x1003, "ret")
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(push_ax, write_ax, pop_ax, terminal))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+    monkeypatch.setattr(
+        terminal_register_returns,
+        "terminal_ax_return_effect_8616",
+        lambda insn: SimpleNamespace(
+            kind=TerminalAxReturnEffectKind8616.OTHER,
+            dst_reg="ax" if insn is write_ax or insn is pop_ax else None,
+        ),
+    )
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert evidence.states == frozenset({TerminalAxReturnLane8616.NONE})
+    assert consistent_terminal_return_storage_8616(evidence) is TerminalReturnStorage8616.NONE
+
+
 def test_terminal_wide_return_requires_every_terminal_path(monkeypatch) -> None:
     branch = _insn(0x1000, "je", size=2, target=0x1010)
     wide_ax = _insn(0x1002, "mov")

@@ -1,8 +1,8 @@
 """Select proven stack objects for call-argument source materialization.
 
 Layer: Types/Lowering.
-Responsibility: resolve byte-level call sources to an existing typed BP-stack
-object without inventing storage identity.
+Responsibility: resolve call sources to typed BP-stack objects and distinguish
+outgoing carriers by their machine-BP coordinates.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 
@@ -20,6 +20,10 @@ from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    stack_cvar_for_machine_bp_range_8616,
+)
 
 
 class _CallArgumentCFunction8616(Protocol):
@@ -105,11 +109,14 @@ def containing_stack_cvariable_8616(
 ) -> CVariable | None:
     """Return the strongest existing BP-stack object proven to contain ``offset``."""
     minimum_size = max(size_hint, 1)
+    canonical = stack_cvar_for_machine_bp_range_8616(codegen, offset, minimum_size)
+    if isinstance(canonical, CVariable) and isinstance(canonical.variable, SimStackVariable):
+        return canonical
     best: CVariable | None = None
     best_score: tuple[int, int, int, int, int] | None = None
     for cvar in iter_stack_cvariable_candidates_8616(codegen, synthetic_stack_cvars):
         variable = cvar.variable
-        base_offset = variable.offset
+        base_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
         size = variable.size
         if variable.base != "bp" or not isinstance(base_offset, int) or not isinstance(size, int):
             continue
@@ -130,3 +137,26 @@ def containing_stack_cvariable_8616(
             best_score = score
 
     return best
+
+
+def outgoing_call_stack_carrier_offset_8616(
+    codegen: object,
+    expression: object,
+) -> int | None:
+    """Return the machine-BP offset only for an outgoing call-stack carrier."""
+    bp_offset = call_argument_stack_variable_offset_8616(codegen, expression)
+    return bp_offset if isinstance(bp_offset, int) and 0 <= bp_offset <= 2 else None
+
+
+def call_argument_stack_variable_offset_8616(
+    codegen: object,
+    expression: object,
+) -> int | None:
+    """Return a direct call argument's proven machine-BP storage offset."""
+    if not isinstance(expression, CVariable):
+        return None
+    variable = expression.variable
+    if not isinstance(variable, SimStackVariable) or variable.base != "bp":
+        return None
+    bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    return bp_offset if isinstance(bp_offset, int) else None
