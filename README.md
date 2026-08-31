@@ -5,6 +5,11 @@ Inertia Decompiler is a toolchain for decompiling and comparing 16-bit and
 processes real-mode `.EXE`, `.COM`, and assembly listings from DOS-era
 toolchains.
 
+Inertia Decompiler uses a dual-license model. Community use is available under
+the GNU Affero General Public License, version 3 or any later version. A separate
+commercial license is available for organizations that need rights outside the
+AGPL's conditions. See [License](#license).
+
 Correctness comes before pretty C. When evidence is weak, the tools prefer low-level output, visible refusals, or explicit fallback reports over guessed source.
 
 ## Why Inertia For DOS
@@ -367,3 +372,22 @@ At match time, the loaded binary image is scanned with either the portable Pytho
 ## Internal Contributor Notes
 
 Contributor and agent-specific rules are intentionally not in this README. See [AGENTS.md](AGENTS.md), [reference/agent-rules.md](reference/agent-rules.md), [reference/decompiler-fix-plan.md](reference/decompiler-fix-plan.md), and the other files under [reference/](reference/).
+
+## License
+
+Original Inertia Decompiler code and documentation are available under either:
+
+- the [GNU Affero General Public License v3.0 or later](LICENSE); or
+- a separate written [commercial license](COMMERCIAL-LICENSE.md).
+
+The AGPL permits commercial use. The separate commercial license is for users
+who need additional proprietary-use rights or separately agreed support terms.
+
+Third-party components, dependencies, test binaries, corpora, research
+material, and other separately licensed content are not automatically covered
+by either Inertia license. Review [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+before redistribution.
+
+Contributions require the
+[Inertia Decompiler Contributor License Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md)
+so the project can preserve both licensing options.

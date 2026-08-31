@@ -1,5 +1,18 @@
 # Developer Guide
 
+## Licensing contributions
+
+Inertia Decompiler is distributed under an AGPL and commercial dual-license
+model. A contribution cannot be merged until its contributor has completed the
+[Contributor License Agreement](CONTRIBUTOR_LICENSE_AGREEMENT.md). The agreement
+keeps copyright with the contributor while granting the project the rights
+needed to distribute the contribution under both licensing options.
+
+Do not submit code, data, binaries, signatures, documentation, or other material
+unless you have the right to provide it under those terms. Clearly identify all
+third-party material and its license. Opening a pull request or adding a
+`Signed-off-by` line does not replace the Contributor License Agreement.
+
 ## Quick start
 
 ```bash
