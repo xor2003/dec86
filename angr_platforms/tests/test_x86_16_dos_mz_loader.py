@@ -227,6 +227,22 @@ def test_bios_and_dos_interrupt_handlers_have_basic_semantics():
     assert dos_result.concrete_value == 5
 
 
+def test_unmodeled_dos_interrupt_service_defines_carry_result() -> None:
+    """An unmodeled DOS service publishes CF while preserving other flag bits."""
+    project = angr.load_shellcode(b"\x90", arch="X86_16", simos="DOS")
+    state = project.factory.call_state(addr=interrupt_addr(0x21), ret_addr=0)
+    state.regs.ah = 0x48
+    state.regs.flags = 0xA5A4
+    preserved_flags = state.solver.eval(state.regs.flags & 0xFFFE)
+
+    execution = DOSInt21(project=project).execute(state)
+
+    result = execution.state
+    assert result.solver.eval(result.regs.flags & 0xFFFE) == preserved_flags
+    assert result.solver.symbolic(result.regs.flags[0])
+    assert result.solver.symbolic(result.regs.ax)
+
+
 @pytest.mark.skipif(
     not T_EXE_PATH.exists() or not T_COD_PATH.exists(),
     reason="f15se2-re executable/COD pair is not available",

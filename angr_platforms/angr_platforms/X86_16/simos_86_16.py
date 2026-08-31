@@ -243,6 +243,12 @@ class DOSInt21(DOSInterruptHandler):
         if self.state.solver.is_true(ah == 0x4C):
             self.exit(claripy.ZeroExt(8, cast(BV, self.state.regs.al)))
 
+        carry = claripy.BVS("dos_int21_cf", 1, explicit_name=True)
+        flags = cast(BV, self.state.regs.flags)
+        flags_width = flags.size()
+        self.state.regs.flags = (
+            flags & claripy.BVV((1 << flags_width) - 2, flags_width)
+        ) | claripy.ZeroExt(flags_width - 1, carry)
         return claripy.BVS("dos_int21_ax", 16, explicit_name=True)
 
 
