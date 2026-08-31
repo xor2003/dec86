@@ -215,6 +215,29 @@ def test_final_codegen_consumes_exact_terminal_storage(
         assert codegen.cfunc.statements.statements[0].retval is not None
 
 
+def test_exact_empty_terminal_storage_overrides_false_caller_result_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A restored AX is preservation even when a caller reads AX after the call."""
+    project, codegen, function = _codegen_fixture()
+    monkeypatch.setattr(
+        unused_void_return_types,
+        "proven_function_result_observation_8616",
+        lambda _project, _addr: CallerReturnUseVerdict8616.USED,
+    )
+    monkeypatch.setattr(
+        unused_void_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.NONE,
+    )
+
+    result = materialize_unused_caller_void_codegen_type_8616(project, codegen)
+
+    assert result.changed is True
+    assert isinstance(function.prototype.returnty, SimTypeBottom)
+    assert codegen.cfunc.statements.statements[0].retval is None
+
+
 @pytest.mark.parametrize(("value", "expected_changed"), [(0, True), (1, False)])
 def test_unused_zero_return_is_synthetic_despite_terminal_ax(
     monkeypatch: pytest.MonkeyPatch,

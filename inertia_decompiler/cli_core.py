@@ -3705,6 +3705,13 @@ def _try_emit_retry_recovered_candidate_8616(
             attempt="decompiled",
             validation_snapshot=retry_tv,
         )
+        if args.output_c_dir is not None:
+            write_generated_function_c(
+                args.output_c_dir,
+                address=function_original_addr(function),
+                name=function.name,
+                payload=retry_payload,
+            )
         _emit_optional_source_sidecar_c_block(
             args.binary,
             function.name,

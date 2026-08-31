@@ -33,6 +33,11 @@ from .core import (
     SegmentOrigin,
 )
 from .function_condition_artifact import build_ir_function_condition_artifact_8616
+from .function_ir_registry import (
+    FunctionIRArtifactVerdict8616,
+    publish_function_ir_artifact_8616,
+    registered_function_ir_artifact_8616,
+)
 from .logical_memory_capture import (
     collect_accesses_for_block,
     collect_accesses_for_function,
@@ -1001,9 +1006,38 @@ def apply_x86_16_vex_ir_artifact(project: object, codegen: object) -> bool:
             and existing_ssa.function_addr == func_addr
         ):
             return False
-    artifact = build_x86_16_ir_function_artifact(project, function)
+    from .function_ssa_registry import (
+        FunctionSSAArtifactStage8616,
+        FunctionSSAArtifactVerdict8616,
+        publish_function_ssa_artifact_8616,
+        registered_function_ssa_artifact_8616,
+    )
+
+    raw_resolution = registered_function_ir_artifact_8616(project, func_addr)
+    ssa_resolution = registered_function_ssa_artifact_8616(project, func_addr)
+    artifact = (
+        raw_resolution.artifact
+        if raw_resolution.verdict is FunctionIRArtifactVerdict8616.PROVEN
+        else None
+    )
+    function_ssa = (
+        ssa_resolution.artifact
+        if ssa_resolution.verdict is FunctionSSAArtifactVerdict8616.PROVEN
+        and ssa_resolution.stage is FunctionSSAArtifactStage8616.IR
+        else None
+    )
+    if artifact is None:
+        artifact = build_x86_16_ir_function_artifact(project, function)
+    if function_ssa is None:
+        function_ssa = build_x86_16_function_ssa(artifact)
     frame_artifact = build_x86_16_ir_frame_access_artifact(artifact)
-    function_ssa = build_x86_16_function_ssa(artifact)
+    if not artifact.refusals:
+        publish_function_ir_artifact_8616(project, artifact)
+        publish_function_ssa_artifact_8616(
+            project,
+            function_ssa,
+            FunctionSSAArtifactStage8616.IR,
+        )
     codegen_boundary._inertia_vex_ir_artifact = artifact
     codegen_boundary._inertia_vex_ir_summary = artifact.summary
     codegen_boundary._inertia_vex_ir_frame = frame_artifact

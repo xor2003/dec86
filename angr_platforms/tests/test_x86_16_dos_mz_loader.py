@@ -130,8 +130,14 @@ def test_dos_mz_jcc_preserves_relocated_linear_branch_destinations(tmp_path):
     vex_text = block.vex._pp_str()
 
     assert project.entry == 0x10000
-    assert "PUT(ip) = 0x10009" in vex_text
-    assert "PUT(ip) = 0x10006" in vex_text
+    assert any(
+        f"PUT({register}) = 0x10009" in vex_text
+        for register in ("ip", "eip")
+    )
+    assert any(
+        f"PUT({register}) = 0x10006" in vex_text
+        for register in ("ip", "eip")
+    )
 
 
 @pytest.mark.skipif(not T_EXE_PATH.exists(), reason="f15se2-re test executable is not available")

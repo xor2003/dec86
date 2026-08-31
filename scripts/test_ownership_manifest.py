@@ -214,11 +214,13 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "inertia_decompiler/cache_lock.py",
             "inertia_decompiler/cache_source_manifest.py",
             "inertia_decompiler/function_cache_context.py",
+            "inertia_decompiler/program_callsite_cache.py",
             "inertia_decompiler/work_items.py",
         ),
         tests=(
             "angr_platforms/tests/test_cache_lock.py",
             "angr_platforms/tests/test_function_cache_context.py",
+            "angr_platforms/tests/test_program_callsite_cache.py",
             "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py",
         ),
     ),
@@ -427,6 +429,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         owner="x86-16-interprocedural-storage-contracts",
         paths=(
             "angr_platforms/angr_platforms/X86_16/caller_return_use_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py",
             "angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py",
             "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py",
             "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py",
@@ -1186,6 +1189,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         owner="x86-16-project-global-object-layout",
         paths=(
             "inertia_decompiler/indexed_alias_program_context.py",
+            "inertia_decompiler/indexed_alias_program_parallel.py",
             "inertia_decompiler/indexed_global_object_cache.py",
             "inertia_decompiler/project_argument_evidence_ranges.py",
             "angr_platforms/angr_platforms/X86_16/lowering/project_global_object_layout.py",
@@ -1194,6 +1198,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_layout.py",
         ),
         tests=(
+            "angr_platforms/tests/test_indexed_alias_program_parallel.py",
             "angr_platforms/tests/test_project_argument_evidence_ranges.py",
             "angr_platforms/tests/test_x86_16_alias_global_object_layout.py",
             "angr_platforms/tests/test_x86_16_global_object_layout.py",
@@ -1218,11 +1223,13 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
         owner="x86-16-lowering-segmented-runtime",
         paths=(
+            "angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py",
             "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py",
             "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
             "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
         ),
         tests=(
+            "angr_platforms/tests/test_x86_16_gp_register_state.py",
             "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
             "angr_platforms/tests/test_x86_16_stack_pointer_snapshot.py",
         ),
@@ -1238,6 +1245,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/interrupt_contract.py",
             "angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py",
             "angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_calls.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py",
             "angr_platforms/angr_platforms/X86_16/semantics/software_interrupt_inputs.py",
             "angr_platforms/angr_platforms/X86_16/structuring/software_interrupt_returns.py",
             "angr_platforms/angr_platforms/X86_16/validation_interrupt_calls.py",

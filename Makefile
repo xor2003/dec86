@@ -43,8 +43,15 @@ PIPELINE_WORKERS ?= $(PARALLEL_JOBS)
 INERTIA_ALLOW_PARALLEL_MSC6_WORKERS ?= 1
 export INERTIA_ALLOW_PARALLEL_MSC6_WORKERS
 LINTERS_DEV_MYPY_FILES ?= \
+	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
+	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
+	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py \
+	inertia_decompiler/cache.py \
+	inertia_decompiler/cache_source_manifest.py \
 	inertia_decompiler/decompile_file_summary.py \
 	inertia_decompiler/indexed_alias_program_context.py \
+	inertia_decompiler/indexed_alias_program_parallel.py \
+	inertia_decompiler/program_callsite_cache.py \
 	inertia_decompiler/project_argument_evidence_ranges.py \
 	inertia_decompiler/indexed_global_object_cache.py \
 	inertia_decompiler/serial_clean_worker_evidence.py \
@@ -350,6 +357,8 @@ check-all: ruff-all pyright-all type-ratchet-changed architecture-check agent-co
 	$(MAKE) type-ratchet-changed architecture-check agent-context-check test-ownership-check pytest-all
 
 QA_TYPED_FILES := \
+	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
+	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_frame_arguments.py \
@@ -853,6 +862,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_expressions.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_render_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_calls.py \
+	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py \
 	angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_aggregate_objects.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_c_ast_matching.py \
@@ -1083,12 +1093,14 @@ QA_TYPED_FILES := \
 	inertia_decompiler/cache_lock.py \
 	inertia_decompiler/cache_runtime_contract.py \
 	inertia_decompiler/cache_source_manifest.py \
+	inertia_decompiler/program_callsite_cache.py \
 	inertia_decompiler/direct_request_cache.py \
 	inertia_decompiler/direct_request_fast_path.py \
 	inertia_decompiler/direct_request_identity.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
 	inertia_decompiler/indexed_alias_program_context.py \
+	inertia_decompiler/indexed_alias_program_parallel.py \
 	inertia_decompiler/project_argument_evidence_ranges.py \
 	inertia_decompiler/serial_clean_worker_cli.py \
 	inertia_decompiler/serial_worker_cache.py \
@@ -1253,6 +1265,8 @@ QA_TYPED_FILES := \
 	decompile.py
 
 QA_RUFF_TARGETS := \
+	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
+	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_frame_arguments.py \
@@ -1756,6 +1770,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_expressions.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_render_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_calls.py \
+	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py \
 	angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_aggregate_objects.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_c_ast_matching.py \
@@ -1986,12 +2001,14 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/cache_lock.py \
 	inertia_decompiler/cache_runtime_contract.py \
 	inertia_decompiler/cache_source_manifest.py \
+	inertia_decompiler/program_callsite_cache.py \
 	inertia_decompiler/direct_request_cache.py \
 	inertia_decompiler/direct_request_fast_path.py \
 	inertia_decompiler/direct_request_identity.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
 	inertia_decompiler/indexed_alias_program_context.py \
+	inertia_decompiler/indexed_alias_program_parallel.py \
 	inertia_decompiler/project_argument_evidence_ranges.py \
 	inertia_decompiler/serial_clean_worker_cli.py \
 	inertia_decompiler/serial_worker_cache.py \
@@ -2132,6 +2149,8 @@ QA_RUFF_TARGETS := \
 	decompile.py \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_cache_lock.py \
+	angr_platforms/tests/test_program_callsite_cache.py \
+	angr_platforms/tests/test_x86_16_gp_register_state.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
 	angr_platforms/tests/test_cli_core_clinic_policy.py \
 	angr_platforms/tests/test_fork_timeout.py \
@@ -2360,6 +2379,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_indexed_address_parity_inventory.py \
 		angr_platforms/tests/test_x86_16_sortd_indexed_address_parity_inventory.py \
 		angr_platforms/tests/test_x86_16_alias_global_object_layout.py \
+		angr_platforms/tests/test_indexed_alias_program_parallel.py \
 		angr_platforms/tests/test_x86_16_global_object_layout.py \
 	angr_platforms/tests/test_x86_16_project_type_contracts.py \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
@@ -2457,6 +2477,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_accepted_payload_integrity.py
 
 QA_PYTEST_TARGETS := \
+	angr_platforms/tests/test_program_callsite_cache.py \
+	angr_platforms/tests/test_x86_16_gp_register_state.py \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_x86_16_caller_return_use_contracts.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
@@ -2706,6 +2728,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_heapsort_widening_regression.py \
 	angr_platforms/tests/test_x86_16_global_declarations.py \
 	angr_platforms/tests/test_x86_16_alias_global_object_layout.py \
+	angr_platforms/tests/test_indexed_alias_program_parallel.py \
 	angr_platforms/tests/test_x86_16_global_object_layout.py \
 	angr_platforms/tests/test_x86_16_project_type_contracts.py \
 	angr_platforms/tests/test_x86_16_function_pointer_parameters.py \
@@ -3091,7 +3114,7 @@ decomp-opt-regression-inputs:
 			--out-dir examples/build_msc6_tiny \
 			--only-constructs $(DECOMP_OPT_REGRESSION_CONSTRUCTS) \
 			--skip-constructs $(DECOMP_OPT_REGRESSION_CONSTRUCTS) \
-			--harvest-success-code 0; \
+			--harvest-success-code 255; \
 	fi
 
 decomp-opt-regression:

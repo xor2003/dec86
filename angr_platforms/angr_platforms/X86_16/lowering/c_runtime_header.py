@@ -24,6 +24,7 @@ LOWERED_RUNTIME_HELPER_DECLARATIONS_8616: dict[str, str] = {
     "srand": "void srand(unsigned int seed);",
     "time": "time_t time(time_t *out);",
     "strcpy": "char *strcpy(char *dst, const char *src);",
+    "dos_int21_flags": "unsigned short dos_int21_flags(void);",
     "inertia_io_out8": "void inertia_io_out8(uint16_t port, uint8_t value);",
     "inertia_io_out16": "void inertia_io_out16(uint16_t port, uint16_t value);",
     "inertia_io_out32": "void inertia_io_out32(uint16_t port, uint32_t value);",

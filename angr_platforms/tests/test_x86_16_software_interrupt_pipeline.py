@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from angr.ailment.expression import VirtualVariable, VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
@@ -18,6 +19,10 @@ from angr_platforms.X86_16.ir.core import (
 )
 from angr_platforms.X86_16.lowering.software_interrupt_calls import (
     materialize_software_interrupt_calls_8616,
+)
+from angr_platforms.X86_16.lowering.software_interrupt_status_outputs import (
+    SoftwareInterruptStatusOutputStats8616,
+    materialize_software_interrupt_status_outputs_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.semantics.software_interrupt_inputs import (
@@ -357,3 +362,65 @@ def test_tail_validation_rejects_stale_interrupt_selector_return() -> None:
     assert tuple(issue.kind for issue in report.issues) == (
         SoftwareInterruptValidationIssueKind8616.STALE_RESULT_SELECTOR,
     )
+
+
+def test_lowering_materializes_dos_interrupt_carry_output_before_branch() -> None:
+    """A DOS carry branch consumes an explicit post-interrupt FLAGS output."""
+    codegen = _Codegen()
+    flags_offset, flags_size = codegen.project.arch.registers["flags"]
+    result = structured_c.CVariable(
+        SimRegisterVariable(0, 2, name="result", region=0x100, ident="ax_1"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    flags = structured_c.CDirtyExpression(
+        VirtualVariable(
+            codegen.next_idx("flags"),
+            17,
+            flags_size * 8,
+            VirtualVariableCategory.REGISTER,
+            oident=flags_offset,
+        ),
+        codegen=codegen,
+    )
+    call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags={"ins_addr": 0x104},
+        codegen=codegen,
+    )
+    branch = structured_c.CIfElse(
+        [
+            (
+                structured_c.CBinaryOp(
+                    "And",
+                    flags,
+                    _const(1, codegen),
+                    tags={"ins_addr": 0x106},
+                    codegen=codegen,
+                ),
+                structured_c.CStatements([], codegen=codegen),
+            )
+        ],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [structured_c.CAssignment(result, call, codegen=codegen), branch],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert materialize_software_interrupt_status_outputs_8616(codegen) is True
+
+    definition = root.statements[1]
+    assert isinstance(definition, structured_c.CAssignment)
+    assert definition.lhs.dirty.oident == flags_offset
+    assert definition.rhs.callee_target == "dos_int21_flags"
+    assert root.statements[2] is branch
+    assert branch.condition_and_nodes[0][0].lhs is flags
+    assert codegen._inertia_software_interrupt_status_output_stats_8616 == (
+        SoftwareInterruptStatusOutputStats8616(1, 1, 1, 1, 0)
+    )
+    assert materialize_software_interrupt_status_outputs_8616(codegen) is False

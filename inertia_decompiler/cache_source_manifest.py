@@ -68,6 +68,7 @@ _RECOVERY_PIPELINE_DEPENDENCY_NAMES_8616 = (
 _INDEXED_ALIAS_PROGRAM_INERTIA_NAMES_8616 = (
     *_DISCOVERY_INERTIA_NAMES_8616,
     "indexed_alias_program_context.py",
+    "indexed_alias_program_parallel.py",
     "project_evidence_transport.py",
 )
 
@@ -77,6 +78,20 @@ _INDEXED_ALIAS_PROGRAM_X86_16_DEPENDENCY_DIRS_8616 = (
     "widening",
 )
 
+_PROGRAM_CALLSITE_INERTIA_NAMES_8616 = (
+    *_DISCOVERY_INERTIA_NAMES_8616,
+    "indexed_alias_program_context.py",
+    "indexed_alias_program_parallel.py",
+    "program_callsite_cache.py",
+)
+
+_PROGRAM_CALLSITE_LOWERING_NAMES_8616 = (
+    "callee_callsite_codec.py",
+    "callee_callsite_contracts.py",
+    "callee_range_callsite_facts.py",
+    "project_callee_callsite_collection.py",
+)
+
 
 class RecoveryCacheSourceScope8616(StrEnum):
     """Implementation surface that owns one recovery-cache artifact."""
@@ -84,6 +99,7 @@ class RecoveryCacheSourceScope8616(StrEnum):
     FULL_DECOMPILATION = "full-decompilation"
     FUNCTION_DISCOVERY = "function-discovery"
     INDEXED_ALIAS_PROGRAM = "indexed-alias-program"
+    PROGRAM_CALLSITE = "program-callsite"
 
 
 def _function_discovery_cache_source_files_8616() -> tuple[Path, ...]:
@@ -146,4 +162,26 @@ def _indexed_alias_program_cache_source_files_8616() -> tuple[Path, ...]:
 
 INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _indexed_alias_program_cache_source_files_8616()
+)
+
+
+def _program_callsite_cache_source_files_8616() -> tuple[Path, ...]:
+    """Return exact discovery and callsite-summary artifact owners."""
+    inertia_root = _ROOT / "inertia_decompiler"
+    x86_root = _ROOT / "angr_platforms" / "angr_platforms" / "X86_16"
+    discovered = {
+        inertia_root / name
+        for name in _PROGRAM_CALLSITE_INERTIA_NAMES_8616
+    }
+    discovered.update(FUNCTION_DISCOVERY_CACHE_SOURCE_FILES)
+    discovered.update((x86_root / "alias").rglob("*.py"))
+    discovered.update(
+        x86_root / "lowering" / name
+        for name in _PROGRAM_CALLSITE_LOWERING_NAMES_8616
+    )
+    return tuple(sorted(path for path in discovered if path.is_file()))
+
+
+PROGRAM_CALLSITE_CACHE_SOURCE_FILES: tuple[Path, ...] = (
+    _program_callsite_cache_source_files_8616()
 )

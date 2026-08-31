@@ -72,11 +72,22 @@ def _strip_casts_8616(node: object) -> object:
 
 def _runtime_helper_name_8616(call: structured_c.CFunctionCall) -> str | None:
     """Read one runtime helper name from the angr call boundary."""
+    marker = call.tags.get("inertia_x86_16_runtime_segment_helper")
+    if isinstance(marker, str) and marker:
+        return marker.upper()
     if isinstance(call.callee_target, str) and call.callee_target:
         return call.callee_target.upper()
     callee = call.callee_func
     name = callee.name if callee is not None else None
     return name.upper() if isinstance(name, str) and name else None
+
+
+def is_runtime_segment_load_helper_8616(node: object) -> bool:
+    """Return whether one structured call is a pure typed segmented load."""
+    return (
+        isinstance(node, structured_c.CFunctionCall)
+        and _runtime_helper_name_8616(node) in {"SEG_U8", "SEG_U16", "SEG_U32"}
+    )
 
 
 def _variable_key_8616(node: object) -> _VariableKey8616 | None:

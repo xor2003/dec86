@@ -12,6 +12,9 @@ from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.callsite_summary_program import (
     program_callsite_summary_evidence_8616,
 )
+from angr_platforms.X86_16.callsite_target_inventory import (
+    CallsiteTargetInventory8616,
+)
 from angr_platforms.X86_16.lowering import callee_callsite_census
 from angr_platforms.X86_16.lowering import project_callee_callsite_collection as collection
 from angr_platforms.X86_16.lowering.callee_callsite_codec import (
@@ -89,20 +92,34 @@ def test_complete_project_collection_scans_each_function_once_and_publishes_cach
 ) -> None:
     project = SimpleNamespace()
     functions = (SimpleNamespace(addr=0x1100, size=0x30),)
-    target = CallTargetSeed(
-        0x1110,
-        0x2200,
-        0x1113,
-        CallTargetKind8616.DIRECT_NEAR_CALL,
+    targets = (
+        CallTargetSeed(
+            0x1110,
+            0x2200,
+            0x1113,
+            CallTargetKind8616.DIRECT_NEAR_CALL,
+        ),
+        CallTargetSeed(
+            0x1120,
+            0x2200,
+            0x1123,
+            CallTargetKind8616.DIRECT_NEAR_CALL,
+        ),
     )
     calls = {"neighbors": 0, "summaries": 0, "ranges": 0}
 
     def neighbors(_function: object) -> list[CallTargetSeed]:
         calls["neighbors"] += 1
-        return [target]
+        return list(targets)
 
-    def summarize(_function: object, callsite_addr: int) -> CallsiteSummary8616:
+    def summarize(
+        _function: object,
+        callsite_addr: int,
+        *,
+        target_inventory: CallsiteTargetInventory8616,
+    ) -> CallsiteSummary8616:
         calls["summaries"] += 1
+        assert target_inventory.seeds == targets
         return _summary(callsite_addr, 0x2200)
 
     def range_facts(
@@ -112,7 +129,9 @@ def test_complete_project_collection_scans_each_function_once_and_publishes_cach
         excluded_fact_keys: frozenset[tuple[int, int]],
     ) -> tuple[CalleeCallsiteFact8616, ...]:
         calls["ranges"] += 1
-        assert excluded_fact_keys == frozenset({(0x2200, 0x1110)})
+        assert excluded_fact_keys == frozenset(
+            {(0x2200, 0x1110), (0x2200, 0x1120)}
+        )
         return ()
 
     monkeypatch.setattr(collection, "collect_neighbor_call_targets", neighbors)
@@ -125,12 +144,12 @@ def test_complete_project_collection_scans_each_function_once_and_publishes_cach
     )
 
     assert result.target_addrs == (0x2200,)
-    assert result.raw_fact_count == result.materialized_count == 1
+    assert result.raw_fact_count == result.materialized_count == 2
     assert result.failure_count == 0
-    assert calls == {"neighbors": 1, "summaries": 1, "ranges": 1}
+    assert calls == {"neighbors": 1, "summaries": 2, "ranges": 1}
     program_summaries = program_callsite_summary_evidence_8616(project)
     assert program_summaries is not None
-    assert program_summaries.materialized_count == 1
+    assert program_summaries.materialized_count == 2
     assert program_summaries.facts[0].caller_addr == 0x1100
     assert program_summaries.facts[0].callsite_addr == 0x1110
     monkeypatch.setattr(

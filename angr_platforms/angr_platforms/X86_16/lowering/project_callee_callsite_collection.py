@@ -19,6 +19,7 @@ from ..callsite_summary_program import (
     attach_program_callsite_summary_evidence_8616,
     program_callsite_summary_evidence_from_facts_8616,
 )
+from ..callsite_target_inventory import CallsiteTargetInventory8616
 from .callee_callsite_contracts import (
     CalleeCallsiteCensus8616,
     CalleeCallsiteFact8616,
@@ -155,8 +156,14 @@ def collect_complete_project_callee_callsites_8616(
     facts_by_target: dict[int, dict[int, CalleeCallsiteFact8616]] = {}
     for function in functions:
         caller_addr = _function_addr_8616(function)
-        for target in collect_neighbor_call_targets(function):
-            summary = summarize_x86_16_callsite(function, target.callsite_addr)
+        targets = tuple(collect_neighbor_call_targets(function))
+        target_inventory = CallsiteTargetInventory8616(targets)
+        for target in targets:
+            summary = summarize_x86_16_callsite(
+                function,
+                target.callsite_addr,
+                target_inventory=target_inventory,
+            )
             if summary is not None and summary.stack_probe_helper:
                 summary = None
             facts_by_target.setdefault(target.target_addr, {})[target.callsite_addr] = (

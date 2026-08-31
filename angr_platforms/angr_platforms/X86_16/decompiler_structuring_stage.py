@@ -143,6 +143,9 @@ from .lowering.segmented_memory_lowering import (
 )
 from .lowering.signed_global_declarations import materialize_signed_global_declarations_8616
 from .lowering.software_interrupt_calls import materialize_software_interrupt_calls_8616
+from .lowering.software_interrupt_status_outputs import (
+    materialize_software_interrupt_status_outputs_8616,
+)
 from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 from .lowering.stack_memory_ssa import lower_x86_16_stack_memory_ssa_alias_artifact
 from .lowering.stack_prototype_materialization import (
@@ -2246,6 +2249,7 @@ def _replay_structuring_lowering_before_validation_8616(
     advance_direct_stack_consumer_generation_8616(codegen)
     changed = bool(_apply_structuring_direct_stack_materialization_8616(project, codegen)) or changed
     changed = bool(materialize_software_interrupt_calls_8616(codegen)) or changed
+    changed = bool(materialize_software_interrupt_status_outputs_8616(codegen)) or changed
     changed = bool(_prime_structuring_segment_global_semantics_8616(project, codegen)) or changed
     function = _current_structuring_function_8616(project, codegen)
     changed = bool(

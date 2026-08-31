@@ -4407,6 +4407,7 @@ def test_retry_recovered_candidate_is_bounded_by_worker_timeout(monkeypatch, tmp
         timeout=7,
         api_style="default",
         alternate_source_c=False,
+        output_c_dir=None,
     )
     wrapper_calls = {}
 
@@ -4468,6 +4469,7 @@ def test_retry_recovered_candidate_uses_thread_when_tail_validation_enabled(monk
         timeout=7,
         api_style="default",
         alternate_source_c=False,
+        output_c_dir=None,
     )
     wrapper_calls = {}
 
@@ -4674,6 +4676,7 @@ def test_retry_recovered_candidate_uses_fresh_sidecar_work_item(monkeypatch, tmp
         dump_layers=False,
         dump_layer_dir=None,
         dump_layer_filter=None,
+        output_c_dir=tmp_path / "generated",
     )
     fresh_project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
     recovered_function = SimpleNamespace(addr=0x1000, name="InitBars", project=fresh_project, info={})
@@ -4725,6 +4728,7 @@ def test_retry_recovered_candidate_uses_fresh_sidecar_work_item(monkeypatch, tmp
     assert seen["work_item"].function is recovered_function
     assert seen["work_item"].function_cfg is recovered_cfg
     assert seen["allow_isolated_retry"] is False
+    assert (args.output_c_dir / "00010554-InitBars.c").read_text() == "int InitBars(void) { return 1; }"
     assert "retry lane: recovered validation-passed candidate" in capsys.readouterr().out
 
 

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.ir import IRFunctionArtifact
+from angr_platforms.X86_16.ir import IRFunctionArtifact, vex_import
+from angr_platforms.X86_16.ir.function_ir_registry import (
+    FunctionIRArtifactFailure8616,
+    FunctionIRArtifactVerdict8616,
+    publish_function_ir_artifact_8616,
+    registered_function_ir_artifact_8616,
+)
 from angr_platforms.X86_16.ir.function_ssa_registry import (
     FunctionSSAArtifactFailure8616,
     FunctionSSAArtifactStage8616,
@@ -11,6 +17,7 @@ from angr_platforms.X86_16.ir.function_ssa_registry import (
     registered_function_ssa_artifact_8616,
 )
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
+from angr_platforms.X86_16.ir.vex_import import apply_x86_16_vex_ir_artifact
 from angr_platforms.X86_16.semantics import call_stack_effect_pipeline
 from angr_platforms.X86_16.semantics.call_output_contracts import CallOutputStats8616
 from angr_platforms.X86_16.semantics.call_outputs import CallOutputArtifact8616
@@ -43,6 +50,31 @@ class _Functions:
 
 def _project(*addresses: int) -> SimpleNamespace:
     return SimpleNamespace(kb=SimpleNamespace(functions=_Functions(*addresses)))
+
+
+def test_raw_ir_registry_reuses_one_exact_artifact() -> None:
+    project = _project()
+    artifact = IRFunctionArtifact(0x1000, (), summary={"marker": "raw"})
+
+    published = publish_function_ir_artifact_8616(project, artifact)
+    replay = registered_function_ir_artifact_8616(project, 0x1000)
+
+    assert published.verdict is FunctionIRArtifactVerdict8616.PROVEN
+    assert replay.artifact is artifact
+    assert replay.failure is None
+
+
+def test_raw_ir_registry_refuses_conflicts_without_replacement() -> None:
+    project = _project()
+    accepted = IRFunctionArtifact(0x1000, (), summary={"marker": "accepted"})
+    conflicting = IRFunctionArtifact(0x1000, (), summary={"marker": "conflict"})
+    publish_function_ir_artifact_8616(project, accepted)
+
+    result = publish_function_ir_artifact_8616(project, conflicting)
+
+    assert result.verdict is FunctionIRArtifactVerdict8616.UNKNOWN_REFUSE
+    assert result.failure is FunctionIRArtifactFailure8616.ARTIFACT_CONFLICT
+    assert registered_function_ir_artifact_8616(project, 0x1000).artifact is accepted
 
 
 def test_registry_upgrades_ir_to_semantics_without_downgrade() -> None:
@@ -92,6 +124,68 @@ def test_registry_refuses_divergent_semantics_without_replacement() -> None:
     assert result.verdict is FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE
     assert result.failure is FunctionSSAArtifactFailure8616.ARTIFACT_CONFLICT
     assert registered_function_ssa_artifact_8616(project, 0x1000).artifact is accepted
+
+
+def test_vex_apply_reuses_matching_raw_ir_and_ir_stage_ssa(monkeypatch) -> None:
+    function_addr = 0x1000
+    project = _project(function_addr)
+    raw_ir = IRFunctionArtifact(function_addr, ())
+    raw_ssa = _ssa(function_addr, "raw")
+    publish_function_ir_artifact_8616(project, raw_ir)
+    publish_function_ssa_artifact_8616(
+        project,
+        raw_ssa,
+        FunctionSSAArtifactStage8616.IR,
+    )
+
+    def _unexpected_build(_project: object, _function: object) -> IRFunctionArtifact:
+        raise AssertionError("matching registered raw IR must be reused")
+
+    monkeypatch.setattr(
+        vex_import,
+        "build_x86_16_ir_function_artifact",
+        _unexpected_build,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function_addr))
+
+    assert apply_x86_16_vex_ir_artifact(project, codegen) is False
+    assert codegen._inertia_raw_vex_ir_artifact_8616 is raw_ir
+    assert codegen._inertia_raw_vex_ir_function_ssa_8616 is raw_ssa
+
+
+def test_vex_apply_does_not_downgrade_semantic_ssa(monkeypatch) -> None:
+    function_addr = 0x1000
+    project = _project(function_addr)
+    raw_ir = IRFunctionArtifact(function_addr, ())
+    semantic_ssa = _ssa(function_addr, "semantic")
+    rebuilt_raw_ssa = _ssa(function_addr, "rebuilt-raw")
+    publish_function_ir_artifact_8616(project, raw_ir)
+    publish_function_ssa_artifact_8616(
+        project,
+        semantic_ssa,
+        FunctionSSAArtifactStage8616.SEMANTIC,
+    )
+
+    def _unexpected_build(_project: object, _function: object) -> IRFunctionArtifact:
+        raise AssertionError("matching registered raw IR must be reused")
+
+    monkeypatch.setattr(
+        vex_import,
+        "build_x86_16_ir_function_artifact",
+        _unexpected_build,
+    )
+    monkeypatch.setattr(
+        vex_import,
+        "build_x86_16_function_ssa",
+        lambda _artifact: rebuilt_raw_ssa,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function_addr))
+
+    assert apply_x86_16_vex_ir_artifact(project, codegen) is False
+    assert codegen._inertia_raw_vex_ir_function_ssa_8616 is rebuilt_raw_ssa
+    registered = registered_function_ssa_artifact_8616(project, function_addr)
+    assert registered.artifact is semantic_ssa
+    assert registered.stage is FunctionSSAArtifactStage8616.SEMANTIC
 
 
 def test_semantic_lookup_caches_distinct_exact_functions(monkeypatch) -> None:

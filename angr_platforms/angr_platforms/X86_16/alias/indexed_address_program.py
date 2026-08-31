@@ -154,7 +154,7 @@ class IndexedAliasProgramEvidence8616:
         )
 
 
-def _build_function_evidence_8616(
+def build_indexed_alias_function_evidence_8616(
     project: object,
     selection: IndexedAliasFunctionSelection8616,
 ) -> IndexedAliasFunctionEvidence8616 | IndexedAliasFunctionRefusal8616:
@@ -221,30 +221,51 @@ def _build_function_evidence_8616(
     return result
 
 
-def build_indexed_alias_program_evidence_8616(
-    project: object,
-    selections: Sequence[IndexedAliasFunctionSelection8616],
+def assemble_indexed_alias_program_evidence_8616(
+    results: Sequence[
+        IndexedAliasFunctionEvidence8616 | IndexedAliasFunctionRefusal8616
+    ],
+    expected_addresses: Sequence[int],
 ) -> IndexedAliasProgramEvidence8616:
-    """Build one closed Alias census from exact recovered function selections."""
-    ordered = tuple(sorted(selections, key=lambda selection: selection.function_addr))
-    if not all(selection.complete for selection in ordered):
-        raise ValueError("indexed-address program selection contains an invalid address")
-    addresses = tuple(selection.function_addr for selection in ordered)
-    if len(addresses) != len(set(addresses)):
-        raise ValueError("indexed-address program selection contains duplicate functions")
-    functions: list[IndexedAliasFunctionEvidence8616] = []
-    refusals: list[IndexedAliasFunctionRefusal8616] = []
-    for selection in ordered:
-        result = _build_function_evidence_8616(project, selection)
-        if isinstance(result, IndexedAliasFunctionRefusal8616):
-            refusals.append(result)
-        else:
-            functions.append(result)
+    """Assemble exact per-function results into one closed Alias census."""
+    addresses = tuple(sorted(expected_addresses))
+    if any(address < 0 for address in addresses) or len(addresses) != len(
+        set(addresses)
+    ):
+        raise ValueError("indexed-address program contains invalid function identities")
+    functions = tuple(
+        sorted(
+            (
+                result
+                for result in results
+                if isinstance(result, IndexedAliasFunctionEvidence8616)
+            ),
+            key=lambda fact: fact.function_addr,
+        )
+    )
+    refusals = tuple(
+        sorted(
+            (
+                result
+                for result in results
+                if isinstance(result, IndexedAliasFunctionRefusal8616)
+            ),
+            key=lambda refusal: refusal.function_addr,
+        )
+    )
+    result_addresses = tuple(
+        sorted(
+            tuple(fact.function_addr for fact in functions)
+            + tuple(refusal.function_addr for refusal in refusals)
+        )
+    )
+    if result_addresses != addresses:
+        raise ValueError("indexed-address program results do not match selections")
     evidence = IndexedAliasProgramEvidence8616(
-        tuple(sorted(functions, key=lambda fact: fact.function_addr)),
-        tuple(sorted(refusals, key=lambda refusal: refusal.function_addr)),
+        functions,
+        refusals,
         IndexedAliasProgramStats8616(
-            raw_fact_count=len(ordered),
+            raw_fact_count=len(addresses),
             normalized_fact_count=len(functions),
             classified_fact_count=len(functions),
             materialized_count=len(functions),
@@ -256,6 +277,27 @@ def build_indexed_alias_program_evidence_8616(
     return evidence
 
 
+def build_indexed_alias_program_evidence_8616(
+    project: object,
+    selections: Sequence[IndexedAliasFunctionSelection8616],
+) -> IndexedAliasProgramEvidence8616:
+    """Build one closed Alias census from exact recovered function selections."""
+    ordered = tuple(sorted(selections, key=lambda selection: selection.function_addr))
+    if not all(selection.complete for selection in ordered):
+        raise ValueError("indexed-address program selection contains an invalid address")
+    addresses = tuple(selection.function_addr for selection in ordered)
+    if len(addresses) != len(set(addresses)):
+        raise ValueError("indexed-address program selection contains duplicate functions")
+    results = [
+        build_indexed_alias_function_evidence_8616(project, selection)
+        for selection in ordered
+    ]
+    return assemble_indexed_alias_program_evidence_8616(
+        results,
+        addresses,
+    )
+
+
 __all__ = [
     "IndexedAliasFunctionEvidence8616",
     "IndexedAliasFunctionRefusal8616",
@@ -263,5 +305,7 @@ __all__ = [
     "IndexedAliasProgramEvidence8616",
     "IndexedAliasProgramFailureKind8616",
     "IndexedAliasProgramStats8616",
+    "assemble_indexed_alias_program_evidence_8616",
+    "build_indexed_alias_function_evidence_8616",
     "build_indexed_alias_program_evidence_8616",
 ]

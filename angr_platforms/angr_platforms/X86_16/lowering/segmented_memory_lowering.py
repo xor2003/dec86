@@ -27,6 +27,10 @@ from archinfo import Arch
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..ir.core import MemSpace
 from ..widening.segmented_load_identity import SegmentedLoadIdentity8616, segmented_load_tags_8616
+from .gp_register_state import (
+    GPRegisterStateLoweringStats8616,
+    lower_architectural_gp_register_state_8616,
+)
 from .linear_global_decomposition_cache import (
     LinearGlobalDecompositionCache8616,
     LinearGlobalDecompositionCacheStats8616,
@@ -115,6 +119,7 @@ class _AngrCodegenBoundary8616(Protocol):
     _func: object | None
     _inertia_assignment_maps: object | None
     _inertia_segment_register_state_lowering_stats_8616: SegmentRegisterStateLoweringStats8616
+    _inertia_gp_register_state_lowering_stats_8616: GPRegisterStateLoweringStats8616
     _inertia_stack_offset_cache: dict[int, object] | None
     _inertia_near_pointer_argument_classified_offsets_8616: set[int]
     _inertia_near_pointer_argument_facts_8616: tuple[NearPointerArgumentFact8616, ...]
@@ -1924,6 +1929,7 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_refusals_8616 = []
     changed = _rematerialize_binary_proven_near_pointer_types_8616(typed_codegen)
+    changed = lower_architectural_gp_register_state_8616(codegen) or changed
     changed = lower_architectural_segment_register_state_8616(codegen) or changed
     initial_segment_stats = typed_codegen._inertia_segment_register_state_lowering_stats_8616
     typed_codegen._inertia_assignment_maps = None
@@ -1977,6 +1983,9 @@ def apply_runtime_segment_lowering_8616(
     if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
         changed = True
     if lower_architectural_segment_register_state_8616(codegen):
+        changed = True
+        typed_codegen._inertia_assignment_maps = None
+    if lower_architectural_gp_register_state_8616(codegen):
         changed = True
         typed_codegen._inertia_assignment_maps = None
     final_segment_stats = typed_codegen._inertia_segment_register_state_lowering_stats_8616

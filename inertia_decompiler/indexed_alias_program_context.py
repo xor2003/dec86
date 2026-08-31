@@ -20,7 +20,6 @@ from typing import Protocol, cast
 
 import angr
 from angr_platforms.X86_16.alias.indexed_address_program import (
-    IndexedAliasFunctionSelection8616,
     IndexedAliasProgramEvidence8616,
     build_indexed_alias_program_evidence_8616,
 )
@@ -45,6 +44,7 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
     recover_program_bounded_global_object_ranges_8616,
 )
 
+from . import indexed_alias_program_parallel as _alias_program_parallel
 from .cache import _cache_key_lock
 from .cli_function_discovery import (
     _recover_fast_exe_catalog,
@@ -57,6 +57,14 @@ from .indexed_global_object_cache import (
     indexed_global_object_cache_key_8616,
     load_indexed_global_object_cache_8616,
     store_indexed_global_object_cache_8616,
+)
+from .program_callsite_cache import (
+    attach_available_program_callsite_evidence_8616,
+    attach_program_callsite_caller_ranges_8616,
+    attach_program_callsite_evidence_8616,
+    program_callsite_cache_key_8616,
+    program_callsite_evidence_from_project_8616,
+    store_program_callsite_cache_8616,
 )
 from .project_evidence_transport import (
     attach_project_bounded_global_object_ranges_8616,
@@ -84,12 +92,6 @@ class IndexedAliasProgramContextResult8616:
     requirement: GlobalObjectProgramRequirementEvidence8616
 
 
-class _FunctionBoundary8616(Protocol):
-    """Third-party recovered function surface used only for transport."""
-
-    addr: object
-
-
 class _ProjectProgramSurface8616(Protocol):
     """Owned immutable Alias/Widening artifacts attached to a project."""
 
@@ -106,18 +108,9 @@ def publish_discovered_indexed_alias_program_8616(
     target_project: object | None = None,
 ) -> IndexedAliasProgramEvidence8616:
     """Build Alias once and attach its closed Widening projection."""
-    selections: list[IndexedAliasFunctionSelection8616] = []
-    for function in functions:
-        try:
-            function_addr = cast(_FunctionBoundary8616, function).addr
-        except AttributeError as exc:
-            raise TypeError("discovered function has no canonical address") from exc
-        if not isinstance(function_addr, int) or function_addr < 0:
-            raise TypeError("discovered function has an invalid canonical address")
-        selections.append(IndexedAliasFunctionSelection8616(function_addr, function))
-    program = build_indexed_alias_program_evidence_8616(
+    program = _alias_program_parallel.build_discovered_indexed_alias_program_bounded_8616(
         evidence_project,
-        selections,
+        functions,
     )
     destination = evidence_project if target_project is None else target_project
     layouts = recover_global_object_layout_evidence_8616(program)
@@ -155,6 +148,8 @@ def _discover_direct_indexed_alias_program_context_8616(
     timeout: int,
     window: int,
     cache_key: dict[str, object] | None,
+    callsite_cache_key: dict[str, object] | None,
+    program_callsites_ready: bool = False,
 ) -> IndexedAliasProgramContextResult8616:
     """Publish a complete census and optionally persist its closed projection."""
     evidence_project = isolated_discovery_evidence_project_8616(
@@ -192,6 +187,30 @@ def _discover_direct_indexed_alias_program_context_8616(
         _ProjectProgramSurface8616,
         target_project,
     )._inertia_project_bounded_global_object_ranges_8616
+    caller_ranges_ready = attach_program_callsite_caller_ranges_8616(
+        evidence_project,
+        target_project,
+        source_project,
+    )
+    if not program_callsites_ready and caller_ranges_ready:
+        collect_complete_project_callee_callsites_8616(
+            evidence_project,
+            tuple(function_boundary for _cfg, function_boundary in recovered),
+        )
+        callsite_evidence = program_callsite_evidence_from_project_8616(
+            evidence_project
+        )
+        attach_program_callsite_evidence_8616(target_project, callsite_evidence)
+        if callsite_cache_key is not None:
+            store_program_callsite_cache_8616(
+                callsite_cache_key,
+                evidence_project,
+                callsite_evidence,
+            )
+    elif not program_callsites_ready:
+        log.warning(
+            "program callsite cache refused: complete caller ranges unavailable"
+        )
     if cache_key is not None:
         store_indexed_global_object_cache_8616(
             cache_key,
@@ -214,15 +233,10 @@ def prepare_direct_indexed_alias_program_context_8616(
     binary_path: Path | None = None,
 ) -> IndexedAliasProgramContextResult8616:
     """Publish a full catalog only when the direct function needs one."""
-    try:
-        function_addr = cast(_FunctionBoundary8616, function).addr
-    except AttributeError as exc:
-        raise TypeError("direct function has no canonical address") from exc
-    if not isinstance(function_addr, int) or function_addr < 0:
-        raise TypeError("direct function has an invalid canonical address")
+    selection = _alias_program_parallel.indexed_alias_function_selection_8616(function)
     local_program = build_indexed_alias_program_evidence_8616(
         target_project,
-        (IndexedAliasFunctionSelection8616(function_addr, function),),
+        (selection,),
     )
     requirement = collect_global_object_program_requirement_8616(
         source_project,
@@ -237,6 +251,11 @@ def prepare_direct_indexed_alias_program_context_8616(
             None,
             requirement,
         )
+    program_callsites_required = bool(requirement.callsite_addrs)
+    callsite_cache_key = program_callsite_cache_key_8616(
+        source_project,
+        binary_path,
+    )
     try:
         transported_layout = target_surface._inertia_project_global_object_layout_evidence_8616
     except AttributeError:
@@ -256,11 +275,14 @@ def prepare_direct_indexed_alias_program_context_8616(
             raise ValueError("transported indexed-global Widening artifact is open")
         if not transported_ranges.closed or transported_ranges.layouts != transported_layout:
             raise ValueError("transported indexed-global Widening bundle is incoherent")
-        return IndexedAliasProgramContextResult8616(
-            IndexedAliasProgramContextStatus8616.REUSED_WIDENING,
-            None,
-            requirement,
-        )
+        if not program_callsites_required or attach_available_program_callsite_evidence_8616(
+            target_project, callsite_cache_key
+        ):
+            return IndexedAliasProgramContextResult8616(
+                IndexedAliasProgramContextStatus8616.REUSED_WIDENING,
+                None,
+                requirement,
+            )
     cache_key = indexed_global_object_cache_key_8616(source_project, binary_path)
     if cache_key is None:
         return _discover_direct_indexed_alias_program_context_8616(
@@ -270,6 +292,8 @@ def prepare_direct_indexed_alias_program_context_8616(
             timeout=timeout,
             window=window,
             cache_key=None,
+            callsite_cache_key=callsite_cache_key,
+            program_callsites_ready=not program_callsites_required,
         )
     lock_timeout = max(600.0, float(max(1, timeout)) * 2.0)
     with _cache_key_lock(
@@ -277,8 +301,15 @@ def prepare_direct_indexed_alias_program_context_8616(
         cache_key,
         timeout_seconds=lock_timeout,
     ):
+        program_callsites_ready = (
+            not program_callsites_required
+            or attach_available_program_callsite_evidence_8616(
+                target_project,
+                callsite_cache_key,
+            )
+        )
         persisted = load_indexed_global_object_cache_8616(cache_key)
-        if persisted is not None:
+        if persisted is not None and program_callsites_ready:
             attach_project_global_object_layout_evidence_8616(
                 target_project,
                 persisted.layouts,
@@ -299,6 +330,8 @@ def prepare_direct_indexed_alias_program_context_8616(
             timeout=timeout,
             window=window,
             cache_key=cache_key,
+            callsite_cache_key=callsite_cache_key,
+            program_callsites_ready=program_callsites_ready,
         )
 
 

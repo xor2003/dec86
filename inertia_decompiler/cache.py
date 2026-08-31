@@ -21,6 +21,7 @@ from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_861
 from inertia_decompiler.cache_source_manifest import (
     FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
     INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
+    PROGRAM_CALLSITE_CACHE_SOURCE_FILES,
     RecoveryCacheSourceScope8616,
 )
 
@@ -357,6 +358,8 @@ def _recovery_cache_key(
         source_files = FUNCTION_DISCOVERY_CACHE_SOURCE_FILES
     elif source_scope is RecoveryCacheSourceScope8616.INDEXED_ALIAS_PROGRAM:
         source_files = INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES
+    elif source_scope is RecoveryCacheSourceScope8616.PROGRAM_CALLSITE:
+        source_files = PROGRAM_CALLSITE_CACHE_SOURCE_FILES
     else:
         source_files = RECOVERY_CACHE_SOURCE_FILES
     payload = {

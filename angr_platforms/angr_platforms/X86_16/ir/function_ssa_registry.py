@@ -18,6 +18,7 @@ from enum import StrEnum
 from typing import Protocol, cast
 
 from ..frontend_function_boundary import exact_function_range_boundary_8616
+from .function_ir_registry import FunctionIRArtifactVerdict8616, publish_function_ir_artifact_8616
 from .ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from .vex_import import build_x86_16_ir_function_artifact
 
@@ -305,7 +306,6 @@ def function_ssa_artifact_for_boundary_8616(
         return registered
     try:
         ir_artifact = build_x86_16_ir_function_artifact(project, function)
-        function_ssa = build_x86_16_function_ssa(ir_artifact)
     except (AttributeError, KeyError, TypeError, ValueError):
         return FunctionSSAArtifactResolution8616(
             function_addr,
@@ -320,6 +320,25 @@ def function_ssa_artifact_for_boundary_8616(
             FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
             None,
             FunctionSSAArtifactFailure8616.IR_BUILD_REFUSED,
+            None,
+        )
+    try:
+        function_ssa = build_x86_16_function_ssa(ir_artifact)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return FunctionSSAArtifactResolution8616(
+            function_addr,
+            FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+            None,
+            FunctionSSAArtifactFailure8616.IR_BUILD_FAILED,
+            None,
+        )
+    ir_publication = publish_function_ir_artifact_8616(project, ir_artifact)
+    if ir_publication.verdict is not FunctionIRArtifactVerdict8616.PROVEN:
+        return FunctionSSAArtifactResolution8616(
+            function_addr,
+            FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+            None,
+            FunctionSSAArtifactFailure8616.ARTIFACT_CONFLICT,
             None,
         )
     return publish_function_ssa_artifact_8616(

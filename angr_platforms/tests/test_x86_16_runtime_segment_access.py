@@ -22,6 +22,7 @@ from angr_platforms.X86_16.ir.segment_contract import (
 )
 from angr_platforms.X86_16.lowering.runtime_segment_access import (
     build_runtime_segment_access_context_8616,
+    is_runtime_segment_load_helper_8616,
     runtime_segment_access_offset_expr_8616,
 )
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
@@ -89,6 +90,24 @@ def test_runtime_segment_access_returns_proven_ds_offset_expression() -> None:
         expected_space=MemSpace.DS,
         width=1,
     ) is offset
+
+
+def test_runtime_segment_load_helper_requires_owned_identity() -> None:
+    codegen = _Codegen()
+    offset = CConstant(0xB4C, SimTypeShort(False), codegen=codegen)
+    tagged = CFunctionCall(
+        0x1234,
+        None,
+        [],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+    )
+
+    assert is_runtime_segment_load_helper_8616(_segmented_access(codegen, "ds", offset))
+    assert is_runtime_segment_load_helper_8616(tagged)
+    assert not is_runtime_segment_load_helper_8616(
+        CFunctionCall("rand", None, [], codegen=codegen)
+    )
 
 
 def test_runtime_segment_access_refuses_wrong_space_or_width() -> None:

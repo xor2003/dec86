@@ -18,6 +18,8 @@ from typing import Protocol, cast
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
+    CFunctionCall,
     CIndexedVariable,
     CReturn,
     CTypeCast,
@@ -38,6 +40,7 @@ from ..semantics.terminal_return_storage import (
     terminal_return_storage_8616,
 )
 from .return_type_evidence import proven_function_result_observation_8616
+from .runtime_segment_access import is_runtime_segment_load_helper_8616
 from .unobserved_returns import return_value_needs_neutralization_8616
 
 
@@ -47,13 +50,18 @@ def _return_expr_is_side_effect_free_8616(expr: object) -> bool:
     pure_node_types = (
         CBinaryOp,
         CConstant,
+        CDirtyExpression,
         CIndexedVariable,
         CTypeCast,
         CUnaryOp,
         CVariable,
         CVariableField,
     )
-    return bool(nodes) and all(isinstance(node, pure_node_types) for node in nodes)
+    return bool(nodes) and all(
+        isinstance(node, pure_node_types)
+        or (isinstance(node, CFunctionCall) and is_runtime_segment_load_helper_8616(node))
+        for node in nodes
+    )
 
 __all__ = [
     "TerminalReturnValueEvidence8616",
@@ -270,10 +278,20 @@ def materialize_unused_caller_void_codegen_type_8616(
             False,
             UnusedVoidReturnTypeStats8616(failure_count=1),
         )
+    terminal_value_empty = evidence is not None and evidence.proves_no_terminal_value
+    terminal_storage = (
+        None
+        if function is None or terminal_value_empty
+        else terminal_return_storage_8616(project, function)
+    )
+    caller_observation = proven_function_result_observation_8616(project, cfunc.addr)
     if (
         function is None
         or _has_explicit_prototype_8616(function)
-        or proven_function_result_observation_8616(project, cfunc.addr) is not CallerReturnUseVerdict8616.UNUSED
+        or (
+            caller_observation is not CallerReturnUseVerdict8616.UNUSED
+            and terminal_storage is not TerminalReturnStorage8616.NONE
+        )
         or not isinstance(cfunc.functy, SimTypeFunction)
     ):
         return UnusedVoidReturnTypeResult8616(False, UnusedVoidReturnTypeStats8616())
@@ -293,10 +311,6 @@ def materialize_unused_caller_void_codegen_type_8616(
     unresolved_returns = bool(nonempty_returns) and all(
         return_value_needs_neutralization_8616(node.retval, prototype.returnty)
         for node in nonempty_returns
-    )
-    terminal_value_empty = evidence is not None and evidence.proves_no_terminal_value
-    terminal_storage = (
-        None if terminal_value_empty else terminal_return_storage_8616(project, function)
     )
     terminal_register_empty = terminal_storage in {
         TerminalReturnStorage8616.NONE,

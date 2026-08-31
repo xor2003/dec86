@@ -199,6 +199,55 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   and function plus whole-tail validation pass. The remaining 54 summary calls are
   owned by program-inventory construction, callee census, and range facts and
   require scope analysis before consolidation.
+- Complete direct-caller censuses and their caller-indexed typed summary
+  projection now use a separate content-addressed program-callsite artifact.
+  The cache has its own narrow discovery/Alias/callsite source scope and refuses
+  incoherent projections. The artifact also persists canonical caller-range
+  coverage and refuses creation or attachment when that coverage is absent or
+  changed, so a partial caller inventory cannot masquerade as complete. On
+  sidecar-free SORTD `sub_109e8`, warm callee
+  argument evidence fell from 11.632 to 0.013 seconds, callee census collection
+  from 11.621 to 0.010 seconds, and target-specific range/boundary rescans
+  disappeared from the profile. Generated C remains byte-identical at
+  `895a5c723e70aad6f98d4cd42249816fc8eecebc50f0d3c4875745b5eededaf9`;
+  function and whole-tail validation pass at 328,780 KiB profiled RSS. The
+  first run paid 52 seconds before decompilation to build the reusable artifact;
+  the warm whole-process profile measured 78.14 seconds wall, including 14.06
+  seconds of Python imports and 51.81 seconds waiting for the forked job, so no
+  end-to-end speedup is claimed from the load-variable comparison.
+- Exact raw function IR now crosses the existing program-owned SSA registry
+  boundary instead of being rebuilt when Structuring attaches VEX evidence.
+  The registry accepts only complete refusal-free artifacts, rejects divergent
+  artifacts at the same address, and keeps semantic-stage SSA from being
+  downgraded by a later raw consumer. On sidecar-free SORTD `sub_109e8`,
+  `apply_x86_16_vex_ir_artifact` fell from 1.694 to 0.002 seconds and the
+  Structuring validation prime from 17.719 to 3.721 seconds. Two current runs
+  measured 43.55 and 46.49 seconds wall at 334,724 and 335,016 KiB RSS;
+  focused decompilation measured 11.70 seconds on the warm profile. Generated
+  C remains byte-identical at
+  `895a5c723e70aad6f98d4cd42249816fc8eecebc50f0d3c4875745b5eededaf9`;
+  function and whole-tail validation pass. The eliminated relift is the
+  accepted speedup; older whole-process wall comparisons remain load-variable.
+- Cold indexed-Alias construction has a typed bounded-fork experiment with an
+  exact serial fallback and a three-worker, roughly 1.13 GiB aggregate cap.
+  Two stable serial SORTD `sub_109e8` runs measured 27.39 and 27.31 seconds;
+  idle three-worker runs measured 25.51 and 30.12 seconds while increasing CPU
+  from 26.63 to 32.52-36.38 seconds. C remained byte-identical at
+  `85b457b8f7e3a9ebf8c91f9fd66aef4c7402b8cc2bbe84ec86645eec49950754`
+  and both validation gates passed, but the speedup did not repeat. Serial
+  therefore remains the default; `INERTIA_INDEXED_ALIAS_WORKERS` is explicit
+  opt-in evidence gathering for larger function censuses.
+- Complete project callsite collection now builds one immutable typed target
+  inventory per recovered function and supplies it to every summary. This
+  removes the summary's per-callsite fallback target enumeration while keeping
+  standalone summary fallback intact. A two-callsite regression proves one
+  function enumeration and one shared complete inventory. A load-contaminated
+  diagnostic profile reduced `collect_neighbor_call_targets` from 222 calls to
+  75 even though the outer run timed out under another seven-worker suite, so
+  no wall-time claim is made from that profile. A separate completed run emitted
+  byte-identical C at
+  `85b457b8f7e3a9ebf8c91f9fd66aef4c7402b8cc2bbe84ec86645eec49950754`
+  with function and whole-tail validation passing.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -210,12 +259,13 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P1 | Structuring validation priming costs 14.25 seconds in the refreshed profiled run | Large functions remain slow even with transported caller evidence | Runtime segment lowering is down to 3.20 seconds, while condition, argument, and segment/global consumers still replay sequentially |
-| P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Alias/IR/Widening edits legitimately rebuild a roughly 30-second program artifact |
+| P1 | Structuring validation priming costs 3.72 seconds in the accepted warm profile | Large functions still pay repeated semantic consumer work | Exact IR relifting is eliminated; direct-stack, condition, and segment/global consumers still replay sequentially |
+| P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Bounded per-function fork work did not repeatably beat serial construction, so the remaining gain must reduce duplicated IR/Alias work rather than add default workers |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
+| P1 | Cold Python import and dataclass construction costs about 14.06 seconds | Every uncached CLI invocation starts slowly before analysis | Short edit/profile loops pay a fixed cost unrelated to target complexity |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |
 
 ## Acceptance Invariants
@@ -235,9 +285,9 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 ### 1. Publish Consumer-Specific Mutation Generations
 
-**Status:** in progress; exact direct-stack projection and immutable program
-callsite-summary reuse are accepted, but callers still lack a complete
-authoritative AST mutation generation scope
+**Status:** in progress; exact direct-stack projection, immutable program
+callsite-summary reuse, and exact raw-IR/IR-stage-SSA reuse are accepted, but
+callers still lack a complete authoritative AST mutation generation scope
 
 **Reason:** Exact full-AST fingerprints can prove stability but cost seconds on
 productive Structuring rounds. Call order, object identity, and pass booleans
@@ -454,8 +504,8 @@ regresses; or the ratchet is tighter than observed machine variance.
 
 ## Progress Rule
 
-Current estimated completion is 55%. Finishing the remaining acceptance work
-is estimated at 6-10 focused engineering days: 3-5 days for Steps 1-3, 1-2
+Current estimated completion is 61%. Finishing the remaining acceptance work
+is estimated at 5-9 focused engineering days: 2-4 days for Steps 1-3, 1-2
 days for Step 4, and about one day each for Steps 5, 6, and 7. Re-estimate after
 each top-level DoD closes; shared-worktree changes can invalidate timing but do
 not change the acceptance criteria.

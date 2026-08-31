@@ -4929,6 +4929,12 @@ def _process_tail_validation_node_8616(
         if isinstance(node, CAssignment):
             if id(node) in prunable_segment_write_ids:
                 return
+            tags = node.tags
+            if isinstance(tags, Mapping) and tags.get("inertia_software_interrupt_status_output_8616") is True:
+                # Lowering exposes FLAGS already produced by the owning INT.
+                # Keep this assignment visible to def-use validation, but do
+                # not count its C projection as a new machine-code effect.
+                return
             # Dynamic angr/codegen compatibility boundary.
             for call_node in _iter_observable_call_nodes_for_validation_8616(node.rhs):
                 _record_helper_call(call_node)
