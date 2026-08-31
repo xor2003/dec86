@@ -17,7 +17,6 @@ of treating an empty process-global cache entry as authoritative evidence.
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Mapping
 from typing import Any, Protocol, cast
 
@@ -32,6 +31,7 @@ from .condition_cache_relift_contracts import (
     ConditionReliftBlock8616,
 )
 from .condition_ir import ConditionFailure, ConditionIR, ConditionSource
+from .condition_lift_capture import isolated_condition_lift_session_8616
 
 __all__ = (
     "ConditionCacheReliftArtifact8616",
@@ -79,7 +79,6 @@ class _FactoryProjectBoundary8616(Protocol):
     factory: _FactoryBoundary8616
 
 
-_CONDITION_RELIFT_LOCK_8616 = threading.RLock()
 _COMPLETE_RELIFT_CACHE_8616 = ConditionReliftArtifactCache8616[ConditionCacheReliftArtifact8616](max_entries=32)
 
 
@@ -233,91 +232,58 @@ def relift_function_condition_cache_8616(
     )
     lifted_blocks: set[int] = set()
 
-    # The custom lifter's current evidence recorder is class-scoped.  Isolate
-    # all of its owned state under one process-local lock and restore the exact
-    # prior objects after collecting the typed artifact.
-    from ..lift_86_16 import Instruction_ANY
-
-    with _CONDITION_RELIFT_LOCK_8616:
-        if not failures:
-            cached = _COMPLETE_RELIFT_CACHE_8616.lookup(arch, cache_request)
-            if cached is not None:
-                return cached
-        original_condition_cache = Instruction_ANY._inertia_module_condition_cache
-        original_pending_sources = Instruction_ANY._inertia_pending_condition_sources_by_addr
-        original_affine_state = Instruction_ANY._inertia_condition_reg_affine_state_8616
-        original_affine_snapshots = Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616
-        original_index_state = Instruction_ANY._inertia_condition_index_reg_state_8616
-        original_value_state = Instruction_ANY._inertia_condition_reg_value_state_8616
-        Instruction_ANY._inertia_module_condition_cache = {}
-        Instruction_ANY._inertia_pending_condition_sources_by_addr = {}
-        Instruction_ANY._inertia_condition_reg_affine_state_8616 = {}
-        Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616 = {}
-        Instruction_ANY._inertia_condition_index_reg_state_8616 = {}
-        Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
-        try:
-            for block, data in loaded_blocks:
-                try:
-                    _direct_lift_8616(data, block.address, arch)
-                except Exception as error:
-                    failures.append(
-                        ConditionCacheReliftFailure8616(
-                            block_addr=block.address,
-                            reason=ConditionCacheReliftFailureReason8616.VEX_LIFT_FAILED,
-                            detail=_failure_detail_8616(error),
-                        )
-                    )
-                    continue
-                lifted_blocks.add(block.address)
-
-            conditions_by_block = tuple(
-                (
-                    address,
-                    tuple(
-                        condition
-                        for condition in Instruction_ANY._inertia_module_condition_cache.get(address, ())
-                        if isinstance(condition, ConditionIR)
-                    ),
-                )
-                for address in sorted(block_addresses)
-            )
-            materialized_blocks = {
-                address for address, conditions in conditions_by_block if address in expected_condition_blocks and conditions
-            }
-            failed_block_addresses = {failure.block_addr for failure in failures}
-            for address in sorted(expected_condition_blocks - materialized_blocks - failed_block_addresses):
-                failures.append(  # noqa: PERF401
+    if not failures:
+        cached = _COMPLETE_RELIFT_CACHE_8616.lookup(arch, cache_request)
+        if cached is not None:
+            return cached
+    with isolated_condition_lift_session_8616() as capture:
+        for block, data in loaded_blocks:
+            try:
+                _direct_lift_8616(data, block.address, arch)
+            except Exception as error:
+                failures.append(
                     ConditionCacheReliftFailure8616(
-                        block_addr=address,
-                        reason=ConditionCacheReliftFailureReason8616.EXPECTED_CONDITION_MISSING,
+                        block_addr=block.address,
+                        reason=ConditionCacheReliftFailureReason8616.VEX_LIFT_FAILED,
+                        detail=_failure_detail_8616(error),
                     )
                 )
-            pending_sources = tuple(
-                (address, source)
-                for address, source in sorted(Instruction_ANY._inertia_pending_condition_sources_by_addr.items())
-                if isinstance(address, int) and isinstance(source, ConditionSource)
-            )
-        finally:
-            Instruction_ANY._inertia_module_condition_cache = original_condition_cache
-            Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending_sources
-            Instruction_ANY._inertia_condition_reg_affine_state_8616 = original_affine_state
-            Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616 = original_affine_snapshots
-            Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
-            Instruction_ANY._inertia_condition_reg_value_state_8616 = original_value_state
+                continue
+            lifted_blocks.add(block.address)
+            capture.record_successful_block(block.address)
 
-        stats = ConditionCacheReliftStats8616(
-            raw_fact_count=len(expected_condition_blocks),
-            normalized_fact_count=len(normalized_expected),
-            classified_fact_count=len(expected_condition_blocks & lifted_blocks),
-            materialized_count=len(materialized_blocks),
-            failure_count=len(failures),
+        conditions_by_block = capture.conditions_by_block(block_addresses)
+        materialized_blocks = {
+            address
+            for address, conditions in conditions_by_block
+            if address in expected_condition_blocks and conditions
+        }
+        failed_block_addresses = {failure.block_addr for failure in failures}
+        failures.extend(
+            ConditionCacheReliftFailure8616(
+                block_addr=address,
+                reason=ConditionCacheReliftFailureReason8616.EXPECTED_CONDITION_MISSING,
+            )
+            for address in sorted(
+                expected_condition_blocks
+                - materialized_blocks
+                - failed_block_addresses
+            )
         )
-        artifact = ConditionCacheReliftArtifact8616(
-            conditions_by_block=conditions_by_block,
-            pending_sources_by_addr=pending_sources,
-            failures=tuple(failures),
-            stats=stats,
-        )
-        if artifact.stats.complete:
-            _COMPLETE_RELIFT_CACHE_8616.publish(arch, cache_request, artifact)
-        return artifact
+        pending_sources = capture.pending_source_items()
+    stats = ConditionCacheReliftStats8616(
+        raw_fact_count=len(expected_condition_blocks),
+        normalized_fact_count=len(normalized_expected),
+        classified_fact_count=len(expected_condition_blocks & lifted_blocks),
+        materialized_count=len(materialized_blocks),
+        failure_count=len(failures),
+    )
+    artifact = ConditionCacheReliftArtifact8616(
+        conditions_by_block=conditions_by_block,
+        pending_sources_by_addr=pending_sources,
+        failures=tuple(failures),
+        stats=stats,
+    )
+    if artifact.stats.complete:
+        _COMPLETE_RELIFT_CACHE_8616.publish(arch, cache_request, artifact)
+    return artifact

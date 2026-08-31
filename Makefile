@@ -235,6 +235,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_trace.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_condition_artifact.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_lift_capture.py \
 	angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py \
 	angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift_cache.py \
 	angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift_contracts.py \
@@ -427,6 +428,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_artifact.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_condition_artifact.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_lift_capture.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_contracts.py \
@@ -487,6 +489,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/function_summary.py \
 	angr_platforms/angr_platforms/X86_16/function_state_summary.py \
 	angr_platforms/angr_platforms/X86_16/callsite_target_inventory.py \
+	angr_platforms/angr_platforms/X86_16/semantics/callsite_summary_request.py \
 	angr_platforms/angr_platforms/X86_16/caller_return_use_contracts.py \
 	angr_platforms/angr_platforms/X86_16/callsite_summary.py \
 	angr_platforms/angr_platforms/X86_16/callsite_register_provenance.py \
@@ -1335,6 +1338,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_artifact.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_condition_artifact.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_lift_capture.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_contracts.py \
@@ -1395,6 +1399,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/function_summary.py \
 	angr_platforms/angr_platforms/X86_16/function_state_summary.py \
 	angr_platforms/angr_platforms/X86_16/callsite_target_inventory.py \
+	angr_platforms/angr_platforms/X86_16/semantics/callsite_summary_request.py \
 	angr_platforms/angr_platforms/X86_16/caller_return_use_contracts.py \
 	angr_platforms/angr_platforms/X86_16/callsite_summary.py \
 	angr_platforms/angr_platforms/X86_16/callsite_register_provenance.py \
@@ -2203,6 +2208,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_discovery_cache_contract.py \
 	angr_platforms/tests/test_x86_16_segment_state.py \
 	angr_platforms/tests/test_x86_16_vex_import.py \
+	angr_platforms/tests/test_x86_16_vex_import_hot_path.py \
 	angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py \
 	angr_platforms/tests/test_x86_16_sortd_indexed_loop_topology.py \
 	angr_platforms/tests/test_x86_16_ssa_cfg.py \
@@ -2271,6 +2277,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_signed_global_declarations.py \
 		angr_platforms/tests/test_x86_16_condition_lowering.py \
 		angr_platforms/tests/test_x86_16_condition_cache_relift.py \
+		angr_platforms/tests/test_x86_16_condition_lift_capture.py \
 		angr_platforms/tests/test_x86_16_function_condition_artifact.py \
 		angr_platforms/tests/test_x86_16_return_liveness_replay.py \
 		angr_platforms/tests/test_x86_16_condition_transfer.py \
@@ -2583,6 +2590,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_discovery_cache_contract.py \
 	angr_platforms/tests/test_x86_16_segment_state.py \
 	angr_platforms/tests/test_x86_16_vex_import.py \
+	angr_platforms/tests/test_x86_16_vex_import_hot_path.py \
 	angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py \
 	angr_platforms/tests/test_x86_16_sortd_indexed_loop_topology.py \
 	angr_platforms/tests/test_x86_16_ssa_cfg.py \
@@ -2643,6 +2651,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_protected_call_arguments.py \
 	angr_platforms/tests/test_x86_16_condition_lowering.py \
 	angr_platforms/tests/test_x86_16_condition_cache_relift.py \
+	angr_platforms/tests/test_x86_16_condition_lift_capture.py \
 	angr_platforms/tests/test_x86_16_function_condition_artifact.py \
 	angr_platforms/tests/test_x86_16_return_liveness_replay.py \
 	angr_platforms/tests/test_x86_16_condition_transfer.py \

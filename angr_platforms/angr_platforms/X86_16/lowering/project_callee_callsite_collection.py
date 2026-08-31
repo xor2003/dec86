@@ -20,6 +20,10 @@ from ..callsite_summary_program import (
     program_callsite_summary_evidence_from_facts_8616,
 )
 from ..callsite_target_inventory import CallsiteTargetInventory8616
+from ..semantics.callsite_summary_request import (
+    CallsiteSummaryRequestCache8616,
+    CallsiteSummaryRequestStats8616,
+)
 from .callee_callsite_contracts import (
     CalleeCallsiteCensus8616,
     CalleeCallsiteFact8616,
@@ -57,6 +61,7 @@ class ProjectCalleeCallsiteCollection8616:
     classified_fact_count: int
     materialized_count: int
     failure_count: int
+    summary_request_stats: CallsiteSummaryRequestStats8616
 
     def validate(self) -> None:
         """Reject noncanonical targets or open fact accounting."""
@@ -78,6 +83,7 @@ class ProjectCalleeCallsiteCollection8616:
             and self.classified_fact_count == self.materialized_count
         ):
             raise ValueError("project callee callsite accounting does not close")
+        self.summary_request_stats.validate()
 
 
 def _function_addr_8616(function: object) -> int | None:
@@ -154,6 +160,7 @@ def collect_complete_project_callee_callsites_8616(
 ) -> ProjectCalleeCallsiteCollection8616:
     """Scan one complete function catalog and publish every callee census."""
     facts_by_target: dict[int, dict[int, CalleeCallsiteFact8616]] = {}
+    request_cache = CallsiteSummaryRequestCache8616()
     for function in functions:
         caller_addr = _function_addr_8616(function)
         targets = tuple(collect_neighbor_call_targets(function))
@@ -163,6 +170,7 @@ def collect_complete_project_callee_callsites_8616(
                 function,
                 target.callsite_addr,
                 target_inventory=target_inventory,
+                request_cache=request_cache,
             )
             if summary is not None and summary.stack_probe_helper:
                 summary = None
@@ -218,6 +226,7 @@ def collect_complete_project_callee_callsites_8616(
         classified_fact_count=materialized,
         materialized_count=materialized,
         failure_count=failures,
+        summary_request_stats=request_cache.stats(),
     )
     result.validate()
     return result

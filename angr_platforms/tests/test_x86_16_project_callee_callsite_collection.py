@@ -27,6 +27,13 @@ from angr_platforms.X86_16.lowering.callee_callsite_contracts import (
     attach_callee_callsite_censuses_8616,
     callee_callsite_censuses_by_addr_8616,
 )
+from angr_platforms.X86_16.semantics.callsite_summary_request import (
+    CallsiteCleanupProjectRole8616,
+    CallsiteSummaryRequestCache8616,
+)
+from angr_platforms.X86_16.semantics.terminal_stack_cleanup import (
+    TerminalStackCleanupEvidence8616,
+)
 
 
 def _summary(callsite_addr: int, target_addr: int) -> CallsiteSummary8616:
@@ -117,9 +124,11 @@ def test_complete_project_collection_scans_each_function_once_and_publishes_cach
         callsite_addr: int,
         *,
         target_inventory: CallsiteTargetInventory8616,
+        request_cache: CallsiteSummaryRequestCache8616,
     ) -> CallsiteSummary8616:
         calls["summaries"] += 1
         assert target_inventory.seeds == targets
+        assert isinstance(request_cache, CallsiteSummaryRequestCache8616)
         return _summary(callsite_addr, 0x2200)
 
     def range_facts(
@@ -146,6 +155,7 @@ def test_complete_project_collection_scans_each_function_once_and_publishes_cach
     assert result.target_addrs == (0x2200,)
     assert result.raw_fact_count == result.materialized_count == 2
     assert result.failure_count == 0
+    assert result.summary_request_stats.raw_fact_count == 0
     assert calls == {"neighbors": 1, "summaries": 2, "ranges": 1}
     program_summaries = program_callsite_summary_evidence_8616(project)
     assert program_summaries is not None
@@ -161,3 +171,38 @@ def test_complete_project_collection_scans_each_function_once_and_publishes_cach
         project,
         0x2200,
     ) == callee_callsite_censuses_by_addr_8616(project)[0x2200]
+
+
+def test_summary_request_reuses_typed_refusal_with_closed_accounting() -> None:
+    cache = CallsiteSummaryRequestCache8616()
+    refusal = TerminalStackCleanupEvidence8616(
+        frozenset(),
+        1,
+        0,
+        0,
+        0,
+        1,
+    )
+    calls = 0
+
+    def collect() -> TerminalStackCleanupEvidence8616:
+        nonlocal calls
+        calls += 1
+        return refusal
+
+    first = cache.terminal_cleanup(
+        CallsiteCleanupProjectRole8616.CURRENT,
+        0x2200,
+        collect,
+    )
+    second = cache.terminal_cleanup(
+        CallsiteCleanupProjectRole8616.CURRENT,
+        0x2200,
+        collect,
+    )
+
+    assert first is second is refusal
+    assert calls == 1
+    stats = cache.stats()
+    assert stats.raw_fact_count == stats.materialized_count == 2
+    assert stats.build_count == stats.reuse_count == 1

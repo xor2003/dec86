@@ -223,12 +223,33 @@ def build_ir_function_condition_artifact_8616(
     function_addr: int,
     raw_blocks: tuple[ConditionReliftBlock8616, ...],
     blocks: tuple[IRBlock, ...],
+    captured_source: ConditionCacheReliftArtifact8616 | None = None,
 ) -> IRFunctionConditionArtifact8616 | None:
-    """Build isolated typed conditions for normalized current-function bytes."""
+    """Build isolated typed conditions, reusing only a complete lift capture."""
     normalized = _normalized_relift_blocks_8616(raw_blocks, blocks)
     expected = tuple(
         sorted(block.addr for block in blocks if len(block.successor_addrs) > 1)
     )
+    block_addresses = tuple(block.address for block in normalized)
+    captured_addresses = (
+        tuple(address for address, _conditions in captured_source.conditions_by_block)
+        if captured_source is not None
+        else ()
+    )
+    if (
+        captured_source is not None
+        and captured_source.failures == ()
+        and captured_source.stats.complete
+        and captured_addresses == block_addresses
+    ):
+        captured_artifact = IRFunctionConditionArtifact8616(
+            function_addr,
+            normalized,
+            expected,
+            captured_source,
+        )
+        if captured_artifact.complete:
+            return captured_artifact
     source = relift_function_condition_cache_8616(
         project,
         normalized,

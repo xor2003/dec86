@@ -59,6 +59,10 @@ from .pipeline.errors import PipelineHardError
 from .semantics.call_register_effects import (
     MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616,
 )
+from .semantics.callsite_summary_request import (
+    CallsiteCleanupProjectRole8616,
+    CallsiteSummaryRequestCache8616,
+)
 from .semantics.register_value_preservation import (
     ByteReturnExtensionKind8616,
     decoded_ax_read_view_8616,
@@ -67,7 +71,10 @@ from .semantics.register_value_preservation import (
     decoded_instruction_self_clears_register_8616,
     register_value_family_8616,
 )
-from .semantics.terminal_stack_cleanup import terminal_stack_cleanup_at_address_8616
+from .semantics.terminal_stack_cleanup import (
+    TerminalStackCleanupEvidence8616,
+    terminal_stack_cleanup_at_address_8616,
+)
 
 __all__ = [
     "CallerReturnUseEvidence8616",
@@ -1078,7 +1085,12 @@ def _direct_call_target_for_insn_8616(function: object, insn: object) -> int | N
         return None
 
 
-def _callee_stack_cleanup_bytes_8616(function: object, insn: object) -> int | None:
+def _callee_stack_cleanup_bytes_8616(
+    function: object,
+    insn: object,
+    *,
+    request_cache: CallsiteSummaryRequestCache8616 | None = None,
+) -> int | None:
     project = _dynamic_callsite_getattr_8616(function, "project", None)
     target = _direct_call_target_for_insn_8616(function, insn)
     if project is None or not isinstance(target, int):
@@ -1093,11 +1105,36 @@ def _callee_stack_cleanup_bytes_8616(function: object, insn: object) -> int | No
     for addr in candidate_addrs:
         if isinstance(addr, int) and addr >= 0 and addr not in deduped_addrs:
             deduped_addrs.append(addr)
-    for candidate_project in (project, _dynamic_callsite_getattr_8616(project, "_inertia_original_project", None)):
+    candidate_projects = (
+        (CallsiteCleanupProjectRole8616.CURRENT, project),
+        (
+            CallsiteCleanupProjectRole8616.ORIGINAL,
+            _dynamic_callsite_getattr_8616(project, "_inertia_original_project", None),
+        ),
+    )
+    for project_role, candidate_project in candidate_projects:
         if candidate_project is None:
             continue
         for candidate_addr in deduped_addrs:
-            evidence = terminal_stack_cleanup_at_address_8616(candidate_project, candidate_addr)
+            def collect_candidate_cleanup(
+                cleanup_project: object = candidate_project,
+                cleanup_address: int = candidate_addr,
+            ) -> TerminalStackCleanupEvidence8616:
+                """Collect one exact project-role/address cleanup result."""
+                return terminal_stack_cleanup_at_address_8616(
+                    cleanup_project,
+                    cleanup_address,
+                )
+
+            evidence = (
+                collect_candidate_cleanup()
+                if request_cache is None
+                else request_cache.terminal_cleanup(
+                    project_role,
+                    candidate_addr,
+                    collect_candidate_cleanup,
+                )
+            )
             if evidence.complete:
                 cleanup = evidence.consistent_cleanup
                 return cleanup if isinstance(cleanup, int) else None
@@ -3327,10 +3364,11 @@ def _return_shape_after_call(
 
 
 def summarize_x86_16_callsite(
-    function: SimpleNamespace,
+    function: object,
     callsite_addr: int,
     *,
     target_inventory: CallsiteTargetInventory8616 | None = None,
+    request_cache: CallsiteSummaryRequestCache8616 | None = None,
 ) -> CallsiteSummary8616 | None:
     """Summarize argument, cleanup, and return-use facts for one callsite."""
 
@@ -3440,7 +3478,11 @@ def summarize_x86_16_callsite(
         )
         cleanup = cleanup_evidence.amount if cleanup_evidence is not None else None
         if cleanup is None:
-            cleanup = _callee_stack_cleanup_bytes_8616(function, insns[call_idx])
+            cleanup = _callee_stack_cleanup_bytes_8616(
+                function,
+                insns[call_idx],
+                request_cache=request_cache,
+            )
         target_source = _call_target_source_8616(insns[call_idx])
         helper_abi_widths = known_helper_abi_widths_8616(target_name)
         argument_byte_limit = cleanup

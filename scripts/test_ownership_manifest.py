@@ -958,6 +958,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
         tests=(
             "angr_platforms/tests/test_x86_16_vex_import.py",
+            "angr_platforms/tests/test_x86_16_vex_import_hot_path.py",
             "angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py",
             "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
         ),
@@ -1026,10 +1027,12 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",
             "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift_cache.py",
             "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/condition_lift_capture.py",
             "angr_platforms/angr_platforms/X86_16/ir/function_condition_artifact.py",
         ),
         tests=(
             "angr_platforms/tests/test_x86_16_condition_cache_relift.py",
+            "angr_platforms/tests/test_x86_16_condition_lift_capture.py",
             "angr_platforms/tests/test_x86_16_function_condition_artifact.py",
         ),
     ),
@@ -1123,6 +1126,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/callsite_summary_codec.py",
             "angr_platforms/angr_platforms/X86_16/callsite_summary_program.py",
             "angr_platforms/angr_platforms/X86_16/callsite_summary_program_codec.py",
+            "angr_platforms/angr_platforms/X86_16/semantics/callsite_summary_request.py",
             "angr_platforms/angr_platforms/X86_16/lowering/callee_callsite_census.py",
             "angr_platforms/angr_platforms/X86_16/lowering/callee_callsite_contracts.py",
             "angr_platforms/angr_platforms/X86_16/lowering/callee_callsite_codec.py",

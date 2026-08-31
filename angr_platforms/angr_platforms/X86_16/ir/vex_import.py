@@ -18,6 +18,7 @@ from ..analysis.stack_frame_ir import build_x86_16_ir_frame_access_artifact
 from ..frontend_function_boundary import ExactFunctionRangeBoundary8616
 from .block_ownership import canonicalize_ir_block_ownership_8616
 from .condition_cache_relift import ConditionReliftBlock8616
+from .condition_lift_capture import isolated_condition_lift_session_8616
 from .core import (
     AddressStatus,
     IRAddress,
@@ -471,6 +472,53 @@ def _int_size(
     )
 
 
+def _binary_value_from_operands_8616(
+    op: str,
+    left: IRValue,
+    right: IRValue,
+) -> IRValue:
+    """Build one binary IR value from operands already normalized once."""
+    cond = build_condition_from_binop(op, left, right)
+    if cond is not None:
+        return IRValue(MemSpace.TMP, name=f"cond:{cond.op}", size=1, expr=(op,))
+    if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
+        return IRValue(
+            left.space,
+            name=left.name,
+            offset=left.offset + int(right.const),
+            size=left.size,
+            expr=(op,),
+        )
+    if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
+        return IRValue(
+            left.space,
+            name=left.name,
+            offset=left.offset - int(right.const),
+            size=left.size,
+            expr=(op,),
+        )
+    if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
+        return IRValue(
+            MemSpace.TMP,
+            name=f"addr:{left.name}+{right.name}",
+            size=left.size,
+            expr=(op, left.name, right.name),
+        )
+    if "And" in op:
+        return IRValue(
+            MemSpace.TMP,
+            name=f"mask:{left.name or 'lhs'}",
+            size=max(left.size, right.size),
+            expr=(op,),
+        )
+    return IRValue(
+        MemSpace.TMP,
+        name=f"expr:{op}",
+        size=max(left.size, right.size),
+        expr=(op,),
+    )
+
+
 def _expr_to_value(
     expr: object,
     tmps: _TmpValues,
@@ -505,29 +553,7 @@ def _expr_to_value(
                 return IRValue(MemSpace.TMP, name=f"expr:{op}", expr=(op,))
             left = convert(args[0], tmps, conditions)
             right = convert(args[1], tmps, conditions)
-            cond = build_condition_from_binop(op, left, right)
-            if cond is not None:
-                return IRValue(MemSpace.TMP, name=f"cond:{cond.op}", size=1, expr=(op,))
-            if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
-                return IRValue(
-                    left.space, name=left.name, offset=left.offset + int(right.const), size=left.size, expr=(op,)
-                )
-            if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
-                return IRValue(
-                    left.space, name=left.name, offset=left.offset - int(right.const), size=left.size, expr=(op,)
-                )
-            if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
-                return IRValue(
-                    MemSpace.TMP,
-                    name=f"addr:{left.name}+{right.name}",
-                    size=left.size,
-                    expr=(op, left.name, right.name),
-                )
-            if "And" in op:
-                return IRValue(
-                    MemSpace.TMP, name=f"mask:{left.name or 'lhs'}", size=max(left.size, right.size), expr=(op,)
-                )
-            return IRValue(MemSpace.TMP, name=f"expr:{op}", size=max(left.size, right.size), expr=(op,))
+            return _binary_value_from_operands_8616(op, left, right)
 
         tag = _expr_tag(expr)
         if tag == "Iex_RdTmp":
@@ -593,11 +619,12 @@ def _stmt_to_instr(
             data = _stmt_data(stmt)
             tmp_id = _stmt_tmp(stmt)
             data_tag = _expr_tag(data)
+            data_size = _int_size(data, type_environment=type_environment)
             tmp_exprs[tmp_id] = data
             dst = IRValue(
                 MemSpace.TMP,
                 name=f"t{tmp_id}",
-                size=_int_size(data, type_environment=type_environment),
+                size=data_size,
                 source_tmp=tmp_id,
             )
             if data_tag == "Iex_Load":
@@ -606,14 +633,14 @@ def _stmt_to_instr(
                     tmps,
                     conditions,
                     expr_to_value=convert,
-                    size=_int_size(data, type_environment=type_environment),
+                    size=data_size,
                     segment_hints=segment_hints,
                     tmp_exprs=tmp_exprs,
                 )
                 tmps[tmp_id] = IRValue(
                     MemSpace.TMP,
                     name=f"load_t{tmp_id}",
-                    size=_int_size(data, type_environment=type_environment),
+                    size=data_size,
                     expr=("load",),
                     source_tmp=tmp_id,
                 )
@@ -621,7 +648,7 @@ def _stmt_to_instr(
                     op="LOAD",
                     dst=dst,
                     args=(addr,),
-                    size=_int_size(data, type_environment=type_environment),
+                    size=data_size,
                     addr=instruction_addr,
                 )
             if data_tag == "Iex_Binop":
@@ -642,7 +669,7 @@ def _stmt_to_instr(
                         cond = build_condition_from_binop(op, left, right)
                         if cond is not None:
                             conditions[tmp_id] = cond
-                    value = convert(data, tmps, conditions)
+                    value = _binary_value_from_operands_8616(op, left, right)
                     tmps[tmp_id] = IRValue(
                         value.space,
                         name=value.name,
@@ -805,7 +832,10 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
     transport_reports: list[VexConditionTransportStats8616] = []
     condition_blocks: list[ConditionReliftBlock8616] = []
     project_boundary = cast(_ProjectBoundary, project)
-    with collect_accesses_for_function(function_addr) as captured:
+    with (
+        isolated_condition_lift_session_8616() as condition_capture,
+        collect_accesses_for_function(function_addr) as captured,
+    ):
         for block_addr in _function_block_addrs(function):
             block_addr_int = _external_int(block_addr)
             capture_start = len(captured.accesses)
@@ -817,6 +847,7 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
                 refusals.append(IRRefusal("block_decode_failed", str(ex), block_addr_int))
                 continue
             ir_block, transport_report = _block_to_ir(block)
+            condition_capture.record_successful_block(block_addr_int)
             blocks.append(ir_block)
             condition_blocks.append(
                 ConditionReliftBlock8616(
@@ -857,11 +888,19 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         tuple(blocks),
         owned_captures,
     )
+    expected_condition_blocks = frozenset(
+        block.addr for block in blocks if len(block.successor_addrs) > 1
+    )
+    captured_condition_source = condition_capture.complete_artifact(
+        frozenset(block.addr for block in blocks),
+        expected_condition_blocks,
+    )
     condition_evidence = build_ir_function_condition_artifact_8616(
         project,
         function_addr,
         tuple(condition_blocks),
         tuple(blocks),
+        captured_condition_source,
     )
     transport_stats = aggregate_vex_condition_transport_stats_8616(
         tuple(transport_reports)

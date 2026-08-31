@@ -228,6 +228,32 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   `895a5c723e70aad6f98d4cd42249816fc8eecebc50f0d3c4875745b5eededaf9`;
   function and whole-tail validation pass. The eliminated relift is the
   accepted speedup; older whole-process wall comparisons remain load-variable.
+- Raw IR construction now captures typed branch-condition evidence inside the
+  already-required frontend block lift and accepts it only when the normalized
+  block inventory and every expected conditional owner close. Incomplete or
+  cache-skipped capture still falls back to isolated exact-byte relifting. On a
+  same-tree sidecar-free SORTD `sub_109e8` profile, 21 function IR artifacts
+  went from 376 direct relifts and 4.200 seconds in the relift owner to zero
+  direct relifts; raw IR construction fell from 21.248 to 17.429 seconds (18%).
+  The complete capture test covers all 12 `Sleep` blocks and three conditional
+  owners. Disabled/enabled runs emitted byte-identical C at
+  `f4b9c76a0cce4c322d19ab866a57941d89db9e30c1c69f6a5043fe11df5b310a`;
+  function and whole-tail validation pass. Profiled wall was 64.63 seconds off
+  versus 62.71 on, but whole-process variance remains too large for a broader
+  wall-time claim. The exact-byte artifact cache now owns its synchronization
+  instead of relying on one caller's outer lift lock.
+- VEX binary temporary import now normalizes each operand once and constructs
+  the resulting typed value from those same operands. The previous path
+  converted both operands, classified the condition, then recursively
+  converted the binary root and both operands again. On consecutive
+  `sub_109e8` profiles, `_expr_to_value` calls fell from 129,486 to 82,146
+  (37%), statement import fell from 7.386 to 6.210 seconds (16%), block import
+  from 7.897 to 6.671 seconds (16%), and full raw IR construction from 17.429
+  to 14.951 seconds (14%). Profiled wall fell from 62.71 to 57.75 seconds.
+  Generated C remains byte-identical at
+  `f4b9c76a0cce4c322d19ab866a57941d89db9e30c1c69f6a5043fe11df5b310a`;
+  function and whole-tail validation pass. A focused call-count regression
+  prevents reintroducing recursive binary-root conversion.
 - Cold indexed-Alias construction has a typed bounded-fork experiment with an
   exact serial fallback and a three-worker, roughly 1.13 GiB aggregate cap.
   Two stable serial SORTD `sub_109e8` runs measured 27.39 and 27.31 seconds;
@@ -241,13 +267,16 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   inventory per recovered function and supplies it to every summary. This
   removes the summary's per-callsite fallback target enumeration while keeping
   standalone summary fallback intact. A two-callsite regression proves one
-  function enumeration and one shared complete inventory. A load-contaminated
-  diagnostic profile reduced `collect_neighbor_call_targets` from 222 calls to
-  75 even though the outer run timed out under another seven-worker suite, so
-  no wall-time claim is made from that profile. A separate completed run emitted
+  function enumeration and one shared complete inventory. A request-local
+  Semantics cache also reuses complete and refused terminal-cleanup evidence
+  only inside that immutable census; closed SORTD accounting reduced 47 cleanup
+  requests to 14 builds plus 33 reuses (70% of builds removed). Standalone and
+  later requests still recompute refusals. A same-tree cache-on/off pair emitted
   byte-identical C at
-  `85b457b8f7e3a9ebf8c91f9fd66aef4c7402b8cc2bbe84ec86645eec49950754`
-  with function and whole-tail validation passing.
+  `f4b9c76a0cce4c322d19ab866a57941d89db9e30c1c69f6a5043fe11df5b310a`
+  with function and whole-tail validation passing. Wall was 31.47 seconds on
+  versus 30.32 off, so this is accepted only as a local work reduction; no
+  end-to-end speedup is claimed.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -259,7 +288,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P1 | Structuring validation priming costs 3.72 seconds in the accepted warm profile | Large functions still pay repeated semantic consumer work | Exact IR relifting is eliminated; direct-stack, condition, and segment/global consumers still replay sequentially |
+| P1 | Structuring validation priming costs 3.72 seconds in the accepted warm profile | Large functions still pay repeated semantic consumer work | Raw IR and frontend condition relifting are eliminated when complete evidence closes; direct-stack and segment/global consumers still replay sequentially |
 | P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Bounded per-function fork work did not repeatably beat serial construction, so the remaining gain must reduce duplicated IR/Alias work rather than add default workers |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
@@ -332,8 +361,9 @@ earlier semantics; accounting does not close; or productive work is skipped.
 runtime-segment candidate dispatch, immutable direct-global instruction and
 register-source CFG projections, typed complete-instruction JCC and direct-call
 patch dispatch, bottom-up condition-subtree tag indexing, and shared exact
-frontend block decode reuse accepted; duplicate positive-BP fallback removed
-from runtime segment orchestration
+frontend block decode reuse accepted; raw IR reuses complete typed condition
+capture from its existing frontend lift; duplicate positive-BP fallback
+removed from runtime segment orchestration
 
 **Reason:** The accepted call-return index reduced the current benchmark's
 shared deep iterator from 3.61 to 2.85 seconds, but other traversal consumers
