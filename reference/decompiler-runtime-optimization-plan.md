@@ -254,6 +254,19 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   `f4b9c76a0cce4c322d19ab866a57941d89db9e30c1c69f6a5043fe11df5b310a`;
   function and whole-tail validation pass. A focused call-count regression
   prevents reintroducing recursive binary-root conversion.
+- VEX condition import now publishes a typed, fail-closed direct-exit demand
+  artifact before statement conversion. Comparisons remain eagerly classified
+  because later flag formulas consume their temporal provenance; And/Or/ITE
+  formulas are eager only when their temporary directly owns a conditional
+  exit. On the production-base 20-function SORTD census, condition calls fell
+  from 3,662 to 570 (84%), condition-classification time from 1.608 to 0.060
+  seconds (96%), and 399-block import from 6.437 to 3.885 seconds (40%). Every
+  imported block result was exactly equal. A complete normal `sub_109e8` run
+  and the legacy-eager comparison emitted identical C at
+  `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`;
+  function and whole-tail validation pass. Shared decompiler load and different
+  profiler modes make the full-run wall values unsuitable for an end-to-end
+  speed claim.
 - Cold indexed-Alias construction has a typed bounded-fork experiment with an
   exact serial fallback and a three-worker, roughly 1.13 GiB aggregate cap.
   Two stable serial SORTD `sub_109e8` runs measured 27.39 and 27.31 seconds;
@@ -363,7 +376,9 @@ register-source CFG projections, typed complete-instruction JCC and direct-call
 patch dispatch, bottom-up condition-subtree tag indexing, and shared exact
 frontend block decode reuse accepted; raw IR reuses complete typed condition
 capture from its existing frontend lift; duplicate positive-BP fallback
-removed from runtime segment orchestration
+removed from runtime segment orchestration; raw VEX import classifies logical
+condition formulas only for typed direct-exit demand while preserving every
+comparison required by flag provenance
 
 **Reason:** The accepted call-return index reduced the current benchmark's
 shared deep iterator from 3.61 to 2.85 seconds, but other traversal consumers

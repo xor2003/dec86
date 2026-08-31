@@ -477,6 +477,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/string_effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/value_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_condition_demand.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_transport.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py \
@@ -1387,6 +1388,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/string_effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/value_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_condition_demand.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_transport.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py \

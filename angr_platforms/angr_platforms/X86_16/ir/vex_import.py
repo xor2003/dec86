@@ -48,6 +48,10 @@ from .regs import register_name_from_offset
 from .ssa import build_x86_16_block_local_ssa
 from .ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from .vex_addressing import SegmentHintMap, block_segment_hints, expr_to_address
+from .vex_condition_demand import (
+    VexConditionDemand8616,
+    collect_vex_condition_demand_8616,
+)
 from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
 from .vex_condition_transport import (
     VexConditionTransportNormalizer8616,
@@ -609,6 +613,7 @@ def _stmt_to_instr(
     segment_hints: SegmentHintMap,
     tmp_exprs: _TmpExprs,
     type_environment: object | None,
+    condition_demand: VexConditionDemand8616,
 ) -> IRInstr | None:
     """Convert one VEX statement boundary into a typed IR instruction."""
     convert = partial(_expr_to_value, type_environment=type_environment)
@@ -657,7 +662,10 @@ def _stmt_to_instr(
                 if len(args) == 2:
                     left = convert(args[0], tmps, conditions)
                     right = convert(args[1], tmps, conditions)
-                    if any(token in op for token in ("Cmp", "And", "Or")):
+                    if "Cmp" in op or (
+                        condition_demand.requires_eager_condition(tmp_id)
+                        and any(token in op for token in ("And", "Or"))
+                    ):
                         conditions[tmp_id] = expr_to_condition(
                             data,
                             tmps,
@@ -688,7 +696,9 @@ def _stmt_to_instr(
                         size=max(left.size, right.size),
                         addr=instruction_addr,
                     )
-            if data_tag == "Iex_ITE":
+            if data_tag == "Iex_ITE" and condition_demand.requires_eager_condition(
+                tmp_id
+            ):
                 cond = expr_to_condition(data, tmps, conditions, expr_to_value=convert, tmp_exprs=tmp_exprs)
                 if not (
                     cond.op == "nonzero"
@@ -766,6 +776,7 @@ def _block_to_ir(
         refusals: list[IRRefusal] = []
         segment_hints = block_segment_hints(block)
         statements = _vex_statements(vex)
+        condition_demand = collect_vex_condition_demand_8616(statements)
         transport = VexConditionTransportNormalizer8616(
             build_vex_condition_transport_layout_8616(statements)
         )
@@ -784,6 +795,7 @@ def _block_to_ir(
                 segment_hints=segment_hints,
                 tmp_exprs=tmp_exprs,
                 type_environment=type_environment,
+                condition_demand=condition_demand,
             )
             if instr is None:
                 if tag:
