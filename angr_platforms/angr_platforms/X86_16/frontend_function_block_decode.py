@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, cast
 
+from .frontend_capstone_decode import decode_exact_capstone_block_8616
+
 
 class _GraphNodeBoundary8616(Protocol):
     """Exact CFG block coordinates exposed by an angr function graph."""
@@ -49,35 +51,14 @@ class _LoaderBoundary8616(Protocol):
     memory: _LoaderMemoryBoundary8616
 
 
-class _CapstoneDecoderBoundary8616(Protocol):
-    """Capstone decoder configured by the active architecture."""
-
-    def disasm(self, code: bytes, address: int) -> Iterable[object]:
-        """Decode exact bytes at their loaded address."""
-
-
-class _ArchitectureBoundary8616(Protocol):
-    """Architecture-owned Capstone configuration."""
-
-    capstone: _CapstoneDecoderBoundary8616
-
-
 class _ProjectBoundary8616(Protocol):
     """Project fields and cache owned by exact function block decoding."""
 
-    arch: _ArchitectureBoundary8616
     loader: _LoaderBoundary8616
     _inertia_function_block_decode_artifacts_8616: dict[
         int,
         FunctionBlockDecodeArtifact8616,
     ]
-
-
-class _InstructionBoundary8616(Protocol):
-    """Decoded instruction coordinates required for completeness checks."""
-
-    address: int
-    size: int
 
 
 class FunctionBlockDecodeStatus8616(Enum):
@@ -237,26 +218,6 @@ def _content_identity_8616(
     return digest.digest()
 
 
-def _decode_is_complete_8616(
-    instructions: tuple[object, ...],
-    address: int,
-    size: int,
-) -> bool:
-    """Require contiguous Capstone ownership of every requested block byte."""
-    expected = address
-    for instruction in instructions:
-        boundary = cast(_InstructionBoundary8616, instruction)
-        try:
-            instruction_address = int(boundary.address)
-            instruction_size = int(boundary.size)
-        except (AttributeError, TypeError, ValueError):
-            return False
-        if instruction_address != expected or instruction_size <= 0:
-            return False
-        expected += instruction_size
-    return bool(instructions) and expected == address + size
-
-
 def collect_function_block_decode_artifact_8616(
     project: object,
     function: object,
@@ -299,25 +260,13 @@ def collect_function_block_decode_artifact_8616(
     cached = cache.get(entry)
     if cached is not None and cached.content_identity == content_identity:
         return cached
-    try:
-        decoder = boundary.arch.capstone
-    except Exception as error:
-        return _refused_artifact_8616(
-            entry,
-            FunctionBlockDecodeFailureReason8616.DECODE_INCOMPLETE,
-            detail=f"{type(error).__name__}: {error}",
-        )
     decoded_blocks: list[FunctionDecodedBlock8616] = []
     failures: list[FunctionBlockDecodeFailure8616] = []
     for address, size, code in block_bytes:
-        try:
-            instructions = tuple(decoder.disasm(code, address))
-        except Exception as error:
-            instructions = ()
-            detail = f"{type(error).__name__}: {error}"
-        else:
-            detail = "Capstone did not consume the exact block extent"
-        if not _decode_is_complete_8616(instructions, address, size):
+        decoded = decode_exact_capstone_block_8616(project, address, code)
+        block = decoded.block
+        if not decoded.complete or block is None:
+            detail = decoded.failure.detail if decoded.failure is not None else "decode refused"
             failures.append(
                 FunctionBlockDecodeFailure8616(
                     address,
@@ -326,7 +275,9 @@ def collect_function_block_decode_artifact_8616(
                 )
             )
             continue
-        decoded_blocks.append(FunctionDecodedBlock8616(address, size, code, instructions))
+        decoded_blocks.append(
+            FunctionDecodedBlock8616(address, size, code, block.instructions)
+        )
     fact_count = len(block_bytes)
     artifact = FunctionBlockDecodeArtifact8616(
         function_entry=entry,

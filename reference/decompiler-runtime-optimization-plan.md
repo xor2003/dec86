@@ -353,6 +353,23 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   with function and whole-tail validation passing. Wall was 31.47 seconds on
   versus 30.32 off, so this is accepted only as a local work reduction; no
   end-to-end speedup is claimed.
+- Request-local Capstone-only block inventory now decodes bounded loaded bytes
+  directly and enters the VEX-backed factory only on a typed refusal. An
+  initial differential found 24 of 646 boundaries incorrectly crossing
+  repeat-prefixed string instructions; the frontend now mirrors the custom
+  lifter's proven boundary before a non-leading repeat and after a leading
+  repeat. The accepted current census matches 54 of 54 active factory blocks
+  with zero refusals, and synthetic parity covers RET, JCC, JMP, CALL, LOOP,
+  INT, repeat-at-entry, repeat-after-leading, and a 100-instruction straight
+  line. On the accepted warm `sub_109e8` profile, 55 block-inventory requests
+  cost 0.0205 seconds, including 54 direct decodes at 0.0193 seconds, with no
+  inventory-owned VEX fallback. The remaining 51 VEX lifts and 0.555 seconds
+  belong to semantic consumers outside this projection. Generated C remains
+  byte-identical at
+  `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`;
+  function and whole-tail validation pass. Cache warmth and request population
+  differ from the prior 2,249-request / 10.210-second profile, so only the
+  closed owner-level VEX elimination is accepted, not a wall-time ratio.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -437,9 +454,11 @@ earlier semantics; accounting does not close; or productive work is skipped.
 runtime-segment candidate dispatch, immutable direct-global instruction and
 register-source CFG projections, typed complete-instruction JCC and direct-call
 patch dispatch, bottom-up condition-subtree tag indexing, and shared exact
-frontend block decode reuse accepted; terminal-return semantics also consumes
-one complete exact-byte Frontend block artifact without entering VEX; raw IR
-reuses complete typed condition capture from its existing frontend lift;
+frontend block decode reuse accepted; request-local bounded block inventories
+also bypass VEX when direct Capstone evidence closes with custom-lifter boundary
+parity; terminal-return semantics consumes one complete exact-byte Frontend
+block artifact without entering VEX; raw IR reuses complete typed condition
+capture from its existing frontend lift;
 duplicate positive-BP fallback removed from runtime segment orchestration; raw
 VEX import classifies logical condition formulas only for typed direct-exit
 demand while preserving every comparison required by flag provenance

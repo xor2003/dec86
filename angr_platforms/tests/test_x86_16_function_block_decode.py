@@ -96,6 +96,23 @@ def test_exact_function_decode_invalidates_when_loaded_bytes_change() -> None:
     assert _instruction_shape(second.blocks[0].instructions[0])[-1] == "ax, 2"
 
 
+def test_exact_function_decode_accepts_caller_owned_hlt_extent() -> None:
+    base = 0x5800
+    memory = _Memory({base: b"\xf4"})
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=memory),
+    )
+
+    artifact = collect_function_block_decode_artifact_8616(
+        project,
+        _function(base, memory.blocks),
+    )
+
+    assert artifact.complete
+    assert _instruction_shape(artifact.blocks[0].instructions[0])[2] == "hlt"
+
+
 def test_exact_function_decode_refuses_incoherent_graph_surface() -> None:
     base = 0x6000
     memory = _Memory({base: b"\xc3"})

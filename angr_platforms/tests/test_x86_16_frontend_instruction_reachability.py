@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from angr_platforms.X86_16.frontend_capstone_decode import DirectCapstoneBlock8616
 from angr_platforms.X86_16.frontend_function_instructions import (
     FunctionInstructionInventoryStatus8616,
     collect_function_instruction_inventory_8616,
@@ -11,6 +12,7 @@ from angr_platforms.X86_16.frontend_instruction_kinds import (
     is_x86_16_call_mnemonic_8616,
 )
 from angr_platforms.X86_16.frontend_instruction_reachability import (
+    collect_decoded_block_evidence_8616,
     collect_instruction_reachability_8616,
     decoded_block_instructions_8616,
 )
@@ -41,6 +43,55 @@ def _unreachable_padding_project() -> object:
         base_addr=0x1000,
         entry_point=0x1000,
     )
+
+
+def _instruction_shape(instruction: object) -> tuple[int, int, str, str]:
+    """Return comparable fields across raw and angr-wrapped Capstone objects."""
+    try:
+        inner = instruction.insn
+    except AttributeError:
+        inner = instruction
+    return (inner.address, inner.size, inner.mnemonic, inner.op_str)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        bytes.fromhex("90c3"),
+        bytes.fromhex("750190c3"),
+        bytes.fromhex("eb0190c3"),
+        bytes.fromhex("e8000090c3"),
+        bytes.fromhex("e2fe90c3"),
+        bytes.fromhex("cd21c3"),
+        bytes.fromhex("b90100f3a4c3"),
+        bytes.fromhex("f3a4c3"),
+        b"\x90" * 100 + b"\xc3",
+    ],
+    ids=(
+        "ret",
+        "jcc",
+        "jmp",
+        "call",
+        "loop",
+        "int",
+        "repeat-after-leading",
+        "repeat-at-entry",
+        "straight-line",
+    ),
+)
+def test_direct_capstone_block_matches_factory_without_vex(code: bytes) -> None:
+    base = 0x3000
+    project = _build_project_from_bytes(code, base_addr=base, entry_point=base)
+    expected_block = project.factory.block(base, opt_level=0)
+    expected = tuple(_instruction_shape(instruction) for instruction in expected_block.capstone.insns)
+    project.factory.default_engine.clear_cache()
+
+    decoded = collect_decoded_block_evidence_8616(project, base, opt_level=0)
+
+    assert isinstance(decoded.block, DirectCapstoneBlock8616)
+    assert decoded.block.size == expected_block.size
+    assert tuple(_instruction_shape(instruction) for instruction in decoded.instructions) == expected
+    assert project.factory.default_engine._block_cache == {}
 
 
 def test_frontend_reachability_excludes_bytes_skipped_by_direct_jump() -> None:
@@ -86,6 +137,18 @@ def test_frontend_reachability_records_lifter_runtime_refusal(monkeypatch) -> No
     def refuse_block(_addr: int, *, opt_level: int) -> object:
         raise RuntimeError("unsupported instruction")
 
+    from angr_platforms.X86_16 import frontend_block_inventory
+
+    refusal = frontend_block_inventory.decode_bounded_capstone_block_8616(
+        project,
+        0x1000,
+        0x1000,
+    )
+    monkeypatch.setattr(
+        frontend_block_inventory,
+        "decode_bounded_capstone_block_8616",
+        lambda _project, _address, _region_end: refusal,
+    )
     monkeypatch.setattr(project.factory, "block", refuse_block)
 
     evidence = collect_instruction_reachability_8616(

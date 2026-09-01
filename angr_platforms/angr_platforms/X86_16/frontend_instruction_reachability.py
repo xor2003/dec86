@@ -11,9 +11,15 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from enum import Enum
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
+from .frontend_block_inventory import (
+    DecodedBlockRequest8616,
+    DecodedBlockStatus8616,
+    collect_decoded_block_evidence_8616,
+    decoded_block_instructions_8616,
+)
+from .frontend_capstone_decode import DirectCapstoneBlock8616
 from .frontend_instruction_kinds import is_x86_16_call_mnemonic_8616
 
 __all__ = [
@@ -64,70 +70,13 @@ class _BlockBoundary8616(Protocol):
     capstone: _CapstoneBoundary8616
 
 
-class _FactoryBoundary8616(Protocol):
-    """Dynamic angr block factory boundary."""
-
-    def block(
-        self,
-        addr: int,
-        *,
-        opt_level: int,
-        num_inst: int | None = None,
-    ) -> _BlockBoundary8616:
-        """Decode one block at ``addr``."""
-
-
 class _ProjectBoundary8616(Protocol):
     """Dynamic angr project boundary used by frontend traversal."""
 
-    factory: _FactoryBoundary8616
-    _inertia_decoded_block_inventories_8616: dict[
-        DecodedBlockRequest8616,
-        DecodedBlockEvidence8616,
-    ]
     _inertia_instruction_reachability_cache_8616: dict[
         tuple[int, int, int],
         InstructionReachabilityEvidence8616,
     ]
-
-
-@dataclass(frozen=True, slots=True)
-class DecodedBlockRequest8616:
-    """Exact request identity for one request-local frontend block decode."""
-
-    address: int
-    instruction_limit: int | None
-    optimization_level: int
-
-
-class DecodedBlockStatus8616(Enum):
-    """Typed outcome of one immutable frontend block decode request."""
-
-    DECODED = "decoded"
-    REFUSED = "refused"
-
-
-@dataclass(frozen=True, slots=True)
-class DecodedBlockEvidence8616:
-    """Cached instructions or a deterministic decode refusal."""
-
-    request: DecodedBlockRequest8616
-    status: DecodedBlockStatus8616
-    instructions: tuple[Any, ...]
-    block: object | None
-    failure_type: type[Exception] | None
-    failure_message: str | None
-
-
-def _raise_cached_decode_failure_8616(evidence: DecodedBlockEvidence8616) -> None:
-    """Re-raise a cached refusal without retaining a traceback object."""
-    failure_type = evidence.failure_type or RuntimeError
-    message = evidence.failure_message or "cached x86-16 block decode refusal"
-    try:
-        failure = failure_type(message)
-    except Exception:
-        failure = RuntimeError(f"{failure_type.__name__}: {message}")
-    raise failure
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,79 +122,15 @@ def _reachability_cache_8616(
     return cache
 
 
-def collect_decoded_block_evidence_8616(
-    project: object,
-    address: int,
-    *,
-    num_inst: int | None = None,
-    opt_level: int = 0,
-) -> DecodedBlockEvidence8616:
-    """Collect one exact block decode within an immutable project request.
-
-    The cache retains only the third-party block and Capstone instruction
-    evidence. It does not store mutable C AST, semantic state, aliases,
-    prototypes, or validation results.
-    """
-    boundary = cast(_ProjectBoundary8616, project)
-    request = DecodedBlockRequest8616(int(address), num_inst, int(opt_level))
-    try:
-        inventories = boundary._inertia_decoded_block_inventories_8616
-    except AttributeError:
-        inventories = {}
-        boundary._inertia_decoded_block_inventories_8616 = inventories
-    cached = inventories.get(request)
-    if cached is not None:
-        if cached.status is DecodedBlockStatus8616.DECODED:
-            return cached
-        _raise_cached_decode_failure_8616(cached)
-    try:
-        if num_inst is None:
-            block = boundary.factory.block(address, opt_level=opt_level)
-        else:
-            block = boundary.factory.block(address, num_inst=num_inst, opt_level=opt_level)
-    except Exception as exc:
-        inventories[request] = DecodedBlockEvidence8616(
-            request=request,
-            status=DecodedBlockStatus8616.REFUSED,
-            instructions=(),
-            block=None,
-            failure_type=type(exc),
-            failure_message=str(exc),
-        )
-        raise
-    instructions = tuple(block.capstone.insns)
-    evidence = DecodedBlockEvidence8616(
-        request=request,
-        status=DecodedBlockStatus8616.DECODED,
-        instructions=cast(tuple[Any, ...], instructions),
-        block=block,
-        failure_type=None,
-        failure_message=None,
-    )
-    inventories[request] = evidence
-    return evidence
-
-
-def decoded_block_instructions_8616(
-    project: object,
-    address: int,
-    *,
-    num_inst: int | None = None,
-    opt_level: int = 0,
-) -> tuple[Any, ...]:
-    """Return instructions from one exact typed frontend decode request."""
-    return collect_decoded_block_evidence_8616(
-        project,
-        address,
-        num_inst=num_inst,
-        opt_level=opt_level,
-    ).instructions
-
-
-def _direct_target_8616(instruction: _InstructionBoundary8616) -> int | None:
+def _direct_target_8616(instruction: object) -> int | None:
     """Return one direct Capstone branch target, if present."""
+    boundary = cast(_InstructionBoundary8616, instruction)
     try:
-        operands = tuple(instruction.insn.operands)
+        inner = boundary.insn
+    except AttributeError:
+        inner = cast(_DecodedInstructionBoundary8616, instruction)
+    try:
+        operands = tuple(inner.operands)
     except (AttributeError, TypeError):
         return None
     for operand in operands:
@@ -264,14 +149,17 @@ def x86_16_block_successors_from_capstone_8616(
 ) -> tuple[set[int], bool]:
     """Return bounded block successors and whether control flow is unresolved."""
     boundary = cast(_BlockBoundary8616, block)
-    try:
-        instructions = tuple(boundary.capstone.insns)
-    except (AttributeError, TypeError):
-        return set(), True
+    if isinstance(block, DirectCapstoneBlock8616):
+        instructions = block.instructions
+    else:
+        try:
+            instructions = tuple(boundary.capstone.insns)
+        except (AttributeError, TypeError):
+            return set(), True
     if not instructions:
         return set(), True
 
-    last = instructions[-1]
+    last = cast(_InstructionBoundary8616, instructions[-1])
     mnemonic = last.mnemonic.lower()
     block_end = boundary.addr + boundary.size
     successors: set[int] = set()

@@ -529,6 +529,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_block_decode.py \
+	angr_platforms/angr_platforms/X86_16/frontend_block_inventory.py \
+	angr_platforms/angr_platforms/X86_16/frontend_capstone_decode.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
 	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
@@ -1446,6 +1448,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_block_decode.py \
+	angr_platforms/angr_platforms/X86_16/frontend_block_inventory.py \
+	angr_platforms/angr_platforms/X86_16/frontend_capstone_decode.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
 	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
