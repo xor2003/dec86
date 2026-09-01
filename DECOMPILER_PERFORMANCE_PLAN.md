@@ -58,12 +58,22 @@ median improved from 23.70 to 16.97 seconds (28.4%); median peak RSS fell from
 `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`,
 and function plus whole-tail validation passed.
 
+Nested status-flag publication is now reentrant for the same typed function
+identity. Before the change, one profiled direct decompilation entered the
+context four times, rebuilt the CFG projection twice, and spent 2.705 profiled
+seconds in projection. After the change, the four entries share one session,
+build one projection, and spend 0.649 seconds there. A nested different-function
+request fails explicitly. Generated C remained byte-identical at SHA-256
+`caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`,
+focused tests pass, and the fast pipeline passes 1,913 tests plus its external
+lane. Concurrent source edits invalidated program-callsite caches during the
+wall-time series, so no end-to-end percentage is claimed from those samples.
+
 Cache-focused and indexed-Alias integration tests pass, `architecture-check-fast`
-passes, and the fast pipeline passed with 1,911 tests. Final broad acceptance is
-blocked by unrelated in-flight work: 11 smoketests now fail in GP stack-restore
-materialization after the benchmark, while two external MS C construct
-subprocesses return nonzero even though their reports record successful build,
-execution, decompilation, recompilation, and decompiled execution.
+passes, and the current fast pipeline passes 1,913 tests plus its required
+external lane. Final broad acceptance remains pending; an earlier broad run was
+blocked by unrelated in-flight GP stack-restore materialization work and two
+inconsistent external MS C construct subprocess results.
 
 Rejected experiments:
 

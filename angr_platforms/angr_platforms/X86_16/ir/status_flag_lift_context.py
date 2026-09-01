@@ -138,10 +138,8 @@ class StatusFlagLiftSession8616:
     def artifact(self) -> StatusFlagLiftArtifact8616:
         """Return immutable evidence suitable for downstream consumers."""
         return StatusFlagLiftArtifact8616(
-            self.function_address,
-            self.candidates,
-            self.packed_preservation_addresses,
-            self.original_linear_delta,
+            self.function_address, self.candidates,
+            self.packed_preservation_addresses, self.original_linear_delta,
         )
 
     def dead_write_mask(
@@ -190,8 +188,7 @@ class StatusFlagLiftSession8616:
 
 
 _active_session: ContextVar[StatusFlagLiftSession8616 | None] = ContextVar(
-    "x86_16_active_status_flag_lift_session",
-    default=None,
+    "x86_16_active_status_flag_lift_session", default=None
 )
 
 
@@ -292,8 +289,9 @@ def published_status_flag_lift_artifact_8616(
         info = cast(_FunctionBoundary8616, function).info
     except AttributeError:
         return None
-    return decode_status_flag_lift_artifact_8616(
-        info.get("status_flag_lift_artifact_8616")
+    return cast(
+        StatusFlagLiftArtifact8616 | None,
+        decode_status_flag_lift_artifact_8616(info.get("status_flag_lift_artifact_8616")),
     )
 
 
@@ -302,22 +300,28 @@ def active_status_flag_lift_context_8616(
     project: object,
     function: object,
 ) -> Iterator[StatusFlagLiftSession8616]:
-    """Build, publish, and close one function's proven flag suppression facts."""
+    """Build once, reuse nested same-function publication, and close once."""
     function_address = _function_address_8616(function)
+    active_session = _active_session.get()
+    if active_session is not None:
+        if active_session.function_address != function_address:
+            raise PipelineHardError(
+                "nested status-flag lift context changed function identity",
+                layer="ir:status_flag_lift_context",
+                function_addr=function_address,
+                details={"active_function_addr": active_session.function_address},
+            )
+        yield active_session
+        return
     if not _is_x86_16_project_8616(project):
         yield StatusFlagLiftSession8616(function_address, ())
         return
-
     from .status_flag_cfg_projection import build_status_flag_function_projection_8616
 
     try:
         projection = build_status_flag_function_projection_8616(project, function)
     except (AttributeError, KeyError, TypeError, ValueError):
-        session = StatusFlagLiftSession8616(
-            function_address,
-            (),
-            projection_failure_count=1,
-        )
+        session = StatusFlagLiftSession8616(function_address, (), projection_failure_count=1)
         yield session
         session.finalize()
         _publish_stats_8616(function, session)
@@ -325,11 +329,7 @@ def active_status_flag_lift_context_8616(
 
     candidates = _suppression_candidates_8616(projection)
     if candidates and not _clear_lift_cache_8616(project):
-        session = StatusFlagLiftSession8616(
-            function_address,
-            (),
-            projection_failure_count=1,
-        )
+        session = StatusFlagLiftSession8616(function_address, (), projection_failure_count=1)
         yield session
         session.finalize()
         _publish_stats_8616(function, session)

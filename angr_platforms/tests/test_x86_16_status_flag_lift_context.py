@@ -101,6 +101,54 @@ def test_cfg_context_keeps_flags_consumed_by_successor_condition() -> None:
     assert session.materialized_addresses == frozenset()
 
 
+def test_cfg_context_reuses_nested_same_function_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    project, function = _project_function(
+        bytes.fromhex("050100 7500 c3"),
+        function_starts=(0x1000,),
+    )
+    from angr_platforms.X86_16.ir import status_flag_cfg_projection
+
+    original = status_flag_cfg_projection.build_status_flag_function_projection_8616
+    calls = 0
+
+    def _counted_projection(project_arg: object, function_arg: object) -> object:
+        nonlocal calls
+        calls += 1
+        return original(project_arg, function_arg)
+
+    monkeypatch.setattr(
+        status_flag_cfg_projection,
+        "build_status_flag_function_projection_8616",
+        _counted_projection,
+    )
+    with (
+        active_status_flag_lift_context_8616(project, function) as outer,
+        active_status_flag_lift_context_8616(project, function) as inner,
+    ):
+        assert inner is outer
+
+    assert calls == 1
+    assert outer.stats.complete
+
+
+def test_cfg_context_rejects_nested_different_function() -> None:
+    project, function = _project_function(
+        bytes.fromhex("c3 909090 c3"),
+        function_starts=(0x1000, 0x1004),
+    )
+    other = project.kb.functions[0x1004]
+
+    with (
+        active_status_flag_lift_context_8616(project, function),
+        pytest.raises(PipelineHardError, match="changed function identity") as error,
+        active_status_flag_lift_context_8616(project, other),
+    ):
+        pass
+
+    assert error.value.function_addr == 0x1004
+    assert error.value.details == {"active_function_addr": 0x1000}
+
+
 def test_cfg_context_suppresses_cmp_flags_overwritten_before_use() -> None:
     project, function = _project_function(
         bytes.fromhex("39d8 39ca 7500 c3"),
