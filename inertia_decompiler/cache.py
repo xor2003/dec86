@@ -19,6 +19,7 @@ from inertia_decompiler.cache_io import load_cache_json_path, store_cache_json_p
 from inertia_decompiler.cache_lock import cache_path_lock
 from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_8616
 from inertia_decompiler.cache_source_manifest import (
+    DIRECT_GLOBAL_OBJECT_CACHE_SOURCE_FILES,
     FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
     FUNCTION_IR_SSA_CACHE_SOURCE_FILES,
     INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
@@ -356,6 +357,7 @@ def _recovery_cache_key(
         if "ignore_local_sidecar_hints" in normalized_extra:
             normalized_extra["ignore_local_sidecar_hints"] = False
     source_files = {
+        RecoveryCacheSourceScope8616.DIRECT_GLOBAL_OBJECT: DIRECT_GLOBAL_OBJECT_CACHE_SOURCE_FILES,
         RecoveryCacheSourceScope8616.FUNCTION_IR_SSA: FUNCTION_IR_SSA_CACHE_SOURCE_FILES,
         RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY: FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
         RecoveryCacheSourceScope8616.INDEXED_ALIAS_PROGRAM: INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,

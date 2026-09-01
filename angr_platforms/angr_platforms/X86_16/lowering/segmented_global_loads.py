@@ -2306,7 +2306,7 @@ def _sidecar_free_dword_update_refs_8616(
     return tuple(refs)
 
 
-def _collect_project_direct_global_width_evidence_8616(
+def collect_project_direct_global_width_evidence_8616(
     project: object,
     function: object,
 ) -> tuple[DirectGlobalStorageEvidenceBoundary8616, ...]:
@@ -2330,7 +2330,7 @@ def _project_direct_global_scalar_refs_8616(
     """Create consistent generic scalar refs from project-wide wide extents."""
     evidence = collect_project_direct_global_object_layout_evidence_8616(
         project,
-        (_collect_project_direct_global_width_evidence_8616,),
+        (collect_project_direct_global_width_evidence_8616,),
     )
     if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
         raise PipelineHardError(

@@ -10,7 +10,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -188,7 +188,7 @@ def collect_project_direct_global_object_layout_evidence_8616(
     except AttributeError:
         evidence_project = project
 
-    views: list[DirectGlobalStorageView8616] = []
+    functions: list[FunctionRangeView8616] = []
     for bounds in ranges:
         if (
             not isinstance(bounds, tuple)
@@ -198,12 +198,41 @@ def collect_project_direct_global_object_layout_evidence_8616(
             or bounds[1] <= bounds[0]
         ):
             raise TypeError("project function ranges contain an invalid (start, end) pair")
-        function = FunctionRangeView8616(addr=bounds[0], size=bounds[1] - bounds[0])
+        functions.append(
+            FunctionRangeView8616(
+                addr=bounds[0],
+                size=bounds[1] - bounds[0],
+            )
+        )
+
+    result = recover_project_direct_global_object_layout_evidence_8616(
+        evidence_project,
+        functions,
+        collectors,
+    )
+    surface._inertia_project_direct_global_object_layout_evidence_8616 = result
+    return result
+
+
+def recover_project_direct_global_object_layout_evidence_8616(
+    project: object,
+    functions: Sequence[object],
+    collectors: tuple[DirectGlobalStorageEvidenceCollector8616, ...],
+) -> DirectGlobalObjectLayoutEvidence8616:
+    """Recover one direct-global Widening census from explicit functions."""
+    views: list[DirectGlobalStorageView8616] = []
+    for function in functions:
+        try:
+            function_addr = cast(FunctionRangeView8616, function).addr
+        except AttributeError as exc:
+            raise TypeError("direct-global function has no integer address") from exc
+        if not isinstance(function_addr, int) or function_addr < 0:
+            raise TypeError("direct-global function has no integer address")
         for collector in collectors:
-            for fact in collector(evidence_project, function):
+            for fact in collector(project, function):
                 views.append(  # noqa: PERF401
                     DirectGlobalStorageView8616(
-                        function_addr=function.addr,
+                        function_addr=function_addr,
                         address=IRAddress(
                             space=MemSpace.DS,
                             offset=fact.offset & 0xFFFF,
@@ -213,10 +242,7 @@ def collect_project_direct_global_object_layout_evidence_8616(
                         ),
                     )
                 )
-
-    result = recover_direct_global_object_layout_evidence_8616(views)
-    surface._inertia_project_direct_global_object_layout_evidence_8616 = result
-    return result
+    return recover_direct_global_object_layout_evidence_8616(views)
 
 
 __all__ = [
@@ -225,4 +251,5 @@ __all__ = [
     "FunctionRangeView8616",
     "collect_project_direct_global_object_layout_evidence_8616",
     "collect_project_global_object_layout_evidence_8616",
+    "recover_project_direct_global_object_layout_evidence_8616",
 ]

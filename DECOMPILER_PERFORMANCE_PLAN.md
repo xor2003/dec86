@@ -82,7 +82,7 @@ concurrent Alias work also invalidates the separately correct indexed-Alias
 artifact, masking the isolated callsite invalidation saving.
 
 The persisted indexed-global Alias/Widening bundle now has the same bounded
-dependency treatment. Its manifest fell from 351 files to 302: Alias owners
+dependency treatment. Its manifest fell from 351 files to 303: Alias owners
 from 38 to the 12 consumed by indexed-address projection, and Widening owners
 from 33 to the eight layout/range builders and codecs. The manifest also now
 includes the previously omitted indexed-global cache and recovery orchestration
@@ -114,6 +114,22 @@ removed only one of 29 decodes and is recorded as simplification, not a
 material speedup. Generated C remained byte-identical at the hash above and
 both validation gates stayed clean.
 
+Project-wide direct-global object-layout evidence now has its own typed,
+cross-process Widening cache. Its source identity includes complete function
+discovery plus only the Lowering, Structuring, and Widening owners consumed by
+the direct-global collector; changing those owners does not invalidate the
+independent indexed Alias/Widening bundle. On the profiled `sub_109e8` path,
+the collector fell from 21 calls and 0.339 seconds to zero calls, the 34
+project-layout lookups fell from 0.342 seconds to about 0.001 seconds, and
+segment-global materialization fell from 1.218 to 0.891 seconds (26.8%). Total
+profiled time improved from 13.607 to 13.428 seconds (1.3%), so this is accepted
+as a bounded duplicate-scan removal rather than the remaining Step 2 10%
+end-to-end result. Generated C remained byte-identical at SHA-256
+`caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`;
+function and whole-tail validation passed. Missing or malformed cache evidence
+is opportunistic only and cannot turn valid transported Widening evidence into
+a decompilation failure.
+
 Cache-focused and indexed-Alias integration tests pass, and
 `architecture-check-fast` passes. The latest broad pipeline reached 1,911
 passing tests but failed three stack-argument recovery tests; all three failures
@@ -135,6 +151,9 @@ Rejected experiments:
   introduced a large cold outlier;
 - whole-lifter mypyc compilation was 3.9% slower;
 - an exact Capstone instruction cache improved repeated lifting by only 2.6%;
+- codegen-lifetime immutable tail-validation atom reuse reduced uncached atom
+  expansions from 11,572 to 373, but generation improved only from 0.616 to
+  0.592 seconds while recursive immutability proof cost 0.062 seconds;
 - default fork-based Alias parallelism was unstable under Python 3.14, emitted
   unsafe-fork warnings, and did not provide a repeatable production gain.
 

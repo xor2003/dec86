@@ -32,7 +32,11 @@ from angr_platforms.X86_16.lowering.callee_pointer_contracts import (
     callee_pointer_argument_evidence_by_addr_8616,
     record_callee_pointer_argument_evidence_8616,
 )
+from angr_platforms.X86_16.widening.direct_global_object_layout_codec import (
+    validate_direct_global_object_layout_evidence_8616,
+)
 from angr_platforms.X86_16.widening.global_object_layout import (
+    DirectGlobalObjectLayoutEvidence8616,
     GlobalObjectLayoutEvidence8616,
 )
 from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import (
@@ -42,8 +46,10 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
 __all__ = [
     "ProjectEvidenceTransferResult8616",
     "attach_project_bounded_global_object_ranges_8616",
+    "attach_project_direct_global_object_layout_evidence_8616",
     "attach_project_global_object_layout_evidence_8616",
     "project_bounded_global_object_ranges_8616",
+    "project_direct_global_object_layout_evidence_8616",
     "project_global_object_layout_evidence_8616",
     "transfer_callee_callsite_censuses_8616",
     "transfer_caller_return_use_evidence_8616",
@@ -61,6 +67,7 @@ class ProjectEvidenceTransferResult8616:
     compiler_helper_target_count: int
     global_object_layout_artifact_count: int
     bounded_global_range_artifact_count: int
+    direct_global_object_layout_artifact_count: int
     callee_pointer_target_count: int
     global_object_source_artifact_count: int
     callee_callsite_census_count: int = 0
@@ -72,6 +79,7 @@ class _ProjectGlobalLayoutSurface8616(Protocol):
 
     _inertia_project_global_object_layout_evidence_8616: GlobalObjectLayoutEvidence8616
     _inertia_project_bounded_global_object_ranges_8616: ProjectBoundedGlobalObjectRangeEvidence8616
+    _inertia_project_direct_global_object_layout_evidence_8616: DirectGlobalObjectLayoutEvidence8616
 
 
 class _RebasedProjectSurface8616(Protocol):
@@ -141,6 +149,35 @@ def attach_project_bounded_global_object_ranges_8616(
         _ProjectGlobalLayoutSurface8616,
         project,
     )._inertia_project_bounded_global_object_ranges_8616 = evidence
+
+
+def project_direct_global_object_layout_evidence_8616(
+    project: object,
+) -> DirectGlobalObjectLayoutEvidence8616 | None:
+    """Return one valid attached direct-global Widening census, when present."""
+    try:
+        evidence = cast(
+            _ProjectGlobalLayoutSurface8616,
+            project,
+        )._inertia_project_direct_global_object_layout_evidence_8616
+    except AttributeError:
+        return None
+    if not isinstance(evidence, DirectGlobalObjectLayoutEvidence8616):
+        raise TypeError("project direct-global Widening artifact has a wrong type")
+    validate_direct_global_object_layout_evidence_8616(evidence)
+    return evidence
+
+
+def attach_project_direct_global_object_layout_evidence_8616(
+    project: object,
+    evidence: DirectGlobalObjectLayoutEvidence8616,
+) -> None:
+    """Attach one already-classified closed direct-global census."""
+    validate_direct_global_object_layout_evidence_8616(evidence)
+    cast(
+        _ProjectGlobalLayoutSurface8616,
+        project,
+    )._inertia_project_direct_global_object_layout_evidence_8616 = evidence
 
 
 def transfer_caller_return_use_evidence_8616(
@@ -256,6 +293,7 @@ def transfer_project_evidence_8616(
     """Copy all typed evidence required by fresh and sliced CLI projects."""
     global_layout = project_global_object_layout_evidence_8616(source_project)
     bounded_ranges = project_bounded_global_object_ranges_8616(source_project)
+    direct_layout = project_direct_global_object_layout_evidence_8616(source_project)
     if bounded_ranges is not None and global_layout is None:
         raise ValueError("bounded-global evidence has no project layout dependency")
     if (
@@ -274,6 +312,11 @@ def transfer_project_evidence_8616(
                 destination_project,
                 bounded_ranges,
             )
+    if direct_layout is not None and source_project is not destination_project:
+        attach_project_direct_global_object_layout_evidence_8616(
+            destination_project,
+            direct_layout,
+        )
     pointer_count, source_count = transfer_project_global_source_evidence_8616(
         source_project,
         destination_project,
@@ -289,6 +332,7 @@ def transfer_project_evidence_8616(
         ),
         global_object_layout_artifact_count=int(global_layout is not None),
         bounded_global_range_artifact_count=int(bounded_ranges is not None),
+        direct_global_object_layout_artifact_count=int(direct_layout is not None),
         callee_pointer_target_count=pointer_count,
         global_object_source_artifact_count=source_count,
         callee_callsite_census_count=transfer_callee_callsite_censuses_8616(

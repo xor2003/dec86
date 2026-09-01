@@ -69,6 +69,7 @@ _INDEXED_ALIAS_PROGRAM_INERTIA_NAMES_8616 = (
     *_DISCOVERY_INERTIA_NAMES_8616,
     "indexed_alias_program_context.py",
     "indexed_alias_program_parallel.py",
+    "indexed_alias_program_publication.py",
     "indexed_alias_program_recovery.py",
     "indexed_global_object_cache.py",
     "project_evidence_transport.py",
@@ -136,11 +137,35 @@ _FUNCTION_IR_SSA_INERTIA_NAMES_8616 = (
     "function_ir_ssa_cache_identity.py",
 )
 
+_DIRECT_GLOBAL_OBJECT_INERTIA_NAMES_8616 = (
+    "direct_global_object_cache.py",
+    "direct_global_object_context.py",
+    "indexed_alias_program_context.py",
+    "indexed_alias_program_recovery.py",
+    "project_evidence_transport.py",
+)
+
+_DIRECT_GLOBAL_OBJECT_LOWERING_NAMES_8616 = (
+    "project_global_object_layout.py",
+    "real_mode_linear.py",
+    "segmented_global_loads.py",
+)
+
+_DIRECT_GLOBAL_OBJECT_STRUCTURING_NAMES_8616 = (
+    "simple_loop_recovery.py",
+)
+
+_DIRECT_GLOBAL_OBJECT_WIDENING_NAMES_8616 = (
+    "direct_global_object_layout_codec.py",
+    "global_object_layout.py",
+)
+
 
 class RecoveryCacheSourceScope8616(StrEnum):
     """Implementation surface that owns one recovery-cache artifact."""
 
     FULL_DECOMPILATION = "full-decompilation"
+    DIRECT_GLOBAL_OBJECT = "direct-global-object"
     FUNCTION_IR_SSA = "function-ir-ssa"
     FUNCTION_DISCOVERY = "function-discovery"
     INDEXED_ALIAS_PROGRAM = "indexed-alias-program"
@@ -265,4 +290,32 @@ def _program_callsite_cache_source_files_8616() -> tuple[Path, ...]:
 
 PROGRAM_CALLSITE_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _program_callsite_cache_source_files_8616()
+)
+
+
+def _direct_global_object_cache_source_files_8616() -> tuple[Path, ...]:
+    """Return discovery plus exact direct-global Lowering/Widening owners."""
+    inertia_root = _ROOT / "inertia_decompiler"
+    x86_root = _ROOT / "angr_platforms" / "angr_platforms" / "X86_16"
+    discovered = set(FUNCTION_DISCOVERY_CACHE_SOURCE_FILES)
+    discovered.update(
+        inertia_root / name for name in _DIRECT_GLOBAL_OBJECT_INERTIA_NAMES_8616
+    )
+    discovered.update(
+        x86_root / "lowering" / name
+        for name in _DIRECT_GLOBAL_OBJECT_LOWERING_NAMES_8616
+    )
+    discovered.update(
+        x86_root / "structuring" / name
+        for name in _DIRECT_GLOBAL_OBJECT_STRUCTURING_NAMES_8616
+    )
+    discovered.update(
+        x86_root / "widening" / name
+        for name in _DIRECT_GLOBAL_OBJECT_WIDENING_NAMES_8616
+    )
+    return tuple(sorted(path for path in discovered if path.is_file()))
+
+
+DIRECT_GLOBAL_OBJECT_CACHE_SOURCE_FILES: tuple[Path, ...] = (
+    _direct_global_object_cache_source_files_8616()
 )
