@@ -290,6 +290,46 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   made from that run. A complete `sub_109e8` run remains byte-identical at
   `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`;
   function and whole-tail validation pass.
+- Terminal AX return semantics now consumes a complete exact-byte Frontend
+  block-decode artifact instead of entering VEX merely to obtain Capstone
+  instructions. The artifact owns graph extents, byte-content identity, typed
+  refusal reasons, closed fact accounting, and mutation-aware request reuse;
+  Semantics owns only balanced entry-save/terminal-restore classification. The
+  previous 20-function profile attributed 14.534 seconds across 21 materialized
+  terminal-return collections, including 13.935 seconds to restore-site
+  decoding. In the focused current `sub_109e8` profile, terminal-return
+  collection cost 0.018 seconds, its one real semantic materialization cost
+  0.007 seconds, direct artifact construction cost 0.010 seconds, and the owner
+  made zero legacy VEX-backed block-decode calls. The complete acceptance run
+  returned status 0 in 67.94 load-contaminated seconds, emitted byte-identical
+  C at
+  `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`,
+  and passed function plus whole-tail validation. Focused tests prove exact
+  Capstone parity, no VEX entry, content-mutation invalidation, graph-surface
+  refusal, cached reuse, and equality with the legacy VEX-backed semantic
+  result. Profile scope and concurrent decompiler load differ, so the locally
+  accepted claim is removal of the owned VEX work, not an end-to-end wall
+  ratio. The required shared-tree pipeline passed 1,896 Python tests and its
+  Ultra QuickC lane, but the MS C lane remains red with only `loops_jumps` and
+  `storage_classes` passing. A changed-surface anchor gate also found seven far
+  CALL/JMP/RET/IRET address failures while `lift_86_16.py` had concurrent
+  uncommitted edits. These broad failures are not hidden or attributed by this
+  focused evidence; the current checkout does not have a globally green gate.
+- Raw bytes-to-VEX and pristine VEX-to-AIL caches were measured and rejected at
+  their current boundaries. On a realistic sidecar-free SORTD `sub_109e8`
+  run, 1,901 custom-lifter requests contained only 67 exact repeated
+  byte/address/options/architecture keys, a 3.5% hit opportunity. A
+  representative 15-byte, 200-statement block averaged 19.94 ms to lift and
+  1.49 ms to deserialize into an isolated IRSB, limiting the measured
+  theoretical saving to about 1.2 seconds before lookup and evidence replay.
+  More importantly, a CMP/JCC differential experiment produced byte-identical
+  VEX after deserialization but lost its required typed `ConditionIR` fact:
+  one fact on the real lift and zero on the raw cache hit. The same profile
+  attributed only 0.048 seconds to Clinic VEX-to-AIL conversion out of 0.713
+  seconds total Clinic time. Do not add either raw cache. A future experiment
+  must cache a complete immutable function-level frontend artifact containing
+  VEX plus closed typed condition, access, and flag evidence, and must first
+  demonstrate materially repeated complete requests.
 - Cold indexed-Alias construction has a typed bounded-fork experiment with an
   exact serial fallback and a three-worker, roughly 1.13 GiB aggregate cap.
   Two stable serial SORTD `sub_109e8` runs measured 27.39 and 27.31 seconds;
@@ -397,11 +437,12 @@ earlier semantics; accounting does not close; or productive work is skipped.
 runtime-segment candidate dispatch, immutable direct-global instruction and
 register-source CFG projections, typed complete-instruction JCC and direct-call
 patch dispatch, bottom-up condition-subtree tag indexing, and shared exact
-frontend block decode reuse accepted; raw IR reuses complete typed condition
-capture from its existing frontend lift; duplicate positive-BP fallback
-removed from runtime segment orchestration; raw VEX import classifies logical
-condition formulas only for typed direct-exit demand while preserving every
-comparison required by flag provenance
+frontend block decode reuse accepted; terminal-return semantics also consumes
+one complete exact-byte Frontend block artifact without entering VEX; raw IR
+reuses complete typed condition capture from its existing frontend lift;
+duplicate positive-BP fallback removed from runtime segment orchestration; raw
+VEX import classifies logical condition formulas only for typed direct-exit
+demand while preserving every comparison required by flag provenance
 
 **Reason:** The accepted call-return index reduced the current benchmark's
 shared deep iterator from 3.61 to 2.85 seconds, but other traversal consumers

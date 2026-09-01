@@ -528,6 +528,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/exact_region_diagnostics.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
+	angr_platforms/angr_platforms/X86_16/frontend_function_block_decode.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
 	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
@@ -961,6 +962,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_pointer_output_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_pointer_outputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_return_passthrough.py \
+	angr_platforms/angr_platforms/X86_16/semantics/terminal_register_restore.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_register_returns.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_return_storage.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_stack_cleanup.py \
@@ -1443,6 +1445,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/exact_region_diagnostics.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
+	angr_platforms/angr_platforms/X86_16/frontend_function_block_decode.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
 	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
@@ -1876,6 +1879,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_pointer_output_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_pointer_outputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_return_passthrough.py \
+	angr_platforms/angr_platforms/X86_16/semantics/terminal_register_restore.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_register_returns.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_return_storage.py \
 	angr_platforms/angr_platforms/X86_16/semantics/terminal_stack_cleanup.py \

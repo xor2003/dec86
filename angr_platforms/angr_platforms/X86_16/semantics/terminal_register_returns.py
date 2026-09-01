@@ -17,12 +17,17 @@ from typing import Any, Protocol, cast
 
 from angr.errors import SimEngineError, SimTranslationError
 
+from ..frontend_function_block_decode import (
+    FunctionBlockDecodeArtifact8616,
+    collect_function_block_decode_artifact_8616,
+)
 from ..frontend_instruction_reachability import decoded_block_instructions_8616
 from ..function_evidence_inventory import (
     FunctionEvidenceKind8616,
     collect_function_binary_evidence_8616,
 )
 from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
+from .terminal_register_restore import terminal_register_restore_sites_8616
 
 __all__ = [
     "TerminalAxReturnEvidence8616",
@@ -214,62 +219,29 @@ def _instruction_address_8616(insn: object) -> int | None:
     return address if isinstance(address, int) else None
 
 
-def _explicit_restore_sites_8616(project: object, block_addrs: frozenset[int]) -> frozenset[int]:
-    """Return exact reverse-epilogue POP sites paired with entry register saves."""
-    decoded: dict[int, object] = {}
+def _decoded_instructions_by_block_8616(
+    project: object,
+    block_addrs: frozenset[int],
+    direct_decode: FunctionBlockDecodeArtifact8616,
+) -> dict[int, tuple[object, ...]]:
+    """Return complete direct evidence or rebuild the legacy exact fallback."""
+    if direct_decode.complete:
+        return direct_decode.instructions_by_block()
+    decoded: dict[int, tuple[object, ...]] = {}
     for block_addr in sorted(block_addrs):
         try:
             instructions = decoded_block_instructions_8616(cast(Any, project), block_addr, opt_level=0)
         except (KeyError, SimEngineError, SimTranslationError, ValueError):
-            return frozenset()
-        for instruction in instructions:
-            address = _instruction_address_8616(instruction)
-            if isinstance(address, int):
-                decoded.setdefault(address, instruction)
-    ordered = tuple(decoded[address] for address in sorted(decoded))
-    terminal_index = next(
-        (
-            index
-            for index, instruction in enumerate(ordered)
-            if str(getattr(_inner_instruction_8616(instruction), "mnemonic", "") or "").lower()
-            in {"ret", "retf", "iret"}
-        ),
-        None,
-    )
-    if terminal_index is None:
-        return frozenset()
-
-    entry_saves: list[str] = []
-    for instruction in ordered:
-        inner = _inner_instruction_8616(instruction)
-        if str(getattr(inner, "mnemonic", "") or "").lower() != "push":
-            break
-        operands = tuple(getattr(inner, "operands", ()) or ())
-        if len(operands) != 1 or int(getattr(operands[0], "type", -1)) != 1:
-            break
-        entry_saves.append(_register_name_8616(instruction, int(getattr(operands[0], "reg", 0) or 0)))
-
-    restores: list[tuple[str, int]] = []
-    for instruction in reversed(ordered[:terminal_index]):
-        inner = _inner_instruction_8616(instruction)
-        mnemonic = str(getattr(inner, "mnemonic", "") or "").lower()
-        if mnemonic != "pop":
-            break
-        operands = tuple(getattr(inner, "operands", ()) or ())
-        address = _instruction_address_8616(instruction)
-        if len(operands) != 1 or int(getattr(operands[0], "type", -1)) != 1 or address is None:
-            break
-        restores.append(
-            (_register_name_8616(instruction, int(getattr(operands[0], "reg", 0) or 0)), address)
-        )
-    if tuple(name for name, _address in restores) != tuple(entry_saves):
-        return frozenset()
-    return frozenset(address for _name, address in restores)
+            continue
+        if instructions:
+            decoded[block_addr] = instructions
+    return decoded
 
 
 def _collect_terminal_ax_return_evidence_uncached_8616(
     project: object,
     function: object,
+    direct_decode: FunctionBlockDecodeArtifact8616,
 ) -> TerminalAxReturnEvidence8616:
     """Collect closed AX lane evidence along bounded paths to binary returns."""
     function_surface = cast(_FunctionSurface8616, function)
@@ -286,7 +258,16 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
     if not isinstance(entry_addr, int) or entry_addr not in block_addrs:
         return TerminalAxReturnEvidence8616(frozenset(), 1, 0, 0, 0, 1)
     project_dynamic = cast(Any, project)
-    explicit_restore_sites = _explicit_restore_sites_8616(project, block_addrs)
+    decoded_by_block = _decoded_instructions_by_block_8616(
+        project,
+        block_addrs,
+        direct_decode,
+    )
+    explicit_restore_sites = (
+        terminal_register_restore_sites_8616(decoded_by_block, entry_addr)
+        if frozenset(decoded_by_block) == block_addrs
+        else frozenset()
+    )
     terminal_states: set[TerminalReturnStorageState8616] = set()
     raw_fact_count = 0
     normalized_fact_count = 0
@@ -325,11 +306,13 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         """Follow one entry-reachable path without crossing cycles."""
         if block_addr in path:
             return
-        try:
-            insns = decoded_block_instructions_8616(project_dynamic, block_addr, opt_level=0)
-        except (KeyError, SimEngineError, SimTranslationError, ValueError):
-            _record_failure()
-            return
+        insns = decoded_by_block.get(block_addr)
+        if insns is None:
+            try:
+                insns = decoded_block_instructions_8616(project_dynamic, block_addr, opt_level=0)
+            except (KeyError, SimEngineError, SimTranslationError, ValueError):
+                _record_failure()
+                return
         if not insns:
             _record_failure()
             return
@@ -424,6 +407,7 @@ def collect_terminal_ax_return_evidence_8616(
     function: object,
 ) -> TerminalAxReturnEvidence8616:
     """Return immutable terminal AX evidence for the exact binary surface."""
+    direct_decode = collect_function_block_decode_artifact_8616(project, function)
 
     def _build(
         cached_project: object | None,
@@ -431,13 +415,20 @@ def collect_terminal_ax_return_evidence_8616(
     ) -> tuple[TerminalAxReturnEvidence8616]:
         """Adapt the semantic collector to the binary evidence inventory."""
         evidence_project = project if cached_project is None else cached_project
-        return (_collect_terminal_ax_return_evidence_uncached_8616(evidence_project, cached_function),)
+        return (
+            _collect_terminal_ax_return_evidence_uncached_8616(
+                evidence_project,
+                cached_function,
+                direct_decode,
+            ),
+        )
 
-    cached = collect_function_binary_evidence_8616(
+    cached: tuple[TerminalAxReturnEvidence8616, ...] = collect_function_binary_evidence_8616(
         project,
         function,
         kind=FunctionEvidenceKind8616.TERMINAL_AX_RETURNS,
         builder=_build,
+        content_identity=direct_decode.content_identity if direct_decode.complete else None,
     )
     if len(cached) != 1:
         raise RuntimeError("terminal AX evidence inventory did not materialize exactly one result")
