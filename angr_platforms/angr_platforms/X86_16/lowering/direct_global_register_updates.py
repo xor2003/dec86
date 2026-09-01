@@ -3,8 +3,7 @@
 Layer: Types/Lowering.
 Responsibility: consume adjacent binary instruction evidence for a direct
 global load followed by a logical direct-global update through one register.
-No rendered C text, symbol spelling, or corpus address participates in proof.
-Consumes alias, widening, and typed facts.
+No rendered C text, symbol spelling, or corpus address participates in proof; consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
@@ -24,6 +23,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 from capstone.x86_const import X86_INS_AND, X86_INS_MOV, X86_INS_OR, X86_INS_XOR, X86_OP_MEM, X86_OP_REG
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..pipeline.structured_ast_query_index import StructuredAstQuerySession8616
 from .real_mode_linear import _capstone_insns_for_direct_global_update_8616, _direct_global_update_blocks_8616
 from .segment_access_policy import instruction_addrs_from_node_8616
 
@@ -242,8 +242,10 @@ def materialize_direct_global_register_updates_8616(
     project: ProjectBoundary8616,
     codegen: CodegenBoundary8616,
     synthetic_globals: object,
+    *,
+    query_session: StructuredAstQuerySession8616 | None = None,
 ) -> bool:
-    """Replace exact tagged update RHSs from closed binary facts."""
+    """Replace exact tagged update RHSs using one copied assignment projection."""
     cfunc = _boundary_attr_8616(codegen, "cfunc", None)
     function_addr = _boundary_attr_8616(cfunc, "addr", None)
     functions = _boundary_attr_8616(_boundary_attr_8616(project, "kb", None), "functions", None)
@@ -256,6 +258,16 @@ def materialize_direct_global_register_updates_8616(
         function = None
     root = _boundary_attr_8616(cfunc, "statements", None)
     facts = collect_direct_global_register_updates_8616(project, function) if function is not None else ()
+    query_index = query_session.current() if query_session is not None and facts else None
+    if query_index is not None:
+        query_index.require_root(root)
+    all_assignments = (
+        query_index.assignments
+        if query_index is not None
+        else tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, structured_c.CAssignment))
+        if facts
+        else ()
+    )
     debug = os.environ.get("INERTIA_DEBUG_DIRECT_GLOBAL_UPDATES") == "1"
     if debug:
         candidates = [
@@ -269,18 +281,16 @@ def materialize_direct_global_register_updates_8616(
                     for item in _iter_c_nodes_deep_8616(_boundary_attr_8616(node, "rhs", None))
                 ),
             )
-            for node in _iter_c_nodes_deep_8616(root)
-            if isinstance(node, structured_c.CAssignment)
+            for node in all_assignments
         ]
         print(f"[direct-global-register-update] facts={facts!r} assignments={candidates!r}", file=sys.stderr)
-    materialized = 0
-    failures = 0
+    materialized = failures = 0
+    ast_changed = False
     for fact in facts:
         direct_lane_matches = [
             node
-            for node in _iter_c_nodes_deep_8616(root)
-            if isinstance(node, structured_c.CAssignment)
-            and fact.update_insn_addr in instruction_addrs_from_node_8616(node)
+            for node in all_assignments
+            if fact.update_insn_addr in instruction_addrs_from_node_8616(node)
             and isinstance(node.lhs, structured_c.CVariable)
             and isinstance(node.lhs.variable, SimMemoryVariable)
             and isinstance(node.lhs.variable.addr, int)
@@ -290,9 +300,8 @@ def materialize_direct_global_register_updates_8616(
         ]
         segmented_store_matches = [
             node
-            for node in _iter_c_nodes_deep_8616(root)
-            if isinstance(node, structured_c.CAssignment)
-            and fact.update_insn_addr in instruction_addrs_from_node_8616(node)
+            for node in all_assignments
+            if fact.update_insn_addr in instruction_addrs_from_node_8616(node)
             and isinstance(node.lhs, structured_c.CFunctionCall)
             and any(
                 isinstance(item, structured_c.CDirtyExpression)
@@ -305,29 +314,30 @@ def materialize_direct_global_register_updates_8616(
         }
         expected_lanes = set(range(fact.destination_offset, fact.destination_offset + fact.width))
         if set(lanes) == expected_lanes and len(direct_lane_matches) == fact.width:
-            assignments = tuple(lanes.values())
+            matched_assignments = tuple(lanes.values())
         elif len(segmented_store_matches) == fact.width:
-            assignments = tuple(segmented_store_matches)
+            matched_assignments = tuple(segmented_store_matches)
         else:
             failures += 1
             continue
         replacements = 0
-        for assignment in assignments:
+        for assignment in matched_assignments:
             source = _source_variable_8616(project, codegen, synthetic_globals, fact, assignment.lhs.type)
             if source is None:
                 break
             replacements += _replace_unsupported_carrier_8616(assignment.rhs, source)
+        ast_changed |= replacements > 0
         if replacements < fact.width:
             failures += 1
             continue
         materialized += 1
-    stats = DirectGlobalRegisterUpdateStats8616(
-        len(facts), len(facts), len(facts), materialized, failures
-    )
+    stats = DirectGlobalRegisterUpdateStats8616(len(facts), len(facts), len(facts), materialized, failures)
     codegen._inertia_direct_global_register_update_stats_8616 = stats
     if not stats.complete:
         raise RuntimeError("direct-global register update evidence loop did not close")
-    return materialized > 0
+    if query_session is not None:
+        query_session.record_mutation(ast_changed)
+    return ast_changed
 
 
 __all__ = [

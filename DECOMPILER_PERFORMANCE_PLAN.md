@@ -90,6 +90,18 @@ owners. Forty-one focused cache, Alias, and indexed-range tests pass, and the
 cold replacement artifact emits the same validated `sub_109e8` C hash. This is
 an invalidation-radius improvement; hot-hit execution is unchanged by design.
 
+The first bounded typed-worklist substep now shares a lazy, mutation-aware AST
+query session between logical-word copy and direct-register global
+materialization. Consumers request the index only when typed facts exist, and
+every RHS mutation invalidates it before the next consumer. On sidecar-free
+`sub_109e8`, recursive structured-C walker calls fell from 96,076 to 94,299
+(1.85%) and query-index builds remained at 55 instead of the rejected eager
+prototype's 70. The generated C stayed byte-identical at SHA-256
+`c4f832cc3e6e73a343462121ea48ae54af6bdeb469bd53fbe4ae1d2f2eaef314`,
+with function and whole-tail validation clean. Profile totals were affected by
+concurrent load, so this is a scan-count acceptance only and does not satisfy
+the remaining Step 2 end-to-end 10% requirement.
+
 Cache-focused and indexed-Alias integration tests pass, `architecture-check-fast`
 passes, and the current fast pipeline passes 1,914 tests plus its required
 external lane. Final broad acceptance remains pending; an earlier broad run was
@@ -98,6 +110,10 @@ inconsistent external MS C construct subprocess results.
 
 Rejected experiments:
 
+- lazy-loading the corpus scanner and recovery-artifact package exports had no
+  controlled startup gain: three interleaved fresh-process pairs measured a
+  2.947-second lazy median versus a 2.874-second eager median; the earlier
+  4.418-second baseline was import/filesystem warm-up variance;
 - stat-qualified per-file source-manifest digest reuse passed correctness tests
   but improved the controlled six-manifest median only from 0.1965 seconds to
   0.1789 seconds (8.9%); the apparent 0.797-second baseline was contention;

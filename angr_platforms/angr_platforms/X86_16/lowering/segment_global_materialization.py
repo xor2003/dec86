@@ -16,6 +16,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, cast
 
+from ..pipeline.structured_ast_query_index import (
+    StructuredAstQuerySession8616,
+    StructuredAstQuerySessionStats8616,
+)
 from ..widening.segmented_load_widening import apply_segmented_load_widening_8616
 from .direct_global_register_updates import materialize_direct_global_register_updates_8616
 from .dos_interrupt_aggregate_globals import materialize_dos_interrupt_aggregate_globals_8616
@@ -73,6 +77,7 @@ class SegmentGlobalMaterializationTiming8616:
 class SegmentGlobalMaterializationResult8616:
     """Result of one complete segmented-global materialization replay."""
 
+    query_stats: StructuredAstQuerySessionStats8616 | None
     runtime_segment_changed: bool
     segmented_load_widening_changed: bool
     named_global_changed: bool
@@ -140,9 +145,26 @@ def run_segment_global_materialization_8616(
             cod_metadata=cod_metadata,
         )
     )
+    cfunc = getattr(codegen, "cfunc", None)
+    query_root = getattr(cfunc, "statements", None)
+    query_session = (
+        StructuredAstQuerySession8616(query_root)
+        if query_root is not None
+        else None
+    )
+    logical_copy_result = materialize_logical_word_memory_copies_8616(
+        codegen,
+        query_session=query_session,
+    )
+    direct_register_changed = materialize_direct_global_register_updates_8616(
+        project,
+        codegen,
+        synthetic_globals,
+        query_session=query_session,
+    )
     named_global_changed = bool(
-        materialize_logical_word_memory_copies_8616(codegen).changed
-        or materialize_direct_global_register_updates_8616(project, codegen, synthetic_globals)
+        logical_copy_result.changed
+        or direct_register_changed
         or named_global_changed
     )
     named_global_seconds = time.perf_counter() - component_started
@@ -210,6 +232,7 @@ def run_segment_global_materialization_8616(
             flush=True,
         )
     result = SegmentGlobalMaterializationResult8616(
+        query_stats=query_session.stats() if query_session is not None else None,
         runtime_segment_changed=runtime_segment_changed,
         segmented_load_widening_changed=segmented_load_widening_changed,
         named_global_changed=named_global_changed,

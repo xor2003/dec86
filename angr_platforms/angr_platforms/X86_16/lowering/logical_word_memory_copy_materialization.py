@@ -19,6 +19,7 @@ from angr.sim_variable import SimMemoryVariable, SimStackVariable
 
 from ..alias.stack_memory_ssa_contracts import StackMemorySSAAliasArtifact8616
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..pipeline.structured_ast_query_index import StructuredAstQuerySession8616
 from ..widening.logical_word_memory_copies import (
     LogicalWordMemoryCopy8616,
     LogicalWordMemoryCopyArtifact8616,
@@ -181,8 +182,15 @@ def _source_cvar_8616(
 
 def materialize_logical_word_memory_copies_8616(
     codegen: object,
+    *,
+    query_session: StructuredAstQuerySession8616 | None = None,
 ) -> LogicalWordMemoryCopyLoweringResult8616:
-    """Replace exact global assignment RHSs from closed copy evidence."""
+    """Replace exact global assignment RHSs from closed copy evidence.
+
+    ``query_session`` may accelerate assignment discovery for the current root.
+    This pass changes RHS children only, so its copied assignment projection
+    remains complete for the duration of this request.
+    """
     boundary = cast(_CodegenBoundary8616, codegen)
     try:
         source = boundary._inertia_stack_memory_ssa_alias_artifact
@@ -208,8 +216,16 @@ def materialize_logical_word_memory_copies_8616(
     raw_fact_count = 0
     materialized_count = 0
     refusals: list[LogicalWordMemoryCopyLoweringRefusal8616] = []
-    if root is not None:
-        for node in _iter_c_nodes_deep_8616(root):
+    if root is not None and fact_index:
+        query_index = query_session.current() if query_session is not None else None
+        if query_index is not None:
+            query_index.require_root(root)
+        nodes = (
+            query_index.assignments
+            if query_index is not None
+            else _iter_c_nodes_deep_8616(root)
+        )
+        for node in nodes:
             if not isinstance(node, structured_c.CAssignment):
                 continue
             identity = _direct_global_identity_8616(node)
@@ -259,6 +275,8 @@ def materialize_logical_word_memory_copies_8616(
                 continue
             node.rhs = source_cvar
             materialized_count += 1
+    if query_session is not None:
+        query_session.record_mutation(materialized_count > 0)
     stats = LogicalWordMemoryCopyLoweringStats8616(
         raw_fact_count=raw_fact_count,
         normalized_fact_count=materialized_count,

@@ -17,6 +17,7 @@ from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.lowering.logical_word_memory_copy_materialization import (
     materialize_logical_word_memory_copies_8616,
 )
+from angr_platforms.X86_16.pipeline.structured_ast_query_index import StructuredAstQuerySession8616
 from angr_platforms.X86_16.widening.logical_word_memory_copies import (
     LogicalWordMemoryCopyFailure8616,
     build_logical_word_memory_copy_artifact_8616,
@@ -137,8 +138,12 @@ def test_register_update_between_reload_and_spill_refuses_copy() -> None:
 
 def test_lowering_materializes_only_exact_tagged_global_assignment() -> None:
     codegen, assignment, source, _temporary = _copy_assignment_fixture()
+    query_session = StructuredAstQuerySession8616(codegen.cfunc.statements)
 
-    result = materialize_logical_word_memory_copies_8616(codegen)
+    result = materialize_logical_word_memory_copies_8616(
+        codegen,
+        query_session=query_session,
+    )
 
     assert result.changed
     assert result.artifact.complete

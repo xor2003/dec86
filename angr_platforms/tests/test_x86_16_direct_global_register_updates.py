@@ -9,6 +9,7 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering import direct_global_register_updates as updates
+from angr_platforms.X86_16.pipeline.structured_ast_query_index import StructuredAstQuerySession8616
 from capstone.x86_const import X86_INS_MOV, X86_INS_XOR, X86_OP_MEM, X86_OP_REG
 
 
@@ -76,12 +77,29 @@ def test_materializes_exact_tagged_global_xor(monkeypatch: pytest.MonkeyPatch) -
         0x39A, 0x39E, 2, 3, updates.DirectGlobalRegisterUpdateOp8616.XOR, 0x12D40, 0x12D43
     )
     monkeypatch.setattr(updates, "collect_direct_global_register_updates_8616", lambda *_args: (fact,))
+    root = codegen.cfunc.statements
+    query_session = StructuredAstQuerySession8616(root)
+    original_iter = updates._iter_c_nodes_deep_8616
+    root_scan_count = 0
+
+    def count_root_scans(node: object):
+        nonlocal root_scan_count
+        if node is root:
+            root_scan_count += 1
+        yield from original_iter(node)
+
+    monkeypatch.setattr(updates, "_iter_c_nodes_deep_8616", count_root_scans)
 
     changed = updates.materialize_direct_global_register_updates_8616(
-        project, codegen, {0x39A: ("g_039A", 2), 0x39E: ("g_039E", 2)}
+        project,
+        codegen,
+        {0x39A: ("g_039A", 2), 0x39E: ("g_039E", 2)},
+        query_session=query_session,
     )
 
     assert changed is True
+    assert root_scan_count == 0
+    assert query_session.stats().build_count == 1
     for assignment in assignments:
         assert isinstance(assignment.rhs, structured_c.CBinaryOp)
         assert assignment.rhs.op == "Xor"
