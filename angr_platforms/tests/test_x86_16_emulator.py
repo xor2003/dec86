@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from angr_platforms.X86_16.emulator import Emulator
+from angr_platforms.X86_16.processor import Processor
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,21 @@ def test_emulator_builds_vex_offset_map_from_arch_contract() -> None:
 
     assert emulator.vex_offsets == {"ax": 0, "ip": 16}
     assert emulator.irsb is None
+
+
+def test_emulator_initializes_processor_once_through_runtime_mro(monkeypatch) -> None:
+    calls: list[object] = []
+    original = Processor.__init__
+
+    def counted(processor: Processor) -> None:
+        calls.append(processor)
+        original(processor)
+
+    monkeypatch.setattr(Processor, "__init__", counted)
+
+    emulator = Emulator(_Arch(register_list=()))
+
+    assert calls == [emulator]
 
 
 def test_emulator_real_mode_ring_check_allows_instruction() -> None:

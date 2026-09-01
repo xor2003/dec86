@@ -15,7 +15,6 @@ from pyvex.lifting.util.vex_helper import IRSBCustomizer, Type
 from pyvex.stmt import Put
 
 from .interrupt import Interrupt
-from .processor import Processor
 from .stack_helpers import StackEmulator
 from .stack_helpers import pop16 as stack_pop16
 from .stack_helpers import push16 as stack_push16
@@ -85,7 +84,6 @@ class Emulator(Interrupt):
 
     def __init__(self, arch: _EmulatorArch, lifter: _LifterWithIrsb | None = None) -> None:
         """Initialize frontend runtime state for one architecture instance."""
-        Processor.__init__(self)
         Interrupt.__init__(self)
         self.arch = arch
         self.lifter = lifter
