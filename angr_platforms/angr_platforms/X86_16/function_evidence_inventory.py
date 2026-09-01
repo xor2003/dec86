@@ -27,6 +27,7 @@ class FunctionEvidenceKind8616(Enum):
     NEIGHBOR_CALL_TARGETS = "neighbor_call_targets"
     DIRECT_GLOBAL_INSTRUCTION_VIEWS = "direct_global_instruction_views"
     REGISTER_SOURCE_BLOCKS = "register_source_blocks"
+    TERMINAL_AX_RETURNS = "terminal_ax_returns"
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,6 +18,10 @@ from typing import Any, Protocol, cast
 from angr.errors import SimEngineError, SimTranslationError
 
 from ..frontend_instruction_reachability import decoded_block_instructions_8616
+from ..function_evidence_inventory import (
+    FunctionEvidenceKind8616,
+    collect_function_binary_evidence_8616,
+)
 from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
 
 __all__ = [
@@ -263,7 +267,7 @@ def _explicit_restore_sites_8616(project: object, block_addrs: frozenset[int]) -
     return frozenset(address for _name, address in restores)
 
 
-def collect_terminal_ax_return_evidence_8616(
+def _collect_terminal_ax_return_evidence_uncached_8616(
     project: object,
     function: object,
 ) -> TerminalAxReturnEvidence8616:
@@ -413,6 +417,31 @@ def collect_terminal_ax_return_evidence_8616(
         materialized_count=materialized_count,
         failure_count=failure_count,
     )
+
+
+def collect_terminal_ax_return_evidence_8616(
+    project: object,
+    function: object,
+) -> TerminalAxReturnEvidence8616:
+    """Return immutable terminal AX evidence for the exact binary surface."""
+
+    def _build(
+        cached_project: object | None,
+        cached_function: object,
+    ) -> tuple[TerminalAxReturnEvidence8616]:
+        """Adapt the semantic collector to the binary evidence inventory."""
+        evidence_project = project if cached_project is None else cached_project
+        return (_collect_terminal_ax_return_evidence_uncached_8616(evidence_project, cached_function),)
+
+    cached = collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.TERMINAL_AX_RETURNS,
+        builder=_build,
+    )
+    if len(cached) != 1:
+        raise RuntimeError("terminal AX evidence inventory did not materialize exactly one result")
+    return cached[0]
 
 
 def terminal_ax_return_lane_states_8616(

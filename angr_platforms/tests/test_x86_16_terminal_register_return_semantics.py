@@ -103,6 +103,72 @@ def test_terminal_ax_evidence_closes_mixed_defined_and_undefined_return_paths(mo
     assert set(project.factory.calls) == set(blocks)
 
 
+def test_terminal_ax_evidence_reuses_semantic_classification(monkeypatch) -> None:
+    terminal = _insn(0x1000, "ret")
+    block = SimpleNamespace(
+        addr=0x1000,
+        size=1,
+        capstone=SimpleNamespace(insns=(terminal,)),
+    )
+    project = SimpleNamespace(factory=_Factory({0x1000: block}))
+    function = SimpleNamespace(
+        addr=0x1000,
+        size=1,
+        blocks=(block,),
+        block_addrs_set={0x1000},
+    )
+    effect_count = 0
+
+    def _effect(_insn: object) -> object:
+        nonlocal effect_count
+        effect_count += 1
+        return SimpleNamespace(kind=TerminalAxReturnEffectKind8616.OTHER, dst_reg=None)
+
+    monkeypatch.setattr(terminal_register_returns, "terminal_ax_return_effect_8616", _effect)
+
+    first = collect_terminal_ax_return_evidence_8616(project, function)
+    second = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert first == second
+    assert project.factory.calls == [0x1000]
+    assert effect_count == 1
+
+
+def test_terminal_ax_evidence_invalidates_changed_block_surface() -> None:
+    jump = _insn(0x1000, "jmp", target=0x1010)
+    terminal = _insn(0x1010, "ret")
+    entry_block = SimpleNamespace(
+        addr=0x1000,
+        size=1,
+        capstone=SimpleNamespace(insns=(jump,)),
+    )
+    terminal_block = SimpleNamespace(
+        addr=0x1010,
+        size=1,
+        capstone=SimpleNamespace(insns=(terminal,)),
+    )
+    project = SimpleNamespace(
+        factory=_Factory({0x1000: entry_block, 0x1010: terminal_block})
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        size=1,
+        blocks=(entry_block,),
+        block_addrs_set={0x1000},
+    )
+
+    incomplete = collect_terminal_ax_return_evidence_8616(project, function)
+    function.size = 0x11
+    function.blocks = (entry_block, terminal_block)
+    function.block_addrs_set = {0x1000, 0x1010}
+    complete = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert not incomplete.complete
+    assert complete.complete
+    assert project.factory.calls.count(0x1000) == 1
+    assert project.factory.calls.count(0x1010) == 1
+
+
 def test_terminal_storage_refuses_mixed_call_output_and_explicit_ax_paths(monkeypatch) -> None:
     branch = _insn(0x1000, "je", size=2, target=0x1010)
     write_ax = _insn(0x1002, "mov")

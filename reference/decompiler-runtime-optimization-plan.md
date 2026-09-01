@@ -279,6 +279,17 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`;
   function and whole-tail validation pass. Concurrent decompilation load makes
   whole-process wall time unsuitable for a broader speed claim.
+- Terminal AX return classification now publishes one immutable Semantics
+  result through the exact function-binary evidence inventory. Byte, word,
+  wide, and return-type consumers reuse both complete evidence and typed
+  refusals until the function block surface changes. On the 20-function
+  sidecar-free SORTD census, semantic collections fell from 80 to 21 and
+  decoded-block requests from 5,245 to 1,353, both 74%; cache surface checks
+  cost 0.099 seconds across 80 requests. Seven concurrent clean workers made
+  the surviving collections substantially slower, so no wall-time claim is
+  made from that run. A complete `sub_109e8` run remains byte-identical at
+  `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`;
+  function and whole-tail validation pass.
 - Cold indexed-Alias construction has a typed bounded-fork experiment with an
   exact serial fallback and a three-worker, roughly 1.13 GiB aggregate cap.
   Two stable serial SORTD `sub_109e8` runs measured 27.39 and 27.31 seconds;
