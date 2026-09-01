@@ -529,6 +529,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_block_decode.py \
+	angr_platforms/angr_platforms/X86_16/frontend_capstone_block.py \
 	angr_platforms/angr_platforms/X86_16/frontend_block_inventory.py \
 	angr_platforms/angr_platforms/X86_16/frontend_capstone_decode.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
@@ -1448,6 +1449,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_block_decode.py \
+	angr_platforms/angr_platforms/X86_16/frontend_capstone_block.py \
 	angr_platforms/angr_platforms/X86_16/frontend_block_inventory.py \
 	angr_platforms/angr_platforms/X86_16/frontend_capstone_decode.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
@@ -2878,6 +2880,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_return_compat_counters.py \
 	angr_platforms/tests/test_x86_16_frontend_function_boundary_index.py \
 	angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py \
+	angr_platforms/tests/test_x86_16_stitched_direct_blocks.py \
 	angr_platforms/tests/test_cli_decompilation_render_refresh.py \
 	angr_platforms/tests/test_project_evidence_transport.py \
 	angr_platforms/tests/test_x86_16_condition_fact_arbitration.py \

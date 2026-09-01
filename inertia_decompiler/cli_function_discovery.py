@@ -47,6 +47,9 @@ from angr_platforms.X86_16.exact_region_diagnostics import (
     format_exact_region_diagnostics_8616,
 )
 from angr_platforms.X86_16.frontend_instruction_reachability import (
+    collect_decoded_block_evidence_8616 as _collect_block_8616,
+)
+from angr_platforms.X86_16.frontend_instruction_reachability import (
     x86_16_block_successors_from_capstone_8616 as _x86_16_block_successors_from_capstone_8616,
 )
 from angr_platforms.X86_16.lst_extract import LSTMetadata
@@ -1384,7 +1387,7 @@ def _collect_stitched_blocks_and_edges_8616(
             continue
         visited.add(block_addr)
         try:
-            block = project.factory.block(block_addr, opt_level=0)
+            block = _collect_block_8616(project, block_addr, opt_level=0).block
         except Exception:
             visited.remove(block_addr)
             continue

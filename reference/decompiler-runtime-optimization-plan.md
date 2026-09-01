@@ -370,6 +370,27 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   function and whole-tail validation pass. Cache warmth and request population
   differ from the prior 2,249-request / 10.210-second profile, so only the
   closed owner-level VEX elimination is accepted, not a wall-time ratio.
+- Exact-region function stitching now consumes that same typed block inventory
+  instead of entering VEX merely for block bytes, instructions, and successor
+  edges. A same-process sidecar-free SORTD census replayed all 20 requested
+  ranges through the forced VEX fallback: every block byte/instruction shape
+  and every edge matched. Direct evidence served 357 of 399 blocks; typed
+  refusals retained VEX for the remaining 42. The stitched-discovery owner fell
+  from 1.623 to 0.093 seconds (94%). An isolated prior-baseline worktree, with
+  only the already-required untracked module dependencies and their GP-state
+  helper, produced status 0 through both direct and forced-fallback discovery,
+  byte-identical C at
+  `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`,
+  and passing function plus whole-tail validation. The owner-level optimization
+  is accepted. The current shared tree is not globally green: concurrent
+  unstaged lowering/return work makes both paths fail identically with
+  unresolved stack locals, status 4, C hash
+  `368c0e02271f7a8b24796546a4f680c0ecea0dd221693f97caad65c03788b0a6`,
+  and no function validation. The changed-file gate passes, as do 12 existing
+  stitched/exact-region tests, 1,906 curated fast-pipeline tests, and all three
+  external quality constructs. The full CLI file has one unrelated live-tree
+  failure because the concurrent untracked affine cleanup assumes a synthetic
+  test codegen has a statement root.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -381,13 +402,14 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
+| P0 | Current shared tree fails `sub_109e8` validation identically with direct block decoding enabled or forcibly refused | Focused output is partial because unresolved stack locals leak into final C | Semantic performance candidates cannot close their validation DoD until concurrent lowering/return changes restore the baseline |
 | P1 | Structuring validation priming costs 3.72 seconds in the accepted warm profile | Large functions still pay repeated semantic consumer work | Raw IR and frontend condition relifting are eliminated when complete evidence closes; direct-stack and segment/global consumers still replay sequentially |
 | P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Bounded per-function fork work did not repeatably beat serial construction, so the remaining gain must reduce duplicated IR/Alias work rather than add default workers |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
-| P1 | Cold Python import and dataclass construction costs about 14.06 seconds | Every uncached CLI invocation starts slowly before analysis | Short edit/profile loops pay a fixed cost unrelated to target complexity |
+| P2 | A current fresh full-CLI import costs about 4.25 seconds across 2,961 modules | Every uncached CLI invocation has a fixed startup cost | No removable module owns more than 0.10 seconds self-time; the earlier 14.06-second observation was load-contaminated, so import refactoring is lower priority than repeated lifting |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |
 
 ## Acceptance Invariants
@@ -456,9 +478,12 @@ register-source CFG projections, typed complete-instruction JCC and direct-call
 patch dispatch, bottom-up condition-subtree tag indexing, and shared exact
 frontend block decode reuse accepted; request-local bounded block inventories
 also bypass VEX when direct Capstone evidence closes with custom-lifter boundary
-parity; terminal-return semantics consumes one complete exact-byte Frontend
-block artifact without entering VEX; raw IR reuses complete typed condition
-capture from its existing frontend lift;
+parity; exact-region stitching consumes the same projection with owner-level
+parity and isolated-baseline validation accepted while the live shared gate is
+blocked by unrelated concurrent changes;
+terminal-return semantics consumes one complete exact-byte Frontend block
+artifact without entering VEX; raw IR reuses complete typed condition capture
+from its existing frontend lift;
 duplicate positive-BP fallback removed from runtime segment orchestration; raw
 VEX import classifies logical condition formulas only for typed direct-exit
 demand while preserving every comparison required by flag provenance

@@ -13,6 +13,8 @@ from typing import Any, Protocol, cast
 
 from capstone import CS_GRP_CALL, CS_GRP_INT, CS_GRP_IRET, CS_GRP_JUMP, CS_GRP_RET
 
+from .frontend_capstone_block import DirectCapstoneBlock8616, DirectCapstoneInstruction8616
+
 _BLOCK_MAX_BYTES_8616 = 400
 _CONTROL_GROUPS_8616 = frozenset({CS_GRP_JUMP, CS_GRP_CALL, CS_GRP_RET, CS_GRP_INT, CS_GRP_IRET})
 _CONTROL_MNEMONICS_8616 = frozenset({
@@ -32,15 +34,6 @@ class _InstructionBoundary8616(Protocol):
     mnemonic: str
     op_str: str
     groups: Sequence[int]
-
-
-class _DetailedInstructionBoundary8616(_InstructionBoundary8616, Protocol):
-    """Capstone detail fields consumed by downstream semantic recovery."""
-
-    operands: Sequence[object]
-
-    def reg_name(self, register_id: int) -> str:
-        """Return Capstone's canonical name for one register id."""
 
 
 class _CapstoneDecoderBoundary8616(Protocol):
@@ -91,36 +84,6 @@ class CapstoneBlockDecodeFailureReason8616(Enum):
     DECODER_UNAVAILABLE = "decoder_unavailable"
     DECODE_INCOMPLETE = "decode_incomplete"
     TERMINATOR_UNSUPPORTED = "terminator_unsupported"
-
-
-@dataclass(frozen=True, slots=True)
-class DirectCapstoneInstruction8616:
-    """angr-compatible immutable view of one raw Capstone instruction."""
-
-    address: int
-    size: int
-    mnemonic: str
-    op_str: str
-    insn: object
-
-    @property
-    def operands(self) -> Sequence[object]:
-        """Expose immutable operand evidence from the raw decoder boundary."""
-        return cast(_DetailedInstructionBoundary8616, self.insn).operands
-
-    def reg_name(self, register_id: int) -> str:
-        """Resolve a register id through the raw decoder boundary."""
-        return cast(_DetailedInstructionBoundary8616, self.insn).reg_name(register_id)
-
-
-@dataclass(frozen=True, slots=True)
-class DirectCapstoneBlock8616:
-    """One contiguous block decoded directly from loaded bytes."""
-
-    addr: int
-    size: int
-    code: bytes
-    instructions: tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
