@@ -391,6 +391,19 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   external quality constructs. The full CLI file has one unrelated live-tree
   failure because the concurrent untracked affine cleanup assumes a synthetic
   test codegen has a statement root.
+- Recovery-metadata helpers now obtain their Capstone-only block view from the
+  typed frontend inventory and retain VEX only on a typed direct-decode
+  refusal. All ten callers consume instruction views rather than VEX or AIL.
+  On a same-checkout cold sidecar-free SORTD `sub_109e8` profile, 3,155 helper
+  requests fell from 5.750 to 0.050 seconds (99%), custom-lifter requests fell
+  from 1,832 to 1,601, indexed Alias context preparation from 30.641 to 28.894
+  seconds, and project callsite collection from 8.075 to 6.337 seconds.
+  Generated C was unchanged and function plus whole-tail validation passed.
+  The patched run also paid a fresh 9.33-second architecture attestation after
+  its source change, so only owner and main-CLI reductions are accepted, not
+  the profiler's process-total comparison. Strict file gates, 93 focused
+  frontend/callsite tests, 1,906 curated fast-pipeline tests, and all three
+  external quality constructs pass.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -404,7 +417,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 | --- | --- | --- | --- |
 | P0 | Current shared tree fails `sub_109e8` validation identically with direct block decoding enabled or forcibly refused | Focused output is partial because unresolved stack locals leak into final C | Semantic performance candidates cannot close their validation DoD until concurrent lowering/return changes restore the baseline |
 | P1 | Structuring validation priming costs 3.72 seconds in the accepted warm profile | Large functions still pay repeated semantic consumer work | Raw IR and frontend condition relifting are eliminated when complete evidence closes; direct-stack and segment/global consumers still replay sequentially |
-| P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Bounded per-function fork work did not repeatably beat serial construction, so the remaining gain must reduce duplicated IR/Alias work rather than add default workers |
+| P1 | Cold indexed Alias/Widening context construction spends 16.9 seconds building the complete function-artifact census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Capstone-only helper relifts are removed; bounded per-function fork work did not repeatably beat serial construction, so the next gain must reduce or accelerate complete typed IR/SSA work without raw-cache evidence loss |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
@@ -481,6 +494,8 @@ also bypass VEX when direct Capstone evidence closes with custom-lifter boundary
 parity; exact-region stitching consumes the same projection with owner-level
 parity and isolated-baseline validation accepted while the live shared gate is
 blocked by unrelated concurrent changes;
+recovery-metadata instruction consumers use the same typed direct block
+projection with VEX fallback and measured owner-level reduction;
 terminal-return semantics consumes one complete exact-byte Frontend block
 artifact without entering VEX; raw IR reuses complete typed condition capture
 from its existing frontend lift;

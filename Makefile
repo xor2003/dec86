@@ -2880,6 +2880,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_return_compat_counters.py \
 	angr_platforms/tests/test_x86_16_frontend_function_boundary_index.py \
 	angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py \
+	angr_platforms/tests/test_x86_16_analysis_helper_direct_blocks.py \
 	angr_platforms/tests/test_x86_16_stitched_direct_blocks.py \
 	angr_platforms/tests/test_cli_decompilation_render_refresh.py \
 	angr_platforms/tests/test_project_evidence_transport.py \

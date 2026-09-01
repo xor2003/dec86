@@ -22,6 +22,7 @@ from angr import SimProcedure
 from angr.sim_type import SimTypeFunction
 
 from .frontend_function_instructions import collect_function_instruction_inventory_8616
+from .frontend_instruction_reachability import collect_decoded_block_evidence_8616
 from .function_evidence_inventory import (
     FunctionEvidenceKind8616,
     collect_function_binary_evidence_8616,
@@ -122,8 +123,8 @@ def _dynamic_analysis_int_attr_8616(obj: object, name: str) -> int | None:
 
 
 def _analysis_project_block_8616(project: object, block_addr: int) -> Any:  # noqa: ANN401
-    """Build a block through angr's dynamic project factory boundary."""
-    return cast(Any, project).factory.block(block_addr, opt_level=0)
+    """Return typed frontend block evidence with VEX retained as fallback."""
+    return collect_decoded_block_evidence_8616(project, block_addr, opt_level=0).block
 
 
 def _analysis_function_addr_8616(function: object) -> int | None:
