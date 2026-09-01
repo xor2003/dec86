@@ -15,364 +15,211 @@ Correctness remains the hard boundary:
 4. generated C remains recompilable;
 5. identical inputs produce deterministic output and evidence hashes.
 
-An optimization that makes the tool faster by skipping required evidence,
-weakening a gate, accepting stale facts, or reducing decompilation quality is a
-regression.
+An optimization that skips required evidence, accepts stale facts, weakens a
+gate, or reduces decompilation quality is a regression.
 
-## Current Evidence And Limits
+## Current Evidence
 
-The recorded sidecar-free SORTD run in `SORTD_GHIDRA_PLAN.md` took 4:36.36
-(about 274 seconds), averaged 478% CPU utilization, and peaked near 302 MiB RSS
-with seven clean function workers.
+An in-process profile of sidecar-free `SORTD.EXE` function `sub_109e8` ranked
+the current cumulative costs as follows:
 
-The saved `cmp16.prof` profile is not a valid profile of core decompilation. Of
-its 8.8 seconds, about 6.4 seconds is the parent waiting in `select()` and about
-1.8 seconds is imports. Expensive work runs in child processes and is mostly
-absent from that profile. Precise native-compilation gain cannot be claimed
-until child work is measured.
-
-The current mypyc builder in `scripts/build_mypyc.py` compiles only
-`inertia_decompiler.decompile_file_summary`. That module is unlikely to own a
-material fraction of decompilation CPU time, so the present mypyc configuration
-should not be expected to improve the 274-second run significantly.
-
-Planning estimates, to be replaced by measurements:
-
-| Improvement | Possible overall gain |
+| Work | Profiled time |
 | --- | ---: |
-| eliminate repeated analysis with a dependency worklist | 20-50% |
-| persistent project and bounded worker reuse | 5-20% |
-| incremental layer/function caching | 2-10x on unchanged warm runs |
-| improved cost-aware scheduling | 10-30% |
-| mypyc on measured owned Python kernels | 5-25% |
-| Cython/Rust for compact typed kernels | additional 5-30% |
+| direct indexed-Alias program context | 33.26 s |
+| custom X86-16 lifting | 20.39 s |
+| indexed Alias evidence construction | 19.65 s |
+| direct function decompilation | 17.37 s |
+| function discovery | 6.72 s |
+| project-wide callee callsite collection | 6.29 s |
 
-These estimates are not additive. Every result must report cold and warm wall
-time, CPU time, utilization, peak RSS, cache status, and output/validation
-identity.
+The accepted cache-layer fix decoupled persisted indexed Alias/Widening
+evidence from the program-callsite cache. With a valid indexed-global cache and
+only the callsite cache missing, the same function improved from 26.42 seconds
+to 14.74 seconds (44.2%), and peak RSS fell from about 315 MiB to 261 MiB. The
+generated-C SHA-256 remained
+`fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`, and
+function and whole-tail validation passed.
 
-## Ordered Implementation Plan
+Rejected experiments:
 
-### 1. Profile Work Inside Function Workers
+- broad typed IR/SSA mypyc compilation improved the median by only 8.3% and
+  introduced a large cold outlier;
+- whole-lifter mypyc compilation was 3.9% slower;
+- an exact Capstone instruction cache improved repeated lifting by only 2.6%;
+- default fork-based Alias parallelism was unstable under Python 3.14, emitted
+  unsafe-fork warnings, and did not provide a repeatable production gain.
 
-Status: pending and mandatory before native compilation expansion.
+These experiments must not be restored without new profile evidence and a
+design that addresses their recorded failure mode.
 
-Measure CPU and wall time separately for:
+## Remaining Ordered Plan
 
-- worker startup and imports;
-- project/binary loading;
-- function discovery and CFG construction;
-- VEX lifting and typed IR import;
-- Alias;
-- Widening;
-- Types/Lowering and interprocedural contracts;
-- Structuring;
-- Rewrite/cleanup;
-- tail validation;
-- C rendering and recompilation;
-- serialization and parent/child transport.
+### 1. Persist Function-Scoped Typed IR And SSA
 
-Profile at least:
+Reason: a cold indexed-Alias rebuild still spends about 19.65 profiled seconds
+building project-wide evidence, with 29 typed-IR function builds in the
+measured run. Reusing proven per-function IR/SSA can remove this cost before
+more invasive scheduling or native-code work.
 
-1. a small wrapper-like SORTD function;
-2. a medium function;
-3. the slowest SORTD function;
-4. one function dominated by validation;
-5. one function dominated by recovery/structuring.
+Definition of Done:
 
-Use wall-clock spans for blocking/native/child work and a sampling or child
-`cProfile` run for Python ownership. Profile interpreted Python before mypyc;
-compiled frames are less useful to `cProfile`.
+- unchanged functions perform no VEX relift or SSA rebuild on a valid hit;
+- cache keys include binary/function input, frontend configuration, exact
+  upstream hashes, schema version, and owning implementation version;
+- changing one function invalidates only its typed dependency closure;
+- live and restored artifacts produce identical typed facts, generated C,
+  validation verdicts, and deterministic hashes;
+- corrupt, partial, stale-schema, and conflicting entries are rejected;
+- the representative end-to-end benchmark improves by at least 10%;
+- focused gates and `make quality-dev PYTHON=./.venv/bin/python` pass.
 
-Definition of done:
+Definition of Failure:
 
-- parent waiting time is separated from child CPU time;
-- top functions and modules are ranked by self and cumulative CPU time;
-- repeated stages and repeated scans are counted;
-- per-function stage data is emitted in deterministic JSON;
-- profiling disabled has negligible overhead;
-- the baseline output, validation verdicts, and behavior gates are unchanged.
+- a key omits semantic inputs or accepts stale evidence;
+- restored and live artifacts differ;
+- a reported hit still performs material relifting or SSA reconstruction;
+- measured gain is below 10% or validation/output quality changes;
+- cache ownership leaks into Rewrite, postprocess, or the CLI.
 
-### 2. Replace Repeated Global Passes With A Typed Dependency Worklist
+### 2. Replace Repeated Global Scans With A Typed Dependency Worklist
 
-Status: pending; expected highest cold-run impact.
+Reason: direct function decompilation still owns 17.37 profiled seconds, with
+repeated AST scans, fact normalization, and dependency fingerprinting. A typed
+worklist should settle only consumers of changed IR, Alias, Widening, type,
+condition, and call-contract facts.
 
-Use the existing pipeline ownership order:
+Definition of Done:
 
-```text
-IR -> Alias -> Widening -> Types -> Structuring -> Rewrite
-```
-
-Only enqueue dependents of changed facts:
-
-```text
-changed Address/storage fact
-  -> dependent Alias joins
-  -> dependent wide Values
-  -> dependent type and call contracts
-  -> dependent Conditions and CFG regions
-  -> dependent validation obligations
-```
-
-Every queued item must have a typed identity containing the function, exact
-storage or CFG identity, upstream fact versions, and analysis version. Worklist
-ordering must be stable. A bounded fixed-point limit must report the exact facts
-that failed to settle and fail explicitly rather than silently accepting the
-last iteration.
-
-Do not maintain two semantic authorities for one fact. Introduce an earlier
-typed producer, migrate one consumer, prove parity, then remove the superseded
-late producer.
-
-Definition of done:
-
-- repeated full-function/full-AST scans decrease by a measured amount;
+- repeated full-function and full-AST scan counts decrease measurably;
 - unchanged facts do not rerun downstream analysis;
-- fixed-point order is deterministic across runs and worker counts;
-- non-settling analysis is an explicit typed failure;
-- SORTD output and validation identities remain equal or decompilation quality
-  improves under the acceptance contract;
-- cold wall time improves by a measured amount.
+- each queued item has a typed identity, upstream versions, and stable order;
+- fixed-point behavior is deterministic across repeats and worker counts;
+- non-settling facts produce an explicit typed failure with their identities;
+- the representative end-to-end benchmark improves by at least 10%;
+- generated C, required calls, validation, and recompilation remain correct.
 
-### 3. Make Cache Invalidation Layered And Function-Scoped
+Definition of Failure:
 
-Status: pending.
+- two layers become competing authorities for the same fact;
+- work is skipped without a complete typed dependency proof;
+- an iteration limit silently returns incomplete output;
+- order or worker count changes output or evidence;
+- scan counts move but end-to-end runtime or correctness regresses.
 
-The existing broad source fingerprint is safe but invalidates too much. Split
-cache ownership into content-addressed layers:
+### 3. Introduce Safe Prefork Worker Reuse
 
-```text
-binary and loader configuration
-  -> discovery/CFG
-  -> lifted typed IR
-  -> Alias
-  -> Widening
-  -> Types/contracts
-  -> Structuring
-  -> rendered C
-  -> validation result
-```
+Reason: repeated process startup, imports, project construction, and immutable
+binary loading remain avoidable. The earlier default fork experiment was
+rejected because it forked after threads existed and was unstable; this task
+requires an explicit safe lifecycle rather than reusing that implementation.
 
-Each key includes only:
+Definition of Done:
 
-- binary/function input hashes;
-- relevant configuration;
-- exact upstream artifact hashes;
-- the owning analysis implementation/schema version.
+- the multiprocessing context and prefork point are explicit and emit no
+  Python 3.14 unsafe-fork warning;
+- immutable project state is documented and function-local state is reset;
+- clean-worker and reused-worker outputs and evidence hashes are identical;
+- shuffled task order and first/middle/last repetitions remain deterministic;
+- aggregate worker memory remains below 2 GiB with controlled recycling;
+- worker failure cannot poison later tasks or hide a failed function;
+- the representative full-program benchmark improves by at least 10%.
 
-Changing rendering must not invalidate IR. Changing Widening may invalidate
-Widening and downstream layers but should retain discovery, IR, and Alias.
-Interprocedural facts must include caller/callee dependency hashes so a callee
-contract change invalidates every affected caller and no others.
+Definition of Failure:
 
-Cache hits are reusable artifacts, not semantic proof. Validation either reruns
-or uses its own complete content-addressed key covering every validated effect
-and validator implementation version.
+- workers inherit active threads or mutable analysis state;
+- RSS grows without a bound or the run risks OOM;
+- task order changes semantics, validation, or output ordering;
+- a worker failure is converted into silent fallback or success;
+- startup savings do not improve the end-to-end run materially.
 
-Definition of done:
+### 4. Schedule Expensive Functions First
 
-- unchanged warm decompilation has a documented hit rate and speedup;
-- changing one layer invalidates only that layer and dependents;
-- changing one function invalidates only its dependency closure;
-- corrupt, partial, old-schema, and conflicting entries are rejected;
-- cache-on and cache-off outputs and validation verdicts are identical;
-- atomic writes and deterministic serialization survive interrupted workers.
+Reason: cost-aware scheduling can shorten the serial tail after safe reusable
+workers and trustworthy stage timings exist. It should follow worker reuse so
+the scheduler is optimized against the final execution lifecycle.
 
-### 4. Reuse Loaded Projects And Bounded Worker Processes
+Definition of Done:
 
-Status: pending after profiling.
+- generic block, edge, instruction, loop, call, and valid historical timing
+  features predict expensive functions without corpus-specific identities;
+- longest-processing-time-first scheduling reduces measured straggler time;
+- output order and hashes remain deterministic;
+- stale estimates are invalidated by input and implementation hashes;
+- serial, four-worker, and seven-worker correctness gates pass;
+- the full-program benchmark shows a repeatable end-to-end gain.
 
-Persistent workers should load Python, angr, the X86-16 architecture, and
-immutable binary/project data once, then process multiple functions. Function
-analysis state must remain isolated and be discarded after each task.
+Definition of Failure:
 
-Requirements:
+- scheduling uses names, fixed addresses, or corpus-specific allowlists;
+- estimates influence semantics, validation, or timeout policy;
+- completion order changes rendered output or diagnostics;
+- utilization changes without a repeatable full-run improvement.
 
-- choose the Python 3.14 multiprocessing context explicitly;
-- define which project components are immutable and shareable;
-- reset or reconstruct every mutable function-local analysis owner;
-- cap tasks per worker and restart on RSS growth or state-integrity failure;
-- keep deterministic output ordering independent of completion order;
-- fall back to clean workers when isolation cannot be proven.
+### 5. Compile Only Residual Measured Kernels With mypyc
 
-Definition of done:
+Reason: broad native-compilation candidates have already failed the acceptance
+threshold. Native compilation is justified only after algorithmic reuse removes
+duplicated work and a remaining owned Python kernel still dominates CPU time.
 
-- repeated import/project construction time decreases measurably;
-- clean-worker and reused-worker output hashes are identical;
-- running the same function first, middle, and last produces identical evidence;
-- shuffled task ordering produces identical results;
-- memory remains below the 2 GiB aggregate budget;
-- fault injection proves one broken worker cannot poison later tasks.
+Definition of Done:
 
-### 5. Schedule Expensive Functions First
+- every target owns a documented material fraction of end-to-end CPU time;
+- the compilation unit has typed owned data and avoids dynamic angr/AST
+  boundary traffic in its hot loop;
+- interpreted and compiled modes have identical facts, generated C, hashes,
+  validation verdicts, and tests;
+- build time, import time, boundary conversion, cold time, and warm time are
+  reported separately;
+- the representative end-to-end benchmark improves by at least 10% without a
+  cold-start outlier;
+- interpreted development remains usable without a native rebuild.
 
-Status: pending after stage timing exists.
+Definition of Failure:
 
-Estimate cost using only generic properties and historical timings:
-
-- block and edge count;
-- lifted instruction/byte count;
-- loop/SCC count;
-- call count;
-- prior stage timings keyed by valid implementation/input hashes.
-
-Use longest-processing-time-first scheduling with deterministic tie-breaking.
-Do not use source names, function names, corpus-specific address lists, or
-quality-altering shortcuts. Preserve bounded process parallelism and memory
-limits.
-
-Definition of done:
-
-- reduced end-of-run straggler time is measured;
-- CPU utilization improves without exceeding memory limits;
-- output order and output hashes remain deterministic;
-- slow-function estimates cannot affect analysis semantics or timeout policy;
-- seven-worker, four-worker, and serial comparison runs remain correct.
-
-### 6. Compile Only Measured Hot Owned Kernels With mypyc
-
-Status: infrastructure exists; target selection pending profiling.
-
-Likely candidates, only if profiles confirm them:
-
-- SSA predecessor, definition, and phi construction;
-- Alias state transfer and exact range operations;
-- widening candidate collection and proof matching;
-- deterministic worklist processing;
-- dominator, natural-loop, and SCC algorithms;
-- typed fact normalization and comparison;
-- validation fingerprints and effect-set comparison.
-
-Poor targets:
-
-- CLI argument parsing and reporting;
-- subprocess orchestration and waiting;
-- filesystem operations;
-- import time;
-- functions dominated by angr/solver/native-library calls;
-- dynamic angr/codegen/AST boundary manipulation.
-
-Compile strongly connected hot modules in coherent mypyc compilation units so
-calls do not repeatedly cross interpreted/compiled boundaries. Prefer precise
-owned dataclasses, enums, primitive fields, `Final` constants, and direct calls.
-Do not distort correct architecture merely to satisfy mypyc.
-
-Use Amdahl's law for every proposal. If a target owns fraction `p` of runtime
-and becomes `s` times faster, maximum overall speedup is:
-
-```text
-1 / ((1 - p) + p / s)
-```
-
-Example: compiling 30% of runtime to run 3x faster yields only 1.25x overall.
-
-Definition of done:
-
-- each target owns at least a documented minimum fraction of CPU time;
-- interpreted and compiled modes pass the same focused and pipeline gates;
-- generated C, evidence counters, validation verdicts, and deterministic hashes
-  are identical;
-- cold and warm benchmarks include mypyc build time separately;
-- incremental builds compile only stale units;
-- development remains usable in interpreted mode without a native rebuild.
-
-### 7. (don't do it. skip this) Use Cython Or Rust Only For Compact Residual Kernels
-
-Status: deferred until mypyc and algorithmic work are measured.
-
-Consider a lower-level extension only when a remaining hotspot has:
-
-- fixed-width integer or bit-vector operations;
-- compact arrays/ranges/bitsets;
-- tight loops with few Python object interactions;
-- a small, typed, testable API;
-- enough measured CPU ownership to justify maintenance.
-
-Potential kernels include interval operations, dominance/SCC calculations,
-compact dataflow sets, masks, and hashing. Do not translate large decompiler
-layers or dynamic angr-facing code. The Python/native boundary must carry owned
-typed data, never AST text or guessed semantics.
-
-Definition of done:
-
-- a pure-Python reference implementation remains available for differential
-  tests;
-- randomized and corpus tests prove exact result parity;
-- sanitizer/native tests pass;
-- boundary conversion time is included in the benchmark;
-- the overall, not merely microbenchmark, gain is material;
-- packaging and debugging cost is documented and accepted.
+- only a microbenchmark improves;
+- conversion or dynamic-object traffic consumes the native gain;
+- architecture or typed contracts are distorted to satisfy mypyc;
+- output, evidence, validation, or deterministic behavior differs;
+- ordinary interpreted development requires rebuilding native extensions.
 
 ## Benchmark Protocol
 
-Every performance claim must use the same binary, options, checkout, cache
-state, worker count, CPU host, and output destination. Record:
+Every claim must use the same binary, options, checkout, cache state, worker
+count, host, and output destination. Record the exact command and environment,
+cold versus warm cache, wall and CPU time, utilization, peak aggregate RSS,
+per-stage timing, generated-output hash, and validation summary. Use at least
+three measured repeats after one untimed warmup when the shared worktree is
+stable.
 
-- commit/worktree fingerprint;
-- Python, angr, mypyc/Cython/native compiler versions;
-- exact command and environment;
-- cold versus warm cache;
-- three or more runs after one untimed warmup when applicable;
-- median and range for wall and CPU time;
-- average CPU utilization and peak aggregate RSS;
-- per-stage and per-function timing;
-- generated output hash;
-- validation summary and behavior-gate result.
-
-Primary benchmark:
+Primary full-program benchmark:
 
 ```text
-./decompile.py SORTD.EXE --ignore-local-sidecar-hints --no-alternate-source-c -q
+PYTHON_JIT=1 PYTHONHASHSEED=0 ./decompile.py SORTD.EXE \
+  --ignore-local-sidecar-hints --no-alternate-source-c -q
 ```
 
-Also include focused small/medium/large functions so startup, algorithmic work,
-and validation can be distinguished. Do not benchmark a stale cache hit against
-a cold baseline without labeling both states.
+Focused work should also benchmark representative small, medium, and large
+functions so startup, algorithmic work, and validation can be separated.
 
-## Acceptance Gate For Every Optimization
+## Acceptance Gate
 
-Before accepting any performance change:
+For every accepted optimization:
 
 1. run focused before/after function regressions;
 2. require `validation=passed` and no semantic call loss;
-3. compare required calls and value-versus-pointer argument classes;
-4. compare register effects, memory writes, return values, and control flow;
-5. require output no farther from `SORTDEMO.C` than the baseline when source is
-   available as an optional oracle;
-6. run strict generated-C recompilation;
-7. run `make quality-fast PYTHON=./.venv/bin/python`;
-8. run `make test-pipeline PYTHON=./.venv/bin/python` before claiming a
+3. compare register effects, memory writes, return values, control flow, and
+   value-versus-pointer argument classes;
+4. require output no farther from original source when source exists as an
+   optional oracle;
+5. run strict generated-C recompilation;
+6. run `make quality-fast PYTHON=./.venv/bin/python`;
+7. run `make test-pipeline PYTHON=./.venv/bin/python` before claiming a
    decompiler speedup;
-9. run `make test-pipeline-expanded PYTHON=./.venv/bin/python` for broad or
+8. use `make test-pipeline-expanded PYTHON=./.venv/bin/python` for broad or
    cross-layer changes;
-10. compare deterministic output and evidence hashes across repeats and worker
-    counts.
+9. compare deterministic output and evidence hashes across repeats and worker
+   counts.
 
 No timeout increase, cache bypass, disabled validator, reduced corpus, removed
-test, silent fallback, or DCE of uncertain code counts as performance work.
-
-## Performance Targets
-
-Targets are provisional until child profiling establishes the real ownership
-distribution:
-
-| Stage | SORTD target |
-| --- | ---: |
-| current recorded cold run | about 274 s |
-| worklist, scheduling, and safe worker reuse | 180-220 s |
-| layered incremental analysis and measured hotspot acceleration | 90-150 s cold |
-| unchanged validated warm repeat | 30-60 s or better |
-
-The preferred outcome is not maximum native code. It is minimum necessary work,
-reused immutable evidence, bounded parallel execution, and native compilation
-only where profiles prove Python interpreter overhead is material.
-
-## External Technical References
-
-- mypyc introduction and expected compiled-code ranges:
-  <https://mypyc.readthedocs.io/en/stable/introduction.html>
-- mypyc performance guidance and profiling/Amdahl warning:
-  <https://mypyc.readthedocs.io/en/stable/performance_tips_and_tricks.html>
-- Python 3.14 `ProcessPoolExecutor`, multiprocessing context, and bounded worker
-  lifetime:
-  <https://docs.python.org/3.14/library/concurrent.futures.html>
+test, silent fallback, uncertain-code deletion, or weaker quality gate counts
+as performance work.

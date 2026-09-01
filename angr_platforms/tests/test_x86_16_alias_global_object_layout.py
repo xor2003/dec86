@@ -37,7 +37,7 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
 )
 
 import inertia_decompiler.cache as cache_module
-import inertia_decompiler.indexed_alias_program_context as indexed_context
+import inertia_decompiler.indexed_alias_program_recovery as indexed_recovery
 from inertia_decompiler.discovery_cache_contract import (
     SourceRegionCatalogEvidence8616,
 )
@@ -274,7 +274,7 @@ def test_persisted_widening_reuses_complete_layout_across_fresh_projects(
     binary_path.write_bytes(BYTE_FIELD_VIEWS + b"\x90" * 0x100 + GLOBAL_WORD_COPY)
     monkeypatch.setattr(cache_module, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(
-        indexed_context,
+        indexed_recovery,
         "isolated_discovery_evidence_project_8616",
         lambda _project: evidence_project,
     )
@@ -285,9 +285,9 @@ def test_persisted_widening_reuses_complete_layout_across_fresh_projects(
         return [(object(), _function(0x1000)), (object(), _function(0x1100))]
 
     complete_catalog = SourceRegionCatalogEvidence8616(2, 2, 2, 2, 0, ())
-    monkeypatch.setattr(indexed_context, "_recover_fast_exe_catalog", recover_catalog)
+    monkeypatch.setattr(indexed_recovery, "_recover_fast_exe_catalog", recover_catalog)
     monkeypatch.setattr(
-        indexed_context,
+        indexed_recovery,
         "_source_region_catalog_evidence_8616",
         lambda _project: complete_catalog,
     )
