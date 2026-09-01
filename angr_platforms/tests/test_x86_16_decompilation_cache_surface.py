@@ -71,8 +71,32 @@ def test_indexed_alias_program_cache_surface_owns_alias_and_widening_only():
     }
 
     assert "inertia_decompiler/indexed_alias_program_context.py" in paths
+    assert "inertia_decompiler/indexed_alias_program_recovery.py" in paths
+    assert "inertia_decompiler/indexed_global_object_cache.py" in paths
     assert "angr_platforms/angr_platforms/X86_16/alias/indexed_address_program.py" in paths
     assert "angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py" in paths
+    assert {
+        "angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py",
+        "angr_platforms/angr_platforms/X86_16/alias/domains.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_range_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_range_projection.py",
+        "angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py",
+        "angr_platforms/angr_platforms/X86_16/widening/global_object_layout_codec.py",
+        "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_layout.py",
+        "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_program_range_codec.py",
+        "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_program_ranges.py",
+        "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_range_layouts.py",
+        "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_range_solver.py",
+        "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_ranges.py",
+    } <= paths
+    assert "angr_platforms/angr_platforms/X86_16/alias/stack_coordinate_projection.py" not in paths
+    assert "angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py" not in paths
     assert "angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py" not in paths
     assert "angr_platforms/angr_platforms/X86_16/lowering/register_local_declarations.py" not in paths
     assert "angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_generation.py" not in paths

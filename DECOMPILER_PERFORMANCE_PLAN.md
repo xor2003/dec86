@@ -81,6 +81,15 @@ with validation clean. An end-to-end percentage is intentionally not claimed:
 concurrent Alias work also invalidates the separately correct indexed-Alias
 artifact, masking the isolated callsite invalidation saving.
 
+The persisted indexed-global Alias/Widening bundle now has the same bounded
+dependency treatment. Its manifest fell from 351 files to 302: Alias owners
+from 38 to the 12 consumed by indexed-address projection, and Widening owners
+from 33 to the eight layout/range builders and codecs. The manifest also now
+includes the previously omitted indexed-global cache and recovery orchestration
+owners. Forty-one focused cache, Alias, and indexed-range tests pass, and the
+cold replacement artifact emits the same validated `sub_109e8` C hash. This is
+an invalidation-radius improvement; hot-hit execution is unchanged by design.
+
 Cache-focused and indexed-Alias integration tests pass, `architecture-check-fast`
 passes, and the current fast pipeline passes 1,914 tests plus its required
 external lane. Final broad acceptance remains pending; an earlier broad run was

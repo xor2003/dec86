@@ -69,13 +69,39 @@ _INDEXED_ALIAS_PROGRAM_INERTIA_NAMES_8616 = (
     *_DISCOVERY_INERTIA_NAMES_8616,
     "indexed_alias_program_context.py",
     "indexed_alias_program_parallel.py",
+    "indexed_alias_program_recovery.py",
+    "indexed_global_object_cache.py",
     "project_evidence_transport.py",
 )
 
 _INDEXED_ALIAS_PROGRAM_X86_16_DEPENDENCY_DIRS_8616 = (
-    *_DISCOVERY_X86_16_DEPENDENCY_DIRS_8616,
-    "alias",
-    "widening",
+    "ir",
+)
+
+_INDEXED_ALIAS_PROGRAM_ALIAS_NAMES_8616 = (
+    "alias_model_impl.py",
+    "domains.py",
+    "indexed_address_access_classification.py",
+    "indexed_address_access_contracts.py",
+    "indexed_address_contracts.py",
+    "indexed_address_copy_contracts.py",
+    "indexed_address_copy_projection.py",
+    "indexed_address_program.py",
+    "indexed_address_projection.py",
+    "indexed_address_range_contracts.py",
+    "indexed_address_range_projection.py",
+    "storage_fact_join.py",
+)
+
+_INDEXED_ALIAS_PROGRAM_WIDENING_NAMES_8616 = (
+    "global_object_layout.py",
+    "global_object_layout_codec.py",
+    "indexed_global_object_layout.py",
+    "indexed_global_object_program_range_codec.py",
+    "indexed_global_object_program_ranges.py",
+    "indexed_global_object_range_layouts.py",
+    "indexed_global_object_range_solver.py",
+    "indexed_global_object_ranges.py",
 )
 
 _PROGRAM_CALLSITE_INERTIA_NAMES_8616 = (
@@ -200,6 +226,14 @@ def _indexed_alias_program_cache_source_files_8616() -> tuple[Path, ...]:
         path
         for directory_name in _INDEXED_ALIAS_PROGRAM_X86_16_DEPENDENCY_DIRS_8616
         for path in (x86_root / directory_name).rglob("*.py")
+    )
+    discovered.update(
+        x86_root / "alias" / name
+        for name in _INDEXED_ALIAS_PROGRAM_ALIAS_NAMES_8616
+    )
+    discovered.update(
+        x86_root / "widening" / name
+        for name in _INDEXED_ALIAS_PROGRAM_WIDENING_NAMES_8616
     )
     return tuple(sorted(path for path in discovered if path.is_file()))
 
