@@ -279,6 +279,11 @@ def test_structuring_stable_stack_semantics_owner_records_pass(monkeypatch):
     monkeypatch.setattr(stage, "lower_runtime_ss_segment_helpers_to_stack_8616", _runtime_ss_lowering)
     monkeypatch.setattr(stage, "lower_stable_ss_linear_stack_dereferences_8616", _ss_lowering)
     monkeypatch.setattr(stage, "prune_unread_stack_lowered_register_carriers_8616", _prune_carriers)
+    monkeypatch.setattr(
+        stage,
+        "materialize_positive_bp_arguments_8616",
+        lambda *_args: calls.append("positive-bp") or False,
+    )
 
     changed = stage._apply_structuring_stable_stack_semantics_8616(project, codegen)
 
@@ -289,6 +294,7 @@ def test_structuring_stable_stack_semantics_owner_records_pass(monkeypatch):
         "memory-lowering",
         "transfer",
         "alias:1",
+        "positive-bp",
         "runtime-ss",
         "ss",
         "carrier",
@@ -331,6 +337,11 @@ def test_structuring_stable_stack_semantics_prefers_memory_ssa_lowering(monkeypa
     )
     monkeypatch.setattr(
         stage,
+        "materialize_positive_bp_arguments_8616",
+        lambda *_args: calls.append("positive-bp") or False,
+    )
+    monkeypatch.setattr(
+        stage,
         "lower_stable_ss_linear_stack_dereferences_8616",
         lambda *_args, **_kwargs: calls.append("ss") or False,
     )
@@ -343,7 +354,15 @@ def test_structuring_stable_stack_semantics_prefers_memory_ssa_lowering(monkeypa
     changed = stage._apply_structuring_stable_stack_semantics_8616(project, codegen)
 
     assert changed is True
-    assert calls == ["vex-ir", "memory-alias", "memory-lowering", "runtime-ss", "ss", "carrier"]
+    assert calls == [
+        "vex-ir",
+        "memory-alias",
+        "memory-lowering",
+        "positive-bp",
+        "runtime-ss",
+        "ss",
+        "carrier",
+    ]
 
 
 def test_structuring_codegen_replays_only_consumers_invalidated_by_rebuild(monkeypatch):
@@ -2880,14 +2899,16 @@ def test_structuring_validation_accepts_evidenced_indexed_global_precision_delta
             materialized_count=1,
         ),
     )
-    before_effect = "while-body-writes:const:True:global:0x132,global:0x134"
-    after_effect = "while-body-writes:const:True:global:0x132,global:0x133,global:0x134"
+    before_effect = "while-body-writes:const:True:ds_global:0x132,ds_global:0x134"
+    after_effect = (
+        "while-body-writes:const:True:ds_global:0x132,ds_global:0x133,ds_global:0x134"
+    )
     validation = {
         "changed": True,
         "status": "changed",
         "mode": "live_out",
         "delta": {
-            "global_writes": {"added": ("global:0x133",), "removed": ()},
+            "global_writes": {"added": ("ds_global:0x133",), "removed": ()},
             "control_flow_effects": {"added": (after_effect,), "removed": (before_effect,)},
         },
     }

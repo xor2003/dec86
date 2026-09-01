@@ -317,6 +317,28 @@ def test_materialization_derives_borrow_from_exact_low_subtraction() -> None:
     assert isinstance(high_assignment.rhs.rhs, structured_c.CTypeCast)
 
 
+def test_materialization_ignores_unowned_entry_flags_carrier() -> None:
+    """An unowned entry FLAGS copy cannot override exact low/high IR provenance."""
+    root, low_container, low_assignment, high_assignment = _fixture()
+    codegen = cast(_FakeCodegen, root.codegen)
+    low_assignment.lhs = _vvar(codegen, "ax", "low_result", 6)
+    entry_flags = structured_c.CAssignment(
+        _vvar(codegen, "flags", "flags_def", 5),
+        _vvar(codegen, "flags", "entry_flags", 7),
+        codegen=codegen,
+    )
+    low_container.statements.insert(0, entry_flags)
+
+    resolution = materialize_carry_borrow_bit_value_8616(
+        root, _source(), _fact(), _ownership(_LOW_ADDR, _HIGH_ADDR)
+    )
+
+    assert resolution.verdict is CarryBorrowBitLoweringVerdict8616.MATERIALIZED
+    assert low_container.statements == [entry_flags, low_assignment]
+    assert isinstance(high_assignment.rhs, structured_c.CBinaryOp)
+    assert high_assignment.rhs.op == "CmpLT"
+
+
 def test_materialization_joins_exclusive_definitions_with_one_common_predicate() -> None:
     root, low_container, _low_assignment, high_assignment = _fixture(duplicate_low_definition=True)
 

@@ -2039,13 +2039,16 @@ def coalesce_shared_call_side_effect_statements_8616(codegen: object) -> bool:
                     and previous_summary_optional is not None
                     and summary.return_used is True
                     and isinstance(summary.callsite_addr, int)
-                    and _same_callsite_statement_effect_8616(
-                        previous_statement,
-                        previous_call,
-                        previous_summary_optional,
-                        statement,
-                        call,
-                        summary,
+                    and (
+                        (statement is previous_statement and call is previous_call)
+                        or _same_callsite_statement_effect_8616(
+                            previous_statement,
+                            previous_call,
+                            previous_summary_optional,
+                            statement,
+                            call,
+                            summary,
+                        )
                     )
                 ):
                     stats.classified_fact_count += 1

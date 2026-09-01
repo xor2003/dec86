@@ -30,7 +30,10 @@ from .caller_observed_byte_return_types import (
     materialize_caller_observed_byte_return_type_8616,
 )
 from .return_type_evidence import proven_function_result_observation_8616
-from .unused_void_return_types import materialize_unused_caller_void_codegen_type_8616
+from .unused_void_return_types import (
+    TerminalReturnStorageInput8616,
+    materialize_unused_caller_void_codegen_type_8616,
+)
 
 __all__ = [
     "TerminalRegisterReturnTypeResult8616",
@@ -254,20 +257,6 @@ def materialize_terminal_register_return_type_8616(
     """Replace a guessed byte header with an unsigned word from AX evidence."""
     project_surface = cast(_ProjectSurface8616, project)
     codegen_surface = cast(_CodegenSurface8616, codegen)
-    void_result = materialize_unused_caller_void_codegen_type_8616(project, codegen)
-    if void_result.stats.classified_fact_count:
-        result = TerminalRegisterReturnTypeResult8616(
-            void_result.changed,
-            TerminalRegisterReturnTypeStats8616(
-                void_result.stats.raw_fact_count,
-                void_result.stats.normalized_fact_count,
-                void_result.stats.classified_fact_count,
-                void_result.stats.materialized_count,
-                void_result.stats.failure_count,
-            ),
-        )
-        codegen_surface._inertia_terminal_register_return_type_result_8616 = result
-        return result
     try:
         cfunc = cast(_CFunctionSurface8616, codegen_surface.cfunc)
         knowledge_base = cast(_KnowledgeBaseSurface8616, project_surface.kb)
@@ -296,8 +285,30 @@ def materialize_terminal_register_return_type_8616(
         function is None
         or _has_explicit_prototype_8616(function)
         or not isinstance(prototype, SimTypeFunction)
-        or not _refinable_generated_word_return_8616(prototype.returnty)
     ):
+        result = TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
+        codegen_surface._inertia_terminal_register_return_type_result_8616 = result
+        return result
+    storage = terminal_return_storage_8616(project, function)
+    void_result = materialize_unused_caller_void_codegen_type_8616(
+        project,
+        codegen,
+        terminal_storage_input=TerminalReturnStorageInput8616(storage),
+    )
+    if void_result.stats.classified_fact_count:
+        result = TerminalRegisterReturnTypeResult8616(
+            void_result.changed,
+            TerminalRegisterReturnTypeStats8616(
+                void_result.stats.raw_fact_count,
+                void_result.stats.normalized_fact_count,
+                void_result.stats.classified_fact_count,
+                void_result.stats.materialized_count,
+                void_result.stats.failure_count,
+            ),
+        )
+        codegen_surface._inertia_terminal_register_return_type_result_8616 = result
+        return result
+    if not _refinable_generated_word_return_8616(prototype.returnty):
         result = TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result
         return result
@@ -305,7 +316,6 @@ def materialize_terminal_register_return_type_8616(
         result = TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result
         return result
-    storage = terminal_return_storage_8616(project, function)
     if os.environ.get("INERTIA_DEBUG_TERMINAL_RETURN_TYPES") == "1":
         _LOGGER.warning("terminal return storage: addr=%#x storage=%s", cfunc.addr, storage)
     byte_result = materialize_caller_observed_byte_return_type_8616(

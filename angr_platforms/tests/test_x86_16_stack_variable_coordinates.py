@@ -19,6 +19,7 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     _resolve_direct_stack_update_cvar_8616,
     stack_cvar_for_stable_ss_linear_access_8616,
 )
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
     materialize_stack_cvar_at_offset_from_facts_8616,
 )
@@ -558,7 +559,8 @@ def test_stable_stack_access_prefers_exact_projection_over_legacy_raw_offset() -
         RealModeLinearStackAccess8616(-2, 2),
     )
 
-    assert resolved is projected_cvar
+    assert isinstance(resolved, CSemanticCast8616)
+    assert resolved.expr is projected_cvar
 
 
 def test_direct_bp_call_source_keeps_exact_projected_stack_variable() -> None:

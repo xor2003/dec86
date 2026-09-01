@@ -111,6 +111,7 @@ from .lowering.pointer_memory_idioms import (
     pointer_swap_validation_delta_is_precision_only_8616,
     splice_proven_pointer_swap_statements_8616,
 )
+from .lowering.positive_bp_arguments import materialize_positive_bp_arguments_8616
 from .lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
@@ -271,6 +272,10 @@ from .tail_validation import (
     x86_16_tail_validation_result_passed,
 )
 from .tail_validation_frame_spills import callee_saved_frame_prune_delta_8616
+from .validation.callsite_completeness import (
+    TailValidationCallsiteSummary8616,
+    classify_callsite_completeness_delta_8616,
+)
 from .validation_condition_closure_delta import validate_condition_closure_delta_8616
 from .validation_condition_precision import condition_precision_validation_delta_8616
 from .validation_identical_return_guards import (
@@ -2384,6 +2389,8 @@ def _apply_structuring_stable_stack_semantics_8616(project: AngrProjectSurface, 
                 lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
     after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
     changed = changed or after_materialized > before_materialized
+    with _timed_owner("positive_bp_argument_interface"):
+        changed = bool(materialize_positive_bp_arguments_8616(project, codegen)) or changed
     with _timed_owner("runtime_ss_segment_helper_lowering"):
         changed = bool(lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project)) or changed
     with _timed_owner("stable_ss_linear_lowering"):
@@ -2857,19 +2864,39 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
     validation: dict[str, object],
     *,
     spec_name: str,
+    before_summary: TailValidationCallsiteSummary8616 | None = None,
+    after_summary: TailValidationCallsiteSummary8616 | None = None,
 ) -> bool:
     """Accept a structuring delta only through an existing consumed-evidence validator."""
     if not isinstance(validation, dict) or x86_16_tail_validation_result_passed(validation):
         return False
+    if before_summary is not None and after_summary is not None:
+        completeness = classify_callsite_completeness_delta_8616(
+            before_summary,
+            after_summary,
+            validation,
+        )
+        codegen._inertia_structuring_callsite_completeness_delta_8616 = completeness
+        validation["callsite_completeness_delta"] = completeness.as_dict()
+        if completeness.accepted:
+            validation["changed"] = False
+            validation["status"] = "stable"
+            validation["summary_text"] = "no observable whole-tail changes"
+            validation.pop("delta", None)
+            validation["verdict"] = build_x86_16_tail_validation_verdict(
+                f"structuring:{spec_name}", validation
+            )
+            return True
     if os.environ.get("INERTIA_DEBUG_LOOP_GUARD_VALIDATION") == "1":
         logging.getLogger(__name__).warning(
             "[structuring-loop-guard-validation] pass=%s branch_facts=%r "
-            "removal_facts=%r delta=%r semantic_failures=%r",
+            "removal_facts=%r delta=%r semantic_failures=%r callsite_completeness=%r",
             spec_name,
             loop_branch_guard_facts_8616(codegen),
             loop_header_duplicate_guard_removal_facts_8616(codegen),
             validation.get("delta"),
             validation.get("semantic_failures"),
+            validation.get("callsite_completeness_delta"),
         )
     try:
         from .decompiler_postprocess_stage import (
@@ -3539,6 +3566,8 @@ def _maybe_validate_structuring_pass_8616(
             codegen,
             validation,
             spec_name=spec_name,
+            before_summary=before_summary,
+            after_summary=after_summary,
         ):
             logging.getLogger(__name__).warning(
                 "structuring pass validation delta accepted from consumed evidence function=%#x pass=%s verdict=%s",
@@ -4430,6 +4459,8 @@ def _decompile_structuring_8616(self: AngrDecompilerSurface) -> None:
             self.codegen,
             validation,
             spec_name="final",
+            before_summary=before_summary,
+            after_summary=after_summary,
         ):
             log.warning(
                 "structuring final validation delta accepted from consumed evidence function=%#x verdict=%s",

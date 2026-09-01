@@ -17,9 +17,14 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
-from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
+from ..c_ast_utils import (
+    _clone_c_ast_tree_8616,
+    _iter_c_nodes_deep_8616,
+    _replace_c_children_8616,
+)
 from ..interrupt_contract import interrupt_core_addr_8616
 from ..pipeline.errors import PipelineHardError
 
@@ -128,7 +133,27 @@ def _interrupt_call_identity_8616(call: structured_c.CFunctionCall) -> int | Non
     target = call.callee_target
     if isinstance(target, structured_c.CConstant) and isinstance(target.value, int):
         return target.value
+    if isinstance(target, int):
+        return target
     return None
+
+
+def _interrupt_callsite_address_8616(
+    statement: object,
+    call: structured_c.CFunctionCall,
+) -> int | None:
+    """Return the nearest tagged owner of one exact interrupt call occurrence."""
+    owners: list[tuple[int, int]] = []
+    for candidate in _iter_c_nodes_deep_8616(statement):
+        address = _instruction_address_8616(candidate)
+        if not isinstance(address, int):
+            continue
+        descendants = tuple(_iter_c_nodes_deep_8616(candidate))
+        if any(descendant is call for descendant in descendants):
+            owners.append((len(descendants), address))
+    if owners:
+        return min(owners)[1]
+    return _interrupt_call_identity_8616(call)
 
 
 def _is_status_accessor_call_8616(node: object) -> bool:
@@ -228,6 +253,47 @@ def _status_assignment_8616(
     )
 
 
+def _canonical_flags_carrier_8616(
+    carrier: structured_c.CExpression,
+    flags_offset: int,
+    flags_size: int,
+    codegen: object,
+) -> structured_c.CExpression:
+    """Return a renderable typed carrier for one proven physical FLAGS read."""
+    if not isinstance(carrier, structured_c.CDirtyExpression):
+        return carrier
+    return structured_c.CVariable(
+        SimRegisterVariable(flags_offset, flags_size, name="flags"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+
+
+def _replace_dirty_flags_carriers_8616(
+    statement: object,
+    canonical: structured_c.CExpression,
+    flags_offset: int,
+) -> bool:
+    """Replace dirty reads after their enclosing statement ownership is stable."""
+
+    def replace(node: object) -> object:
+        if (
+            isinstance(node, structured_c.CDirtyExpression)
+            and _physical_register_offset_8616(node) == flags_offset
+        ):
+            replacement = cast(
+                structured_c.CExpression,
+                _clone_c_ast_tree_8616(canonical),
+            )
+            tags = cast(_TaggedNode8616, node).tags
+            if isinstance(tags, dict):
+                replacement.tags = dict(tags)
+            return replacement
+        return node
+
+    return bool(_replace_c_children_8616(statement, replace))
+
+
 def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
     """Materialize every proven DOS interrupt FLAGS result consumed by C."""
     surface = cast(_CodegenSurface8616, codegen)
@@ -250,6 +316,7 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
         statements = list(container.statements or ())
         pending: tuple[int, int] | None = None
         insertions: dict[int, structured_c.CAssignment] = {}
+        carrier_rewrites: list[tuple[object, structured_c.CExpression]] = []
         for index, statement in enumerate(statements):
             calls = _calls_in_statement_8616(statement)
             interrupt_calls = tuple(call for call in calls if _is_dos_int21_call_8616(call))
@@ -257,7 +324,10 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
                 if len(interrupt_calls) != 1:
                     pending = None
                     continue
-                callsite_addr = _interrupt_call_identity_8616(interrupt_calls[0])
+                callsite_addr = _interrupt_callsite_address_8616(
+                    statement,
+                    interrupt_calls[0],
+                )
                 pending = (index, callsite_addr) if isinstance(callsite_addr, int) else None
                 continue
             carriers = _flags_carriers_8616(statement, flags_offset)
@@ -275,6 +345,14 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
                     continue
                 normalized += 1
                 classified += 1
+                carrier = _canonical_flags_carrier_8616(
+                    carriers[0],
+                    flags_offset,
+                    int(flags_info[1]),
+                    codegen,
+                )
+                if carrier is not carriers[0]:
+                    carrier_rewrites.append((statement, carrier))
                 if call_index + 1 < len(statements):
                     existing_calls = _calls_in_statement_8616(statements[call_index + 1])
                     if any(_is_status_accessor_call_8616(call) for call in existing_calls):
@@ -282,7 +360,7 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
                         pending = None
                         continue
                 insertions[call_index] = _status_assignment_8616(
-                    carriers[0],
+                    carrier,
                     callsite_addr,
                     codegen,
                 )
@@ -303,6 +381,15 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
                     rewritten.append(insertion)
             container.statements = rewritten
             changed = True
+        for statement, carrier in carrier_rewrites:
+            changed = (
+                _replace_dirty_flags_carriers_8616(
+                    statement,
+                    carrier,
+                    flags_offset,
+                )
+                or changed
+            )
     stats = SoftwareInterruptStatusOutputStats8616(
         raw,
         normalized,

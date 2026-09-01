@@ -165,6 +165,8 @@ from .global_declarations import (
 )
 from .gp_register_state import runtime_gp_expression_view_8616
 from .instruction_bp_stack_access import (
+    InstructionBpStackAccess8616,
+    InstructionBpStackAccessEvidence8616,
     InstructionBpStackAccessIndex8616,
     ensure_instruction_bp_stack_access_index_8616,
     select_instruction_bp_stack_access_8616,
@@ -173,7 +175,7 @@ from .linear_global_decomposition_cache import (
     LinearGlobalCarrierKey8616,
     LinearGlobalDecompositionCache8616,
 )
-from .physical_registers import physical_register_offset_8616
+from .physical_registers import physical_register_name_8616, physical_register_offset_8616
 from .register_variable_identity import (
     capstone_register_name_8616 as _capstone_register_name_8616,
 )
@@ -1026,7 +1028,13 @@ def _ensure_positive_bp_stack_arg_8616(
     if getattr(variable, "base", None) != "bp":
         return
     prototype_type = _prototype_arg_type_for_bp_offset_8616(codegen, offset)
-    effective_type = prototype_type if prototype_type is not None else target_type
+    target_width = _type_size_bytes_8616(target_type, default=0)
+    effective_type = (
+        prototype_type
+        if prototype_type is not None
+        and _type_size_bytes_8616(prototype_type, default=0) >= target_width
+        else target_type
+    )
     if getattr(cvar, "variable_type", None) != effective_type:
         cvar.variable_type = effective_type
         if prototype_type is not None:
@@ -1049,6 +1057,8 @@ def _ensure_positive_bp_stack_arg_8616(
     existing_arg = arg_by_offset.get(offset)
     if existing_arg is not None:
         _copy_existing_arg_surface_to_stack_cvar_8616(existing_arg, cvar)
+    required_width = max(target_width, variable.size if isinstance(variable.size, int) else 0)
+    _ensure_stack_cvar_min_width_8616(codegen, cvar, required_width)
     arg_by_offset[offset] = cvar
     cfunc.arg_list = [arg_by_offset[key] for key in sorted(arg_by_offset)]
 
@@ -1083,6 +1093,13 @@ def _ensure_positive_bp_stack_arg_8616(
         proto_arg_type = (
             _prototype_arg_type_for_bp_offset_8616(codegen, arg_offset) if isinstance(arg_offset, int) else None
         )
+        arg_storage_width = arg_var.size if isinstance(arg_var, SimStackVariable) else 0
+        if (
+            proto_arg_type is not None
+            and isinstance(arg_storage_width, int)
+            and _type_size_bytes_8616(proto_arg_type, default=0) < arg_storage_width
+        ):
+            proto_arg_type = None
         arg_type = proto_arg_type or getattr(arg, "variable_type", None) or SimTypeShort(False)
         if proto_arg_type is not None and getattr(arg, "variable_type", None) != proto_arg_type:
             arg.variable_type = proto_arg_type
@@ -1105,9 +1122,10 @@ def stack_cvar_for_stable_ss_linear_access_8616(
     codegen: StructuredAstValue,
     access: RealModeLinearStackAccess8616,
     *,
+    instruction_access: InstructionBpStackAccess8616 | None = None,
     require_lvalue: bool = False,
 ) -> StructuredAstValue | None:
-    """Materialize a proven SS stack access as a readable value or exact lvalue."""
+    """Materialize a proven SS access, retaining exact instruction evidence."""
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return None
@@ -1222,7 +1240,22 @@ def stack_cvar_for_stable_ss_linear_access_8616(
         storage_size,
     )
     if entry_sp_offset is None:
-        return None
+        if (
+            instruction_access is None
+            or instruction_access.displacement != displacement
+            or instruction_access.size != storage_size
+        ):
+            return None
+        cvar = _resolve_direct_stack_update_cvar_8616(
+            codegen,
+            displacement,
+            storage_size,
+        )
+        if not isinstance(cvar, structured_c.CVariable):
+            return None
+        _ensure_stack_cvar_min_width_8616(codegen, cvar, storage_size)
+        _ensure_positive_bp_stack_arg_8616(codegen, cvar, target_type)
+        return cvar
     cvar = materialize_stack_cvar_at_offset_from_facts_8616(
         codegen,
         entry_sp_offset,
@@ -3422,7 +3455,16 @@ def match_stable_ss_linear_stack_access_8616(
                 )
         region = getattr(getattr(codegen, "cfunc", None), "addr", None)
         facts = _stack_storage_facts_for_segmented_address_8616("ss", displacement, width, region=region)
-        if facts is None or facts.identity is None:
+        try:
+            direct_sp_frame_carrier = bool(codegen._inertia_allow_direct_sp_for_callee_save_spill)
+        except AttributeError:
+            direct_sp_frame_carrier = False
+        direct_sp_frame_carrier = bool(
+            direct_sp_frame_carrier
+            and len(offset_terms) == 1
+            and _expr_register_name_8616(offset_terms[0], project) == "sp"
+        )
+        if (facts is None or facts.identity is None) and not direct_sp_frame_carrier:
             _log_refusal_8616(codegen, "no_stack_facts", displacement=displacement, width=width, region=region)
             return None
         if inferred_ss_from_stack_fact and not _has_stack_storage_evidence_for_displacement_8616(
@@ -3849,17 +3891,9 @@ def _callee_saved_register_names_from_frame_evidence_8616(
 
 
 def _expr_register_name_8616(node: StructuredAstValue, project: AngrProjectValue) -> str | None:
-    node = _strip_casts_8616(node)
-    dirty = getattr(node, "dirty", None)
-    reg_offset = _dirty_reg_offset_8616(dirty) if dirty is not None else None
-    if reg_offset is None and isinstance(node, structured_c.CVariable):
-        variable = node.variable
-        if isinstance(variable, SimRegisterVariable):
-            reg_offset = variable.reg
-    if not isinstance(reg_offset, int):
-        return None
-    reg_name = getattr(project.arch, "register_names", {}).get(reg_offset)
-    return reg_name.lower() if isinstance(reg_name, str) else None
+    del project
+    register_name = physical_register_name_8616(_strip_casts_8616(node))
+    return register_name if isinstance(register_name, str) else None
 
 
 def _statement_ins_addr_8616(stmt: StructuredAstValue) -> int | None:
@@ -7514,7 +7548,7 @@ def _resolve_direct_stack_update_cvar_8616(
             ):
                 continue
             size = getattr(variable, "size", None)
-            if isinstance(size, int) and size > 0 and size < width:
+            if not isinstance(size, int) or size != width:
                 continue
             if isinstance(cvar, structured_c.CVariable):
                 _apply_preferred_stack_cvar_name_8616(cvar, offset, codegen)
@@ -7529,10 +7563,12 @@ def _resolve_direct_stack_update_cvar_8616(
                 continue
             if not _stack_cvar_matches_offset_width_8616(node, offset, width):
                 continue
-            _apply_preferred_stack_cvar_name_8616(node, offset, codegen)
-            _ensure_stack_cvar_has_identifier_8616(codegen, node, offset)
             stack_id = _stack_cvar_identity_8616(node)
             stack_size = stack_id[1] if stack_id is not None else None
+            if stack_size != width:
+                continue
+            _apply_preferred_stack_cvar_name_8616(node, offset, codegen)
+            _ensure_stack_cvar_has_identifier_8616(codegen, node, offset)
             usage_count = _stack_cvar_ast_usage_count_8616(codegen, node)
             exact_size = int(isinstance(stack_size, int) and stack_size == width)
             seen_candidate_ids.add(id(node))
@@ -7582,6 +7618,76 @@ def _resolve_direct_stack_update_cvar_8616(
         unified[variable] = {(cvar, getattr(cvar, "variable_type", None))}
     publish_selected_stack_cvar_projection_8616(codegen, cvar, bp_offset=offset, size=width)
     return cvar
+
+
+def _resolve_existing_direct_stack_owner_cvar_8616(
+    codegen: StructuredAstValue,
+    offset: int,
+    width: int,
+    *,
+    require_wider_owner: bool = False,
+) -> StructuredAstValue | None:
+    """Resolve an existing stack object that owns a same-base access range."""
+    candidates: list[tuple[int, int, int, StructuredAstValue]] = []
+    seen_candidate_ids: set[int] = set()
+
+    def _record(candidate: StructuredAstValue, stack_size: int | None) -> None:
+        if not isinstance(candidate, structured_c.CVariable) or not isinstance(stack_size, int):
+            return
+        if stack_size < width or (require_wider_owner and stack_size == width):
+            return
+        if id(candidate) in seen_candidate_ids:
+            return
+        seen_candidate_ids.add(id(candidate))
+        _apply_preferred_stack_cvar_name_8616(candidate, offset, codegen)
+        _ensure_stack_cvar_has_identifier_8616(codegen, candidate, offset)
+        candidates.append(
+            (
+                int(stack_size == width),
+                _stack_cvar_ast_usage_count_8616(codegen, candidate),
+                stack_size,
+                candidate,
+            )
+        )
+
+    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        for variable, cvar in tuple(variables_in_use.items()):
+            if not isinstance(variable, SimStackVariable) or variable.base != "bp":
+                continue
+            if _canonical_stack_offset_8616(machine_bp_offset_for_stack_variable_8616(codegen, variable)) != offset:
+                continue
+            _record(cvar, variable.size)
+
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if root is not None:
+        for node in _iter_structured_c_nodes_8616(root):
+            if not isinstance(node, structured_c.CVariable):
+                continue
+            stack_identity = _stack_cvar_identity_8616(node)
+            if stack_identity is None or stack_identity[0] != offset:
+                continue
+            _record(node, stack_identity[1])
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[:3], reverse=True)
+    return candidates[0][3]
+
+
+def _resolve_direct_stack_read_cvar_8616(
+    codegen: StructuredAstValue,
+    offset: int,
+    width: int,
+) -> StructuredAstValue | None:
+    """Resolve an exact stack read or its existing same-base storage owner."""
+    projected = stack_cvar_for_machine_bp_range_8616(codegen, offset, width)
+    if isinstance(projected, structured_c.CVariable):
+        return projected
+    owner = _resolve_existing_direct_stack_owner_cvar_8616(codegen, offset, width)
+    if owner is not None:
+        return owner
+    return _resolve_direct_stack_update_cvar_8616(codegen, offset, width)
 
 
 def _direct_stack_update_source_expr_8616(
@@ -8087,7 +8193,7 @@ def _direct_stack_move_source_expr_8616(
         if not isinstance(fact.source_offset, int):
             return None
         source_width = fact.source_access_width if isinstance(fact.source_access_width, int) else fact.width
-        source = _resolve_direct_stack_update_cvar_8616(codegen, fact.source_offset, source_width)
+        source = _resolve_direct_stack_read_cvar_8616(codegen, fact.source_offset, source_width)
         if source is None:
             return None
         if fact.source_sign_extend and source_width < fact.width:
@@ -15800,7 +15906,26 @@ def _materialize_direct_stack_mov_instructions_impl_8616(
     for fact in facts:
         root._inertia_stack_mov_assignment_already_present_8616 = False
         fact_key = _direct_stack_move_fact_key_8616(fact)
-        dst_cvar = _resolve_direct_stack_update_cvar_8616(codegen, fact.dst_offset, fact.width)
+        indexed_destination = any(
+            isinstance(index, int)
+            for index in (
+                fact.dst_index_global_displacement,
+                fact.dst_index_stack_offset,
+                fact.dst_index_immediate,
+            )
+        )
+        dst_cvar = (
+            _resolve_existing_direct_stack_owner_cvar_8616(
+                codegen,
+                fact.dst_offset,
+                fact.width,
+                require_wider_owner=True,
+            )
+            if indexed_destination
+            else None
+        )
+        if dst_cvar is None:
+            dst_cvar = _resolve_direct_stack_update_cvar_8616(codegen, fact.dst_offset, fact.width)
         dst_expr = (
             _direct_stack_move_destination_expr_8616(codegen, fact, dst_cvar) if dst_cvar is not None else None
         )
@@ -17415,7 +17540,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
     def _instruction_bp_stack_access_8616(
         node: StructuredAstValue,
         shaped_access: RealModeLinearStackAccess8616,
-    ) -> RealModeLinearStackAccess8616 | None:
+    ) -> InstructionBpStackAccess8616 | None:
         """Bind one SS-shaped access to its exact direct BP instruction operand."""
         nonlocal instruction_bp_access_index
         source_addrs = instruction_addrs_from_node_8616(node)
@@ -17442,12 +17567,17 @@ def lower_stable_ss_linear_stack_dereferences_8616(
             return None
         instruction_bp_access_lane.raw += 1
         instruction_bp_access_lane.normalized += 1
-        displacement, size = exact.displacement, exact.size
+        size = exact.size
         width = shaped_access.width if isinstance(shaped_access.width, int) and shaped_access.width > 0 else size
-        if size > 0 and width > 0 and size != width:
+        logical_same_base_owner = bool(
+            exact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+            and exact.displacement == shaped_access.displacement
+            and size > width > 0
+        )
+        if size > 0 and width > 0 and size != width and not logical_same_base_owner:
             return None
         instruction_bp_access_lane.classified += 1
-        return RealModeLinearStackAccess8616(displacement=displacement, width=width if width > 0 else None)
+        return exact
 
     def transform(node: StructuredAstValue) -> StructuredAstValue:
         """Materialize only proven SS stack accesses while preserving unrelated AST."""
@@ -17497,8 +17627,15 @@ def lower_stable_ss_linear_stack_dereferences_8616(
                             return materialized
                 instruction_access = _instruction_bp_stack_access_8616(stripped_node, access)
                 if instruction_access is not None:
-                    access = instruction_access
-                cvar = stack_cvar_for_stable_ss_linear_access_8616(codegen, access)
+                    access = RealModeLinearStackAccess8616(
+                        displacement=instruction_access.displacement,
+                        width=instruction_access.size,
+                    )
+                cvar = stack_cvar_for_stable_ss_linear_access_8616(
+                    codegen,
+                    access,
+                    instruction_access=instruction_access,
+                )
                 if cvar is None:
                     if instruction_access is not None:
                         instruction_bp_access_lane.failures += 1

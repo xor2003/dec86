@@ -170,6 +170,11 @@ from .lowering.stack_probe_return_facts import (
     build_typed_stack_probe_return_facts_8616,
 )
 from .pipeline.errors import PipelineHardError
+from .postprocess.call_argument_transaction import (
+    CallArgumentMutationResult8616,
+    accepted_call_argument_mutation_8616,
+    refused_call_argument_mutation_8616,
+)
 from .stack_probe_fact_trace import (
     ensure_stack_probe_fact_stats_8616,
     record_callsite_summary_fact_8616,
@@ -4912,7 +4917,7 @@ def _refresh_callsite_summary_node_ids_8616(
                 return exact_callsite
             tags = getattr(node, "tags", None)
             try:
-                normalized_tags = dict(tags.items())
+                normalized_tags = dict(cast(Mapping[object, object], tags).items())
             except (AttributeError, TypeError, ValueError):
                 normalized_tags = {}
             if normalized_tags:
@@ -5253,7 +5258,7 @@ def _conservative_call_arg_seed_8616(
     direct_expr_from_push_source_fn: Callable[..., StructuredAstValue | None],
     normalize_materialized_call_args_fn: Callable[..., list[StructuredAstValue] | None],
     all_arg_exprs_are_non_segment_registers_fn: Callable[[StructuredAstValue], bool],
-    set_materialized_call_args_fn: Callable[..., bool],
+    set_materialized_call_args_fn: Callable[..., CallArgumentMutationResult8616],
     refresh_summary_arg_shape_fn: Callable[[StructuredAstValue, StructuredAstValue | None], None],
     call_args_need_rematerialization_fn: Callable[..., bool],
 ) -> bool:
@@ -5326,9 +5331,17 @@ def _conservative_call_arg_seed_8616(
                 seeded_args = tuple(default_args)
             if seeded_args is None:
                 continue
-            set_materialized_call_args_fn(node, seeded_args, call_name=call_name, force_replace=True)
-            refresh_summary_arg_shape_fn(node, summary)
-            changed = True
+            transaction = set_materialized_call_args_fn(
+                node,
+                seeded_args,
+                call_name=call_name,
+                force_replace=True,
+            )
+            if transaction.arguments_accepted:
+                refresh_summary_arg_shape_fn(node, summary)
+                changed = True
+            elif transaction.changed:
+                changed = True
         return changed
 
     return _impl()
@@ -5344,7 +5357,7 @@ def _seed_empty_known_helper_calls_8616(
     expected_arg_count_fn: Callable[[str], int | None],
     known_default_args_fn: Callable[[str, StructuredAstValue], tuple[StructuredAstValue, ...] | None],
     direct_expr_from_push_source_fn: Callable[..., StructuredAstValue | None],
-    set_materialized_call_args_fn: Callable[..., bool],
+    set_materialized_call_args_fn: Callable[..., CallArgumentMutationResult8616],
     refresh_summary_arg_shape_fn: Callable[[StructuredAstValue, StructuredAstValue | None], None],
 ) -> bool:
     def _impl() -> bool:
@@ -5402,9 +5415,17 @@ def _seed_empty_known_helper_calls_8616(
                 seeded_args = tuple(default_args)
             if seeded_args is None:
                 continue
-            set_materialized_call_args_fn(node, seeded_args, call_name=call_name, force_replace=True)
-            refresh_summary_arg_shape_fn(node, summary)
-            changed = True
+            transaction = set_materialized_call_args_fn(
+                node,
+                seeded_args,
+                call_name=call_name,
+                force_replace=True,
+            )
+            if transaction.arguments_accepted:
+                refresh_summary_arg_shape_fn(node, summary)
+                changed = True
+            elif transaction.changed:
+                changed = True
         return changed
 
     return _impl()
@@ -7630,14 +7651,15 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     stack_bindings=direct_bindings or None,
                 )
                 if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                    _set_materialized_call_args(
+                    transaction = _set_materialized_call_args(
                         call,
                         normalized_args,
                         call_name=_call_node_name_8616(call),
                         force_replace=True,
                     )
-                    record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                    _refresh_summary_arg_shape(call, summary)
+                    if transaction.arguments_accepted:
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                        _refresh_summary_arg_shape(call, summary)
         retval = ret_stmt.retval
         if retval is not None and not isinstance(retval, structured_c.CConstant):
             return False
@@ -9606,15 +9628,16 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         and _all_arg_exprs_are_non_segment_registers(normalized_direct_args)
                         and tuple(normalized_direct_args) != args
                     ):
-                        changed_existing = _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             normalized_direct_args,
                             call_name=call_name,
                             force_replace=True,
                         )
-                        if changed_existing:
-                            _delete_consumed_return_call_refs_8616(consumed_return_call_indices)
-                            return True
+                        if transaction.arguments_accepted:
+                            deleted = _delete_consumed_return_call_refs_8616(consumed_return_call_indices)
+                            return transaction.changed or deleted
+                        return transaction.changed
         preserve_return_register_indices: set[int] = set()
         ordered_push_sources_for_args: tuple[StructuredAstValue, ...] = ()
         if isinstance(push_arg_sources, tuple) and len(push_arg_sources) == len(args):
@@ -9671,7 +9694,12 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 return False
         if tuple(normalized_args) == args:
             return False
-        return _set_materialized_call_args(call, normalized_args, call_name=call_name, force_replace=force_replace_args)
+        return _set_materialized_call_args(
+            call,
+            normalized_args,
+            call_name=call_name,
+            force_replace=force_replace_args,
+        ).changed
 
     def _normalize_near_function_pointer_call_arg_8616(arg: StructuredAstValue) -> StructuredAstValue:
         node = arg
@@ -9818,7 +9846,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
 
     def _set_materialized_call_args(
         call: StructuredAstValue, args: StructuredAstValue, *, call_name: str | None, force_replace: bool = False
-    ) -> bool:
+    ) -> CallArgumentMutationResult8616:
         def _protected_call_arg_state() -> ProtectedCallArgumentStore8616:
             protected = getattr(codegen, "_inertia_protected_call_args_8616", None)
             if not isinstance(protected, ProtectedCallArgumentStore8616):
@@ -9892,7 +9920,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             codegen._inertia_callsite_known_target_arg_materialization_refused_8616 = (
                 int(getattr(codegen, "_inertia_callsite_known_target_arg_materialization_refused_8616", 0) or 0) + 1
             )
-            return target_changed
+            return refused_call_argument_mutation_8616(target_changed=target_changed)
         args_before = _boundary_tuple_8616(getattr(call, "args", ()) or ())
         normalized_args_after = []
         for arg in tuple(args):
@@ -9925,7 +9953,15 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         )
                         + 1
                     )
-                return target_changed or bool(args_before)
+                if zero_arity_ownership.blocks_candidate:
+                    return refused_call_argument_mutation_8616(
+                        arguments_changed=bool(args_before),
+                        target_changed=target_changed,
+                    )
+                return accepted_call_argument_mutation_8616(
+                    arguments_changed=bool(args_before),
+                    target_changed=target_changed,
+                )
             if zero_arity_ownership.blocks_candidate:
                 codegen._inertia_callsite_nonzero_arg_candidate_refused_8616 = (
                     int(
@@ -9938,7 +9974,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     )
                     + 1
                 )
-                return target_changed
+                return refused_call_argument_mutation_8616(target_changed=target_changed)
         effective_call_name = _call_node_name_8616(call) or call_name
         if summary is not None:
             logical_widths = _summary_logical_arg_widths(summary, effective_call_name)
@@ -9995,17 +10031,17 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         tuple(_debug_expr_8616(arg) for arg in args_before),
                         tuple(_debug_expr_8616(arg) for arg in args_after),
                     )
-                return target_changed
+                return refused_call_argument_mutation_8616(target_changed=target_changed)
         if any(_c_ast_has_cycle_or_too_complex_8616(arg) for arg in args_after):
             codegen._inertia_call_arg_cyclic_or_complex_refused_8616 = (
                 int(getattr(codegen, "_inertia_call_arg_cyclic_or_complex_refused_8616", 0) or 0) + 1
             )
-            return False
+            return refused_call_argument_mutation_8616(target_changed=target_changed)
         if any(_c_ast_contains_identity_8616(arg, call) for arg in args_after):
             codegen._inertia_call_arg_self_reference_refused_8616 = (
                 int(getattr(codegen, "_inertia_call_arg_self_reference_refused_8616", 0) or 0) + 1
             )
-            return False
+            return refused_call_argument_mutation_8616(target_changed=target_changed)
         args_equal = _call_args_match_materialized_args_8616(call, args_after)
         summary_push_sources = (
             _boundary_tuple_8616(summary.push_arg_sources or ())
@@ -10035,7 +10071,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         tuple(_debug_expr_8616(arg) for arg in args_before),
                         tuple(_debug_expr_8616(arg) for arg in args_after),
                     )
-                return False
+                return refused_call_argument_mutation_8616(target_changed=target_changed)
         if not args_before and len(args_after) > 1:
             stats.push_order_reversed_count += 1
         protected = _protected_call_arg_state()
@@ -10062,7 +10098,10 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             if target_changed:
                 codegen._inertia_codegen_decl_refresh_required_8616 = True
                 codegen._inertia_codegen_call_args_render_refresh_required_8616 = True
-            return target_changed
+            return accepted_call_argument_mutation_8616(
+                arguments_changed=False,
+                target_changed=target_changed,
+            )
         call.args = list(args_after)
         stats.call_arg_materialized_count += len(args_after)
         codegen._inertia_callsite_args_ast_materialized_8616 = True
@@ -10087,7 +10126,10 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 tuple(_debug_expr_8616(arg) for arg in args_before),
                 tuple(_debug_expr_8616(arg) for arg in args_after),
             )
-        return True
+        return accepted_call_argument_mutation_8616(
+            arguments_changed=True,
+            target_changed=target_changed,
+        )
 
     def _prototype_arg_count(call: StructuredAstValue) -> int | None:
         callee_func = getattr(call, "callee_func", None)
@@ -13793,14 +13835,13 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     for idx, source in enumerate(ordered_sources)
                 )
                 if direct_args and all(argument is not None for argument in direct_args):
-                    restored = bool(
-                        _set_materialized_call_args(
-                            node,
-                            direct_args,
-                            call_name=semantic_call_name,
-                            force_replace=True,
-                        )
-                    ) or restored
+                    transaction = _set_materialized_call_args(
+                        node,
+                        direct_args,
+                        call_name=semantic_call_name,
+                        force_replace=True,
+                    )
+                    restored = transaction.changed or restored
                 continue
             updated = False
             for idx, current_arg in enumerate(tuple(current_args)):
@@ -15819,24 +15860,25 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     materialize_pointer=False,
                 )
                 if direct_stack_arg is not None:
-                    args_changed = _set_materialized_call_args(
+                    transaction = _set_materialized_call_args(
                         call,
                         [_clone_c_ast_tree(direct_stack_arg)],
                         call_name=semantic_call_name or call_name,
                         force_replace=True,
                     )
-                    while new_statements and _is_outgoing_stack_arg_segment_placeholder_store_statement(
-                        new_statements[-1],
-                        stack_probe_seen=stack_probe_seen,
-                    ):
-                        new_statements.pop()
-                        stats.consumed_outgoing_stack_placeholder_count += 1
+                    if transaction.changed:
                         changed = True
-                    if args_changed:
-                        record_stack_arg_materialization_8616(codegen, 1)
-                    _refresh_summary_arg_shape(call, summary)
-                    if args_changed:
-                        changed = True
+                    if transaction.arguments_accepted:
+                        while new_statements and _is_outgoing_stack_arg_segment_placeholder_store_statement(
+                            new_statements[-1],
+                            stack_probe_seen=stack_probe_seen,
+                        ):
+                            new_statements.pop()
+                            stats.consumed_outgoing_stack_placeholder_count += 1
+                            changed = True
+                        if transaction.arguments_changed:
+                            record_stack_arg_materialization_8616(codegen, 1)
+                        _refresh_summary_arg_shape(call, summary)
                     if _apply_call_return_store_destination_8616(
                         stmt,
                         call,
@@ -15953,26 +15995,28 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                                 call,
                                 normalized_args,
                             )
-                            args_changed = _set_materialized_call_args(
+                            transaction = _set_materialized_call_args(
                                 call,
                                 normalized_args,
                                 call_name=semantic_call_name or call_name,
                                 force_replace=True,
                             )
-                            if args_changed:
+                            if transaction.arguments_changed:
                                 record_stack_arg_materialization_8616(codegen, len(normalized_args))
                             return_calls_already_embedded = _call_args_embed_return_source_callsites_8616(
                                 call,
                                 ordered_push_sources,
                             )
                             if (
-                                args_changed or args_already_materialized or return_calls_already_embedded
+                                transaction.arguments_accepted
+                                and (transaction.arguments_changed or args_already_materialized or return_calls_already_embedded)
                             ) and _delete_consumed_return_call_refs_8616(consumed_return_call_indices):
                                 changed = True
-                            _refresh_summary_arg_shape(call, summary)
-                            if args_changed:
+                            if transaction.arguments_accepted:
+                                _refresh_summary_arg_shape(call, summary)
+                                strict_arg_shape_applied = True
+                            if transaction.changed:
                                 changed = True
-                            strict_arg_shape_applied = True
                 if not strict_arg_shape_applied and len(new_statements) >= expected_arg_count:  # noqa: SIM102
                     if not typed_stack_probe_materialization and (
                         not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None
@@ -16015,47 +16059,49 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                             else None
                         )
                         if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                            _set_materialized_call_args(
+                            transaction = _set_materialized_call_args(
                                 call,
                                 normalized_args,
                                 call_name=semantic_call_name or call_name,
                                 force_replace=True,
                             )
-                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                            _record_prunable_segment_metadata_ids(
-                                call,
-                                new_statements,
-                                candidate_indices,
-                            )
-                            if prune_consumed_arg_stores and summary is not None:
-                                if stack_probe_seen and not stack_probe_address_seen and typed_stack_probe_fact is None:
-                                    cleanup_indices = candidate_indices.copy()
-                                    scan_idx = min(candidate_indices, default=-1) - 1
-                                    while scan_idx >= 0:
-                                        prev_stmt = new_statements[scan_idx]
-                                        if _statement_contains_call(prev_stmt):
+                            if transaction.arguments_accepted:
+                                record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                                _record_prunable_segment_metadata_ids(
+                                    call,
+                                    new_statements,
+                                    candidate_indices,
+                                )
+                                if prune_consumed_arg_stores and summary is not None:
+                                    if stack_probe_seen and not stack_probe_address_seen and typed_stack_probe_fact is None:
+                                        cleanup_indices = candidate_indices.copy()
+                                        scan_idx = min(candidate_indices, default=-1) - 1
+                                        while scan_idx >= 0:
+                                            prev_stmt = new_statements[scan_idx]
+                                            if _statement_contains_call(prev_stmt):
+                                                break
+                                            if _is_stack_carrier_temp_assignment(
+                                                prev_stmt
+                                            ) or _is_segment_register_metadata_store(prev_stmt):
+                                                cleanup_indices.append(scan_idx)
+                                                scan_idx -= 1
+                                                continue
                                             break
-                                        if _is_stack_carrier_temp_assignment(
-                                            prev_stmt
-                                        ) or _is_segment_register_metadata_store(prev_stmt):
-                                            cleanup_indices.append(scan_idx)
-                                            scan_idx -= 1
-                                            continue
-                                        break
-                                    _delete_consumed_indices_8616(
-                                        new_statements,
-                                        list(set(cleanup_indices)),
-                                        live_consumers=(call, *statements[i + 1 :]),
-                                    )
-                                else:
-                                    _delete_consumed_indices_8616(
-                                        new_statements,
-                                        list(range(len(new_statements) - expected_arg_count, len(new_statements))),
-                                        live_consumers=(call, *statements[i + 1 :]),
-                                    )
-                            _refresh_summary_arg_shape(call, summary)
-                            changed = True
-                            strict_arg_shape_applied = True
+                                        _delete_consumed_indices_8616(
+                                            new_statements,
+                                            list(set(cleanup_indices)),
+                                            live_consumers=(call, *statements[i + 1 :]),
+                                        )
+                                    else:
+                                        _delete_consumed_indices_8616(
+                                            new_statements,
+                                            list(range(len(new_statements) - expected_arg_count, len(new_statements))),
+                                            live_consumers=(call, *statements[i + 1 :]),
+                                        )
+                                _refresh_summary_arg_shape(call, summary)
+                                strict_arg_shape_applied = True
+                            if transaction.changed:
+                                changed = True
                 if (
                     not strict_arg_shape_applied
                     and typed_stack_probe_fact is not None
@@ -16083,23 +16129,25 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         and len(normalized_args) >= expected_arg_count
                         and _all_arg_exprs_are_non_segment_registers(normalized_args)
                     ):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             normalized_args,
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        if prune_consumed_arg_stores and summary is not None:
-                            _delete_consumed_indices_8616(
-                                new_statements,
-                                consumed_indices,
-                                live_consumers=(call, *statements[i + 1 :]),
-                            )
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
+                            if prune_consumed_arg_stores and summary is not None:
+                                _delete_consumed_indices_8616(
+                                    new_statements,
+                                    consumed_indices,
+                                    live_consumers=(call, *statements[i + 1 :]),
+                                )
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
+                            changed = True
                 if (
                     not strict_arg_shape_applied
                     and typed_stack_probe_fact is not None
@@ -16120,23 +16168,27 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             normalized_args,
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        if prune_consumed_arg_stores and (summary is not None or typed_stack_probe_fact is not None):
-                            _delete_consumed_indices_8616(
-                                new_statements,
-                                consumed_indices,
-                                live_consumers=(call, *statements[i + 1 :]),
-                            )
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
+                            if prune_consumed_arg_stores and (
+                                summary is not None or typed_stack_probe_fact is not None
+                            ):
+                                _delete_consumed_indices_8616(
+                                    new_statements,
+                                    consumed_indices,
+                                    live_consumers=(call, *statements[i + 1 :]),
+                                )
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
+                            changed = True
                 if (
                     not strict_arg_shape_applied
                     and isinstance(expected_arg_count, int)
@@ -16166,16 +16218,18 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                             push_sources=tuple(ordered_sources),
                         )
                         if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                            _set_materialized_call_args(
+                            transaction = _set_materialized_call_args(
                                 call,
                                 normalized_args,
                                 call_name=semantic_call_name or call_name,
                                 force_replace=True,
                             )
-                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                            _refresh_summary_arg_shape(call, summary)
-                            changed = True
-                            strict_arg_shape_applied = True
+                            if transaction.arguments_accepted:
+                                record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                                _refresh_summary_arg_shape(call, summary)
+                                strict_arg_shape_applied = True
+                            if transaction.changed:
+                                changed = True
                 if not strict_arg_shape_applied and (
                     not typed_stack_probe_materialization
                     and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
@@ -16213,23 +16267,25 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         push_sources=backtrack_push_sources,
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             normalized_args,
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        if prune_consumed_arg_stores and summary is not None:
-                            _delete_consumed_indices_8616(
-                                new_statements,
-                                consumed_indices,
-                                live_consumers=(call, *statements[i + 1 :]),
-                            )
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
+                            if prune_consumed_arg_stores and summary is not None:
+                                _delete_consumed_indices_8616(
+                                    new_statements,
+                                    consumed_indices,
+                                    live_consumers=(call, *statements[i + 1 :]),
+                                )
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
+                            changed = True
                 if not strict_arg_shape_applied and (
                     not typed_stack_probe_materialization
                     and (not stack_probe_seen or stack_probe_address_seen or typed_stack_probe_fact is None)
@@ -16246,16 +16302,18 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         else None
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             normalized_args,
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
+                            changed = True
                 if (
                     not strict_arg_shape_applied
                     and not typed_stack_probe_materialization
@@ -16274,22 +16332,24 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             normalized_args,
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        if prune_consumed_arg_stores and summary is not None:
-                            _delete_consumed_indices_8616(
-                                new_statements,
-                                consumed_indices,
-                                live_consumers=(call, *statements[i + 1 :]),
-                            )
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                            if prune_consumed_arg_stores and summary is not None:
+                                _delete_consumed_indices_8616(
+                                    new_statements,
+                                    consumed_indices,
+                                    live_consumers=(call, *statements[i + 1 :]),
+                                )
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
+                            changed = True
                 if (
                     not strict_arg_shape_applied
                     and expected_arg_count == 1
@@ -16312,23 +16372,27 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         call_name=semantic_call_name or call_name,
                     )
                     if normalized_args is not None and not _is_segment_register_value_expr(normalized_args[0]):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             [normalized_args[0]],
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, 1)
-                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        if prune_consumed_arg_stores and (summary is not None or typed_stack_probe_fact is not None):
-                            _delete_consumed_indices_8616(
-                                new_statements,
-                                consumed_indices,
-                                live_consumers=(call, *statements[i + 1 :]),
-                            )
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
-                        strict_arg_shape_applied = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, 1)
+                            _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
+                            if prune_consumed_arg_stores and (
+                                summary is not None or typed_stack_probe_fact is not None
+                            ):
+                                _delete_consumed_indices_8616(
+                                    new_statements,
+                                    consumed_indices,
+                                    live_consumers=(call, *statements[i + 1 :]),
+                                )
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
+                            changed = True
                 if (
                     not strict_arg_shape_applied
                     and (semantic_call_name is not None or call_name is not None)
@@ -16343,18 +16407,19 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         else None
                     )
                     if default_args is not None and len(default_args) == expected_arg_count:
-                        args_changed = _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             list(default_args),
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        if args_changed:
+                        if transaction.arguments_changed:
                             record_stack_arg_materialization_8616(codegen, len(default_args))
-                        _refresh_summary_arg_shape(call, summary)
-                        if args_changed:
+                        if transaction.arguments_accepted:
+                            _refresh_summary_arg_shape(call, summary)
+                            strict_arg_shape_applied = True
+                        if transaction.changed:
                             changed = True
-                        strict_arg_shape_applied = True
             elif (
                 call is not None
                 and not is_stack_probe_helper
@@ -16391,15 +16456,17 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     and isinstance(expected_arg_count, int)
                     and len(fallback_args) == expected_arg_count
                 ):
-                    _set_materialized_call_args(
+                    transaction = _set_materialized_call_args(
                         call,
                         list(fallback_args),
                         call_name=semantic_call_name or call_name,
                         force_replace=True,
                     )
-                    record_stack_arg_materialization_8616(codegen, len(fallback_args))
-                    _refresh_summary_arg_shape(call, summary)
-                    changed = True
+                    if transaction.arguments_accepted:
+                        record_stack_arg_materialization_8616(codegen, len(fallback_args))
+                        _refresh_summary_arg_shape(call, summary)
+                    if transaction.changed:
+                        changed = True
                     if _apply_call_return_store_destination_8616(
                         stmt,
                         call,
@@ -16443,24 +16510,26 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         )
                     )
                 ):
-                    _set_materialized_call_args(
+                    transaction = _set_materialized_call_args(
                         call,
                         normalized_args,
                         call_name=semantic_call_name or call_name,
                         force_replace=True,
                     )
-                    record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                    _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                    if prune_consumed_arg_stores and (
-                        summary is not None or (typed_stack_probe_fact is not None and stack_probe_seen)
-                    ):
-                        _delete_consumed_indices_8616(
-                            new_statements,
-                            consumed_indices,
-                            live_consumers=(call, *statements[i + 1 :]),
-                        )
-                    _refresh_summary_arg_shape(call, summary)
-                    changed = True
+                    if transaction.arguments_accepted:
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
+                        if prune_consumed_arg_stores and (
+                            summary is not None or (typed_stack_probe_fact is not None and stack_probe_seen)
+                        ):
+                            _delete_consumed_indices_8616(
+                                new_statements,
+                                consumed_indices,
+                                live_consumers=(call, *statements[i + 1 :]),
+                            )
+                        _refresh_summary_arg_shape(call, summary)
+                    if transaction.changed:
+                        changed = True
                 else:
                     if want_arg_count <= 0:
                         i += 1
@@ -16488,15 +16557,17 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                             )
                         )
                     ):
-                        _set_materialized_call_args(
+                        transaction = _set_materialized_call_args(
                             call,
                             [normalized_args[0]],
                             call_name=semantic_call_name or call_name,
                             force_replace=True,
                         )
-                        record_stack_arg_materialization_8616(codegen, 1)
-                        _refresh_summary_arg_shape(call, summary)
-                        changed = True
+                        if transaction.arguments_accepted:
+                            record_stack_arg_materialization_8616(codegen, 1)
+                            _refresh_summary_arg_shape(call, summary)
+                        if transaction.changed:
+                            changed = True
             if _apply_call_return_store_destination_8616(
                 stmt,
                 call,

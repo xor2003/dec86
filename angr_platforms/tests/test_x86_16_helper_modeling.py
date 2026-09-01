@@ -24,6 +24,8 @@ def test_dos_pseudo_callee_attachment_accepts_partial_callnode_matches(monkeypat
     )
     codegen.project = SimpleNamespace(arch=_decompile.Arch86_16())
     codegen.next_idx = lambda _name: 1
+    codegen.next_ident = lambda name: name
+    codegen.next_node_idx = lambda: 1
 
     first = _decompile.structured_c.CFunctionCall(None, None, [], codegen=codegen)
     second = _decompile.structured_c.CFunctionCall(None, None, [], codegen=codegen)

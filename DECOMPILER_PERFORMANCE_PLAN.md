@@ -219,6 +219,16 @@ binary loading remain avoidable. The earlier default fork experiment was
 rejected because it forked after threads existed and was unstable; this task
 requires an explicit safe lifecycle rather than reusing that implementation.
 
+Rejected experiment (2026-09-01): an import-warm fork server that still used a
+fresh grandchild and fresh project for every function produced byte-identical C
+(`8ebb397779ad9c8637965aab0b246e2cdf7700122669f6ae88de05d2242c4107`) but took
+92.17s versus 89.53s for the existing exec lane on
+`SORTD.EXE --max-functions 1 --timeout 10 --trace-c-stages`, about 3% slower.
+Both runs timed out with validation uncollected, so this triggered the
+Definition of Failure and the CLI integration was removed. Do not repeat an
+import-only fork-server experiment; any future work on this step must eliminate
+measured project/analysis reconstruction while preserving clean-state proof.
+
 Definition of Done:
 
 - the multiprocessing context and prefork point are explicit and emit no

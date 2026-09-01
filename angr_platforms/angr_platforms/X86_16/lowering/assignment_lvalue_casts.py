@@ -5,6 +5,8 @@ Responsibility: remove structured-C casts from direct scalar assignment
 destinations only when every cast and the owning variable have the same proven
 integer width. Signedness-only views do not change the stored bit pattern.
 Pointer, aggregate, unknown-width, and width-changing destinations are refused.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

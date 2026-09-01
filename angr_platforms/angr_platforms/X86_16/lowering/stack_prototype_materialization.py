@@ -357,6 +357,13 @@ def _apply_arg_cvar_surface_8616(cvar: structured_c.CVariable, *, name: str, var
     return changed
 
 
+def _is_generated_argument_name_8616(name: object) -> bool:
+    """Return whether a parameter name is an Inertia/angr placeholder."""
+    return isinstance(name, str) and bool(
+        re.fullmatch(r"(?:arg_[0-9a-fA-F]+|arg_n[0-9a-fA-F]+|a[0-9]+)", name)
+    )
+
+
 def _reconciled_positive_arg_name_8616(
     variable: SimStackVariable,
     prototype_name: str | None,
@@ -369,6 +376,7 @@ def _reconciled_positive_arg_name_8616(
             and candidate
             and candidate != "local"
             and not candidate.startswith("local_")
+            and not _is_generated_argument_name_8616(candidate)
             and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", candidate) is not None
         ):
             return candidate
@@ -1198,6 +1206,7 @@ def materialize_annotated_stack_prototype_8616(
             and prototype_name
             and prototype_name != "local"
             and not prototype_name.startswith("local_")
+            and not _is_generated_argument_name_8616(prototype_name)
             and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prototype_name)
             is not None
             and current_arg_names.count(prototype_name) == 1
@@ -1292,7 +1301,7 @@ def materialize_annotated_stack_prototype_8616(
         if isinstance(variable, SimStackVariable):
             name = _reconciled_positive_arg_name_8616(
                 variable,
-                prototype_name if prototype_name_is_unique else None,
+                name,
             )
         if name in arg_names:
             name = f"arg_{offset:x}"
@@ -1333,14 +1342,24 @@ def materialize_annotated_stack_prototype_8616(
     new_proto = SimTypeFunction(arg_types, return_type, arg_names=arg_names, variadic=variadic)
     if arch is not None:
         new_proto = _with_arch_8616(new_proto, arch)
-    if not _prototype_equivalent_8616(typed_func.prototype, new_proto):
+    function_names = (
+        tuple(typed_func.prototype.arg_names or ())
+        if isinstance(typed_func.prototype, SimTypeFunction)
+        else ()
+    )
+    if not _prototype_equivalent_8616(typed_func.prototype, new_proto) or function_names != tuple(arg_names):
         typed_func.prototype = new_proto
         _raise_prototype_source_8616(
             typed_func,
             PrototypeSource.CCA_DECOMPILER,
         )
         changed = True
-    if not _prototype_equivalent_8616(typed_cfunc.functy, new_proto):
+    cfunc_names = (
+        tuple(typed_cfunc.functy.arg_names or ())
+        if isinstance(typed_cfunc.functy, SimTypeFunction)
+        else ()
+    )
+    if not _prototype_equivalent_8616(typed_cfunc.functy, new_proto) or cfunc_names != tuple(arg_names):
         typed_cfunc.functy = new_proto
         changed = True
     try:

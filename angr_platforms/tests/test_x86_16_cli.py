@@ -3851,11 +3851,12 @@ def test_recover_candidate_function_pair_keeps_explicit_exact_region_when_trunca
         "_richest_bounded_recovery_region",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("explicit region must not broaden")),
     )
-    monkeypatch.setattr(
-        decompile,
-        "_repair_x86_16_function_graph_8616",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("explicit region must not run unbounded repair")),
-    )
+    repaired_regions = []
+
+    def _repair_graph(_project, _function, *, exact_region=None):
+        repaired_regions.append(exact_region)
+
+    monkeypatch.setattr(decompile, "_repair_x86_16_function_graph_8616", _repair_graph)
 
     recovered_cfg, _recovered_function = decompile._recover_candidate_function_pair(
         candidate_project,
@@ -3870,6 +3871,7 @@ def test_recover_candidate_function_pair_keeps_explicit_exact_region_when_trunca
     assert recovered_cfg.region == exact_region
     assert observed_regions == [exact_region, exact_region]
     assert stitch_calls == [exact_region, exact_region]
+    assert repaired_regions == [exact_region]
 
 
 def test_stitched_exact_region_replaces_function_with_escaping_block():
@@ -7113,11 +7115,16 @@ def test_decompile_function_disables_structuring_for_tiny_single_call_helpers(mo
         def __init__(self, function, cfg=None, options=None, expr_collapse_depth=None):
             assert options == [("structurer_cls", "Phoenix")]
             assert expr_collapse_depth is not None
-            self.codegen = SimpleNamespace(
-                cfunc=SimpleNamespace(variables_in_use={}, arg_list=()),
+            cfunc = SimpleNamespace(variables_in_use={}, arg_list=())
+            codegen = SimpleNamespace(
+                cfunc=cfunc,
                 project=function.project,
                 _inertia_call_target_identity_consumer_8616=lambda *_args: False,
+                next_ident=lambda name: f"{name}_0",
+                next_node_idx=lambda: 0,
             )
+            cfunc.statements = structured_c.CStatements([], addr=function.addr, codegen=codegen)
+            self.codegen = codegen
             self.errors = []
             self.clinic = object()
 
@@ -7134,7 +7141,7 @@ def test_decompile_function_disables_structuring_for_tiny_single_call_helpers(mo
         )
     }
     project = SimpleNamespace(
-        arch=SimpleNamespace(name="86_16"),
+        arch=Arch86_16(),
         analyses=SimpleNamespace(Decompiler=FakeDecompiler),
         factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]),
     )

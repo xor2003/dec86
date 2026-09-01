@@ -1224,12 +1224,12 @@ def test_iret_restores_ip_cs_and_flags():
         if isinstance(stmt, pyvex.stmt.Put)
     }
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x5678
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x306
-    assert state.solver.eval(state.regs.flags) == 0x0801
+    assert state.solver.eval(state.regs.flags) == 0x0803
     assert block.vex.jumpkind == "Ijk_Ret"
-    assert {"cs", "flags"} <= put_regs
+    assert {"cs", "eflags"} <= put_regs
 
 
 def test_jmp_short_executes_to_branch_target():
@@ -1254,31 +1254,38 @@ def test_call_rm16_pushes_return_and_jumps():
     assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x102
 
 
-def test_jmpf_ptr16_16_executes_to_linear_alias():
-    state = _run_control_flow_instruction(b"\xea\x78\x56\x34\x12")
+def test_jmpf_ptr16_16_preserves_segment_and_executes_target_offset():
+    state = _run_control_flow_instruction(b"\xea\x08\x01\x34\x12\x90\x90\x90\xb8\xcd\xab")
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x108
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x300
+    simgr = state.project.factory.simgr(state)
+    simgr.step(num_inst=1)
+    assert len(simgr.active) == 1
+    target_state = simgr.active[0]
+    assert target_state.addr == 0x10B
+    assert target_state.solver.eval(target_state.regs.ax) == 0xABCD
+    assert target_state.solver.eval(target_state.regs.cs) == 0x1234
 
 
 def test_callf_ptr16_16_pushes_return_frame_and_jumps():
     state = _run_control_flow_instruction(b"\x9a\x78\x56\x34\x12")
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x5678
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x2FC
     assert state.solver.eval(state.memory.load(0x2FC, 2, endness=state.arch.memory_endness)) == 0x105
     assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x0000
 
 
-def test_jmpf_m16_16_executes_to_linear_alias():
+def test_jmpf_m16_16_executes_to_architectural_offset():
     state = _run_control_flow_instruction(
         b"\xff\x2e\x20\x01",
         setup=lambda s: (setattr(s.regs, "ds", 0), s.memory.store(0x120, b"\x78\x56\x34\x12")),
     )
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x5678
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x300
 
@@ -1289,7 +1296,7 @@ def test_callf_m16_16_pushes_return_frame_and_jumps():
         setup=lambda s: (setattr(s.regs, "ds", 0), s.memory.store(0x120, b"\x78\x56\x34\x12")),
     )
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x5678
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x2FC
     assert state.solver.eval(state.memory.load(0x2FC, 2, endness=state.arch.memory_endness)) == 0x104
@@ -1313,7 +1320,7 @@ def test_retn_imm16_pops_target_and_adjusts_stack():
 def test_retf_transfers_control_without_crashing():
     state = _run_control_flow_instruction(b"\xcb", setup=lambda s: s.memory.store(0x300, b"\x78\x56\x34\x12"))
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x5678
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x304
 
@@ -1321,7 +1328,7 @@ def test_retf_transfers_control_without_crashing():
 def test_retf_imm16_transfers_control_without_crashing():
     state = _run_control_flow_instruction(b"\xca\x04\x00", setup=lambda s: s.memory.store(0x300, b"\x78\x56\x34\x12"))
 
-    assert state.addr == 0x79B8
+    assert state.addr == 0x5678
     assert state.solver.eval(state.regs.cs) == 0x1234
     assert state.solver.eval(state.regs.sp) == 0x308
 

@@ -15,7 +15,7 @@ from typing import Protocol, cast
 
 from angr.ailment.expression import VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeInt
+from angr.sim_type import SimTypeLong
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
 from ..c_ast_utils import _replace_c_children_8616
@@ -194,7 +194,7 @@ def runtime_gp_state_expr_8616(
             region=function_addr,
             category="inertia_gp_register_state",
         ),
-        variable_type=SimTypeInt(False),
+        variable_type=_runtime_gp_lane_type_8616(codegen),
         codegen=codegen,
     )
     if view_width == 4:
@@ -204,13 +204,17 @@ def runtime_gp_state_expr_8616(
         projected = structured_c.CBinaryOp(
             "Shr",
             projected,
-            structured_c.CConstant(bit_shift, SimTypeInt(False), codegen=codegen),
+            structured_c.CConstant(bit_shift, _runtime_gp_lane_type_8616(codegen), codegen=codegen),
             codegen=codegen,
         )
     return structured_c.CBinaryOp(
         "And",
         projected,
-        structured_c.CConstant((1 << (view_width * 8)) - 1, SimTypeInt(False), codegen=codegen),
+        structured_c.CConstant(
+            (1 << (view_width * 8)) - 1,
+            _runtime_gp_lane_type_8616(codegen),
+            codegen=codegen,
+        ),
         codegen=codegen,
     )
 
@@ -241,7 +245,7 @@ def runtime_gp_state_assignment_8616(
             region=function_addr,
             category="inertia_gp_register_state",
         ),
-        variable_type=SimTypeInt(False),
+        variable_type=_runtime_gp_lane_type_8616(codegen),
         codegen=codegen,
     )
     if view_width == 4:
@@ -282,6 +286,26 @@ class _CodegenGPRegisters8616(Protocol):
     cfunc: _CFunctionGPRegisters8616 | None
     project: _ProjectGPRegisters8616 | None
     _inertia_gp_register_state_lowering_stats_8616: GPRegisterStateLoweringStats8616
+
+
+def _runtime_gp_lane_type_8616(codegen: object) -> SimTypeLong:
+    """Return the architecture-bound 32-bit type for one coherent GP lane."""
+    project = cast(_CodegenGPRegisters8616, codegen).project
+    lane_type = SimTypeLong(False)
+    return lane_type.with_arch(project.arch) if project is not None else lane_type
+
+
+def _bind_gp_write_value_type_8616(
+    codegen: object,
+    value: structured_c.CExpression,
+) -> None:
+    """Bind an angr variable's existing value type before width comparison."""
+    project = cast(_CodegenGPRegisters8616, codegen).project
+    if project is None or not isinstance(value, structured_c.CVariable):
+        return
+    value_type = value.variable_type
+    if value_type is not None:
+        value.variable_type = value_type.with_arch(project.arch)
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,7 +422,7 @@ def _runtime_gp_cvar_8616(
             region=function_addr,
             category="inertia_gp_register_state",
         ),
-        variable_type=SimTypeInt(False),
+        variable_type=_runtime_gp_lane_type_8616(source.codegen),
         codegen=source.codegen,
     )
 
@@ -419,14 +443,22 @@ def _runtime_gp_expr_8616(
         projected = structured_c.CBinaryOp(
             "Shr",
             projected,
-            structured_c.CConstant(bit_shift, SimTypeInt(False), codegen=source.codegen),
+            structured_c.CConstant(
+                bit_shift,
+                _runtime_gp_lane_type_8616(source.codegen),
+                codegen=source.codegen,
+            ),
             codegen=source.codegen,
         )
     mask = (1 << (view_width * 8)) - 1
     return structured_c.CBinaryOp(
         "And",
         projected,
-        structured_c.CConstant(mask, SimTypeInt(False), codegen=source.codegen),
+        structured_c.CConstant(
+            mask,
+            _runtime_gp_lane_type_8616(source.codegen),
+            codegen=source.codegen,
+        ),
         codegen=source.codegen,
     )
 
@@ -443,6 +475,8 @@ def _runtime_gp_subview_write_8616(
 ) -> structured_c.CAssignment:
     """Project one narrow-register write while preserving its origin tags."""
     codegen = source.codegen
+    _bind_gp_write_value_type_8616(codegen, value)
+    lane_type = _runtime_gp_lane_type_8616(codegen)
     parent_lhs = _runtime_gp_cvar_8616(register_name, source, function_addr)
     parent_read = _runtime_gp_cvar_8616(register_name, source, function_addr)
     value_mask = (1 << (view_width * 8)) - 1
@@ -450,20 +484,20 @@ def _runtime_gp_subview_write_8616(
     preserved = structured_c.CBinaryOp(
         "And",
         parent_read,
-        structured_c.CConstant(preserve_mask, SimTypeInt(False), codegen=codegen),
+        structured_c.CConstant(preserve_mask, lane_type, codegen=codegen),
         codegen=codegen,
     )
     inserted: structured_c.CExpression = structured_c.CBinaryOp(
         "And",
         value,
-        structured_c.CConstant(value_mask, SimTypeInt(False), codegen=codegen),
+        structured_c.CConstant(value_mask, lane_type, codegen=codegen),
         codegen=codegen,
     )
     if bit_shift:
         inserted = structured_c.CBinaryOp(
             "Shl",
             inserted,
-            structured_c.CConstant(bit_shift, SimTypeInt(False), codegen=codegen),
+            structured_c.CConstant(bit_shift, lane_type, codegen=codegen),
             codegen=codegen,
         )
     return structured_c.CAssignment(

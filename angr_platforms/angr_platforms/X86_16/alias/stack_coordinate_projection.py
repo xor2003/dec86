@@ -5,6 +5,8 @@ Responsibility: select one machine-BP offset from complete stack Alias evidence
 and a proven typed frame relation. Consumers in Widening and Types/Lowering use
 this owner instead of interpreting numerically overlapping coordinate domains.
 Do not infer coordinates from names, source, COD, assembly, or rendered C.
+Owns storage identity.
+Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting work here.
 """
 
 from __future__ import annotations

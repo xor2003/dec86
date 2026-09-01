@@ -27,6 +27,7 @@ from angr_platforms.X86_16.lowering.positive_bp_argument_plan import (
     complete_positive_bp_body_word_access_plan_8616,
 )
 from angr_platforms.X86_16.lowering.positive_bp_arguments import (
+    _canonical_argument_name_8616,
     _merge_existing_and_body_argument_type_8616,
     materialize_positive_bp_arguments_8616,
 )
@@ -190,6 +191,30 @@ def test_positive_bp_plan_projects_synthetic_tail_to_entry_sp_coordinates() -> N
     ) == (4, 6, 8)
     cloned_tail = SimStackVariable(6, 2, base="bp", name="arg_8", region=0x10058)
     assert machine_bp_offset_for_stack_variable_8616(codegen, cloned_tail) == 8
+
+
+def test_projected_entry_sp_argument_drops_stale_coordinate_name() -> None:
+    arch = Arch86_16()
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=arch),
+        next_idx=lambda _name: 1,
+        next_ident=lambda name: f"{name}_0",
+        next_node_idx=lambda: 1,
+    )
+    candidate = CVariable(
+        SimStackVariable(2, 2, base="bp", name="ret_addr"),
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=codegen,
+    )
+
+    assert (
+        _canonical_argument_name_8616(
+            candidate,
+            4,
+            entry_sp_offset=2,
+        )
+        == "arg_4"
+    )
 
 
 def test_positive_bp_plan_refuses_incomplete_width_census_atomically() -> None:

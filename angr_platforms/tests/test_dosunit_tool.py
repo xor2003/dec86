@@ -4800,7 +4800,7 @@ def test_dosunit_compare_ssa_uses_z3_proven_callee_lemma_for_shifted_call(tmp_pa
     original_image[0x200:0x204] = b"\xe8\x2d\x00\xc3"  # call 0x1230; ret
     original_image[0x230:0x236] = b"\x89\xd8\x83\xc0\x01\xc3"  # mov ax, bx; add ax, 1; ret
     candidate_image[0x220:0x224] = b"\xe8\x3d\x00\xc3"  # call 0x1260; ret
-    candidate_image[0x260:0x264] = b"\x89\xd8\x40\xc3"  # mov ax, bx; inc ax; ret
+    candidate_image[0x260:0x267] = b"\x89\xd8\xf7\xd0\xf7\xd8\xc3"  # mov ax, bx; not ax; neg ax; ret
     original = tmp_path / "original.exe"
     candidate = tmp_path / "candidate.exe"
     original.write_bytes(_mz_exe(bytes(original_image)))
@@ -4818,7 +4818,7 @@ def test_dosunit_compare_ssa_uses_z3_proven_callee_lemma_for_shifted_call(tmp_pa
         "module": "demo.exe",
         "functions": [
             _edge_function("demo.exe:caller_rebuilt", "caller_rebuilt", offset=0x0220, size=4),
-            _edge_function("demo.exe:callee_rebuilt", "callee_rebuilt", offset=0x0260, size=4),
+            _edge_function("demo.exe:callee_rebuilt", "callee_rebuilt", offset=0x0260, size=7),
         ],
     }
     mapping = {

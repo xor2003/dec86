@@ -9,9 +9,14 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
-from angr_platforms.X86_16.validation_dataflow import validate_structured_def_use_8616
+from angr_platforms.X86_16.validation_dataflow import (
+    DefUseEntryStackRange8616,
+    validate_structured_def_use_8616,
+)
 from angr_platforms.X86_16.validation_predicates import invert_predicate_token_8616
 from archinfo import ArchX86
+
+_ENTRY_FREQUENCY_RANGE = (DefUseEntryStackRange8616(4, 2),)
 
 
 class _Codegen:
@@ -129,7 +134,10 @@ def test_def_use_accepts_guarded_definition_in_complementary_else() -> None:
         codegen=codegen,
     )
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_FREQUENCY_RANGE,
+    )
 
     assert report.passed
     assert report.raw_fact_count == report.normalized_fact_count
@@ -182,7 +190,10 @@ def test_def_use_refuses_complementary_else_after_predicate_write() -> None:
         codegen=codegen,
     )
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_FREQUENCY_RANGE,
+    )
 
     assert not report.passed
     assert report.failure_count == 1

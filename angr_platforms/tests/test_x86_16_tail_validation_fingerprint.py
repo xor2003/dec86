@@ -959,6 +959,30 @@ def test_expr_fingerprint_does_not_cache_temporary_simplified_rebuilds(monkeypat
     assert all(key[1] not in rebuilt_ids for key in cache)
 
 
+def test_safe_fingerprint_rebuild_preserves_template_type_for_archless_operand():
+    codegen = _DummyCodegen()
+    template = CBinaryOp("Add", _const(1, codegen), _const(2, codegen), codegen=codegen)
+    archless = CVariable(
+        SimStackVariable(4, 2, name="arg_4"),
+        variable_type=SimTypeShort(True),
+        codegen=codegen,
+    )
+    archless.variable_type = SimTypeShort(True)
+
+    rebuilt = tail_validation_fingerprint_module._safe_rebuild_binary_8616(
+        "Add",
+        archless,
+        template.rhs,
+        template,
+    )
+
+    assert rebuilt is not template
+    assert rebuilt.lhs is archless
+    assert rebuilt.rhs is template.rhs
+    assert rebuilt.common_type is template.common_type
+    assert rebuilt.type.size == codegen.project.arch.bits
+
+
 def test_expr_fingerprint_cache_requires_same_retained_node_identity():
     codegen = _DummyCodegen()
     project = codegen.project

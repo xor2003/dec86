@@ -24,6 +24,11 @@ class RetiredTestContract:
 REVIEWED_TEST_MODULE_LAYERS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
     {
         "angr_platforms/tests/test_agent_test_focus.py": ("tooling/gates",),
+        "angr_platforms/tests/test_batch_decompile_procs_runtime.py": (
+            "tooling/gates",
+            "inertia_decompiler/cli",
+        ),
+        "angr_platforms/tests/test_decompile_jit_restart.py": ("inertia_decompiler/cli",),
         "angr_platforms/tests/test_omf_pat_far_transfer_variants.py": ("compiler-flags",),
         "angr_platforms/tests/test_omf_pat_fixup_widths.py": ("compiler-flags",),
         "angr_platforms/tests/test_omf_pat_lidata.py": ("compiler-flags",),
@@ -31,6 +36,7 @@ REVIEWED_TEST_MODULE_LAYERS: Final[Mapping[str, tuple[str, ...]]] = MappingProxy
         "angr_platforms/tests/test_omf_pat_zero_displacement.py": ("compiler-flags",),
         "angr_platforms/tests/test_parallel_job_defaults.py": ("tooling/gates",),
         "angr_platforms/tests/test_report_compiler_matches_flags.py": ("compiler-flags",),
+        "angr_platforms/tests/test_scalar_types_runtime_fixture.py": ("tooling/gates",),
         "angr_platforms/tests/test_x86_16_access_trait_arrays.py": ("X86_16/lowering", "inertia_decompiler/cli"),
         "angr_platforms/tests/test_x86_16_access_trait_policy.py": ("X86_16/lowering", "inertia_decompiler/cli"),
         "angr_platforms/tests/test_x86_16_access_trait_strides.py": ("X86_16/lowering", "inertia_decompiler/cli"),
@@ -40,6 +46,10 @@ REVIEWED_TEST_MODULE_LAYERS: Final[Mapping[str, tuple[str, ...]]] = MappingProxy
         "angr_platforms/tests/test_x86_16_msc6_regressions.py": ("inertia_decompiler/cli",),
         "angr_platforms/tests/test_x86_16_msc6_sort_patterns_regression.py": ("inertia_decompiler/cli",),
         "angr_platforms/tests/test_x86_16_segment_association.py": ("X86_16/lowering", "inertia_decompiler/cli"),
+        "angr_platforms/tests/test_x86_16_prevalidation_stack_prototype.py": (
+            "X86_16/lowering",
+            "X86_16/tail-validation",
+        ),
         "angr_platforms/tests/test_x86_16_string_corpus_anchors.py": ("inertia_decompiler/cli",),
         "angr_platforms/tests/test_x86_16_structuring_cyclic.py": ("X86_16/structuring",),
         "angr_platforms/tests/test_x86_16_structuring_stage_environment.py": ("X86_16/structuring",),
@@ -92,6 +102,26 @@ RETIRED_TEST_CONTRACTS: Final[Mapping[str, RetiredTestContract]] = MappingProxyT
             replacements=(
                 "angr_platforms/tests/test_x86_16_structuring_loop_break_jcc.py::"
                 "test_structuring_unconsumed_loop_break_jcc_inserts_guard_before_taken_body",
+            ),
+        ),
+        "angr_platforms/tests/test_x86_16_structuring_integration.py::"
+        "TestStructuringIntegration::test_natural_loop_stats_tracking": RetiredTestContract(
+            reason="untyped placeholder expected graph mutation without explicit loop evidence",
+            replacements=(
+                "angr_platforms/tests/test_x86_16_structuring_loops.py::"
+                "test_detect_natural_loop_returns_exact_typed_topology",
+                "angr_platforms/tests/test_x86_16_loop_recovery.py::"
+                "test_exact_natural_loop_topology_is_proven_without_graph_mutation",
+            ),
+        ),
+        "angr_platforms/tests/test_x86_16_structuring_codegen.py::"
+        "TestStructuringCodegen::test_codegen_integration_with_structuring": RetiredTestContract(
+            reason="untyped empty regions cannot prove loop topology or emit executable C statements",
+            replacements=(
+                "angr_platforms/tests/test_x86_16_structuring_cyclic.py::"
+                "test_structure_analysis_publishes_proven_topology_without_collapse",
+                "angr_platforms/tests/test_x86_16_structuring_codegen.py::"
+                "TestStructuringCodegen::test_loop_render_contains_while",
             ),
         ),
     }

@@ -7,6 +7,8 @@ contract while reusing the owning function argument instead of materializing a
 second stack object. Storage identity remains owned by
 ``stack_variable_coordinates``.
 Do not infer ranges from source, COD, assembly text, or rendered C.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

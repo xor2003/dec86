@@ -283,15 +283,22 @@ def materialize_stored_call_result_assignments_8616(
         raise TypeError("callsite summary carrier contains an invalid owned contract")
 
     artifacts_to_remove: dict[int, tuple[CStatements, CAssignment]] = {}
+    owned_call_ids: set[int] = set()
     for occurrence in _direct_call_occurrences_8616(root):
-        summary = summary_map.get(id(occurrence.call))
+        call_id = id(occurrence.call)
+        if call_id in owned_call_ids:
+            continue
+        summary = summary_map.get(call_id)
         if summary is None:
             continue
         destination = _stored_stack_destination_8616(summary)
-        if destination is None or (
+        if destination is None:
+            continue
+        if (
             isinstance(occurrence.statement, CAssignment)
             and _is_exact_stack_destination_8616(codegen, occurrence.statement.lhs, destination)
         ):
+            owned_call_ids.add(call_id)
             continue
         stats.raw_fact_count += 1
         destination_variable = _stack_destination_variable_8616(codegen, root, destination)
@@ -304,11 +311,19 @@ def materialize_stored_call_result_assignments_8616(
             )
             continue
         stats.normalized_fact_count += 1
-        if isinstance(occurrence.statement, CAssignment) and not _is_return_register_destination_8616(
-            boundary,
-            occurrence.statement.lhs,
-            summary,
-            destination[1],
+        exact_store_statement = (
+            isinstance(summary.return_store_instruction_addr, int)
+            and occurrence.statement.tags.get("ins_addr") == summary.return_store_instruction_addr
+        )
+        if (
+            isinstance(occurrence.statement, CAssignment)
+            and not exact_store_statement
+            and not _is_return_register_destination_8616(
+                boundary,
+                occurrence.statement.lhs,
+                summary,
+                destination[1],
+            )
         ):
             _refuse_8616(
                 stats,
@@ -335,6 +350,7 @@ def materialize_stored_call_result_assignments_8616(
             for parent, artifact in _store_artifacts_8616(root, store_ins_addr):
                 if artifact is not occurrence.statement:
                     artifacts_to_remove[id(artifact)] = (parent, artifact)
+        owned_call_ids.add(call_id)
         stats.materialized_count += 1
 
     for parent, artifact in artifacts_to_remove.values():

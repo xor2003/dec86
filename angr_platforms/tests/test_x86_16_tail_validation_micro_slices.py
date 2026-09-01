@@ -261,7 +261,7 @@ def test_tail_validation_micro_slice_detects_segmented_write_observable():
     )
 
     assert diff["changed"] is True
-    assert diff["delta"]["global_writes"]["removed"] == ("global:0x1235",)
+    assert diff["delta"]["global_writes"]["removed"] == ("ds_global:0x1235",)
     assert diff["delta"]["segmented_writes"]["added"] == ()
 
 

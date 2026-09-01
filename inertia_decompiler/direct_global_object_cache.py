@@ -36,21 +36,24 @@ def direct_global_object_cache_key_8616(
 ) -> dict[str, object] | None:
     """Return semantic identity for one complete direct-global census."""
     policy = _display_catalog_cache_policy_8616(cast(angr.Project, source_project))
-    return _recovery_cache_key(
-        binary_path=binary_path,
-        kind=DIRECT_GLOBAL_OBJECT_CACHE_NAMESPACE_8616,
-        source_scope=RecoveryCacheSourceScope8616.DIRECT_GLOBAL_OBJECT,
-        extra={
-            "artifact_schema": _DIRECT_GLOBAL_OBJECT_CACHE_SCHEMA_8616,
-            "ignore_local_sidecar_hints": policy.ignore_local_sidecar_hints,
-            "include_library_functions": policy.include_library_functions,
-            "function_discovery_backend": policy.function_discovery_backend,
-            "pat_backend": policy.pat_backend,
-            "auto_rizin_policy": policy.auto_rizin_policy,
-            "signature_catalog_path": policy.signature_catalog_path,
-            "signature_catalog_size": policy.signature_catalog_size,
-            "signature_catalog_mtime_ns": policy.signature_catalog_mtime_ns,
-        },
+    return cast(
+        dict[str, object] | None,
+        _recovery_cache_key(
+            binary_path=binary_path,
+            kind=DIRECT_GLOBAL_OBJECT_CACHE_NAMESPACE_8616,
+            source_scope=RecoveryCacheSourceScope8616.DIRECT_GLOBAL_OBJECT,
+            extra={
+                "artifact_schema": _DIRECT_GLOBAL_OBJECT_CACHE_SCHEMA_8616,
+                "ignore_local_sidecar_hints": policy.ignore_local_sidecar_hints,
+                "include_library_functions": policy.include_library_functions,
+                "function_discovery_backend": policy.function_discovery_backend,
+                "pat_backend": policy.pat_backend,
+                "auto_rizin_policy": policy.auto_rizin_policy,
+                "signature_catalog_path": policy.signature_catalog_path,
+                "signature_catalog_size": policy.signature_catalog_size,
+                "signature_catalog_mtime_ns": policy.signature_catalog_mtime_ns,
+            },
+        ),
     )
 
 

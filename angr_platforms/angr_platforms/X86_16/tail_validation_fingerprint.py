@@ -12,6 +12,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import contextvars
+import copy
 import logging
 import os
 import re
@@ -178,12 +179,18 @@ def _remember_temporary_fingerprint_node_8616(node: object) -> None:
 
 
 def _safe_rebuild_binary_8616(op: str, lhs: object, rhs: object, template: object) -> object:
+    """Project simplified children without rerunning angr type inference."""
     if lhs is _dynamic_tail_validation_getattr_8616(template, "lhs", None) and rhs is _dynamic_tail_validation_getattr_8616(template, "rhs", None):
         return template
-    codegen = _first_codegen_8616(template, lhs, rhs)
-    if codegen is None:
+    if not isinstance(template, CBinaryOp):
         return template
-    rebuilt = CBinaryOp(op, lhs, rhs, codegen=codegen)
+    try:
+        rebuilt = copy.copy(template)
+        rebuilt.op = op
+        rebuilt.lhs = lhs
+        rebuilt.rhs = rhs
+    except (AttributeError, TypeError, ValueError):
+        return template
     _remember_temporary_fingerprint_node_8616(rebuilt)
     return rebuilt
 
@@ -2366,7 +2373,7 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
             if node.op == "And":
                 mask = _c_constant_int_value(node.rhs)
                 parent = _expr_fingerprint(node.lhs, project, _child_seen())
-                view_name = {
+                view_names = {
                     ("reg:eax", 0xFFFF): "ax",
                     ("reg:ebx", 0xFFFF): "bx",
                     ("reg:ecx", 0xFFFF): "cx",
@@ -2377,7 +2384,8 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
                     ("reg:ebx", 0xFF): "bl",
                     ("reg:ecx", 0xFF): "cl",
                     ("reg:edx", 0xFF): "dl",
-                }.get((parent, mask))
+                }
+                view_name = view_names.get((parent, mask)) if isinstance(mask, int) else None
                 if view_name is not None:
                     return _cached(f"reg:{view_name}")
                 return _cached(f"And({parent},{_expr_fingerprint(node.rhs, project, _child_seen())})")

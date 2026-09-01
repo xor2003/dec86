@@ -145,6 +145,67 @@ def test_materializes_exact_ax_push_bytes_and_observes_pop_write() -> None:
     assert codegen._inertia_gp_stack_restore_lowering_stats_8616.materialized_count == 1
 
 
+def test_materializes_restore_nested_in_terminal_return() -> None:
+    """A terminal return owner accepts the proven save snapshot before it."""
+    codegen = _Codegen(project=SimpleNamespace(arch=Arch86_16()))
+    low = _assignment(
+        codegen,
+        structured_c.CVariable(
+            SimStackVariable(-2, 1, base="bp", name="local_2"),
+            variable_type=SimTypeChar(False),
+            codegen=codegen,
+        ),
+        0x1000,
+    )
+    high = _assignment(
+        codegen,
+        structured_c.CVariable(
+            SimStackVariable(-1, 1, base="bp", name="local_1"),
+            variable_type=SimTypeChar(False),
+            codegen=codegen,
+        ),
+        0x1000,
+    )
+    restore = structured_c.CBinaryOp(
+        "Or",
+        low.lhs,
+        structured_c.CBinaryOp(
+            "Shl",
+            high.lhs,
+            structured_c.CConstant(8, SimTypeChar(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x1008},
+    )
+    terminal = structured_c.CReturn(
+        restore,
+        codegen=codegen,
+        tags={"ins_addr": 0x1009},
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements([terminal], codegen=codegen),
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen._inertia_stack_register_restore_artifact_8616 = _artifact()
+
+    assert materialize_gp_stack_restores_8616(codegen) is True
+    snapshot, observed_terminal = codegen.cfunc.statements.statements
+    assert isinstance(snapshot, structured_c.CAssignment)
+    assert runtime_gp_expression_view_8616(snapshot.rhs).register_name == "ax"
+    assert observed_terminal is terminal
+    assert isinstance(terminal.retval, structured_c.CVariable)
+    assert terminal.retval.variable.size == 2
+    assert terminal.retval.tags["inertia_x86_16_gp_stack_restore"] == (
+        0x1000,
+        0x1008,
+        "ax",
+    )
+    assert codegen._inertia_gp_stack_restore_lowering_stats_8616.closed
+
+
 def test_classified_restore_without_push_carriers_hard_fails() -> None:
     """Closed evidence accounting rejects a fact that cannot reach C."""
     codegen = _Codegen(project=SimpleNamespace(arch=Arch86_16()))

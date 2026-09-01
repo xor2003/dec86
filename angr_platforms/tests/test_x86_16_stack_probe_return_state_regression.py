@@ -15,8 +15,14 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_stack_metadata import _generic_stack_carrier_name_8616
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
-from angr_platforms.X86_16.decompiler_postprocess_calls import _materialize_callsite_stack_arguments_8616
+from angr_platforms.X86_16.decompiler_postprocess_calls import (
+    _bind_call_argument_setup_liveness_classifier_8616,
+    _materialize_callsite_stack_arguments_8616,
+)
 from angr_platforms.X86_16.decompiler_postprocess_utils import _same_c_expression_8616
+from angr_platforms.X86_16.lowering.call_argument_carrier_liveness import (
+    call_argument_setup_is_proven_dead_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
@@ -56,6 +62,7 @@ def _project():
 
 def _empty_codegen(project):
     codegen = _DummyCodegen(project)
+    _bind_call_argument_setup_liveness_classifier_8616(codegen, call_argument_setup_is_proven_dead_8616)
     root = CStatements([], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
     return codegen
@@ -1016,8 +1023,8 @@ def test_stack_probe_materialize_preserves_typed_ss_pickup_across_call_and_globa
             target_addr=0x1544,
             return_addr=0x4018,
             kind="direct_near",
-            arg_count=0,
-            arg_widths=(),
+            arg_count=1,
+            arg_widths=(2,),
             stack_cleanup=2,
             return_register=None,
             return_used=False,

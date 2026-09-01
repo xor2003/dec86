@@ -32,6 +32,14 @@ class InstructionBpStackAccess8616:
     displacement: int
     size: int
     kind: StackMemoryAliasFactKind8616
+    evidence: InstructionBpStackAccessEvidence8616
+
+
+class InstructionBpStackAccessEvidence8616(StrEnum):
+    """Alias projection that determines an instruction access width."""
+
+    EXECUTION_SLICE = "execution_slice"
+    LOGICAL_ACCESS = "logical_access"
 
 
 class InstructionBpStackAccessRefusalKind8616(StrEnum):
@@ -202,12 +210,22 @@ def build_instruction_bp_stack_access_index_8616(
             )
             continue
         collected.setdefault(instruction_addr, set()).add(
-            InstructionBpStackAccess8616(address.offset, address.size, kind)
+            InstructionBpStackAccess8616(
+                address.offset,
+                address.size,
+                kind,
+                InstructionBpStackAccessEvidence8616.EXECUTION_SLICE,
+            )
         )
         materialized_count += 1
     for instruction_addr, address, kind in logical_candidates:
         collected.setdefault(instruction_addr, set()).add(
-            InstructionBpStackAccess8616(address.offset, address.size, kind)
+            InstructionBpStackAccess8616(
+                address.offset,
+                address.size,
+                kind,
+                InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS,
+            )
         )
         materialized_count += 1
     stats = InstructionBpStackAccessStats8616(
@@ -227,6 +245,7 @@ def build_instruction_bp_stack_access_index_8616(
                         fact.displacement,
                         fact.size,
                         fact.kind.value,
+                        fact.evidence.value,
                     ),
                 )
             )
@@ -275,8 +294,24 @@ def select_instruction_bp_stack_access_8616(
         for fact in candidates
         if fact.displacement == displacement and fact.size == size
     )
+    exact_logical = tuple(
+        fact
+        for fact in exact
+        if fact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+    )
+    if exact_logical:
+        return min(exact_logical, key=lambda fact: fact.kind.value)
+    same_base_logical_owners = tuple(
+        fact
+        for fact in candidates
+        if fact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+        and fact.displacement == displacement
+        and fact.size > size
+    )
+    if same_base_logical_owners:
+        return min(same_base_logical_owners, key=lambda fact: (fact.size, fact.kind.value))
     if exact:
-        return min(exact, key=lambda fact: fact.kind.value)
+        return min(exact, key=lambda fact: (fact.evidence.value, fact.kind.value))
     ranges = {(fact.displacement, fact.size) for fact in candidates}
     if len(ranges) != 1:
         return None
@@ -289,6 +324,7 @@ def select_instruction_bp_stack_access_8616(
 
 __all__ = [
     "InstructionBpStackAccess8616",
+    "InstructionBpStackAccessEvidence8616",
     "InstructionBpStackAccessIndex8616",
     "InstructionBpStackAccessRefusal8616",
     "InstructionBpStackAccessRefusalKind8616",

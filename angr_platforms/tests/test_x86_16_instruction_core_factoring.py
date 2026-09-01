@@ -305,8 +305,8 @@ def test_x86_16_emu_runtime_uses_shared_far_frame_helpers_by_mode():
     assert "push_privilege_stack32(" in source
     assert "pop_far_return_frame16(" in source
     assert "pop_far_return_frame32(" in source
-    assert "pop_interrupt_frame16(" in source
-    assert "pop_interrupt_frame32(" in source
+    assert "return_interrupt16(" in source
+    assert "return_interrupt32(" in source
 
 
 def test_x86_16_instruction_core_uses_stack_helpers_for_far_control_transfer():
@@ -378,7 +378,7 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_8bit_and_16bit_relative_
 
     assert "branch_rel8(" in source
     assert "branch_rel16(" in source
-    assert "loop_rel8(" in source
+    assert "_loop_counter_nonzero(" in source
     assert "self.emu.lifter_instruction.jump(" not in source
 
 

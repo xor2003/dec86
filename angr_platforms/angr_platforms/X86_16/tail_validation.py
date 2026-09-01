@@ -297,6 +297,7 @@ _LOOP_BODY_WRITE_EFFECT_PREFIXES_8616 = (
 _CONTROL_FLOW_WRITE_LOCATION_MARKERS_8616 = (
     "stack_slot:",
     "stack:",
+    "ds_global:",
     "global:",
     "deref:",
     "reg:",
@@ -1563,10 +1564,7 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
     if field_name == "control_flow_effects":
         value = _canonical_control_flow_effect_for_compare_8616(value)
     else:
-        value = normalize_condition_fingerprint_string_8616(value)
-        value = normalize_condition_fingerprint_algebraic_8616(value)
-        value = _canonicalize_global_word_pair_condition_fingerprint_8616(value)
-        value = _canonicalize_linear_ds_deref_condition_fingerprint_8616(value)
+        value = _canonicalize_condition_fingerprint_for_compare_8616(value)
     compacted = compact_normalized_validation_observable_8616(field_name, value)
     if compacted == value:
         return value
@@ -1589,7 +1587,7 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
                 f"{field_name}:sha256:{prefix_digest}:len:{len(prefix)}:"
                 f"loop-body-writes:{','.join(locations)}"
             )
-    return compacted
+    return cast(str, compacted)
 
 
 def _compact_tail_validation_observables_8616(field_name: str, values: set[str]) -> set[str]:
@@ -1621,10 +1619,12 @@ def canonicalize_tail_validation_summary_field_values_8616(
 ) -> set[str]:
     """Canonicalize condition/control-flow fingerprint strings for comparison.
 
-    Delegates to two IR-layer normalizers:
+    Delegates condition semantics to the IR-layer owners:
     1. ``normalize_condition_fingerprint_string_8616`` inverts ``Not(CmpEQ(...))`` → ``CmpNE(...)``
     2. ``normalize_condition_fingerprint_algebraic_8616`` canonicalizes
        ``CmpEQ(Sub(x,const:c),const:0)`` → ``CmpEQ(x,const:c)``
+    3. ``canonicalize_condition_storage_fingerprint_8616`` supplies canonical
+       typed storage identities such as ``ds_global`` and ``stack_slot``.
 
     These are validation-only; they do not mutate IR or feed results back into recovery.
     """
@@ -1659,14 +1659,7 @@ def canonicalize_tail_validation_summary_field_values_8616(
         if value.startswith(f"{field_name}:sha256:"):
             normalized.add(value)
             continue
-        v1 = normalize_condition_fingerprint_string_8616(value)
-        v2 = normalize_condition_fingerprint_algebraic_8616(v1)
-        v3 = _canonicalize_global_word_pair_condition_fingerprint_8616(v2)
-        v3 = _canonicalize_linear_ds_deref_condition_fingerprint_8616(v3)
-        v3 = _canonicalize_stack_arg_storage_fingerprint_8616(v3)
-        if field_name == "control_flow_effects":
-            v3 = _canonicalize_embedded_helper_call_tokens_for_compare_8616(v3)
-        normalized.add(v3)
+        normalized.add(_canonicalize_condition_fingerprint_for_compare_8616(value))
     return normalized
 
 
@@ -1686,11 +1679,7 @@ def _canonicalize_embedded_helper_call_tokens_for_compare_8616(value: str) -> st
 
 
 def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str:
-    def _global_offset(fingerprint: str) -> int | None:
-        match = re.fullmatch(r"global:(0x[0-9a-fA-F]+|\d+)", fingerprint)
-        if match is None:
-            return None
-        return int(match.group(1), 0)
+    """Fold adjacent byte views after Condition IR has canonicalized DS storage."""
 
     def _ds_global_offset(fingerprint: str) -> int | None:
         match = re.fullmatch(r"ds_global:(0x[0-9a-fA-F]+|\d+)", fingerprint)
@@ -1704,7 +1693,7 @@ def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str
             return None
         return int(match.group(1), 0)
 
-    def _scaled_global_byte_offset(fingerprint: str) -> int | None:
+    def _scaled_ds_global_byte_offset(fingerprint: str) -> int | None:
         call = _split_fingerprint_call_8616(fingerprint)
         if call is None:
             return None
@@ -1713,12 +1702,12 @@ def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str
         if len(args) != 2:
             return None
         if op == "Shl" and _const_value(args[1]) == 8:
-            return _global_offset(args[0])
+            return _ds_global_offset(args[0])
         if op == "Mul":
             if _const_value(args[0]) == 0x100:
-                return _global_offset(args[1])
+                return _ds_global_offset(args[1])
             if _const_value(args[1]) == 0x100:
-                return _global_offset(args[0])
+                return _ds_global_offset(args[0])
         return None
 
     def _flatten_or_args(fingerprint: str) -> list[str]:
@@ -1738,14 +1727,13 @@ def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str
         parts = _flatten_or_args(fingerprint)
         if len(parts) != 2:
             return None
-        for prefix, parser in (("global", _global_offset), ("ds_global", _ds_global_offset)):
-            offsets = sorted(
-                offset
-                for part in parts
-                if isinstance((offset := parser(part)), int)
-            )
-            if len(offsets) == 2 and offsets[1] == offsets[0] + 2:
-                return f"{prefix}:{offsets[0]:#x}"
+        offsets = sorted(
+            offset
+            for part in parts
+            if isinstance((offset := _ds_global_offset(part)), int)
+        )
+        if len(offsets) == 2 and offsets[1] == offsets[0] + 2:
+            return f"ds_global:{offsets[0]:#x}"
         return None
 
     def _normalize_expr(fingerprint: str) -> str:
@@ -1758,13 +1746,12 @@ def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str
         if op == "And" and len(normalized_args) == 2:
             left_const = _const_value(normalized_args[0])
             right_const = _const_value(normalized_args[1])
-            for prefix, parser in (("global", _global_offset), ("ds_global", _ds_global_offset)):
-                left_offset = parser(normalized_args[0])
-                right_offset = parser(normalized_args[1])
-                if isinstance(left_offset, int) and right_const == 0xFFFF:
-                    return f"{prefix}:{left_offset:#x}"
-                if isinstance(right_offset, int) and left_const == 0xFFFF:
-                    return f"{prefix}:{right_offset:#x}"
+            left_offset = _ds_global_offset(normalized_args[0])
+            right_offset = _ds_global_offset(normalized_args[1])
+            if isinstance(left_offset, int) and right_const == 0xFFFF:
+                return f"ds_global:{left_offset:#x}"
+            if isinstance(right_offset, int) and left_const == 0xFFFF:
+                return f"ds_global:{right_offset:#x}"
         if op in {"CmpEQ", "CmpNE"} and len(normalized_args) == 2:
             for candidate, zero in (
                 (normalized_args[0], normalized_args[1]),
@@ -1780,30 +1767,34 @@ def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str
             if deduped_args != tuple(normalized_args):
                 return f"Or({','.join(deduped_args)})"
         if op == "Shr" and len(normalized_args) == 2:
-            base_offset = _global_offset(normalized_args[0])
-            if isinstance(base_offset, int) and _const_value(normalized_args[1]) == 16:
-                return f"global:{base_offset + 2:#x}"
             base_offset = _ds_global_offset(normalized_args[0])
             if isinstance(base_offset, int) and _const_value(normalized_args[1]) == 16:
                 return f"ds_global:{base_offset + 2:#x}"
         if op == "Or" and len(normalized_args) == 2:
-            low_offset = _global_offset(normalized_args[0])
-            high_offset = _scaled_global_byte_offset(normalized_args[1])
+            low_offset = _ds_global_offset(normalized_args[0])
+            high_offset = _scaled_ds_global_byte_offset(normalized_args[1])
             if not isinstance(low_offset, int) or not isinstance(high_offset, int):
-                low_offset = _global_offset(normalized_args[1])
-                high_offset = _scaled_global_byte_offset(normalized_args[0])
+                low_offset = _ds_global_offset(normalized_args[1])
+                high_offset = _scaled_ds_global_byte_offset(normalized_args[0])
             if isinstance(low_offset, int) and high_offset == low_offset + 1:
-                return f"global:{low_offset:#x}"
+                return f"ds_global:{low_offset:#x}"
         return f"{op}({','.join(normalized_args)})"
 
     return _normalize_expr(value)
 
 
+def _canonicalize_condition_fingerprint_for_compare_8616(value: str) -> str:
+    """Normalize one condition through the Condition IR storage owner."""
+    normalized = normalize_condition_fingerprint_string_8616(value)
+    normalized = normalize_condition_fingerprint_algebraic_8616(normalized)
+    normalized = canonicalize_condition_storage_fingerprint_8616(normalized)
+    normalized = _canonicalize_global_word_pair_condition_fingerprint_8616(normalized)
+    return _canonicalize_stack_arg_storage_fingerprint_8616(normalized)
+
+
 def _canonicalize_final_branch_condition_fingerprint_8616(value: str) -> str:
     """Normalize exact storage-view equivalences for final branch validation."""
-    return _canonicalize_global_word_pair_condition_fingerprint_8616(
-        canonicalize_condition_storage_fingerprint_8616(value)
-    )
+    return _canonicalize_condition_fingerprint_for_compare_8616(value)
 
 
 def _canonicalize_helper_call_fingerprint_for_compare_8616(value: str) -> str:
@@ -2191,10 +2182,10 @@ def _do_while_post_body_condition_fingerprint_8616(
         nonlocal occurrence_count
         if isinstance(node, CVariable) and _expr_fingerprint(node, project) == target:
             occurrence_count += 1
-            return replacement
+            return cast(str, replacement)
         if isinstance(node, CBinaryOp):
             return f"{node.op}({_fingerprint(node.lhs)},{_fingerprint(node.rhs)})"
-        return _expr_fingerprint(node, project)
+        return cast(str, _expr_fingerprint(node, project))
 
     fingerprint = _fingerprint(loop.condition)
     return fingerprint if occurrence_count == 1 else None
@@ -4411,7 +4402,7 @@ def _assignment_write_locations_8616(
         width = _target_abi_type_size_bytes_8616(lhs.dst_type, project, default=0)
     elif isinstance(lhs, CDirtyExpression):
         width = _dirty_expression_write_width_bytes_8616(lhs)
-    base = _tail_validation_global_write_offset_8616(location)
+    base = _tail_validation_ds_global_write_offset_8616(location)
     if not isinstance(base, int) or width <= 1 or width > 8:
         return (location,)
     return tuple(f"global:{base + byte_offset:#x}" for byte_offset in range(width))
@@ -5948,10 +5939,12 @@ def _tail_validation_linear_ds_write_offset_8616(location: str) -> int | None:
     return offset if offset >= 0 else None
 
 
-def _tail_validation_global_write_offset_8616(location: str) -> int | None:
+def _tail_validation_ds_global_write_offset_8616(location: str) -> int | None:
+    """Return the offset from Condition IR's canonical DS-global identity."""
     if not isinstance(location, str):
         return None
-    match = re.fullmatch(r"global:0x([0-9a-fA-F]+)", location)
+    canonical_location = canonicalize_condition_storage_fingerprint_8616(location)
+    match = re.fullmatch(r"ds_global:0x([0-9a-fA-F]+)", canonical_location)
     if match is None:
         return None
     return int(match.group(1), 16)
@@ -5976,7 +5969,7 @@ def _suppress_global_linear_ds_write_precision_delta_8616(diff: dict[str, TailVa
         global_by_offset = {
             offset: location
             for location in global_values
-            if isinstance((offset := _tail_validation_global_write_offset_8616(location)), int)
+            if isinstance((offset := _tail_validation_ds_global_write_offset_8616(location)), int)
         }
         segmented_by_offset: dict[int, set[str]] = {}
         for location in segmented_values:
@@ -5994,7 +5987,7 @@ def _suppress_global_linear_ds_write_precision_delta_8616(diff: dict[str, TailVa
                 global_values.remove(high_global)
             changed = True
         for global_location in tuple(global_values):
-            global_base = _tail_validation_global_write_offset_8616(global_location)
+            global_base = _tail_validation_ds_global_write_offset_8616(global_location)
             if not isinstance(global_base, int):
                 continue
             if global_base in byte_expanded_word_bases:
@@ -6810,13 +6803,7 @@ def _canonical_control_flow_effect_for_compare_8616(value: str) -> str:
         normalized_calls = tuple(_canonicalize_helper_call_fingerprint_for_compare_8616(call) for call in calls)
         if prefix.endswith(":") and ":" in prefix[:-1]:
             kind, condition = prefix[:-1].split(":", 1)
-            normalized_condition = _canonicalize_stack_arg_storage_fingerprint_8616(
-                normalize_condition_fingerprint_string_8616(condition)
-            )
-            normalized_condition = normalize_condition_fingerprint_algebraic_8616(normalized_condition)
-            normalized_condition = _canonicalize_global_word_pair_condition_fingerprint_8616(normalized_condition)
-            normalized_condition = _canonicalize_linear_ds_deref_condition_fingerprint_8616(normalized_condition)
-            normalized_condition = _canonicalize_stack_arg_storage_fingerprint_8616(normalized_condition)
+            normalized_condition = _canonicalize_condition_fingerprint_for_compare_8616(condition)
             return f"{kind}:{normalized_condition}:{','.join(normalized_calls)}"
         return f"{prefix}{','.join(normalized_calls)}"
     write_split = _split_control_flow_loop_body_write_effect_8616(value)
@@ -6825,28 +6812,18 @@ def _canonical_control_flow_effect_for_compare_8616(value: str) -> str:
         normalized_locations: list[str] = []
         for location in locations:
             canonical_location = _canonicalize_segmented_write_fingerprint_for_compare_8616(location)
-            offset = _tail_validation_global_write_offset_8616(canonical_location)
+            offset = _tail_validation_ds_global_write_offset_8616(canonical_location)
             if offset is None:
                 offset = _tail_validation_linear_ds_write_offset_8616(canonical_location)
-            normalized_location = f"global:{offset:#x}" if offset is not None else canonical_location
+            normalized_location = f"ds_global:{offset:#x}" if offset is not None else canonical_location
             if normalized_location not in normalized_locations:
                 normalized_locations.append(normalized_location)
         if prefix.endswith(":") and ":" in prefix[:-1]:
             kind, condition = prefix[:-1].split(":", 1)
-            normalized_condition = _canonicalize_stack_arg_storage_fingerprint_8616(
-                normalize_condition_fingerprint_string_8616(condition)
-            )
-            normalized_condition = normalize_condition_fingerprint_algebraic_8616(normalized_condition)
-            normalized_condition = _canonicalize_global_word_pair_condition_fingerprint_8616(normalized_condition)
-            normalized_condition = _canonicalize_linear_ds_deref_condition_fingerprint_8616(normalized_condition)
+            normalized_condition = _canonicalize_condition_fingerprint_for_compare_8616(condition)
             return f"{kind}:{normalized_condition}:{','.join(sorted(normalized_locations))}"
         return f"{prefix}{','.join(sorted(normalized_locations))}"
-    normalized_control_flow = normalize_condition_fingerprint_algebraic_8616(
-        normalize_condition_fingerprint_string_8616(_canonicalize_stack_arg_storage_fingerprint_8616(value))
-    )
-    normalized_control_flow = _canonicalize_global_word_pair_condition_fingerprint_8616(normalized_control_flow)
-    normalized_control_flow = _canonicalize_linear_ds_deref_condition_fingerprint_8616(normalized_control_flow)
-    normalized_control_flow = _canonicalize_stack_arg_storage_fingerprint_8616(normalized_control_flow)
+    normalized_control_flow = _canonicalize_condition_fingerprint_for_compare_8616(value)
     normalized_control_flow = _canonicalize_embedded_helper_call_tokens_for_compare_8616(normalized_control_flow)
     return normalized_control_flow
 
@@ -7233,7 +7210,7 @@ def indexed_segmented_global_precision_delta_8616(
         return False
 
     def _is_evidenced_location(location: str) -> bool:
-        offset = _tail_validation_global_write_offset_8616(location)
+        offset = _tail_validation_ds_global_write_offset_8616(location)
         return isinstance(offset, int) and any(((offset - start) & 0xFFFF) < width for start, width in spans)
 
     delta = validation.get("delta")
@@ -7271,7 +7248,7 @@ def indexed_segmented_global_precision_delta_8616(
     if not added_locations and not removed_locations:
         return False
     changed_locations = (*added_locations.elements(), *removed_locations.elements())
-    if any(not location.startswith("global:") or not _is_evidenced_location(location) for location in changed_locations):
+    if any(not location.startswith("ds_global:") or not _is_evidenced_location(location) for location in changed_locations):
         return False
     return added_locations == Counter(global_added) and removed_locations == Counter(global_removed)
 

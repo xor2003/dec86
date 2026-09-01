@@ -82,7 +82,11 @@ def test_cloned_structured_callsite_rebind_requires_exact_inherited_identity() -
 
     rebind_cloned_structured_callsite_identity_8616(call, source, replacement)
 
-    assert call.tags == {"ins_addr": replacement.callsite_addr, "block_addr": 0x4000}
+    assert call.tags == {
+        "ins_addr": replacement.callsite_addr,
+        "block_addr": 0x4000,
+        "inertia_target_addr_8616": replacement.target_addr,
+    }
 
 
 def test_cloned_structured_callsite_rebind_refuses_unproven_source_tag() -> None:

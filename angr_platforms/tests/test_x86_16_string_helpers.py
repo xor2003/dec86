@@ -75,8 +75,10 @@ class _StringEmu:
         self.irsb = self.lifter_instruction.irsb
         self.loads = []
         self.stores = []
+        self.gpreg_reads = []
 
     def get_gpreg(self, reg):
+        self.gpreg_reads.append(reg)
         return self.gpregs[reg]
 
     def set_gpreg(self, reg, value):
@@ -160,8 +162,9 @@ def test_repeat_prefix_cond_consumes_cx_for_repeated_string_ops():
 
     cond = repeat_prefix_cond(emu, instr)
 
-    assert emu.get_gpreg(reg16_t.CX) == 3
+    assert emu.gpregs[reg16_t.CX] == 3
     assert cond is True
+    assert emu.gpreg_reads.count(reg16_t.CX) == 2
 
 
 def test_repeat_prefix_cond_skips_operation_when_initial_count_is_zero():

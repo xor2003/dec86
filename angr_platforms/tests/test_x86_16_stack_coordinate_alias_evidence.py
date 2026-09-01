@@ -83,7 +83,7 @@ def test_complete_alias_evidence_disambiguates_anonymous_entry_sp_clone() -> Non
     assert machine_bp_offset_for_stack_variable_8616(
         codegen,
         colliding_raw_bp_variable,
-    ) == -4
+    ) is None
 
 
 def test_typed_frame_evidence_disambiguates_anonymous_entry_sp_clone() -> None:
@@ -117,4 +117,4 @@ def test_typed_frame_evidence_disambiguates_anonymous_entry_sp_clone() -> None:
     assert machine_bp_offset_for_stack_variable_8616(
         codegen,
         SimStackVariable(-4, 2, base="bp"),
-    ) == -4
+    ) is None

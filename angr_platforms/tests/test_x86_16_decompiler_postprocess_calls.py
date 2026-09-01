@@ -39,6 +39,7 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _annotated_function_pointer_stack_offsets_8616,
     _attach_callsite_summaries_8616,
     _bind_call_argument_setup_liveness_classifier_8616,
+    _bind_callee_pointer_argument_classifier_8616,
     _bind_function_result_observation_provider_8616,
     _bind_segment_push_source_lowerer_8616,
     _cod_metadata_for_function_8616,
@@ -76,6 +77,9 @@ from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     record_stack_variable_coordinate_projection_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from angr_platforms.X86_16.postprocess.call_argument_transaction import (
+    accepted_call_argument_mutation_8616,
+)
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -748,6 +752,7 @@ def test_conservative_call_arg_seed_uses_known_default_for_zero_arg_helper_summa
 
     def _set_args(node, args, *, call_name, force_replace=False):
         node.args = list(args)
+        return accepted_call_argument_mutation_8616(arguments_changed=True, target_changed=False)
 
     def _refresh_shape(node, summary):
         if summary is not None:
@@ -823,7 +828,7 @@ def test_conservative_call_arg_seed_forwards_ordered_arithmetic_push_sources():
 
     def _set_args(node, args, *, call_name, force_replace=False):
         node.args = list(args)
-        return True
+        return accepted_call_argument_mutation_8616(arguments_changed=True, target_changed=False)
 
     changed = _conservative_call_arg_seed_8616(
         root=root,
@@ -1882,7 +1887,7 @@ def test_materialize_callsite_stack_arguments_resolves_register_carrier_before_m
     assert diff["changed"] is False
 
 
-def test_materialize_callsite_stack_arguments_infers_one_arg_after_stack_probe_helper():
+def test_materialize_callsite_stack_arguments_preserves_setup_after_zero_arity_refusal():
     project = _project()
     codegen = _empty_codegen(project)
     structured_c = _scg.c
@@ -1969,13 +1974,13 @@ def test_materialize_callsite_stack_arguments_infers_one_arg_after_stack_probe_h
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    assert len(codegen.cfunc.statements.statements) == 1
-    only_call_stmt = codegen.cfunc.statements.statements[-1]
-    assert isinstance(only_call_stmt, CExpressionStatement)
-    assert only_call_stmt.expr is call
-    assert _args_match(only_call_stmt.expr.args, [arg_slot])
-    assert codegen._inertia_callsite_summaries[id(call)].arg_count == 1
-    assert codegen._inertia_callsite_summaries[id(call)].arg_widths == (2,)
+    assert len(codegen.cfunc.statements.statements) == 2
+    assert isinstance(codegen.cfunc.statements.statements[0], CAssignment)
+    final_stmt = codegen.cfunc.statements.statements[-1]
+    assert isinstance(final_stmt, CExpressionStatement)
+    assert final_stmt.expr is call
+    assert final_stmt.expr.args == []
+    assert codegen._inertia_callsite_summaries[id(call)].arg_count == 0
 
 
 def test_materialize_callsite_stack_arguments_materializes_binary_proven_multi_args_after_stack_probe_helper():
@@ -2612,6 +2617,7 @@ def test_materialize_callsite_stack_arguments_walks_same_register_chain_across_s
 
 def test_materialize_callsite_stack_arguments_rewrites_nested_indexed_pointer_offsets_to_named_stack_vars():
     project = _project()
+    _bind_callee_pointer_argument_classifier_8616(project, lambda _project, _name, index: index in {0, 1})
     codegen = _empty_codegen(project)
     structured_c = _scg.c
     outgoing_base = structured_c.CVariable(
@@ -4250,7 +4256,7 @@ def test_materialize_callsite_stack_arguments_carries_probe_evidence_into_loop_b
             target_addr=0x1544,
             return_addr=0x4015,
             kind="direct_near",
-            arg_count=0,
+            arg_count=None,
             arg_widths=(),
             stack_cleanup=0,
             return_register=None,
@@ -4784,7 +4790,7 @@ def test_materialize_callsite_stack_arguments_accepts_ss_shift_linear_store_shap
             target_addr=0x1544,
             return_addr=0x4015,
             kind="direct_near",
-            arg_count=0,
+            arg_count=None,
             arg_widths=(),
             stack_cleanup=0,
             return_register=None,
@@ -5006,6 +5012,7 @@ def test_materialize_callsite_stack_arguments_extracts_inline_store_before_call_
 
 def test_materialize_callsite_stack_arguments_consumes_repeated_value_carrier_assignments():
     project = _project()
+    _bind_callee_pointer_argument_classifier_8616(project, lambda _project, _name, index: index in {0, 1})
     codegen = _empty_codegen(project)
     structured_c = _scg.c
 
@@ -6307,6 +6314,7 @@ def test_callsite_target_stats_accept_persisted_typed_target_identity() -> None:
 
 def test_materialize_callsite_stack_arguments_normalizes_bp_slot_values_and_pointer_args():
     project = _project()
+    _bind_callee_pointer_argument_classifier_8616(project, lambda _project, _name, index: index in {0, 1})
     codegen = _empty_codegen(project)
     structured_c = _scg.c
 

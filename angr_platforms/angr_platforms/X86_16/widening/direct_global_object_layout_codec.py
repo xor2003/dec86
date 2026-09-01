@@ -3,6 +3,9 @@
 Layer: Widening.
 Responsibility: serialize and validate an already-classified direct-global
 object-layout census without rebuilding binary, Alias, or Widening evidence.
+Consumes alias-proven storage identity.
+Do not join values from rendered text, cosmetic shape, postprocess, or
+CLI/reporting evidence.
 """
 
 from __future__ import annotations

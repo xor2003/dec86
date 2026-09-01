@@ -913,6 +913,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/pipeline/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/affine_compound_assignment.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/call_argument_transaction.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/cleanup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/flags_cleanup.py \
@@ -1060,6 +1061,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/widening_model.py \
 	angr_platforms/angr_platforms/X86_16/widening/__init__.py \
 	angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py \
+	angr_platforms/angr_platforms/X86_16/widening/direct_global_object_layout_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/global_object_layout_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_program_range_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_program_ranges.py \
@@ -1104,6 +1106,8 @@ QA_TYPED_FILES := \
 	inertia_decompiler/architecture_runtime_guard.py \
 	inertia_decompiler/project_evidence_transport.py \
 	inertia_decompiler/indexed_global_object_cache.py \
+	inertia_decompiler/direct_global_object_cache.py \
+	inertia_decompiler/direct_global_object_context.py \
 	inertia_decompiler/serial_clean_worker_evidence.py \
 	inertia_decompiler/cod_module_caller_evidence.py \
 	inertia_decompiler/c_text_cleanup.py \
@@ -1119,6 +1123,7 @@ QA_TYPED_FILES := \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
 	inertia_decompiler/indexed_alias_program_context.py \
+	inertia_decompiler/indexed_alias_program_publication.py \
 	inertia_decompiler/indexed_alias_program_recovery.py \
 	inertia_decompiler/indexed_alias_program_parallel.py \
 	inertia_decompiler/project_argument_evidence_ranges.py \
@@ -1278,6 +1283,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/alias/logical_stack_storage_identity.py \
 	angr_platforms/angr_platforms/X86_16/ir/logical_memory_scalar_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/direct_global_register_updates.py \
+	angr_platforms/angr_platforms/X86_16/lowering/direct_global_register_update_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/direct_stack_segmented_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/logical_word_memory_copy_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_frame_projection.py \
@@ -1301,6 +1307,12 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/validation_observable_compaction.py \
 	angr_platforms/angr_platforms/X86_16/validation_pointer_parameter_output_contracts.py \
 	angr_platforms/angr_platforms/X86_16/validation_pointer_parameter_outputs.py \
+	angr_platforms/angr_platforms/X86_16/lowering/gp_stack_restore.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_value_projection.py \
+	angr_platforms/angr_platforms/X86_16/validation/entry_stack_ranges.py \
+	inertia_decompiler/function_ir_ssa_cache.py \
+	inertia_decompiler/function_ir_ssa_cache_codec.py \
+	inertia_decompiler/function_ir_ssa_cache_identity.py \
 	decompile.py
 
 QA_RUFF_TARGETS := \
@@ -1857,6 +1869,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/pipeline/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/affine_compound_assignment.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/call_argument_transaction.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/cleanup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/flags_cleanup.py \
@@ -2004,6 +2017,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/widening_model.py \
 	angr_platforms/angr_platforms/X86_16/widening/__init__.py \
 	angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py \
+	angr_platforms/angr_platforms/X86_16/widening/direct_global_object_layout_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/global_object_layout_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_program_range_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_program_ranges.py \
@@ -2048,6 +2062,8 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/architecture_runtime_guard.py \
 	inertia_decompiler/project_evidence_transport.py \
 	inertia_decompiler/indexed_global_object_cache.py \
+	inertia_decompiler/direct_global_object_cache.py \
+	inertia_decompiler/direct_global_object_context.py \
 	inertia_decompiler/serial_clean_worker_evidence.py \
 	inertia_decompiler/cod_module_caller_evidence.py \
 	inertia_decompiler/c_text_cleanup.py \
@@ -2063,6 +2079,7 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
 	inertia_decompiler/indexed_alias_program_context.py \
+	inertia_decompiler/indexed_alias_program_publication.py \
 	inertia_decompiler/indexed_alias_program_recovery.py \
 	inertia_decompiler/indexed_alias_program_parallel.py \
 	inertia_decompiler/project_argument_evidence_ranges.py \
@@ -2526,6 +2543,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/alias/logical_stack_storage_identity.py \
 	angr_platforms/angr_platforms/X86_16/ir/logical_memory_scalar_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/direct_global_register_updates.py \
+	angr_platforms/angr_platforms/X86_16/lowering/direct_global_register_update_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/direct_stack_segmented_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/logical_word_memory_copy_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_frame_projection.py \
@@ -2554,7 +2572,13 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/validation_condition_closure_delta.py \
 	angr_platforms/angr_platforms/X86_16/validation_observable_compaction.py \
 	angr_platforms/angr_platforms/X86_16/validation_pointer_parameter_output_contracts.py \
-	angr_platforms/angr_platforms/X86_16/validation_pointer_parameter_outputs.py
+	angr_platforms/angr_platforms/X86_16/validation_pointer_parameter_outputs.py \
+	angr_platforms/angr_platforms/X86_16/lowering/gp_stack_restore.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_value_projection.py \
+	angr_platforms/angr_platforms/X86_16/validation/entry_stack_ranges.py \
+	inertia_decompiler/function_ir_ssa_cache.py \
+	inertia_decompiler/function_ir_ssa_cache_codec.py \
+	inertia_decompiler/function_ir_ssa_cache_identity.py
 
 QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_materialized_condition_storage.py

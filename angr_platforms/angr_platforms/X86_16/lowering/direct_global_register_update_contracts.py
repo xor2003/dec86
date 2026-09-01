@@ -3,6 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: own typed contracts shared by binary evidence collection and
 structured-C materialization without collecting or rewriting either surface.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

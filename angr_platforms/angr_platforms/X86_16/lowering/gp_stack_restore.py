@@ -3,8 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: consume exact stack-byte provenance and bind the structured
 PUSH stores and POP register write to one coherent architectural GP lane.
-Consumes Alias facts. Do not recover pairs from opcodes, assembly, names, or
-rendered C text.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 
 Dynamic boundary: angr structured-C nodes and codegen attachments expose
 version-dependent child containers and tags.
@@ -121,7 +121,11 @@ def _snapshot_insertion_point_8616(
         for index, statement in enumerate(container.statements):
             if not isinstance(
                 statement,
-                (structured_c.CAssignment, structured_c.CFunctionCall),
+                (
+                    structured_c.CAssignment,
+                    structured_c.CFunctionCall,
+                    structured_c.CReturn,
+                ),
             ):
                 continue
             statement_addrs = container_addrs[index]

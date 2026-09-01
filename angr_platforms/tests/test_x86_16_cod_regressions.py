@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from angr import ailment
-from angr.ailment.expression import BasePointerOffset
+from angr.ailment.expression import StackBaseOffset
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.calling_conventions import SimRegArg
@@ -1217,18 +1217,18 @@ def test_decompiler_return_compat_refuses_cross_block_terminal_ax_substitution()
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        ax_a = ailment.Expr.Register(1, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x1010)
-        ax_b = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x1012)
+        ax_a = ailment.Expr.Register(1, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x1010)
+        ax_b = ailment.Expr.Register(2, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x1012)
         assign_a = ailment.Stmt.Assignment(
             3,
             ax_a,
-            ailment.Expr.Const(4, None, 0x1111, 16, ins_addr=0x1010),
+            ailment.Expr.Const(4, 0x1111, 16, ins_addr=0x1010),
             ins_addr=0x1010,
         )
         assign_b = ailment.Stmt.Assignment(
             5,
             ax_b,
-            ailment.Expr.Const(6, None, 0x2222, 16, ins_addr=0x1012),
+            ailment.Expr.Const(6, 0x2222, 16, ins_addr=0x1012),
             ins_addr=0x1012,
         )
         block_a = SimpleNamespace(statements=[assign_a])
@@ -1285,11 +1285,11 @@ def test_decompiler_return_compat_infers_ax_stack_load_without_prototype():
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
-        two = ailment.Expr.Const(2, None, 2, 16, ins_addr=0x100B4)
+        bp = ailment.Expr.Register(1, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+        two = ailment.Expr.Const(2, 2, 16, ins_addr=0x100B4)
         bp_minus_two = ailment.Expr.BinaryOp(3, "Sub", [bp, two], bits=16, ins_addr=0x100B4)
         stack_load = ailment.Expr.Load(4, bp_minus_two, 2, arch.memory_endness, ins_addr=0x100B4)
-        ax = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+        ax = ailment.Expr.Register(5, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
         assignment = ailment.Stmt.Assignment(6, ax, stack_load, ins_addr=0x100B4)
         ret_stmt = ailment.Stmt.Return(7, [], ins_addr=0x100BF)
         block = SimpleNamespace(statements=[assignment, ret_stmt])
@@ -1308,7 +1308,9 @@ def test_decompiler_return_compat_infers_ax_stack_load_without_prototype():
         assert len(result.ret_exprs) == 1
         retval = result.ret_exprs[0]
         assert isinstance(retval, ailment.Expr.Load)
-        assert isinstance(retval.addr, BasePointerOffset)
+        assert isinstance(retval.addr, StackBaseOffset)
+        assert isinstance(retval.addr.tags.get("variable"), SimStackVariable)
+        assert retval.addr.tags["variable"].base == "bp"
         assert retval.addr.offset == -2
         assert getattr(function, "_inertia_return_compat_ax_materialized_count", 0) == 1
     finally:
@@ -1336,16 +1338,16 @@ def test_decompiler_return_compat_resolves_ax_self_update_return_source():
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
-        four = ailment.Expr.Const(2, None, 4, 16, ins_addr=0x100B4)
+        bp = ailment.Expr.Register(1, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+        four = ailment.Expr.Const(2, 4, 16, ins_addr=0x100B4)
         bp_plus_four = ailment.Expr.BinaryOp(3, "Add", [bp, four], bits=16, ins_addr=0x100B4)
         stack_load = ailment.Expr.Load(4, bp_plus_four, 2, arch.memory_endness, ins_addr=0x100B4)
-        ax_dst = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+        ax_dst = ailment.Expr.Register(5, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
         load_assignment = ailment.Stmt.Assignment(6, ax_dst, stack_load, ins_addr=0x100B4)
-        ax_read = ailment.Expr.Register(7, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B5)
-        one = ailment.Expr.Const(8, None, 1, 16, ins_addr=0x100B5)
+        ax_read = ailment.Expr.Register(7, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B5)
+        one = ailment.Expr.Const(8, 1, 16, ins_addr=0x100B5)
         inc_expr = ailment.Expr.BinaryOp(9, "Add", [ax_read, one], bits=16, ins_addr=0x100B5)
-        ax_dst_update = ailment.Expr.Register(10, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B5)
+        ax_dst_update = ailment.Expr.Register(10, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B5)
         inc_assignment = ailment.Stmt.Assignment(11, ax_dst_update, inc_expr, ins_addr=0x100B5)
         ret_stmt = ailment.Stmt.Return(12, [], ins_addr=0x100BF)
         block = SimpleNamespace(statements=[load_assignment, inc_assignment, ret_stmt])
@@ -1367,7 +1369,9 @@ def test_decompiler_return_compat_resolves_ax_self_update_return_source():
         assert retval.op == "Add"
         load_expr, const_expr = retval.operands
         assert isinstance(load_expr, ailment.Expr.Load)
-        assert isinstance(load_expr.addr, BasePointerOffset)
+        assert isinstance(load_expr.addr, StackBaseOffset)
+        assert isinstance(load_expr.addr.tags.get("variable"), SimStackVariable)
+        assert load_expr.addr.tags["variable"].base == "bp"
         assert load_expr.addr.offset == 4
         assert isinstance(const_expr, ailment.Expr.Const)
         assert const_expr.value == 1
@@ -1398,8 +1402,8 @@ def test_decompiler_return_compat_refuses_ax_inference_for_source_proven_void():
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        value = ailment.Expr.Const(1, None, 75, 16, ins_addr=0x10517)
-        ax = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
+        value = ailment.Expr.Const(1, 75, 16, ins_addr=0x10517)
+        ax = ailment.Expr.Register(2, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
         assignment = ailment.Stmt.Assignment(3, ax, value, ins_addr=0x10517)
         ret_stmt = ailment.Stmt.Return(4, [], ins_addr=0x1051F)
         block = SimpleNamespace(statements=[assignment, ret_stmt])
@@ -1457,12 +1461,12 @@ def test_decompiler_return_compat_requires_unbranched_scalar_for_unused_caller(
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        value = ailment.Expr.Const(1, None, 75, 16, ins_addr=0x10517)
-        ax = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
+        value = ailment.Expr.Const(1, 75, 16, ins_addr=0x10517)
+        ax = ailment.Expr.Register(2, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
         assignment = ailment.Stmt.Assignment(3, ax, value, ins_addr=0x10517)
-        condition = ailment.Expr.Const(4, None, 1, 1, ins_addr=0x10519)
-        true_target = ailment.Expr.Const(5, None, 0x1051F, 16, ins_addr=0x10519)
-        false_target = ailment.Expr.Const(6, None, 0x1051D, 16, ins_addr=0x10519)
+        condition = ailment.Expr.Const(4, 1, 1, ins_addr=0x10519)
+        true_target = ailment.Expr.Const(5, 0x1051F, 16, ins_addr=0x10519)
+        false_target = ailment.Expr.Const(6, 0x1051D, 16, ins_addr=0x10519)
         conditional = ailment.Stmt.ConditionalJump(
             7,
             condition,
@@ -1669,8 +1673,8 @@ def test_decompiler_return_compat_keeps_guessed_scalar_when_caller_uses_return()
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        value = ailment.Expr.Const(1, None, 75, 16, ins_addr=0x10517)
-        ax = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
+        value = ailment.Expr.Const(1, 75, 16, ins_addr=0x10517)
+        ax = ailment.Expr.Register(2, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
         assignment = ailment.Stmt.Assignment(3, ax, value, ins_addr=0x10517)
         ret_stmt = ailment.Stmt.Return(4, [], ins_addr=0x1051F)
         ret_block = SimpleNamespace(statements=[assignment, ret_stmt])
@@ -1723,10 +1727,10 @@ def test_decompiler_return_compat_keeps_unknown_caller_unconditional_predecessor
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        value = ailment.Expr.Const(1, None, 75, 16, ins_addr=0x10517)
-        ax = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
+        value = ailment.Expr.Const(1, 75, 16, ins_addr=0x10517)
+        ax = ailment.Expr.Register(2, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
         assignment = ailment.Stmt.Assignment(3, ax, value, ins_addr=0x10517)
-        jump = ailment.Stmt.Jump(4, ailment.Expr.Const(5, None, 0x10530, 16, ins_addr=0x1051A), ins_addr=0x1051A)
+        jump = ailment.Stmt.Jump(4, ailment.Expr.Const(5, 0x10530, 16, ins_addr=0x1051A), ins_addr=0x1051A)
         ret_stmt = ailment.Stmt.Return(6, [], ins_addr=0x10530)
         pred_block = SimpleNamespace(statements=[assignment, jump])
         ret_block = SimpleNamespace(statements=[ret_stmt])
@@ -1778,22 +1782,22 @@ def test_decompiler_return_compat_keeps_unknown_caller_reaching_ax_register_retu
         apply_x86_16_decompiler_return_compatibility()
 
         arch = Arch86_16()
-        ax_a = ailment.Expr.Register(1, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10510)
-        ax_b = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10520)
+        ax_a = ailment.Expr.Register(1, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10510)
+        ax_b = ailment.Expr.Register(2, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10520)
         assign_a = ailment.Stmt.Assignment(
             3,
             ax_a,
-            ailment.Expr.Const(4, None, 0, 16, ins_addr=0x10510),
+            ailment.Expr.Const(4, 0, 16, ins_addr=0x10510),
             ins_addr=0x10510,
         )
         assign_b = ailment.Stmt.Assignment(
             5,
             ax_b,
-            ailment.Expr.Const(6, None, 75, 16, ins_addr=0x10520),
+            ailment.Expr.Const(6, 75, 16, ins_addr=0x10520),
             ins_addr=0x10520,
         )
-        jump_a = ailment.Stmt.Jump(7, ailment.Expr.Const(8, None, 0x10530, 16, ins_addr=0x10512), ins_addr=0x10512)
-        jump_b = ailment.Stmt.Jump(9, ailment.Expr.Const(10, None, 0x10530, 16, ins_addr=0x10522), ins_addr=0x10522)
+        jump_a = ailment.Stmt.Jump(7, ailment.Expr.Const(8, 0x10530, 16, ins_addr=0x10512), ins_addr=0x10512)
+        jump_b = ailment.Stmt.Jump(9, ailment.Expr.Const(10, 0x10530, 16, ins_addr=0x10522), ins_addr=0x10522)
         ret_stmt = ailment.Stmt.Return(11, [], ins_addr=0x10530)
         pred_a = SimpleNamespace(statements=[assign_a, jump_a])
         pred_b = SimpleNamespace(statements=[assign_b, jump_b])
@@ -2357,12 +2361,11 @@ def test_empty_return_branch_refuses_ordered_value_for_non_jcc_condition_tag(mon
             statements=structured_c.CStatements([real_if, artifact_if], codegen=c_codegen),
         )
     )
-    project = SimpleNamespace(
-        factory=SimpleNamespace(
-            block=lambda *_args, **_kwargs: SimpleNamespace(
-                capstone=SimpleNamespace(insns=(SimpleNamespace(address=0x2000, mnemonic="imul"),))
-            )
-        )
+    project = SimpleNamespace()
+    monkeypatch.setattr(
+        _postprocess_stage,
+        "_linear_function_insns_for_codegen_8616",
+        lambda *_args: (SimpleNamespace(address=0x2000, mnemonic="imul"),),
     )
     monkeypatch.setattr(_postprocess_stage, "_ordered_conditional_return_values_8616", lambda *_args: [75])
 
@@ -2383,11 +2386,11 @@ def test_decompiler_return_compat_infers_c_return_value_from_terminal_ax_stack_l
             return [self._block]
 
     arch = Arch86_16()
-    bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
-    two = ailment.Expr.Const(2, None, 2, 16, ins_addr=0x100B4)
+    bp = ailment.Expr.Register(1, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+    two = ailment.Expr.Const(2, 2, 16, ins_addr=0x100B4)
     bp_minus_two = ailment.Expr.BinaryOp(3, "Sub", [bp, two], bits=16, ins_addr=0x100B4)
     stack_load = ailment.Expr.Load(4, bp_minus_two, 2, arch.memory_endness, ins_addr=0x100B4)
-    ax = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+    ax = ailment.Expr.Register(5, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
     assignment = ailment.Stmt.Assignment(6, ax, stack_load, ins_addr=0x100B4)
     ret_stmt = ailment.Stmt.Return(7, [], ins_addr=0x100BF)
     block = SimpleNamespace(statements=[assignment, ret_stmt])
@@ -2734,13 +2737,13 @@ def test_decompiler_return_compat_uses_latest_ail_insn_when_c_return_has_no_ail_
             return [self._block]
 
     arch = Arch86_16()
-    bp = ailment.Expr.Register(1, None, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
-    two = ailment.Expr.Const(2, None, 2, 16, ins_addr=0x100B4)
+    bp = ailment.Expr.Register(1, arch.registers["bp"][0], 16, reg_name="bp", ins_addr=0x100B4)
+    two = ailment.Expr.Const(2, 2, 16, ins_addr=0x100B4)
     bp_minus_two = ailment.Expr.BinaryOp(3, "Sub", [bp, two], bits=16, ins_addr=0x100B4)
     stack_load = ailment.Expr.Load(4, bp_minus_two, 2, arch.memory_endness, ins_addr=0x100B4)
-    ax = ailment.Expr.Register(5, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
+    ax = ailment.Expr.Register(5, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x100B4)
     assignment = ailment.Stmt.Assignment(6, ax, stack_load, ins_addr=0x100B4)
-    sp = ailment.Expr.Register(7, None, arch.registers["sp"][0], 16, reg_name="sp", ins_addr=0x100BF)
+    sp = ailment.Expr.Register(7, arch.registers["sp"][0], 16, reg_name="sp", ins_addr=0x100BF)
     epilogue = ailment.Stmt.Assignment(8, sp, sp, ins_addr=0x100BF)
     block = SimpleNamespace(statements=[assignment, epilogue])
     function = SimpleNamespace(addr=0x1000, graph=None, info={})

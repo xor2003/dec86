@@ -83,6 +83,7 @@ from .frontend_instruction_reachability import decoded_block_instructions_8616
 from .ir.condition_ir import JCC_TO_COND_8616, ConditionIR
 from .ir.core import IRValue
 from .lowering.real_mode_linear import (
+    project_stack_value_range_8616,
     proven_wide_stack_pair_low_offset_8616,
     stack_cvar_for_machine_bp_value_range_8616,
 )
@@ -605,6 +606,13 @@ def _stack_slot_expr_8616(
     )
     if isinstance(proven, CVariable):
         return proven
+    projected = project_stack_value_range_8616(
+        codegen,
+        requested_disp,
+        requested_size,
+    )
+    if projected.materialized:
+        return projected.expression
 
     region = getattr(cfunc, "addr", None)
     return CVariable(

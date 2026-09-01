@@ -70,6 +70,7 @@ def test_call_return_conditions_are_rebound_after_all_lowering(monkeypatch) -> N
         "_materialize_structuring_stdlib_call_chains_8616",
         "_apply_structuring_stable_stack_semantics_8616",
         "materialize_software_interrupt_calls_8616",
+        "materialize_software_interrupt_status_outputs_8616",
         "_prime_structuring_segment_global_semantics_8616",
         "prune_frame_prologue_stack_assignments_8616",
         "_replay_materialized_call_stack_metadata_8616",

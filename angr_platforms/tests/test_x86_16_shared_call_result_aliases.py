@@ -5,6 +5,9 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.structuring.shared_call_result_aliases import (
     CallResultAliasOwnershipVerdict8616,
     CallResultAliasRefusalReason8616,
@@ -135,6 +138,34 @@ def test_exact_stack_owner_rewrites_later_shared_call_assignments() -> None:
         result.stats.failure_count,
         result.stats.rewritten_assignment_count,
     ) == (1, 1, 1, 1, 0, 1)
+
+
+def test_projected_stack_owner_matches_machine_bp_destination() -> None:
+    codegen = _AstCodegen()
+    call = _call(codegen)
+    projected_variable = SimStackVariable(-14, 2, base="bp", name="mseg")
+    projected_destination = structured_c.CVariable(
+        projected_variable,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    owner = _assignment(codegen, projected_destination, call, statement_index=10)
+    alias = _assignment(codegen, _dirty(codegen, 630), call, statement_index=20)
+    _surface(codegen, [owner, alias], call)
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected_variable,
+        cvar=projected_destination,
+        bp_offset=-12,
+        entry_sp_offset=-14,
+        size=2,
+    )
+
+    result = materialize_shared_call_result_aliases_8616(codegen)
+
+    assert result.verdict is CallResultAliasOwnershipVerdict8616.MATERIALIZED
+    assert isinstance(alias.rhs, structured_c.CVariable)
+    assert alias.rhs.variable.offset == -14
 
 
 def test_alias_before_exact_stack_owner_refuses() -> None:

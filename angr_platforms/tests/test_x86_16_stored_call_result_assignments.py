@@ -11,6 +11,10 @@ from angr_platforms.X86_16.callsite_summary import (
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     record_stack_variable_coordinate_projection_8616,
 )
+from angr_platforms.X86_16.structuring.shared_call_result_aliases import (
+    CallResultAliasOwnershipVerdict8616,
+    materialize_shared_call_result_aliases_8616,
+)
 from angr_platforms.X86_16.structuring.stored_call_result_assignments import (
     StoredCallResultAssignmentRefusalReason8616,
     StoredCallResultAssignmentVerdict8616,
@@ -187,3 +191,42 @@ def test_materializes_projected_entry_sp_variable_for_machine_bp_destination() -
     assert assignment.rhs is call
     assert isinstance(assignment.lhs.variable, SimStackVariable)
     assert assignment.lhs.variable.offset == 4
+
+
+def test_exact_store_owns_shared_dirty_call_result_before_alias_rewrite() -> None:
+    codegen = _AstCodegen()
+    value = _stack_value(codegen)
+    call = _indirect_call(codegen, value, 0x100E)
+    owner = structured_c.CAssignment(
+        structured_c.CDirtyExpression(SimpleNamespace(varid=808), codegen=codegen),
+        call,
+        tags={"ins_addr": 0x1014},
+        codegen=codegen,
+    )
+    aliases = [
+        structured_c.CAssignment(
+            structured_c.CDirtyExpression(SimpleNamespace(varid=varid), codegen=codegen),
+            call,
+            tags={"ins_addr": 0x1017, "vex_stmt_idx": vex_stmt_idx},
+            codegen=codegen,
+        )
+        for varid, vex_stmt_idx in ((835, 35), (836, 36))
+    ]
+    root = structured_c.CStatements([owner, *aliases], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x100E, 0x1014)}
+
+    assignment_result = materialize_stored_call_result_assignments_8616(codegen)
+    alias_result = materialize_shared_call_result_aliases_8616(codegen)
+
+    assert assignment_result.verdict is StoredCallResultAssignmentVerdict8616.MATERIALIZED
+    assert assignment_result.stats.failure_count == 0
+    assert isinstance(owner.lhs, structured_c.CVariable)
+    assert isinstance(owner.lhs.variable, SimStackVariable)
+    assert alias_result.verdict is CallResultAliasOwnershipVerdict8616.MATERIALIZED
+    assert all(isinstance(alias.rhs, structured_c.CVariable) for alias in aliases)
+    assert sum(
+        isinstance(statement.rhs, structured_c.CFunctionCall)
+        for statement in root.statements
+        if isinstance(statement, structured_c.CAssignment)
+    ) == 1

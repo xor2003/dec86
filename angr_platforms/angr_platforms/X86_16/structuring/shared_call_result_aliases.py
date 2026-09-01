@@ -34,6 +34,7 @@ from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
 from ..callsite_summary import CallsiteSummary8616
+from ..lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ def _canonical_stack_offset_8616(offset: int) -> int:
 
 
 def _is_exact_summary_destination_8616(
+    codegen: object,
     expression: object,
     summary: CallsiteSummary8616,
 ) -> bool:
@@ -150,11 +152,11 @@ def _is_exact_summary_destination_8616(
     ):
         return False
     variable = current.variable
+    machine_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
     return (
         variable.base == "bp"
-        and isinstance(variable.offset, int)
-        and _canonical_stack_offset_8616(variable.offset)
-        == _canonical_stack_offset_8616(destination[1])
+        and isinstance(machine_offset, int)
+        and _canonical_stack_offset_8616(machine_offset) == _canonical_stack_offset_8616(destination[1])
         and int(variable.size) == width
     )
 
@@ -184,6 +186,7 @@ def _direct_call_assignments_8616(
 
 
 def _structured_alias_refusal_8616(
+    codegen: object,
     owner: _DirectCallAssignmentOccurrence8616,
     alias: _DirectCallAssignmentOccurrence8616,
     summary: CallsiteSummary8616,
@@ -194,7 +197,9 @@ def _structured_alias_refusal_8616(
     intervening = owner.parent.statements[owner.statement_index + 1 : alias.statement_index]
     for statement in intervening:
         for node in _iter_c_nodes_deep_8616(statement):
-            if isinstance(node, CAssignment) and _is_exact_summary_destination_8616(node.lhs, summary):
+            if isinstance(node, CAssignment) and _is_exact_summary_destination_8616(
+                codegen, node.lhs, summary
+            ):
                 return CallResultAliasRefusalReason8616.INTERVENING_EFFECT_CONFLICT
             if isinstance(node, CFunctionCall) and node is not owner.call:
                 return CallResultAliasRefusalReason8616.INTERVENING_EFFECT_CONFLICT
@@ -263,7 +268,9 @@ def materialize_shared_call_result_aliases_8616(
                 tuple(
                     False
                     if summary is None
-                    else _is_exact_summary_destination_8616(occurrence.assignment.lhs, summary)
+                    else _is_exact_summary_destination_8616(
+                        codegen, occurrence.assignment.lhs, summary
+                    )
                     for occurrence in occurrences
                 ),
             )
@@ -289,7 +296,7 @@ def materialize_shared_call_result_aliases_8616(
         destinations = tuple(
             occurrence
             for occurrence in occurrences
-            if _is_exact_summary_destination_8616(occurrence.assignment.lhs, summary)
+            if _is_exact_summary_destination_8616(codegen, occurrence.assignment.lhs, summary)
         )
         if len(destinations) != 1:
             _refuse_8616(
@@ -305,7 +312,8 @@ def materialize_shared_call_result_aliases_8616(
             (
                 reason
                 for alias in aliases
-                if (reason := _structured_alias_refusal_8616(owner, alias, summary)) is not None
+                if (reason := _structured_alias_refusal_8616(codegen, owner, alias, summary))
+                is not None
             ),
             None,
         )

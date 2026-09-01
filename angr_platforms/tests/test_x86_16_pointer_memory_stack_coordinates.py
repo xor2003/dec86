@@ -174,6 +174,7 @@ def test_runtime_high_byte_load_projects_word_argument_not_padding() -> None:
     )
 
     high = project_stack_value_range_8616(codegen, 5, 1)
+    low = _stack_slot_expr_8616(codegen, 4, 1)
 
     assert high.status is StackValueProjectionStatus8616.CONTAINED_VALUE
     assert high.owner is not None
@@ -182,6 +183,8 @@ def test_runtime_high_byte_load_projects_word_argument_not_padding() -> None:
     assert high.expression.expr.op == "Shr"
     assert high.expression.expr.lhs is word
     assert high.expression.expr.rhs.value == 8
+    assert low.expr is word
+    assert low.dst_type.size == 8
     word.variable_type = SimTypePointer(SimTypeChar(False)).with_arch(arch)
     pointer_high = project_stack_value_range_8616(codegen, 5, 1)
     assert pointer_high.expression is not None

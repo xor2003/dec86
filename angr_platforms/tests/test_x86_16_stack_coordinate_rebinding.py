@@ -259,7 +259,7 @@ def test_stack_prototype_materialization_preserves_colliding_entry_sp_clone() ->
     assert codegen.cfunc.arg_list == [first_cvar, second_cvar]
     assert [argument.variable.name for argument in codegen.cfunc.arg_list] == [
         "a",
-        "arg_6",
+        "b",
     ]
     assert ambiguous_clone.name == "arg_6"
     assert [

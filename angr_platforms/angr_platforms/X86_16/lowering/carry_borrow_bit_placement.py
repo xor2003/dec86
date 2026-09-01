@@ -19,7 +19,7 @@ from ..c_ast_utils import (
     _same_c_expression_8616,
 )
 from ..semantics.carry_borrow_contracts import CarryBorrowKind8616
-from ..structuring_cfg_ownership import CFGOwnershipArtifact
+from ..structuring_cfg_ownership import CFGInstructionReachability8616, CFGOwnershipArtifact
 from ..widening.carry_borrow_values import WideCarryBorrowValue8616
 from .carry_borrow_bit_ast import (
     CarryBitCarrierClosure8616,
@@ -41,6 +41,7 @@ from .carry_borrow_bit_scope import (
     CarryBitOccurrence8616,
     InlinedCarryBitOccurrence8616,
     assignment_map_8616,
+    node_instruction_site_8616,
     variable_key_8616,
 )
 
@@ -165,10 +166,21 @@ def _materialize_orphaned_carry_uses_8616(
     ownership: CFGOwnershipArtifact,
     occurrences: tuple[CarryBitOccurrence8616, ...],
 ) -> CarryBorrowBitLoweringResolution8616:
-    """Replace exact high-site masks whose numeric definitions were structured away."""
+    """Replace exact high-site masks whose owned definitions were structured away."""
     for occurrence in occurrences:
         key = variable_key_8616(occurrence.flag_variable)
-        if key is None or assignment_map_8616(occurrence).get(key, ()):
+        if key is None:
+            return refused_carry_borrow_bit_lowering_8616(
+                source,
+                CarryBorrowBitLoweringFailure8616.CARRY_USE_AMBIGUOUS,
+                fact=fact,
+            )
+        definitions = assignment_map_8616(occurrence).get(key, ())
+        if any(
+            node_instruction_site_8616(definition, ownership)
+            is not CFGInstructionReachability8616.OWNER_MISSING
+            for definition in definitions
+        ):
             return refused_carry_borrow_bit_lowering_8616(
                 source,
                 CarryBorrowBitLoweringFailure8616.CARRY_USE_AMBIGUOUS,
@@ -241,7 +253,17 @@ def materialize_carry_borrow_bit_value_8616(
             CarryBorrowBitLoweringFailure8616.CARRY_USE_MISSING,
             fact=fact,
         )
-    if not _one_semantic_carry_use_8616(occurrences):
+    only_unowned_carriers = all(
+        key is not None
+        and all(
+            node_instruction_site_8616(definition, ownership)
+            is CFGInstructionReachability8616.OWNER_MISSING
+            for definition in assignment_map_8616(occurrence).get(key, ())
+        )
+        for occurrence in occurrences
+        for key in (variable_key_8616(occurrence.flag_variable),)
+    )
+    if not _one_semantic_carry_use_8616(occurrences) or only_unowned_carriers:
         return _materialize_orphaned_carry_uses_8616(root, source, fact, ownership, occurrences)
 
     closures: list[CarryBitCarrierClosure8616] = []

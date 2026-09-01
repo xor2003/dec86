@@ -46,6 +46,7 @@ def _match_segment_register_based_dereference(
             classified is None
             or _dynamic_attr_8616(classified, "addr_expr", None) is None
             or _dynamic_attr_8616(classified, "seg_name", None) not in {"ds", "es"}
+            or _dynamic_attr_8616(classified, "kind", None) == "unknown"
         ):
             return None
         allows_object_rewrite = _dynamic_attr_8616(classified, "allows_object_rewrite", None)

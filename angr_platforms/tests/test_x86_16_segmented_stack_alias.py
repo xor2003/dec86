@@ -102,7 +102,7 @@ def _project():
     return SimpleNamespace(arch=Arch86_16())
 
 
-def _codegen(statements):
+def _codegen(statements, *, standard_bp_coordinate=False):
     project = _project()
     codegen = _DummyCodegen(project)
     root = CStatements(statements, addr=0x4010, codegen=codegen)
@@ -114,6 +114,8 @@ def _codegen(statements):
         variables_in_use={},
         unified_local_vars={},
     )
+    if standard_bp_coordinate:
+        _attach_standard_bp_coordinate(codegen)
     return project, codegen
 
 
@@ -933,7 +935,7 @@ def test_real_mode_linear_stack_access_infers_ss_from_unresolved_segment_carrier
 
 
 def test_real_mode_linear_stack_lowering_materializes_unsigned_indexed_bp_displacement():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_current_function_8616 = _indexed_bp_function(-0x5A)
     si = _reg(project, "si", codegen)
     lhs = CUnaryOp(
@@ -954,13 +956,13 @@ def test_real_mode_linear_stack_lowering_materializes_unsigned_indexed_bp_displa
     assert changed is True
     assert isinstance(stmt.lhs, CUnaryOp)
     assert stmt.lhs.op == "Dereference"
-    assert -0x5A in _stack_offsets_in_expr(stmt.lhs)
+    assert -0x5C in _stack_offsets_in_expr(stmt.lhs)
     assert codegen._inertia_indexed_bp_stack_address_raw_fact_count_8616 == 1
     assert codegen._inertia_indexed_bp_stack_address_materialized_count_8616 == 1
 
 
 def test_real_mode_linear_stack_lowering_treats_indexed_frame_anchor_displacement_as_absolute():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_current_function_8616 = _indexed_bp_function(-2, size=1, index=0)
     anchor = _stack(-2, codegen, name="anchor")
     deref = CUnaryOp(
@@ -986,12 +988,12 @@ def test_real_mode_linear_stack_lowering_treats_indexed_frame_anchor_displacemen
 
     assert changed is True
     assert isinstance(stmt.lhs, CVariable)
-    assert stmt.lhs.variable.offset == -2
+    assert stmt.lhs.variable.offset == -4
     assert codegen._inertia_instruction_bp_stack_access_lane_8616.is_closed
 
 
 def test_real_mode_linear_stack_lowering_materializes_nested_indexed_reference_displacement():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_current_function_8616 = _indexed_bp_function(-0x5A)
     anchor = _stack(-2, codegen, name="iRow")
     si = _reg(project, "si", codegen)
@@ -1018,7 +1020,7 @@ def test_real_mode_linear_stack_lowering_materializes_nested_indexed_reference_d
     assert changed is True
     assert isinstance(stmt.lhs, CUnaryOp)
     assert stmt.lhs.op == "Dereference"
-    assert -0x5A in _stack_offsets_in_expr(stmt.lhs)
+    assert -0x5C in _stack_offsets_in_expr(stmt.lhs)
     assert -2 not in _stack_offsets_in_expr(stmt.lhs)
     assert codegen._inertia_indexed_bp_stack_address_materialized_count_8616 == 1
 
@@ -1045,7 +1047,7 @@ def test_real_mode_linear_stack_access_refuses_unresolved_segment_carrier_withou
 
 
 def test_real_mode_linear_stack_lowering_reuses_vvar_chain_with_constant_tail():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_typed_stack_probe_return_facts = {
         1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
     }
@@ -1082,11 +1084,11 @@ def test_real_mode_linear_stack_lowering_reuses_vvar_chain_with_constant_tail():
     assert changed is True
     lhs = codegen.cfunc.statements.statements[1].lhs
     assert isinstance(lhs, CVariable)
-    assert lhs.variable.offset == -10
+    assert lhs.variable.offset == -12
 
 
 def test_real_mode_linear_stack_lowering_replaces_stack_base_with_unresolved_segment_carrier():
-    project, codegen = _codegen([])  # noqa: RUF059
+    project, codegen = _codegen([], standard_bp_coordinate=True)  # noqa: RUF059
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010)
     ]
@@ -1115,7 +1117,7 @@ def test_real_mode_linear_stack_lowering_replaces_stack_base_with_unresolved_seg
     lhs = codegen.cfunc.statements.statements[0].lhs
     assert isinstance(lhs, CVariable)
     assert isinstance(lhs.variable, SimStackVariable)
-    assert lhs.variable.offset == -2
+    assert lhs.variable.offset == -4
 
 
 def _unresolved_segment_stack_base_deref(project, segment_carrier, stack_base, displacement: int, codegen):
@@ -1387,7 +1389,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_arg_offsets_to_disambiguate_b
 
 
 def test_real_mode_linear_stack_carrier_delta_prefers_abi_arg_region_over_return_address_slot():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 2, 2, region=0x4010),
@@ -1412,12 +1414,12 @@ def test_real_mode_linear_stack_carrier_delta_prefers_abi_arg_region_over_return
 
     assert changed is True
     offsets = [stmt.lhs.variable.offset for stmt in codegen.cfunc.statements.statements]
-    assert offsets == [4, 6]
+    assert offsets == [2, 4]
     assert codegen._inertia_stack_carrier_delta_inferred_from_abi_arg_region_count_8616 == 1
 
 
 def test_real_mode_linear_stack_base_bias_uses_prototype_offsets_without_arg_list_or_alias_facts():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen.cfunc.functy = SimTypeFunction(
         [SimTypeShort(False), SimTypeShort(False)],
         SimTypeShort(False),
@@ -1440,12 +1442,12 @@ def test_real_mode_linear_stack_base_bias_uses_prototype_offsets_without_arg_lis
 
     assert changed is True
     offsets = [stmt.lhs.variable.offset for stmt in codegen.cfunc.statements.statements]
-    assert offsets == [4, 6]
+    assert offsets == [2, 4]
     assert codegen._inertia_stack_arg_offsets_from_prototype_count_8616 == 2
 
 
 def test_real_mode_linear_stack_base_bias_uses_bp_memory_operands_without_sidecar_facts():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
 
     def _bp_mem_operand(offset: int):
         return SimpleNamespace(type=X86_OP_MEM, mem=SimpleNamespace(base=X86_REG_BP, disp=offset))
@@ -1483,12 +1485,12 @@ def test_real_mode_linear_stack_base_bias_uses_bp_memory_operands_without_sideca
 
     assert changed is True
     offsets = [stmt.lhs.variable.offset for stmt in codegen.cfunc.statements.statements]
-    assert offsets == [4, 6]
+    assert offsets == [2, 4]
     assert codegen._inertia_stack_bp_offsets_from_capstone_count_8616 == 2
 
 
 def test_real_mode_linear_stack_base_bias_uses_single_exact_entry_arg_slot():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
 
     def _bp_mem_operand(offset: int):
         return SimpleNamespace(type=X86_OP_MEM, mem=SimpleNamespace(base=X86_REG_BP, disp=offset))
@@ -1512,7 +1514,7 @@ def test_real_mode_linear_stack_base_bias_uses_single_exact_entry_arg_slot():
     changed = lower_stable_ss_linear_stack_dereferences_8616(codegen)
 
     assert changed is True
-    assert codegen.cfunc.statements.statements[0].lhs.variable.offset == 4
+    assert codegen.cfunc.statements.statements[0].lhs.variable.offset == 2
     assert codegen._inertia_stack_base_bp_bias_single_arg_inferred_count_8616 == 1
 
 
@@ -1577,7 +1579,7 @@ def test_real_mode_linear_stack_base_bias_uses_multiple_bp_alias_facts_for_exact
 
 
 def test_real_mode_linear_stack_lowering_materializes_inferred_stack_base_bias_slots():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
@@ -1600,11 +1602,11 @@ def test_real_mode_linear_stack_lowering_materializes_inferred_stack_base_bias_s
 
     assert changed is True
     offsets = [stmt.lhs.variable.offset for stmt in codegen.cfunc.statements.statements]
-    assert offsets == [4, 6]
+    assert offsets == [2, 4]
 
 
 def test_real_mode_linear_stack_lowering_visits_for_loop_initializer_and_iterator():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
@@ -1636,12 +1638,12 @@ def test_real_mode_linear_stack_lowering_visits_for_loop_initializer_and_iterato
     assert changed is True
     assert isinstance(loop.initializer.lhs, CVariable)
     assert isinstance(loop.iterator.lhs, CVariable)
-    assert loop.initializer.lhs.variable.offset == 4
-    assert loop.iterator.lhs.variable.offset == 6
+    assert loop.initializer.lhs.variable.offset == 2
+    assert loop.iterator.lhs.variable.offset == 4
 
 
 def test_real_mode_linear_stack_lowering_does_not_reuse_narrow_byte_carrier_for_word_access():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     func = SimpleNamespace(info={"x86_16_annotations": {"stack_vars": {-4: {"name": "i"}}}})
     codegen._func = func
     existing_byte = CVariable(
@@ -1672,14 +1674,14 @@ def test_real_mode_linear_stack_lowering_does_not_reuse_narrow_byte_carrier_for_
     lhs = codegen.cfunc.statements.statements[0].lhs
     assert isinstance(lhs, CVariable)
     assert lhs is not existing_byte
-    assert lhs.variable.offset == -2
+    assert lhs.variable.offset == -4
     assert lhs.variable.size == 2
     assert lhs.variable.name == "i"
     assert existing_byte.variable.size == 1
 
 
 def test_real_mode_linear_stack_lowering_does_not_reuse_wide_carrier_for_byte_access():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     existing_word = CVariable(
         SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
         variable_type=SimTypeShort(False),
@@ -1708,7 +1710,7 @@ def test_real_mode_linear_stack_lowering_does_not_reuse_wide_carrier_for_byte_ac
     lhs = codegen.cfunc.statements.statements[0].lhs
     assert isinstance(lhs, CVariable)
     assert lhs is not existing_word
-    assert lhs.variable.offset == -2
+    assert lhs.variable.offset == -4
     assert lhs.variable.size == 1
     assert type(lhs.variable_type) is SimTypeChar
     assert existing_word.variable.size == 2
@@ -1800,7 +1802,7 @@ def test_runtime_ss_segment_helper_lowering_materializes_ss_register_carrier_sta
 
 
 def test_runtime_ss_segment_helper_refreshes_stale_bias_and_offset_caches():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
@@ -1846,7 +1848,7 @@ def test_runtime_ss_segment_helper_refreshes_stale_bias_and_offset_caches():
     rhs = codegen.cfunc.statements.statements[0].rhs
     assert isinstance(rhs, CVariable)
     assert isinstance(rhs.variable, SimStackVariable)
-    assert rhs.variable.offset == 6
+    assert rhs.variable.offset == 4
     refreshed_evidence = codegen._inertia_stack_base_bp_bias_evidence_8616
     assert isinstance(refreshed_evidence, StackBaseBpBiasEvidence8616)
     assert refreshed_evidence.inferred_bias is None
@@ -1856,7 +1858,7 @@ def test_runtime_ss_segment_helper_refreshes_stale_bias_and_offset_caches():
 
 
 def test_runtime_ss_segment_helper_prefers_physical_bp_over_entry_sp_delta():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
     ]
@@ -1900,7 +1902,7 @@ def test_runtime_ss_segment_helper_prefers_physical_bp_over_entry_sp_delta():
     rhs = codegen.cfunc.statements.statements[0].rhs
     assert isinstance(rhs, CVariable)
     assert isinstance(rhs.variable, SimStackVariable)
-    assert rhs.variable.offset == 7
+    assert rhs.variable.offset == 5
 
 
 def test_runtime_ss_segment_helper_refuses_stale_bias_after_evidence_changes():
@@ -1982,7 +1984,7 @@ def test_runtime_segment_helper_lowering_refuses_unknown_offset_without_exceptio
 
 
 def test_real_mode_linear_stack_lowering_recurses_into_condition_and_nodes():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -4, 2, region=0x4010)
     ]
@@ -2008,7 +2010,7 @@ def test_real_mode_linear_stack_lowering_recurses_into_condition_and_nodes():
     rewritten_condition = codegen.cfunc.statements.statements[0].condition_and_nodes[0][0]
     assert isinstance(rewritten_condition.rhs, CVariable)
     assert isinstance(rewritten_condition.rhs.variable, SimStackVariable)
-    assert rewritten_condition.rhs.variable.offset == -4
+    assert rewritten_condition.rhs.variable.offset == -6
 
 
 def test_real_mode_linear_stack_lowering_renames_reused_stack_cvar_from_annotations():
@@ -2042,7 +2044,7 @@ def test_real_mode_linear_stack_lowering_renames_reused_stack_cvar_from_annotati
 
 
 def test_real_mode_linear_stack_lowering_replaces_stable_ss_sp_carrier():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([], standard_bp_coordinate=True)
     codegen._inertia_typed_stack_probe_return_facts = {
         1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
     }
@@ -2058,6 +2060,12 @@ def test_real_mode_linear_stack_lowering_replaces_stable_ss_sp_carrier():
         ),
         codegen=codegen,
     )
+    deref.operand = CTypeCast(
+        SimTypeShort(False),
+        SimTypePointer(SimTypeShort(False)),
+        deref.operand,
+        codegen=codegen,
+    )
     codegen.cfunc.statements = CStatements(
         [CAssignment(deref, _const(7, codegen), codegen=codegen)],
         addr=0x4010,
@@ -2071,7 +2079,7 @@ def test_real_mode_linear_stack_lowering_replaces_stable_ss_sp_carrier():
     lhs = codegen.cfunc.statements.statements[0].lhs
     assert isinstance(lhs, CVariable)
     assert isinstance(lhs.variable, SimStackVariable)
-    assert lhs.variable.offset == -2
+    assert lhs.variable.offset == -4
     assert isinstance(getattr(lhs, "variable_type", None), SimTypeShort)
 
 

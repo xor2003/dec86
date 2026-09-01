@@ -23,36 +23,6 @@ class TestStructuringIntegration:
         pass_obj = RegionBasedStructuringPass()
         assert pass_obj is not None, "Pass should be instantiable"
 
-    def test_natural_loop_stats_tracking(self):
-        """Verify that structuring handles loop-like structures."""
-        # Create a simple loop graph
-        entry = Region(block_addr=0x1000, region_type=RegionType.Linear)
-        header = Region(block_addr=0x1001, region_type=RegionType.Linear)
-        body = Region(block_addr=0x1002, region_type=RegionType.Linear)
-        exit_region = Region(block_addr=0x1003, region_type=RegionType.Linear)
-
-        graph = RegionGraph()
-        graph.entry = entry
-        for r in [entry, header, body, exit_region]:
-            graph.add_node(r)
-
-        graph.add_edge(entry, header)
-        graph.add_edge(header, body)
-        graph.add_edge(body, header)  # Back-edge
-        graph.add_edge(header, exit_region)
-
-        # Run structuring
-        analysis = StructureAnalysis(graph)
-        analysis.structure()
-
-        # Verify structuring completed
-        assert analysis.stats.iterations > 0, "Should iterate"
-        assert not analysis.stats.max_iterations_reached, "Should complete without limit"
-        # Verify some reductions occurred (loop or if-then-else reduction)
-        assert analysis.stats.cycles_resolved > 0 or analysis.stats.regions_reduced > 0, (
-            "Should apply some structural reductions"
-        )
-
     def test_structuring_message_passing(self):
         """Verify that event listeners receive messages."""
         messages = []

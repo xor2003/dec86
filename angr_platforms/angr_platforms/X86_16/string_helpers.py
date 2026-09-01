@@ -216,7 +216,10 @@ def repeat_prefix_cond(emu: StringEmulator, instr: StringInstruction) -> _Castab
     else:
         repeat_target = emu.constant(emu.lifter_instruction.addr, Type.int_32)
         emu.lifter_instruction.jump(execute_operation, repeat_target, JumpKind.Boring)
-    remaining = counter - emu.constant(1, counter_type)
+    # Re-read after the conditional Exit so AIL block splitting cannot strand
+    # a VEX temporary defined only in the predecessor block.
+    remaining_counter = cast(_AddSubValue, emu.get_gpreg(counter_reg))
+    remaining = remaining_counter - emu.constant(1, counter_type)
     emu.set_gpreg(counter_reg, remaining)
     return cast(_CastableToRdt | bool, remaining != zero)
 

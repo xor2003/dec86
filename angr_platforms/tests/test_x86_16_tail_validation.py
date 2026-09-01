@@ -1388,8 +1388,8 @@ def test_tail_validation_compacts_canonical_loop_write_effects_to_same_digest(mo
     assert compact_split is not None
     assert compact_split[1] == (
         "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-2)",
-        "global:0x132",
-        "global:0xba4",
+        "ds_global:0x132",
+        "ds_global:0xba4",
     )
 
 
@@ -1405,7 +1405,7 @@ def test_indexed_segmented_global_precision_accepts_compacted_control_prefix():
     )
     validation = {
         "delta": {
-            "global_writes": {"added": ("global:0x133",), "removed": ()},
+            "global_writes": {"added": ("ds_global:0x133",), "removed": ()},
             "control_flow_effects": {"added": (after,), "removed": (before,)},
         }
     }
@@ -5574,11 +5574,11 @@ def test_tail_validation_keeps_ds_byte_pair_distinct_from_word_global_write():
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
     assert diff["changed"] is True
-    assert diff["delta"]["global_writes"] == {"added": ("global:0x7002",), "removed": ()}
+    assert diff["delta"]["global_writes"] == {"added": ("ds_global:0x7002",), "removed": ()}
     assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ("deref:ds:0x7002", "deref:ds:0x7003")}
 
 
-def test_tail_validation_keeps_ds_word_load_distinct_from_global_word_condition():
+def test_tail_validation_canonicalizes_ds_word_load_as_global_word_condition():
     project = _project()
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
@@ -5625,11 +5625,9 @@ def test_tail_validation_keeps_ds_word_load_distinct_from_global_word_condition(
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
-    assert diff["changed"] is True
-    assert diff["delta"]["conditions"]["added"]
-    assert diff["delta"]["conditions"]["removed"]
-    assert diff["delta"]["control_flow_effects"]["added"]
-    assert diff["delta"]["control_flow_effects"]["removed"]
+    assert diff["changed"] is False
+    assert diff["delta"]["conditions"] == {"added": (), "removed": ()}
+    assert diff["delta"]["control_flow_effects"] == {"added": (), "removed": ()}
 
 
 def test_tail_validation_diff_formatter_reports_observable_delta():
@@ -7972,15 +7970,17 @@ def test_tail_validation_compare_keeps_loop_body_global_write_delta_observable()
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
     assert diff["changed"] is True
-    assert diff["delta"]["control_flow_effects"]["added"] == (f"for-body-writes:{condition}:global:0x100",)
+    assert diff["delta"]["control_flow_effects"]["added"] == (
+        f"for-body-writes:{condition}:ds_global:0x100",
+    )
 
 
 def test_indexed_segmented_global_precision_accepts_exact_evidenced_byte_expansion():
-    before = "while-body-writes:const:True:global:0x132,global:0x134"
-    after = "while-body-writes:const:True:global:0x132,global:0x133,global:0x134"
+    before = "while-body-writes:const:True:ds_global:0x132,ds_global:0x134"
+    after = "while-body-writes:const:True:ds_global:0x132,ds_global:0x133,ds_global:0x134"
     validation = {
         "delta": {
-            "global_writes": {"added": ("global:0x133",), "removed": ()},
+            "global_writes": {"added": ("ds_global:0x133",), "removed": ()},
             "control_flow_effects": {"added": (after,), "removed": (before,)},
         }
     }
@@ -8895,7 +8895,7 @@ def test_tail_validation_normalizes_multi_branch_void_return_loop_exit_guard(mon
         ],
         after_codegen,
     )
-    after.cfunc.arg_list = [first_exit_carrier]
+    after.cfunc.arg_list = [first_exit_carrier, after_goal_hi]
 
     monkeypatch.setattr(
         tail_validation_module,

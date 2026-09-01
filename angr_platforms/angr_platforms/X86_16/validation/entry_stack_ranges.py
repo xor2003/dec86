@@ -1,10 +1,12 @@
 """Collect proven entry-defined stack argument ranges for tail validation.
 
-Layer: Tail validation.
+Layer: Validation.
 Responsibility: project explicit structured-C stack arguments into the shared
 machine-BP coordinate domain and expose only exact initialized byte ranges.
 Consumes the Types/Lowering stack-coordinate owner; it does not infer argument
 semantics from names, rendered C, assembly text, or positive offsets alone.
+Owns canonical equivalence checking and validation diagnostics.
+Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-backed proof.
 """
 
 from __future__ import annotations

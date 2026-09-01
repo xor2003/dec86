@@ -25,9 +25,9 @@ def _register_name(arch: Arch86_16, expr: object) -> str | None:
 
 def test_resolves_secondary_data_register_in_return_expression() -> None:
     arch = Arch86_16()
-    ax = ailment.Expr.Register(1, None, arch.registers["ax"][0], 16, reg_name="ax")
-    dx = ailment.Expr.Register(2, None, arch.registers["dx"][0], 16, reg_name="dx")
-    value = ailment.Expr.Const(3, None, 0x1234, 16)
+    ax = ailment.Expr.Register(1, arch.registers["ax"][0], 16, reg_name="ax")
+    dx = ailment.Expr.Register(2, arch.registers["dx"][0], 16, reg_name="dx")
+    value = ailment.Expr.Const(3, 0x1234, 16)
     assignment = ailment.Stmt.Assignment(4, dx, value)
     expression = ailment.Expr.BinaryOp(5, "Add", [ax, dx], False, bits=16)
 
@@ -41,17 +41,17 @@ def test_resolves_secondary_data_register_in_return_expression() -> None:
     )
 
     assert isinstance(resolved, ailment.Expr.BinaryOp)
-    assert resolved.operands[0] is ax
+    assert resolved.operands[0] == ax
     assert isinstance(resolved.operands[1], ailment.Expr.Const)
     assert resolved.operands[1].value == 0x1234
 
 
 def test_refuses_secondary_register_after_overlapping_partial_write() -> None:
     arch = Arch86_16()
-    dx = ailment.Expr.Register(1, None, arch.registers["dx"][0], 16, reg_name="dx")
-    dl = ailment.Expr.Register(2, None, arch.registers["dl"][0], 8, reg_name="dl")
-    dx_assignment = ailment.Stmt.Assignment(3, dx, ailment.Expr.Const(4, None, 0x1234, 16))
-    dl_assignment = ailment.Stmt.Assignment(5, dl, ailment.Expr.Const(6, None, 0x56, 8))
+    dx = ailment.Expr.Register(1, arch.registers["dx"][0], 16, reg_name="dx")
+    dl = ailment.Expr.Register(2, arch.registers["dl"][0], 8, reg_name="dl")
+    dx_assignment = ailment.Stmt.Assignment(3, dx, ailment.Expr.Const(4, 0x1234, 16))
+    dl_assignment = ailment.Stmt.Assignment(5, dl, ailment.Expr.Const(6, 0x56, 8))
 
     resolved = resolve_same_block_data_register_dependencies_8616(
         dx,
@@ -62,4 +62,4 @@ def test_refuses_secondary_register_after_overlapping_partial_write() -> None:
         copy_expression=_copy_expression,
     )
 
-    assert resolved is dx
+    assert resolved == dx

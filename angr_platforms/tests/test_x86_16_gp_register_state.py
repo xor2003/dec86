@@ -13,7 +13,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.rustylib.ailment import VirtualVariableCategory
-from angr.sim_type import SimTypeInt, SimTypeShort
+from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import IRAddress, IRInstr, IRValue, MemSpace
@@ -94,13 +94,13 @@ def test_tail_fingerprint_canonicalizes_runtime_edi_low_word_as_di() -> None:
             name="inertia_edi",
             category="inertia_gp_register_state",
         ),
-        variable_type=SimTypeInt(False),
+        variable_type=SimTypeLong(False),
         codegen=codegen,
     )
     low_word = CBinaryOp(
         "And",
         edi,
-        CConstant(0xFFFF, SimTypeInt(False), codegen=codegen),
+        CConstant(0xFFFF, SimTypeLong(False), codegen=codegen),
         codegen=codegen,
     )
 
@@ -232,9 +232,11 @@ def test_gp_runtime_state_projects_dl_write_into_coherent_dx_parent() -> None:
         ),
         codegen=codegen,
     )
+    value = CVariable(SimMemoryVariable(0x2000, 2, name="value"), variable_type=SimTypeShort(False), codegen=codegen)
+    value.variable_type = SimTypeShort(False)
     assignment = CAssignment(
         dl,
-        CConstant(0, SimTypeShort(False), codegen=codegen),
+        value,
         codegen=codegen,
         tags={"ins_addr": 0x10E90},
     )
@@ -295,7 +297,8 @@ def test_gp_runtime_state_materializes_eax_as_32bit_lane() -> None:
     replacement = codegen.cfunc.statements
     assert isinstance(replacement, CVariable)
     assert replacement.variable.name == "inertia_eax"
-    assert isinstance(replacement.type, SimTypeInt)
+    assert isinstance(replacement.type, SimTypeLong)
+    assert replacement.type.size == 32
     assert codegen._inertia_global_declaration_specs_8616 == (
         ("unsigned long", "inertia_eax", None),
     )

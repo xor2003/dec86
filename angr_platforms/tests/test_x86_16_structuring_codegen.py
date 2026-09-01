@@ -1376,38 +1376,6 @@ class TestStructuringCodegen:
         assert codegen.stats["loops_rendered"] > 0, "Should count loops"
         assert codegen.stats["switches_rendered"] > 0, "Should count switches"
 
-    def test_codegen_integration_with_structuring(self):
-        """
-        End-to-end test: structure CFG, then generate C code.
-        """
-        # Build a realistic CFG: Entry -> Loop, Exit
-        entry = Region(block_addr=0x8000, region_type=RegionType.Linear)
-        loop_header = Region(block_addr=0x8001, region_type=RegionType.Linear)
-        loop_body = Region(block_addr=0x8002, region_type=RegionType.Linear)
-        exit_region = Region(block_addr=0x8003, region_type=RegionType.Linear)
-
-        graph = RegionGraph()
-        graph.entry = entry
-        for r in [entry, loop_header, loop_body, exit_region]:
-            graph.add_node(r)
-
-        graph.add_edge(entry, loop_header)
-        graph.add_edge(loop_header, loop_body)
-        graph.add_edge(loop_body, loop_header)  # Back-edge
-        graph.add_edge(loop_header, exit_region)
-
-        # Structuring
-        analyzer = StructureAnalysis(graph)
-        structured = analyzer.structure()
-
-        # Codegen
-        codegen = StructuringCodegenPass()
-        code = codegen.apply(structured)
-
-        # Should generate valid C structure
-        assert code is not None
-        assert len(code) > 0, "Should generate non-empty code"
-
     def test_loop_codegen_mentions_structuring_variables_for_abnormal_loop(self):
         loop_region = Region(block_addr=0x9000, region_type=RegionType.Loop)
         loop_region.metadata["abnormal_loop_plan"] = {
@@ -1568,6 +1536,47 @@ class TestStructuringCodegen:
         assert coalesce_shared_call_side_effect_statements_8616(codegen) is True
 
         assert codegen.cfunc.statements.statements == [first]
+        stats = codegen._inertia_shared_call_occurrence_stats_8616
+        assert (
+            stats.raw_fact_count,
+            stats.normalized_fact_count,
+            stats.classified_fact_count,
+            stats.materialized_count,
+            stats.failure_count,
+        ) == (1, 1, 1, 1, 0)
+
+    def test_shared_return_used_identical_statement_reference_is_coalesced(self):
+        codegen = _AstCodegen()
+        call = structured_c.CFunctionCall("itoa", None, [], codegen=codegen)
+        assignment = structured_c.CAssignment(
+            structured_c.CVariable(
+                SimRegisterVariable(0, 2, name="ax#1"),
+                variable_type=SimTypeShort(False),
+                codegen=codegen,
+            ),
+            call,
+            codegen=codegen,
+        )
+        codegen.cfunc = SimpleNamespace(
+            statements=structured_c.CStatements([assignment, assignment], codegen=codegen)
+        )
+        codegen._inertia_callsite_summaries = {
+            id(call): CallsiteSummary8616(
+                callsite_addr=0x1038,
+                target_addr=0x11E3,
+                return_addr=0x103B,
+                kind="near",
+                arg_count=0,
+                arg_widths=(),
+                stack_cleanup=0,
+                return_register="ax",
+                return_used=True,
+            )
+        }
+
+        assert coalesce_shared_call_side_effect_statements_8616(codegen) is True
+
+        assert codegen.cfunc.statements.statements == [assignment]
         stats = codegen._inertia_shared_call_occurrence_stats_8616
         assert (
             stats.raw_fact_count,

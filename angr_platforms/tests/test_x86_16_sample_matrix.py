@@ -15,17 +15,12 @@ from angr_platforms.X86_16.analysis_helpers import (
     patch_dos_int21_call_sites,
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.cod_analysis_image import build_cod_analysis_image_8616
 from angr_platforms.X86_16.load_dos_mz import DOSMZ
-from angr_platforms.X86_16.synthetic_call_stub_evidence import record_synthetic_call_stubs_8616
-from angr_platforms.X86_16.tail_validation import x86_16_tail_validation_snapshot_passed
 
 MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-
-from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
 
@@ -230,55 +225,6 @@ def test_medium_model_entry_far_call_sites_are_patched():
     assert extended_cfg is not None
     function = extended_cfg.functions[project.entry]
     assert function.get_call_target(0x117E) == 0x1380
-
-
-def test_cod_segmented_proc_does_not_publish_unclassified_access_traits():
-    proc_path = REPO_ROOT / "cod" / "f14" / "COCKPIT.COD"
-    entries = decompile.extract_cod_function_entries(proc_path, "_TIDShowRange", "NEAR")
-    cod_metadata = decompile.extract_cod_proc_metadata(proc_path, "_TIDShowRange", "NEAR")
-    selected_entries = decompile.extract_small_two_arg_cod_logic_entries(entries)
-    if selected_entries is None:
-        selected_entries = decompile.extract_simple_cod_logic_entries(entries)
-    if selected_entries is None:
-        cod_image = build_cod_analysis_image_8616(
-            entries,
-            start_offset=decompile.infer_cod_logic_start(entries),
-            image_base=0x1000,
-        )
-    else:
-        cod_image = build_cod_analysis_image_8616(selected_entries, image_base=0x1000)
-    proc_code = cod_image.code
-    synthetic_globals = cod_image.synthetic_globals
-
-    project = decompile._build_project_from_bytes(proc_code, base_addr=0x1000, entry_point=0x1000)
-    record_synthetic_call_stubs_8616(
-        project,
-        frozenset(0x1000 + offset for offset in cod_image.call_target_offsets),
-    )
-    cfg = project.analyses.CFGFast(
-        start_at_entry=False,
-        function_starts=[project.entry],
-        regions=[(project.entry, project.entry + len(proc_code))],
-        normalize=True,
-        force_complete_scan=False,
-    )
-    function = cfg.functions[project.entry]
-
-    status, payload = decompile._decompile_function(
-        project,
-        cfg,
-        function,
-        timeout=scaled_decompile_timeout(90),
-        api_style="modern",
-        binary_path=proc_path,
-        cod_metadata=cod_metadata,
-        synthetic_globals=synthetic_globals,
-    )
-
-    assert status == "ok", payload
-    snapshot = vars(project).get("_inertia_last_tail_validation_snapshot")
-    assert x86_16_tail_validation_snapshot_passed(snapshot), snapshot
-    assert function.addr not in vars(project).get("_inertia_access_traits", {})
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():

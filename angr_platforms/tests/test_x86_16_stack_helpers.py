@@ -92,7 +92,7 @@ class _StackEmu:
         self.sgregs = {sgreg_t.CS: 0x1234, sgreg_t.SS: 0x2000}
         self.memory = {}
         self.irsb = type("_IRSB", (), {"next": None, "jumpkind": None})()
-        self.lifter_instruction = type("_Lifter", (), {"jump": self._jump})()
+        self.lifter_instruction = type("_Lifter", (), {"addr": 0x100, "jump": self._jump})()
         self.flags = 0xF002
 
     def update_gpreg(self, reg, delta):
@@ -462,12 +462,14 @@ def test_stack_helpers_emit_near_call_and_jump_set_control_transfer_edges():
 def test_stack_helpers_branch_rel32_uses_shared_jump_emission_for_taken_branches():
     emu = _StackEmu()
     emu.gpregs[reg32_t.EIP] = 0x1000
+    emu.lifter_instruction.addr = 0x1000
 
     assert branch_rel32(emu, True, 0x20) == 0x1020
     assert emu.get_gpreg(reg32_t.EIP) == 0x1020
     assert emu.irsb.jumpkind == "Ijk_Boring"
 
     emu.gpregs[reg32_t.EIP] = 0x2000
+    emu.lifter_instruction.addr = 0x2000
     assert branch_rel32(emu, False, 0x20) is None
     assert emu.get_gpreg(reg32_t.EIP) == 0x2000
 
@@ -480,10 +482,12 @@ def test_stack_helpers_branch_rel8_and_rel16_share_relative_target_emission():
     assert emu.get_gpreg(reg16_t.IP) == 0x0112
 
     emu.gpregs[reg16_t.IP] = 0x0200
+    emu.lifter_instruction.addr = 0x0200
     assert branch_rel16(emu, True, 0x20, instruction_size=4) == 0x0224
     assert emu.get_gpreg(reg16_t.IP) == 0x0224
 
     emu.gpregs[reg16_t.IP] = 0x0300
+    emu.lifter_instruction.addr = 0x0300
     assert branch_rel8(emu, False, 0x10) is None
     assert branch_rel16(emu, False, 0x20, instruction_size=4) is None
 

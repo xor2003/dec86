@@ -416,10 +416,13 @@ def test_lowering_materializes_dos_interrupt_carry_output_before_branch() -> Non
 
     definition = root.statements[1]
     assert isinstance(definition, structured_c.CAssignment)
-    assert definition.lhs.dirty.oident == flags_offset
+    assert isinstance(definition.lhs, structured_c.CVariable)
+    assert definition.lhs.variable.reg == flags_offset
     assert definition.rhs.callee_target == "dos_int21_flags"
     assert root.statements[2] is branch
-    assert branch.condition_and_nodes[0][0].lhs is flags
+    rewritten_flags = branch.condition_and_nodes[0][0].lhs
+    assert isinstance(rewritten_flags, structured_c.CVariable)
+    assert rewritten_flags.variable.reg == flags_offset
     assert codegen._inertia_software_interrupt_status_output_stats_8616 == (
         SoftwareInterruptStatusOutputStats8616(1, 1, 1, 1, 0)
     )
@@ -469,8 +472,76 @@ def test_lowering_coalesces_cloned_reads_of_one_flags_register() -> None:
     assert materialize_software_interrupt_status_outputs_8616(codegen) is True
     definition = root.statements[1]
     assert isinstance(definition, structured_c.CAssignment)
-    assert definition.lhs.dirty.oident == flags_offset
+    assert isinstance(definition.lhs, structured_c.CVariable)
+    assert definition.lhs.variable.reg == flags_offset
     assert definition.rhs.callee_target == "dos_int21_flags"
     assert codegen._inertia_software_interrupt_status_output_stats_8616 == (
         SoftwareInterruptStatusOutputStats8616(1, 1, 1, 1, 0)
     )
+
+
+def test_lowering_canonicalizes_dirty_flags_after_untagged_nested_interrupt() -> None:
+    """A nested call owner supplies provenance and a renderable FLAGS carrier."""
+    codegen = _Codegen()
+    flags_offset, flags_size = codegen.project.arch.registers["flags"]
+    result = structured_c.CVariable(
+        SimRegisterVariable(0, 2, name="result", region=0x100, ident="ax_1"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        codegen=codegen,
+    )
+    call_statement = structured_c.CAssignment(
+        result,
+        call,
+        tags={"ins_addr": 0x104},
+        codegen=codegen,
+    )
+    dirty_flags = structured_c.CDirtyExpression(
+        VirtualVariable(
+            codegen.next_idx("flags"),
+            17,
+            flags_size * 8,
+            VirtualVariableCategory.REGISTER,
+            oident=flags_offset,
+        ),
+        codegen=codegen,
+    )
+    condition = structured_c.CBinaryOp(
+        "And",
+        dirty_flags,
+        _const(1, codegen),
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    branch = structured_c.CIfElse(
+        [(condition, structured_c.CStatements([], codegen=codegen))],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    call_container = structured_c.CStatements([call_statement], codegen=codegen)
+    branch_container = structured_c.CStatements([branch], codegen=codegen)
+    root = structured_c.CStatements(
+        [call_container, branch_container],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert materialize_software_interrupt_status_outputs_8616(codegen) is True
+
+    definition = root.statements[1]
+    assert isinstance(definition, structured_c.CAssignment)
+    assert definition.tags["ins_addr"] == 0x104
+    assert isinstance(definition.lhs, structured_c.CVariable)
+    assert definition.lhs.variable.reg == flags_offset
+    rewritten_branch = branch_container.statements[0]
+    assert isinstance(rewritten_branch, structured_c.CIfElse)
+    rewritten_condition = rewritten_branch.condition_and_nodes[0][0]
+    assert isinstance(rewritten_condition, structured_c.CBinaryOp)
+    assert isinstance(rewritten_condition.lhs, structured_c.CVariable)
+    assert rewritten_condition.lhs.variable.reg == flags_offset
+    assert definition.rhs.callee_target == "dos_int21_flags"

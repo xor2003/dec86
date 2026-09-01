@@ -30,6 +30,7 @@ from angr_platforms.X86_16.ir.logical_memory_contracts import (
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.lowering.instruction_bp_stack_access import (
     InstructionBpStackAccess8616,
+    InstructionBpStackAccessEvidence8616,
     ensure_instruction_bp_stack_access_index_8616,
     select_instruction_bp_stack_access_8616,
 )
@@ -150,6 +151,7 @@ def test_instruction_bp_stack_index_reuses_exact_alias_artifact() -> None:
             -2,
             2,
             StackMemoryAliasFactKind8616.LOAD,
+            InstructionBpStackAccessEvidence8616.EXECUTION_SLICE,
         ),
     )
 
@@ -165,6 +167,7 @@ def test_instruction_bp_stack_index_preserves_logical_word_over_byte_execution()
         -2,
         2,
         StackMemoryAliasFactKind8616.LOAD,
+        InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS,
     ) in index.by_instruction_addr[0x1010]
 
 
@@ -185,6 +188,28 @@ def test_instruction_bp_stack_index_selects_exact_byte_among_sibling_views() -> 
         -1,
         1,
         StackMemoryAliasFactKind8616.LOAD,
+        InstructionBpStackAccessEvidence8616.EXECUTION_SLICE,
+    )
+
+
+def test_instruction_bp_stack_index_prefers_same_base_logical_word_owner() -> None:
+    index = ensure_instruction_bp_stack_access_index_8616(
+        SimpleNamespace(),
+        _byte_split_logical_alias_artifact(),
+    )
+
+    selected = select_instruction_bp_stack_access_8616(
+        index,
+        frozenset({0x1010}),
+        displacement=-2,
+        size=1,
+    )
+
+    assert selected == InstructionBpStackAccess8616(
+        -2,
+        2,
+        StackMemoryAliasFactKind8616.LOAD,
+        InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS,
     )
 
 
@@ -205,6 +230,7 @@ def test_instruction_bp_stack_index_uses_sole_range_to_correct_shaped_offset() -
         -2,
         2,
         StackMemoryAliasFactKind8616.LOAD,
+        InstructionBpStackAccessEvidence8616.EXECUTION_SLICE,
     )
 
 

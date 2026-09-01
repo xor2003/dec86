@@ -64,6 +64,7 @@ def _return_expr_is_side_effect_free_8616(expr: object) -> bool:
     )
 
 __all__ = [
+    "TerminalReturnStorageInput8616",
     "TerminalReturnValueEvidence8616",
     "materialize_unused_caller_void_codegen_type_8616",
     "materialize_unused_caller_void_return_type_8616",
@@ -71,6 +72,13 @@ __all__ = [
     "record_terminal_return_value_evidence_8616",
     "terminal_return_value_evidence_8616",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalReturnStorageInput8616:
+    """Carry one terminal-storage classification already collected by Semantics."""
+
+    storage: TerminalReturnStorage8616 | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,8 +272,14 @@ def materialize_unused_caller_void_return_type_8616(
 def materialize_unused_caller_void_codegen_type_8616(
     project: object,
     codegen: object,
+    *,
+    terminal_storage_input: TerminalReturnStorageInput8616 | None = None,
 ) -> UnusedVoidReturnTypeResult8616:
-    """Replay a proven empty result contract on the final generated C surface."""
+    """Replay a proven empty result contract on the final generated C surface.
+
+    ``terminal_storage_input`` lets another Types/lowering consumer reuse the
+    same Semantics classification instead of decoding the function twice.
+    """
     project_surface = cast(_ProjectSurface8616, project)
     codegen_surface = cast(_CodegenSurface8616, codegen)
     try:
@@ -282,7 +296,11 @@ def materialize_unused_caller_void_codegen_type_8616(
     terminal_storage = (
         None
         if function is None or terminal_value_empty
-        else terminal_return_storage_8616(project, function)
+        else (
+            terminal_storage_input.storage
+            if terminal_storage_input is not None
+            else terminal_return_storage_8616(project, function)
+        )
     )
     caller_observation = proven_function_result_observation_8616(project, cfunc.addr)
     if (

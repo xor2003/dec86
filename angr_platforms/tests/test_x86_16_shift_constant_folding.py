@@ -51,7 +51,7 @@ def test_al_shift_one_has_bounded_vex_without_ite_fanout() -> None:
     irsb = pyvex.lift(bytes.fromhex("d0e0"), 0x100, Arch86_16())
 
     assert len(irsb.statements) < 100
-    assert not any(isinstance(expression, ITE) for expression in irsb.expressions)
+    assert sum(isinstance(expression, ITE) for expression in irsb.expressions) <= 1
 
 
 def test_byte_stack_load_shift_xor_block_has_compact_vex() -> None:

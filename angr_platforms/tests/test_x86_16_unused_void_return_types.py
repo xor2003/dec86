@@ -19,6 +19,7 @@ from angr_platforms.X86_16.lowering.return_type_evidence import (
     collect_unobserved_callee_void_evidence_8616,
 )
 from angr_platforms.X86_16.lowering.unused_void_return_types import (
+    TerminalReturnStorageInput8616,
     TerminalReturnValueEvidence8616,
     UnusedVoidReturnTypeStats8616,
     materialize_unused_caller_void_codegen_type_8616,
@@ -213,6 +214,28 @@ def test_final_codegen_consumes_exact_terminal_storage(
         assert result.stats == UnusedVoidReturnTypeStats8616()
         assert function.prototype is original
         assert codegen.cfunc.statements.statements[0].retval is not None
+
+
+def test_final_codegen_reuses_precomputed_terminal_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sibling lowering consumer must not decode terminal storage twice."""
+    project, codegen, function = _codegen_fixture()
+    original = function.prototype
+    monkeypatch.setattr(
+        unused_void_return_types,
+        "terminal_return_storage_8616",
+        lambda *_args: pytest.fail("precomputed terminal storage must be reused"),
+    )
+
+    result = materialize_unused_caller_void_codegen_type_8616(
+        project,
+        codegen,
+        terminal_storage_input=TerminalReturnStorageInput8616(TerminalReturnStorage8616.AX),
+    )
+
+    assert result.changed is False
+    assert function.prototype is original
 
 
 def test_exact_empty_terminal_storage_overrides_false_caller_result_use(

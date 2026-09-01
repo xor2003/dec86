@@ -103,14 +103,33 @@ def _candidate_width_8616(candidate: structured_c.CVariable) -> int:
     return max(2, size if isinstance(size, int) and size > 0 else 2)
 
 
+def _optional_arg_list_8616(cfunc: object) -> tuple[object, ...]:
+    """Read angr's optional argument surface at the dynamic boundary."""
+    try:
+        return tuple(cast(_PositiveBpCFunction8616, cfunc).arg_list or ())
+    except AttributeError:
+        return ()
+
+
 def _canonical_argument_name_8616(
     candidate: structured_c.CVariable,
     bp_offset: int,
+    *,
+    entry_sp_offset: int | None,
 ) -> str:
-    """Keep meaningful names and replace local placeholders deterministically."""
+    """Keep names only when their storage coordinate remains authoritative."""
     variable = cast(SimStackVariable, candidate.variable)
     name = variable.name or candidate.name
-    if isinstance(name, str) and not generated_stack_variable_name_8616(name):
+    projected_entry_sp_view = (
+        isinstance(entry_sp_offset, int)
+        and variable.offset == entry_sp_offset
+        and entry_sp_offset != bp_offset
+    )
+    if (
+        not projected_entry_sp_view
+        and isinstance(name, str)
+        and not generated_stack_variable_name_8616(name)
+    ):
         return name
     return f"arg_{bp_offset:x}"
 
@@ -220,10 +239,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
         return False
     # angr and focused codegen adapters may omit optional C-function indexes.
     # Capture that dynamic boundary once; owned lowering state remains explicit.
-    try:
-        existing_arg_list = tuple(cfunc.arg_list or ())
-    except AttributeError:
-        existing_arg_list = ()
+    existing_arg_list = _optional_arg_list_8616(cfunc)
     try:
         variables_in_use = cfunc.variables_in_use
     except AttributeError:
@@ -255,7 +271,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
         typed_codegen,
         function,
     )
-    existing_arg_list = tuple(cfunc.arg_list or ())
+    existing_arg_list = _optional_arg_list_8616(cfunc)
     changed: bool = bool(return_address_result.changed)
 
     candidates: dict[int, list[structured_c.CVariable]] = {}
@@ -375,7 +391,11 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             else max(body_bucket, key=_candidate_width_8616)
         )
         variable = cast(SimStackVariable, canonical.variable)
-        name = _canonical_argument_name_8616(canonical, offset)
+        name = _canonical_argument_name_8616(
+            canonical,
+            offset,
+            entry_sp_offset=entry_sp_offset,
+        )
         argument_type = (
             layout_argument.argument_type
             if layout_argument is not None
@@ -566,21 +586,23 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
         ]
     else:
         source_types = [cast(SimType, candidate.variable_type) for candidate in desired]
+    # Plan entries already own machine-BP coordinates. Candidate variables may
+    # still use entry-SP offsets until the projections below are published.
     argument_types = source_types if authoritative_prototype is not None else [
         _argument_type_for_proven_stack_width_8616(
             project,
             argument_type,
             proven_width=(
                 2
-                if machine_bp_offset_for_stack_variable_8616(
-                    codegen,
-                    cast(SimStackVariable, candidate.variable),
-                )
-                in word_access_offsets
+                if entry.bp_offset in word_access_offsets
                 else None
             ),
         )
-        for candidate, argument_type in zip(desired, source_types, strict=False)
+        for entry, argument_type in zip(
+            argument_plan.entries,
+            source_types,
+            strict=True,
+        )
     ]
     for candidate, argument_type, entry, entry_sp_offset in zip(
         desired,

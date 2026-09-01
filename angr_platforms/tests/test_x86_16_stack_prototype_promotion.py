@@ -497,6 +497,55 @@ def test_lowering_materializes_normalized_stack_annotation_prototype_before_post
     assert postprocess._apply_annotations_8616(project, codegen) is False
 
 
+def test_lowering_replaces_generated_argument_name_with_proven_stack_label() -> None:
+    """Prefer optional labels only after the exact BP argument already exists."""
+    arch = Arch86_16()
+    short_type = SimTypeShort(False).with_arch(arch)
+    generated_prototype = SimTypeFunction(
+        (short_type,), short_type, arg_names=("arg_4",)
+    ).with_arch(arch)
+    func = SimpleNamespace(
+        addr=0x1000,
+        name="set_value",
+        prototype=generated_prototype,
+        is_prototype_guessed=True,
+        info={ANNOTATION_KEY: {"stack_vars": {2: {"name": "value"}}}},
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: func if addr == 0x1000 else None
+            )
+        ),
+    )
+    codegen = SimpleNamespace(
+        next_idx=lambda _name: 1,
+        project=project,
+        cstyle_null_cmp=False,
+        next_ident=lambda name: f"{name}_0",
+        next_node_idx=lambda: 1,
+    )
+    arg_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=short_type, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        variables_in_use={arg_var: arg_cvar},
+        unified_local_vars={},
+        arg_list=[arg_cvar],
+        functy=generated_prototype,
+        prototype=generated_prototype,
+        statements=structured_c.CStatements([], codegen=codegen),
+    )
+
+    changed = materialize_annotated_stack_prototype_8616(project, codegen)
+
+    assert changed is True
+    assert arg_var.name == "value"
+    assert codegen.cfunc.arg_list == [arg_cvar]
+    assert tuple(func.prototype.arg_names) == ("value",)
+
+
 def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -> None:
     """Collapse physical word slots when structured BP starts prove one wide object."""
     arch = Arch86_16()
