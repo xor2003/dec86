@@ -76,7 +76,7 @@ from inertia_decompiler.cache import (
     _store_cache_json,
 )
 from inertia_decompiler.cli_arg_parser import CliArguments, parse_cli_arguments
-from inertia_decompiler.cli_batch_c_output import build_batch_c_output_8616
+from inertia_decompiler.cli_batch_c_output import BatchCOutputStatus8616, build_batch_c_output_8616
 from inertia_decompiler.cli_c_text_postprocess import _prune_invalid_simple_function_prototypes_text
 from inertia_decompiler.cli_output import (
     _print_asm_fallback_text,
@@ -3485,6 +3485,7 @@ def _emit_function_result(
                     timeout_was_explicit=timeout_was_explicit,
                 ),
                 fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                result_state_by_index=result_state_by_index,
             )
         ):
             decompiled_local += 1
@@ -3567,6 +3568,7 @@ def _emit_function_result(
                             timeout_was_explicit=timeout_was_explicit,
                         ),
                         fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                        result_state_by_index=result_state_by_index,
                     )
                 ):
                     decompiled_local += 1
@@ -3626,8 +3628,9 @@ def _try_emit_retry_recovered_candidate_8616(
     synthetic_globals: _SyntheticGlobals8616,
     retry_timeout: int | None = None,
     fallback_tail_validation_by_index: dict[int, dict[str, object]] | None = None,
+    result_state_by_index: dict[int, FunctionWorkResult] | None = None,
 ) -> bool:
-    """Try one fresh-project retry and emit only validated, compilable C."""
+    """Try one fresh-project retry and retain only validated, compilable C."""
     try:
         if retry_timeout is None:
             retry_timeout = max(1, int(args.timeout)) if isinstance(args.timeout, int) else 120
@@ -3702,6 +3705,12 @@ def _try_emit_retry_recovered_candidate_8616(
         retry_payload = retry_result.payload
         if fallback_tail_validation_by_index is not None:
             fallback_tail_validation_by_index[item.index] = dict(retry_tv)
+        if result_state_by_index is not None:
+            result_state_by_index[item.index] = replace(
+                retry_result,
+                payload=retry_payload,
+                tail_validation=dict(retry_tv),
+            )
         print("/* retry lane: recovered validation-passed candidate */")
         _print_function_attempt_status(
             function,
@@ -7631,7 +7640,7 @@ def _finish_batch_cli_8616(
             write_generated_translation_unit_c(
                 args.output_c_dir,
                 payload=batch_c_output.source,
-                complete=not batch_c_output.failed,
+                complete=batch_c_output.status is BatchCOutputStatus8616.READY,
             )
     if batch_c_output.failed:
         print(f"generated C translation-unit export failed: {batch_c_output.detail}", file=sys.stderr)

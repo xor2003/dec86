@@ -87,13 +87,13 @@ def _space_for_segment(segment: str | None) -> MemSpace | None:
 
 
 def _source_base_for_family(family: str) -> tuple[str, ...]:
-    if family in {"movs", "lods", "cmps"}:
+    if family in {"movs", "lods", "cmps", "outs"}:
         return ("si",)
     return ()
 
 
 def _destination_base_for_family(family: str) -> tuple[str, ...]:
-    if family in {"movs", "stos", "scas", "cmps"}:
+    if family in {"movs", "stos", "scas", "cmps", "ins"}:
         return ("di",)
     return ()
 

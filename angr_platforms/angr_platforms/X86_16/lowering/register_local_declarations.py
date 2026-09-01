@@ -35,6 +35,7 @@ __all__ = [
 class _CFunctionDeclarationBoundary8616(Protocol):
     """Third-party CFunction declaration maps consumed by code generation."""
 
+    addr: object
     variables_in_use: object
     unified_local_vars: object
     variable_manager: object
@@ -65,6 +66,12 @@ class _VariableManagerBoundary8616(Protocol):
 
     def unified_variable(self, variable: SimRegisterVariable) -> object | None:
         """Return angr's exact unified identity for one register variable."""
+
+
+class _RootAddressBoundary8616(Protocol):
+    """Third-party C-AST root exposing an optional function address."""
+
+    addr: object
 
 
 class _RegisterLocalResultBoundary8616(Protocol):
@@ -127,9 +134,15 @@ def _materialize_register_virtual_carriers_8616(codegen: object, root: object) -
         return 0
     if not isinstance(registers, dict):
         return 0
-    region = getattr(cfunc, "addr", None)
+    try:
+        region = cfunc.addr
+    except AttributeError:
+        region = None
     if not isinstance(region, int):
-        region = getattr(root, "addr", None)
+        try:
+            region = cast(_RootAddressBoundary8616, root).addr
+        except AttributeError:
+            return 0
     if not isinstance(region, int):
         return 0
     exact_registers = {

@@ -18,7 +18,10 @@ __all__ = [
     "SegmentStackByteOrigin8616",
     "SegmentStackFragments8616",
     "complete_segment_restore_8616",
+    "complete_stack_register_restore_8616",
     "computed_segment_fragments_8616",
+    "computed_stack_register_fragments_8616",
+    "register_value_fragments_8616",
     "segment_value_fragments_8616",
     "stack_load_fragments_8616",
     "store_stack_fragments_8616",
@@ -50,9 +53,25 @@ def segment_value_fragments_8616(
     values: dict[str, SegmentStackFragments8616],
 ) -> SegmentStackFragments8616:
     """Read symbolic segment-byte provenance for one typed value."""
+    return register_value_fragments_8616(
+        value,
+        instruction_addr,
+        values,
+        tracked_registers=SEGMENT_REGISTERS,
+    )
+
+
+def register_value_fragments_8616(
+    value: IRAtom | None,
+    instruction_addr: int,
+    values: dict[str, SegmentStackFragments8616],
+    *,
+    tracked_registers: frozenset[str],
+) -> SegmentStackFragments8616:
+    """Read exact byte provenance for one tracked 16-bit register value."""
     if not isinstance(value, IRValue):
         return frozenset()
-    if value.space is MemSpace.REG and value.name in SEGMENT_REGISTERS:
+    if value.space is MemSpace.REG and value.name in tracked_registers and value.size in {1, 2}:
         fragments = frozenset(
             SegmentStackByteOrigin8616(value.name, instruction_addr, byte, byte)
             for byte in range(2)
@@ -108,6 +127,12 @@ def _stack_offset(address: IRAddress, sp_delta: int | None) -> int | None:
         or address.base != ("sp",)
     ):
         return None
+    # The lifter folds negative PUSH displacements into the typed address
+    # (for example PUSH AX exposes SS:SP-2 after SP became SP-2), while POP
+    # byte offsets remain relative to the current SP. Do not count a folded,
+    # entry-relative negative displacement twice.
+    if address.offset < 0:
+        return address.offset
     return sp_delta + address.offset
 
 
@@ -165,9 +190,28 @@ def computed_segment_fragments_8616(
     values: dict[str, SegmentStackFragments8616],
 ) -> SegmentStackFragments8616:
     """Transfer byte provenance through lossless MOV, shift, and OR operations."""
+    return computed_stack_register_fragments_8616(
+        instruction,
+        values,
+        tracked_registers=SEGMENT_REGISTERS,
+    )
+
+
+def computed_stack_register_fragments_8616(
+    instruction: IRInstr,
+    values: dict[str, SegmentStackFragments8616],
+    *,
+    tracked_registers: frozenset[str],
+) -> SegmentStackFragments8616:
+    """Transfer tracked register bytes through lossless typed operations."""
     if instruction.addr is None or not instruction.args:
         return frozenset()
-    lhs = segment_value_fragments_8616(instruction.args[0], instruction.addr, values)
+    lhs = register_value_fragments_8616(
+        instruction.args[0],
+        instruction.addr,
+        values,
+        tracked_registers=tracked_registers,
+    )
     if instruction.op == "MOV":
         return lhs
     if "Shr" in instruction.op:
@@ -177,7 +221,12 @@ def computed_segment_fragments_8616(
         bits = _constant_arg(instruction, 1)
         return frozenset() if bits is None else _shift_fragments(lhs, bits, left=True)
     if "Or" in instruction.op and len(instruction.args) == 2:
-        rhs = segment_value_fragments_8616(instruction.args[1], instruction.addr, values)
+        rhs = register_value_fragments_8616(
+            instruction.args[1],
+            instruction.addr,
+            values,
+            tracked_registers=tracked_registers,
+        )
         return _merge_fragments(lhs, rhs)
     return frozenset()
 
@@ -186,6 +235,13 @@ def complete_segment_restore_8616(
     fragments: SegmentStackFragments8616,
 ) -> tuple[str, int, tuple[int, ...]] | None:
     """Return one complete two-byte source only when every identity agrees."""
+    return complete_stack_register_restore_8616(fragments)
+
+
+def complete_stack_register_restore_8616(
+    fragments: SegmentStackFragments8616,
+) -> tuple[str, int, tuple[int, ...]] | None:
+    """Return one exact 16-bit saved-register identity from two stack bytes."""
     if len(fragments) != 2:
         return None
     registers = {fragment.saved_register for fragment in fragments}

@@ -82,7 +82,9 @@ unsigned short sub_10058(short arg, unsigned short *arg_5)
     contract_result = result["generated_c_contract"]
     assert contract_result["status"] == "failed"
     assert "local_2 = 104;" in contract_result["present_forbidden_fragments"]
-    assert contract_result["insufficient_occurrences"] == [["arg_6[local_2]", 3, 0]]
+    assert contract_result["missing_indexed_argument_uses"] == [
+        contract.indexed_argument_uses[0].label()
+    ]
 
 
 def test_args_generated_c_contract_refuses_hoisted_verbose_assignment() -> None:

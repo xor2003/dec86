@@ -14,6 +14,17 @@ from typing import Any, cast
 
 from pycparser import c_ast, c_parser
 
+if __package__:
+    from .generated_c_indexed_argument_contract import (
+        IndexedArgumentUseRequirement,
+        missing_indexed_argument_uses,
+    )
+else:
+    from generated_c_indexed_argument_contract import (
+        IndexedArgumentUseRequirement,
+        missing_indexed_argument_uses,
+    )
+
 _PARSE_PREFIX = (
     "typedef _Bool bool;\n"
     "typedef signed char int8_t;\n"
@@ -22,6 +33,16 @@ _PARSE_PREFIX = (
     "typedef unsigned short uint16_t;\n"
     "typedef signed long int32_t;\n"
     "typedef unsigned long uint32_t;\n"
+    "uint16_t SEG_U16(uint16_t segment, uint16_t offset);\n"
+    "void *SEG_PTR(uint16_t segment, uint16_t offset);\n"
+    "uint16_t PTR_U16(void *pointer);\n"
+    "uint32_t PTR_U32(void *pointer);\n"
+)
+_PRESERVED_RUNTIME_MACRO_PREFIXES = (
+    "#define SEG_U16(",
+    "#define SEG_PTR(",
+    "#define PTR_U16(",
+    "#define PTR_U32(",
 )
 
 
@@ -141,6 +162,7 @@ class GeneratedCContractResult:
     insufficient_occurrences: tuple[tuple[str, int, int], ...] = ()
     missing_guarded_assignments: tuple[str, ...] = ()
     missing_branch_body_effects: tuple[str, ...] = ()
+    missing_indexed_argument_uses: tuple[str, ...] = ()
     parse_error: str | None = None
 
     @property
@@ -157,6 +179,7 @@ class GeneratedCContractResult:
             "insufficient_occurrences": [list(item) for item in self.insufficient_occurrences],
             "missing_guarded_assignments": list(self.missing_guarded_assignments),
             "missing_branch_body_effects": list(self.missing_branch_body_effects),
+            "missing_indexed_argument_uses": list(self.missing_indexed_argument_uses),
             "parse_error": self.parse_error,
         }
 
@@ -295,9 +318,14 @@ def _branch_body_effects_match(
 
 def _parse_generated_c(source: str, *, compiler: str = "gcc") -> c_ast.FileAST:
     """Preprocess comments and parse generated C through pycparser."""
+    parser_source = "\n".join(
+        line
+        for line in source.splitlines()
+        if not line.lstrip().startswith(_PRESERVED_RUNTIME_MACRO_PREFIXES)
+    )
     completed = subprocess.run(
         [compiler, "-E", "-P", "-x", "c", "-"],
-        input=f"{_PARSE_PREFIX}{source}",
+        input=f"{_PARSE_PREFIX}{parser_source}",
         capture_output=True,
         text=True,
         check=False,
@@ -319,6 +347,7 @@ class GeneratedCContract:
     minimum_occurrences: tuple[tuple[str, int], ...] = ()
     guarded_assignments: tuple[CallGuardedAssignmentRequirement, ...] = ()
     branch_body_effects: tuple[BranchBodyEffectsRequirement, ...] = ()
+    indexed_argument_uses: tuple[IndexedArgumentUseRequirement, ...] = ()
 
     def assess(self, generated_output: str) -> GeneratedCContractResult:
         """Evaluate textual and parsed structural expectations."""
@@ -331,8 +360,9 @@ class GeneratedCContract:
         )
         missing_guarded: tuple[str, ...] = ()
         missing_branch_effects: tuple[str, ...] = ()
+        missing_indexed_uses: tuple[str, ...] = ()
         parse_error: str | None = None
-        if self.guarded_assignments or self.branch_body_effects:
+        if self.guarded_assignments or self.branch_body_effects or self.indexed_argument_uses:
             try:
                 parsed = _parse_generated_c(generated_output)
                 missing_guarded = tuple(
@@ -348,6 +378,10 @@ class GeneratedCContract:
                     for requirement in self.branch_body_effects
                     if not _branch_body_effects_match(parsed, requirement)
                 )
+                missing_indexed_uses = missing_indexed_argument_uses(
+                    parsed,
+                    self.indexed_argument_uses,
+                )
             except ValueError as ex:
                 parse_error = str(ex)
         status = (
@@ -358,6 +392,7 @@ class GeneratedCContract:
                 or insufficient
                 or missing_guarded
                 or missing_branch_effects
+                or missing_indexed_uses
                 or parse_error
             )
             else GeneratedCContractStatus.PASSED
@@ -369,6 +404,7 @@ class GeneratedCContract:
             insufficient_occurrences=insufficient,
             missing_guarded_assignments=missing_guarded,
             missing_branch_body_effects=missing_branch_effects,
+            missing_indexed_argument_uses=missing_indexed_uses,
             parse_error=parse_error,
         )
 
@@ -380,6 +416,7 @@ class GeneratedCContract:
             "minimum_occurrences": [list(item) for item in self.minimum_occurrences],
             "guarded_assignments": [item.to_json() for item in self.guarded_assignments],
             "branch_body_effects": [item.to_json() for item in self.branch_body_effects],
+            "indexed_argument_uses": [item.to_json() for item in self.indexed_argument_uses],
         }
 
     @classmethod
@@ -392,6 +429,7 @@ class GeneratedCContract:
         minimum = raw.get("minimum_occurrences")
         guarded = raw.get("guarded_assignments", [])
         branch_effects = raw.get("branch_body_effects", [])
+        indexed_uses = raw.get("indexed_argument_uses", [])
         if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
             return None
         if not isinstance(forbidden, list) or not all(isinstance(item, str) for item in forbidden):
@@ -400,6 +438,7 @@ class GeneratedCContract:
             not isinstance(minimum, list)
             or not isinstance(guarded, list)
             or not isinstance(branch_effects, list)
+            or not isinstance(indexed_uses, list)
         ):
             return None
         parsed_minimum: list[tuple[str, int]] = []
@@ -421,10 +460,16 @@ class GeneratedCContract:
         )
         if any(item is None for item in parsed_branch_effects):
             return None
+        parsed_indexed_uses = tuple(
+            IndexedArgumentUseRequirement.from_json(item) for item in indexed_uses
+        )
+        if any(item is None for item in parsed_indexed_uses):
+            return None
         return cls(
-            tuple(required),
-            tuple(forbidden),
-            tuple(parsed_minimum),
-            tuple(item for item in parsed_guarded if item is not None),
-            tuple(item for item in parsed_branch_effects if item is not None),
+            required_fragments=tuple(required),
+            forbidden_fragments=tuple(forbidden),
+            minimum_occurrences=tuple(parsed_minimum),
+            guarded_assignments=tuple(item for item in parsed_guarded if item is not None),
+            branch_body_effects=tuple(item for item in parsed_branch_effects if item is not None),
+            indexed_argument_uses=tuple(item for item in parsed_indexed_uses if item is not None),
         )

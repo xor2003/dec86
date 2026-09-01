@@ -198,22 +198,12 @@ def _unassigned_return_carrier_8616(
     return identity is not None and identity not in assigned_carriers
 
 
-def _unobserved_stack_local_return_carrier_8616(
-    retval: object,
-    argument_carriers: frozenset[_CarrierIdentity8616],
-) -> bool:
-    """Recognize a pure local stack result whose caller contract is unused."""
-    if not isinstance(retval, CVariable):
-        return False
-    variable = retval.variable
-    if not isinstance(variable, SimStackVariable) or variable.base != "bp" or variable.offset >= 0:
-        return False
-    identity = _carrier_identity_8616(retval)
-    return identity is None or identity not in argument_carriers
-
-
 def neutralize_unobserved_unresolved_returns_8616(project: object, codegen: object) -> bool:
-    """Materialize typed zeroes for proven-unobserved unusable return values."""
+    """Materialize typed zeroes only for proven-unobserved unusable returns.
+
+    Caller liveness may authorize replacing an unresolved or unassigned carrier,
+    but it never authorizes deleting a value defined by the callee.
+    """
     boundary = cast(_ReturnCodegenSurface8616, codegen)
     try:
         cfunc = boundary.cfunc
@@ -268,7 +258,6 @@ def neutralize_unobserved_unresolved_returns_8616(project: object, codegen: obje
             if not (
                 return_value_needs_neutralization_8616(return_node.retval, return_type)
                 or _unassigned_return_carrier_8616(return_node.retval, defined_carriers)
-                or _unobserved_stack_local_return_carrier_8616(return_node.retval, argument_carriers)
             ):
                 continue
             classified += 1

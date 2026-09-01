@@ -4,6 +4,11 @@ Layer: Structuring.
 Responsibility: retain a read-only typed projection of bound call assignments
 so condition placement does not repeatedly traverse one unchanged C AST.
 The caller must discard this projection after any relevant AST mutation.
+
+Owns CFG shape, loops, switches, and structured condition lowering from proven
+IR/semantic evidence. Do not perform alias-state ownership, widening,
+type/materialization recovery, rewrite cleanup, postprocess, or CLI/reporting
+work here.
 """
 
 from __future__ import annotations

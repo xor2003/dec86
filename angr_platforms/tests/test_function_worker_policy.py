@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from inertia_decompiler.function_worker_policy import (
+    CLEAN_PROCESS_WORKER_CAP_8616,
     CleanProcessOverride8616,
     FunctionWorkerMode8616,
     clean_process_override_8616,
@@ -38,14 +39,14 @@ def test_pure_binary_whole_file_uses_bounded_clean_processes_by_default() -> Non
     policy = _policy()
 
     assert policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
-    assert policy.workers == 7
+    assert policy.workers == CLEAN_PROCESS_WORKER_CAP_8616
 
 
 def test_sidecar_whole_file_uses_clean_processes_to_bound_native_state() -> None:
     policy = _policy(sidecar_available=True)
 
     assert policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
-    assert policy.workers == 7
+    assert policy.workers == CLEAN_PROCESS_WORKER_CAP_8616
 
 
 def test_explicit_clean_process_override_supports_sidecar_runs() -> None:
@@ -55,7 +56,7 @@ def test_explicit_clean_process_override_supports_sidecar_runs() -> None:
     )
 
     assert policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
-    assert policy.workers == 7
+    assert policy.workers == CLEAN_PROCESS_WORKER_CAP_8616
 
 
 def test_explicit_disable_preserves_single_shared_worker() -> None:
@@ -67,7 +68,7 @@ def test_explicit_disable_preserves_single_shared_worker() -> None:
 
 def test_clean_process_mode_is_bounded_by_functions_and_cpu_budget() -> None:
     assert _policy(function_count=2).workers == 2
-    assert _policy(function_count=200).workers == 7
+    assert _policy(function_count=200).workers == CLEAN_PROCESS_WORKER_CAP_8616
 
 
 def test_non_x86_policy_preserves_shared_worker_selection() -> None:

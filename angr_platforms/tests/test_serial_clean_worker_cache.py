@@ -301,6 +301,10 @@ def test_clean_worker_parent_reuses_validated_result_without_second_process(monk
     assert os.environ[cli_core._SERIAL_CLEAN_WORKER_RESULT_ENV_8616]
 
 
+def test_serial_worker_cache_capacity_covers_large_whole_binary_sweeps() -> None:
+    assert worker_cache.SERIAL_WORKER_CACHE_MAX_ENTRIES_8616 >= 4096
+
+
 def test_canonical_clean_cache_preflight_refuses_miss_without_emitting(monkeypatch, capsys):
     canonical = cli_core.DirectAddrCanonicalization8616(
         requested_addr=0x10554,

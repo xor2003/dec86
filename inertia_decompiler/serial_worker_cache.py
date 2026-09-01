@@ -36,7 +36,7 @@ from inertia_decompiler.direct_addr_failure_family import FailureFamilySnapshot
 
 SERIAL_WORKER_CACHE_NAMESPACE_8616: str = "serial_clean_worker"
 SERIAL_WORKER_CACHE_SCHEMA_8616: int = 2
-SERIAL_WORKER_CACHE_MAX_ENTRIES_8616: int = 256
+SERIAL_WORKER_CACHE_MAX_ENTRIES_8616: int = 4096
 SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616: str = "cache_analysis_timeout"
 
 

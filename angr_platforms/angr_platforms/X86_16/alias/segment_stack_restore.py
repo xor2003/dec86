@@ -10,18 +10,20 @@ names, rendered assembly, or C shape.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol, cast
+from typing import Final, Protocol, cast
 
 from ..ir.core import IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 from ..ir.segment_state_transfer import SEGMENT_REGISTERS, SegmentRestoreSource
 from .segment_stack_fragments import (
     SegmentStackByteOrigin8616,
     SegmentStackFragments8616,
-    complete_segment_restore_8616,
-    computed_segment_fragments_8616,
-    segment_value_fragments_8616,
+    complete_stack_register_restore_8616,
+    computed_stack_register_fragments_8616,
+    register_value_fragments_8616,
     stack_load_fragments_8616,
     store_stack_fragments_8616,
 )
@@ -30,8 +32,13 @@ __all__ = [
     "SegmentStackRestoreArtifact8616",
     "SegmentStackRestoreFact8616",
     "SegmentStackRestoreVerdict8616",
+    "StackRegisterRestoreArtifact8616",
+    "StackRegisterRestoreFact8616",
+    "StackRegisterRestoreVerdict8616",
     "apply_x86_16_segment_stack_restore_artifact",
+    "apply_x86_16_stack_register_restore_artifact_8616",
     "build_x86_16_segment_stack_restore_artifact",
+    "build_x86_16_stack_register_restore_artifact_8616",
 ]
 
 
@@ -40,6 +47,7 @@ class _CodegenBoundary8616(Protocol):
 
     _inertia_vex_ir_artifact: object
     _inertia_segment_stack_restore_artifact: SegmentStackRestoreArtifact8616
+    _inertia_stack_register_restore_artifact_8616: SegmentStackRestoreArtifact8616
 
 
 class SegmentStackRestoreVerdict8616(StrEnum):
@@ -98,6 +106,11 @@ class SegmentStackRestoreArtifact8616:
             ],
             "summary": dict(self.summary),
         }
+
+
+StackRegisterRestoreVerdict8616: Final[type[SegmentStackRestoreVerdict8616]] = SegmentStackRestoreVerdict8616
+StackRegisterRestoreFact8616: Final[type[SegmentStackRestoreFact8616]] = SegmentStackRestoreFact8616
+StackRegisterRestoreArtifact8616: Final[type[SegmentStackRestoreArtifact8616]] = SegmentStackRestoreArtifact8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,22 +174,28 @@ def _update_sp_delta(instruction: IRInstr, sp_delta: int | None) -> int | None:
     source = instruction.args[0]
     if source.space is not MemSpace.REG or source.name != "sp" or sp_delta is None:
         return None
-    return sp_delta + source.offset
+    return sp_delta + int(source.offset)
 
 
 def _transfer_block(
     block_addr: int,
     instructions: tuple[IRInstr, ...],
     entry_state: _SegmentStackAliasState8616,
+    tracked_registers: frozenset[str] = SEGMENT_REGISTERS,
 ) -> tuple[list[SegmentStackRestoreFact8616], _SegmentStackAliasState8616]:
     """Transfer exact stack identities and classify restorations in one block."""
     values: dict[str, SegmentStackFragments8616] = {}
     stack_bytes = entry_state.byte_map()
     sp_delta = entry_state.sp_delta
     facts: list[SegmentStackRestoreFact8616] = []
+    machine_instruction_addr: int | None = None
+    instruction_entry_state = entry_state
     for instruction in instructions:
         if instruction.addr is None:
             continue
+        if instruction.addr != machine_instruction_addr:
+            machine_instruction_addr = instruction.addr
+            instruction_entry_state = _stack_state(sp_delta, stack_bytes)
         if instruction.op == "LOAD" and isinstance(instruction.dst, IRValue) and instruction.args:
             address = instruction.args[0]
             if isinstance(address, IRAddress) and instruction.dst.name is not None:
@@ -189,22 +208,36 @@ def _transfer_block(
                 store_stack_fragments_8616(
                     address,
                     value,
-                    segment_value_fragments_8616(value, instruction.addr, values),
+                    register_value_fragments_8616(
+                        value,
+                        instruction.addr,
+                        values,
+                        tracked_registers=tracked_registers,
+                    ),
                     sp_delta,
                     stack_bytes,
                 )
         elif isinstance(instruction.dst, IRValue) and instruction.dst.space is MemSpace.TMP:
-            fragments = computed_segment_fragments_8616(instruction, values)
+            fragments = computed_stack_register_fragments_8616(
+                instruction,
+                values,
+                tracked_registers=tracked_registers,
+            )
             if instruction.dst.name is not None:
                 values[instruction.dst.name] = fragments
             if instruction.op != "MOV":
                 values[f"expr:{instruction.op}"] = fragments
 
         dst = instruction.dst
-        if isinstance(dst, IRValue) and dst.space is MemSpace.REG and dst.name in SEGMENT_REGISTERS:
+        if isinstance(dst, IRValue) and dst.space is MemSpace.REG and dst.name in tracked_registers:
             source = instruction.args[0] if instruction.args else None
-            fragments = segment_value_fragments_8616(source, instruction.addr, values)
-            complete = complete_segment_restore_8616(fragments)
+            fragments = register_value_fragments_8616(
+                source,
+                instruction.addr,
+                values,
+                tracked_registers=tracked_registers,
+            )
+            complete = complete_stack_register_restore_8616(fragments)
             if complete is not None:
                 saved_register, saved_addr, stack_offsets = complete
                 facts.append(
@@ -221,11 +254,25 @@ def _transfer_block(
                     )
                 )
         sp_delta = _update_sp_delta(instruction, sp_delta)
+        if instruction.op == "CALL":
+            effect = instruction.call_stack_effect
+            if (
+                effect is not None
+                and effect.complete
+                and effect.net_stack_delta == 0
+                and not effect.escaped_ranges
+            ):
+                sp_delta = instruction_entry_state.sp_delta
+                stack_bytes = instruction_entry_state.byte_map()
+            else:
+                sp_delta = None
+                stack_bytes.clear()
     return facts, _stack_state(sp_delta, stack_bytes)
 
 
 def _solve_stack_states(
     artifact: IRFunctionArtifact,
+    tracked_registers: frozenset[str] = SEGMENT_REGISTERS,
 ) -> dict[int, _SegmentStackAliasState8616]:
     """Reach a deterministic must-state fixed point across typed IR edges."""
     blocks_by_addr = {block.addr: block for block in artifact.blocks}
@@ -244,6 +291,7 @@ def _solve_stack_states(
                 block_addr,
                 blocks_by_addr[block_addr].instrs,
                 entry_state,
+                tracked_registers,
             )[1]
             if new_exit != exit_states[block_addr]:
                 exit_states[block_addr] = new_exit
@@ -305,6 +353,51 @@ def build_x86_16_segment_stack_restore_artifact(artifact: IRFunctionArtifact) ->
     )
 
 
+def build_x86_16_stack_register_restore_artifact_8616(
+    artifact: IRFunctionArtifact,
+    *,
+    tracked_registers: frozenset[str],
+) -> SegmentStackRestoreArtifact8616:
+    """Build exact stack save/restore facts for selected 16-bit registers."""
+    exit_states = _solve_stack_states(artifact, tracked_registers)
+    predecessors = _predecessor_map(artifact)
+    instruction_blocks = {
+        instruction.addr: block.addr
+        for block in artifact.blocks
+        for instruction in block.instrs
+        if instruction.addr is not None
+    }
+    facts = tuple(
+        fact
+        for block in artifact.blocks
+        for fact in _transfer_block(
+            block.addr,
+            block.instrs,
+            _join_stack_states(
+                ((_SegmentStackAliasState8616(0),) if block.addr == artifact.function_addr else ())
+                + tuple(exit_states[pred] for pred in predecessors[block.addr])
+            ),
+            tracked_registers,
+        )[0]
+    )
+    proven = tuple(fact for fact in facts if fact.verdict is SegmentStackRestoreVerdict8616.PROVEN)
+    return SegmentStackRestoreArtifact8616(
+        facts=facts,
+        summary={
+            "raw_fact_count": len(facts),
+            "normalized_fact_count": len(facts),
+            "classified_fact_count": len(proven),
+            "materialized_count": len(proven),
+            "failure_count": len(facts) - len(proven),
+            "cross_block_restore_count": sum(
+                fact.saved_instruction_addr is not None
+                and instruction_blocks.get(fact.saved_instruction_addr) != fact.block_addr
+                for fact in proven
+            ),
+        },
+    )
+
+
 def apply_x86_16_segment_stack_restore_artifact(project: object, codegen: object) -> bool:
     """Attach Alias-proved segment stack restoration before segment-state transfer."""
     boundary = cast(_CodegenBoundary8616, codegen)
@@ -315,4 +408,42 @@ def apply_x86_16_segment_stack_restore_artifact(project: object, codegen: object
     if not isinstance(artifact, IRFunctionArtifact):
         return False
     boundary._inertia_segment_stack_restore_artifact = build_x86_16_segment_stack_restore_artifact(artifact)
+    return False
+
+
+def apply_x86_16_stack_register_restore_artifact_8616(project: object, codegen: object) -> bool:
+    """Attach exact 16-bit GP save/restore evidence at the codegen boundary."""
+    del project
+    boundary = cast(_CodegenBoundary8616, codegen)
+    try:
+        artifact = boundary._inertia_vex_ir_artifact
+    except AttributeError:
+        return False
+    if not isinstance(artifact, IRFunctionArtifact):
+        return False
+    restoration = (
+        build_x86_16_stack_register_restore_artifact_8616(
+            artifact,
+            tracked_registers=frozenset({"ax", "bx", "cx", "di", "dx", "si"}),
+        )
+    )
+    boundary._inertia_stack_register_restore_artifact_8616 = restoration
+    if os.environ.get("INERTIA_DEBUG_GP_STACK_RESTORE"):
+        logging.getLogger(__name__).warning(
+            "[gp-stack-restore-alias] function=%#x blocks=%s summary=%s facts=%s",
+            artifact.function_addr,
+            tuple((block.addr, block.successor_addrs) for block in artifact.blocks),
+            restoration.summary,
+            restoration.facts,
+        )
+        for block in artifact.blocks:
+            logging.getLogger(__name__).warning(
+                "[gp-stack-restore-ir] block=%#x calls=%s",
+                block.addr,
+                tuple(
+                    (instruction.addr, instruction.call_stack_effect)
+                    for instruction in block.instrs
+                    if instruction.op == "CALL"
+                ),
+            )
     return False

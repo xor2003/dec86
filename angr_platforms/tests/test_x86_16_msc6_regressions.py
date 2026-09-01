@@ -386,6 +386,8 @@ def test_msc6_fptr_select_and_apply_materializes_branch_function_pointer_targets
     emitted_body = _extract_emitted_function_8616(combined, "select_and_apply")
     assert emitted_body, combined
     assert re.match(r"unsigned short\s+select_and_apply\s*\(", emitted_body), emitted_body
+    assert "if (which)" in emitted_body
+    assert "if (value)" not in emitted_body
     assert "fn = inc_one;" in emitted_body
     assert "fn = dec_one;" in emitted_body
     assert "fn = which;" not in emitted_body

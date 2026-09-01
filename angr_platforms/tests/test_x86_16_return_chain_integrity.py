@@ -5,8 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from angr.analyses.decompiler.structured_codegen.c import CConstant, CReturn, CStatements
+from angr.analyses.decompiler.structured_codegen.c import CConstant, CReturn, CStatements, CVariable
 from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16 import decompiler_postprocess_stage, decompiler_structuring_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -60,6 +61,24 @@ def _codegen_with_returns(*values: int) -> SimpleNamespace:
     )
 
 
+def _codegen_with_mask_return(*, preserved: bool) -> SimpleNamespace:
+    """Build one Structuring-owned mask return and its durable fingerprint."""
+    codegen = _DummyCodegen()
+    mask = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="mask", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    retval = mask if preserved else CConstant(0, SimTypeShort(False), codegen=codegen)
+    return SimpleNamespace(
+        cfunc=SimpleNamespace(statements=CStatements([CReturn(retval, codegen=codegen)], codegen=codegen)),
+        _inertia_return_chain_flattened_8616=False,
+        _inertia_return_chain_suffix_materialized_8616=False,
+        _inertia_mask_accumulator_materialized_8616=True,
+        _inertia_mask_accumulator_return_fingerprint_8616="stack_slot:SS:BP-0x4:size2",
+    )
+
+
 def test_return_chain_integrity_is_not_applicable_without_metadata() -> None:
     """Third-party codegen objects without return-chain state remain unaffected."""
     result = assess_materialized_return_chain_integrity_8616(SimpleNamespace())
@@ -75,6 +94,25 @@ def test_return_chain_integrity_accepts_values_independent_of_render_spelling() 
     assert result.verdict is MaterializedReturnChainIntegrityVerdict8616.PASSED
     assert result.expected_values == (1, 2, 3, 255)
     assert result.missing_values == ()
+
+
+def test_return_chain_integrity_accepts_mask_accumulator_return() -> None:
+    result = assess_materialized_return_chain_integrity_8616(
+        _codegen_with_mask_return(preserved=True)
+    )
+
+    assert result.verdict is MaterializedReturnChainIntegrityVerdict8616.PASSED
+    assert result.active is True
+
+
+def test_return_chain_integrity_rejects_lost_mask_accumulator_return() -> None:
+    result = assess_materialized_return_chain_integrity_8616(
+        _codegen_with_mask_return(preserved=False)
+    )
+
+    assert result.verdict is MaterializedReturnChainIntegrityVerdict8616.MISSING_RETURN_EXPRESSION
+    assert result.accepted is False
+    assert result.observed_return_fingerprints == ("const:0",)
 
 
 def test_return_chain_integrity_accepts_coalesced_equal_return_edges() -> None:

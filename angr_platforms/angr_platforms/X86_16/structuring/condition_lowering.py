@@ -9,7 +9,7 @@ rewrite cleanup, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..ir.condition_ir import (
@@ -50,6 +50,18 @@ __all__ = [
 ]
 
 _SOURCE_INSTRUCTION_ADDRS_TAG_8616 = "inertia_source_instruction_addrs"
+
+
+class _CodegenFunctionBoundary8616(Protocol):
+    """Third-party structured-codegen surface exposing its active C function."""
+
+    cfunc: object
+
+
+class _CFunctionAddressBoundary8616(Protocol):
+    """Third-party C function surface exposing its address."""
+
+    addr: object
 
 
 def _make_c_constant_8616(value: int, codegen: object, signed: bool = False) -> CConstant:
@@ -216,7 +228,11 @@ def _ir_value_to_cvar_8616(
 
     if value.space == MemSpace.REG:
         register_name = value.name if isinstance(value.name, str) else None
-        function_region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        try:
+            cfunc = cast(_CodegenFunctionBoundary8616, codegen).cfunc
+            function_region = cast(_CFunctionAddressBoundary8616, cfunc).addr
+        except AttributeError:
+            function_region = None
         if resolve_register_name:
             reg_offset, reg_size = _register_offset_size_for_value_8616(value, project)
         else:

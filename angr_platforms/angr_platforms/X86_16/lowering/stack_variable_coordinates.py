@@ -17,23 +17,28 @@ from typing import Protocol, cast
 
 from angr.sim_variable import SimStackVariable
 
+from ..alias.stack_coordinate_projection import (
+    StackCoordinateProjectionStatus8616,
+    project_stack_offset_to_machine_bp_8616,
+)
+from ..alias.stack_memory_ssa_contracts import StackMemorySSAAliasArtifact8616
+from ..analysis.stack_frame_ir import FrameAccessArtifact
 from .stack_storage_evidence import (
     alias_excludes_stack_range_8616,
-    alias_proves_stack_range_8616,
-    proven_bp_entry_sp_delta_8616,
     typed_frame_excludes_stack_range_8616,
 )
 
 
 @dataclass(frozen=True, slots=True)
 class StackVariableCoordinateProjection8616:
-    """One exact machine-BP to angr entry-SP variable projection."""
+    """One machine-BP storage slot and its typed semantic value projection."""
 
     variable: SimStackVariable
     cvar: object
     bp_offset: int
     entry_sp_offset: int
     size: int
+    value_size: int
     display_name: str = ""
     equivalent_variables: tuple[SimStackVariable, ...] = ()
 
@@ -85,6 +90,24 @@ class StackVariableCoordinateRegistry8616:
             and projection.bp_offset + projection.size >= bp_offset + size
         )
         return matches[0] if len(matches) == 1 else None
+
+    def for_bp_value_range(
+        self,
+        bp_offset: int,
+        size: int,
+    ) -> StackVariableCoordinateProjection8616 | None:
+        """Return the unique exact storage or typed low-value projection."""
+        exact = self.for_bp_range(bp_offset, size)
+        if exact is not None:
+            return exact
+        owner = self.containing_bp_range(bp_offset, size)
+        if (
+            owner is None
+            or owner.bp_offset != bp_offset
+            or owner.value_size != size
+        ):
+            return None
+        return owner
 
     def for_entry_sp_range(
         self,
@@ -168,12 +191,39 @@ class _CodegenBoundary8616(Protocol):
     """Dynamic angr codegen extension carrying the owned registry."""
 
     _inertia_stack_variable_coordinate_registry_8616: StackVariableCoordinateRegistry8616
+    _inertia_stack_memory_ssa_alias_artifact: StackMemorySSAAliasArtifact8616
+    _inertia_vex_ir_frame: FrameAccessArtifact
 
 
 class _CVariableBoundary8616(Protocol):
     """Third-party C variable field needed to publish a selected projection."""
 
     variable: object
+
+
+class _TypedCVariableBoundary8616(Protocol):
+    """Third-party C variable type field used to retain a typed value view."""
+
+    variable_type: object
+
+
+class _SizedTypeBoundary8616(Protocol):
+    """Third-party angr type width used at the C-variable boundary."""
+
+    size: int
+
+
+def _semantic_value_size_8616(cvar: object, storage_size: int) -> int:
+    """Return a proven semantic value width bounded by its ABI storage slot."""
+    try:
+        variable_type = cast(_TypedCVariableBoundary8616, cvar).variable_type
+        bits = cast(_SizedTypeBoundary8616, variable_type).size
+    except (AttributeError, TypeError, ValueError):
+        return storage_size
+    if not isinstance(bits, int) or bits <= 0:
+        return storage_size
+    value_size = max(1, (bits + 7) // 8)
+    return value_size if value_size <= storage_size else storage_size
 
 
 def stack_variable_coordinate_registry_8616(
@@ -215,6 +265,7 @@ def record_stack_variable_coordinate_projection_8616(
         bp_offset=bp_offset,
         entry_sp_offset=entry_sp_offset,
         size=size,
+        value_size=_semantic_value_size_8616(cvar, size),
         display_name=(
             display_name
             if isinstance(display_name, str) and display_name
@@ -257,6 +308,7 @@ def record_stack_variable_coordinate_alias_8616(
         bp_offset=projection.bp_offset,
         entry_sp_offset=projection.entry_sp_offset,
         size=projection.size,
+        value_size=projection.value_size,
         display_name=projection.display_name,
         equivalent_variables=(*projection.equivalent_variables, variable),
     )
@@ -293,6 +345,7 @@ def bind_stack_variable_coordinate_cvar_8616(
         bp_offset=projection.bp_offset,
         entry_sp_offset=projection.entry_sp_offset,
         size=projection.size,
+        value_size=_semantic_value_size_8616(cvar, projection.size),
         display_name=display_name or projection.display_name,
         equivalent_variables=projection.equivalent_variables,
     )
@@ -422,19 +475,26 @@ def machine_bp_offset_for_stack_variable_8616(
         projection = registry.containing_entry_sp_range(variable.offset, variable.size)
         if projection is not None:
             return projection.bp_offset + variable.offset - projection.entry_sp_offset
-        delta = proven_bp_entry_sp_delta_8616(codegen)
-        if isinstance(delta, int):
-            projected_bp_offset = variable.offset - delta
-            if alias_proves_stack_range_8616(
-                codegen,
-                projected_bp_offset,
-                variable.size,
-            ) and not alias_proves_stack_range_8616(
-                codegen,
+        boundary = cast(_CodegenBoundary8616, codegen)
+        try:
+            source_alias = boundary._inertia_stack_memory_ssa_alias_artifact
+        except AttributeError:
+            source_alias = None
+        try:
+            frame = boundary._inertia_vex_ir_frame
+        except AttributeError:
+            frame = None
+        if isinstance(source_alias, StackMemorySSAAliasArtifact8616):
+            coordinate = project_stack_offset_to_machine_bp_8616(
+                source_alias,
+                frame,
                 variable.offset,
                 variable.size,
-            ):
-                return projected_bp_offset
+            )
+            if coordinate.materialized:
+                return coordinate.bp_offset
+            if coordinate.status is StackCoordinateProjectionStatus8616.AMBIGUOUS:
+                return None
     return variable.offset if isinstance(variable.offset, int) else None
 
 
@@ -451,6 +511,19 @@ def stack_cvar_for_machine_bp_range_8616(
     return projection.cvar if projection is not None else None
 
 
+def stack_cvar_for_machine_bp_value_range_8616(
+    codegen: object,
+    bp_offset: int,
+    size: int,
+) -> object | None:
+    """Return the C value for an exact slot or its proven low-byte view."""
+    projection = stack_variable_coordinate_registry_8616(codegen).for_bp_value_range(
+        bp_offset,
+        size,
+    )
+    return projection.cvar if projection is not None else None
+
+
 __all__ = [
     "StackVariableCoordinateProjection8616",
     "StackVariableCoordinateRegistry8616",
@@ -461,5 +534,6 @@ __all__ = [
     "record_stack_variable_coordinate_projection_8616",
     "reset_stack_variable_coordinate_registry_8616",
     "stack_cvar_for_machine_bp_range_8616",
+    "stack_cvar_for_machine_bp_value_range_8616",
     "stack_variable_coordinate_registry_8616",
 ]

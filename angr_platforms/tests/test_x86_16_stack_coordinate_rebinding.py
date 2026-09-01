@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.stack_coordinate_rebinding import (
@@ -265,3 +266,51 @@ def test_stack_prototype_materialization_preserves_colliding_entry_sp_clone() ->
         machine_bp_offset_for_stack_variable_8616(codegen, argument.variable)
         for argument in codegen.cfunc.arg_list
     ] == [4, 6]
+
+
+def test_validation_codegen_clone_rebinds_stack_coordinates_to_cloned_arguments() -> None:
+    """Keep validation-clone storage identity independent from the live AST."""
+    codegen = _codegen()
+    word_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    lhs = SimStackVariable(2, 2, base="bp", name="a", ident="arg_0")
+    rhs = SimStackVariable(4, 2, base="bp", name="b", ident="arg_1")
+    lhs_cvar = structured_c.CVariable(lhs, variable_type=word_type, codegen=codegen)
+    rhs_cvar = structured_c.CVariable(rhs, variable_type=word_type, codegen=codegen)
+    statements = structured_c.CStatements(
+        [lhs_cvar, rhs_cvar],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[lhs_cvar, rhs_cvar],
+        statements=statements,
+        body=statements,
+        unified_local_vars={},
+        variables_in_use={lhs: lhs_cvar, rhs: rhs_cvar},
+        codegen=codegen,
+    )
+    for variable, cvar, bp_offset in (
+        (lhs, lhs_cvar, 4),
+        (rhs, rhs_cvar, 6),
+    ):
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=variable,
+            cvar=cvar,
+            bp_offset=bp_offset,
+            entry_sp_offset=variable.offset,
+            size=variable.size,
+            display_name=variable.name,
+        )
+
+    cloned = postprocess_stage._clone_codegen_for_validation_summary_8616(codegen)
+
+    assert cloned is not None
+    assert cloned.cfunc.arg_list[0] is not lhs_cvar
+    assert cloned.cfunc.arg_list[1] is not rhs_cvar
+    assert all(
+        isinstance(argument.variable, SimStackVariable)
+        for argument in cloned.cfunc.arg_list
+    )
+    assert [argument.variable.offset for argument in cloned.cfunc.arg_list] == [2, 4]
+    assert stack_cvar_for_machine_bp_range_8616(cloned, 4, 2) is cloned.cfunc.arg_list[0]
+    assert stack_cvar_for_machine_bp_range_8616(cloned, 6, 2) is cloned.cfunc.arg_list[1]

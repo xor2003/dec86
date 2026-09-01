@@ -13,7 +13,7 @@ import logging
 import os
 from abc import update_abstractmethods
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import bitstring
 from pyvex.lifting import register
@@ -122,7 +122,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
     instr32: Instr32 | None
     simple_semantics: tuple[Any, ...] | None
     condition_value_semantics: tuple[Any, ...] | None
-    _past_instructions: list[Any] | tuple[Any, ...] = ()
+    _past_instructions: Any = ()
 
     def dirty(self, ret_type: object, func_name: str, args: list[object]) -> Any:
         """Emit one Dirty helper with complete no-memory-effect metadata."""
@@ -135,7 +135,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             statement.mSize = 0
             statement.nFxState = 0
         return result
-    _future_instructions: list[Any] | tuple[Any, ...] = ()
+    _future_instructions: Any = ()
     _inertia_consumed_last_condition_8616: IRCondition
     _inertia_consumed_last_condition_addr_8616: int | None
     bitwidth: int
@@ -143,10 +143,11 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
     chsz_op: int | bool
     reg_offsets: dict[int, int]
 
-    _REG8_NAMES = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}  # noqa: RUF012
-    _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}  # noqa: RUF012
-    _LOW8_PARENT_REGS = {"al": "ax", "bl": "bx", "cl": "cx", "dl": "dx"}  # noqa: RUF012
-    _SIMPLE_JCC_8616: frozenset[str] = frozenset(
+    _REG8_NAMES: ClassVar[set[str]] = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}
+    _REG16_NAMES: ClassVar[set[str]] = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
+    _REG32_NAMES: ClassVar[set[str]] = {"eax", "ebx", "ecx", "edx", "esp", "ebp", "esi", "edi"}
+    _LOW8_PARENT_REGS: ClassVar[dict[str, str]] = {"al": "ax", "bl": "bx", "cl": "cx", "dl": "dx"}
+    _SIMPLE_JCC_8616: ClassVar[frozenset[str]] = frozenset(
         JCC_EQ_MNEMONICS_8616
         | JCC_NE_MNEMONICS_8616
         | JCC_ULT_MNEMONICS_8616
@@ -159,7 +160,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         | JCC_SGT_MNEMONICS_8616
         | _JCC_COMPARISON_MNEMONICS_8616
     )
-    _BLOCK_TERMINATORS = {  # noqa: RUF012
+    _BLOCK_TERMINATORS: ClassVar[set[str]] = {
         "call",
         "jmp",
         *_SIMPLE_JCC_8616,
@@ -170,7 +171,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         "int3",
         "hlt",
     }
-    _REG_OFFSETS = {  # noqa: RUF012
+    _REG_OFFSETS: ClassVar[dict[reg16_t | int, int]] = {
         reg16_t.AX: 0,
         reg16_t.CX: 4,
         reg16_t.DX: 8,
@@ -185,10 +186,15 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         22: 40,  # CS offset
     }
 
-    def lift(self, irsb_c: Any, past_instructions: list[Any], future_instructions: list[Any]) -> None:
+    def lift(self, irsb_c: Any, past_instructions: Any, future_instructions: Any) -> None:
         """Lift one decoded pyvex instruction into the active IRSB customizer."""
 
         self.irsb_c = irsb_c
+        self._past_instructions = past_instructions
+        self._future_instructions = future_instructions
+        if past_instructions and self.instr.repeat_class != "none":
+            self.jump(None, self.addr)
+            return
         self.mark_instruction_start()
         self.emu.irsb = irsb_c
         # Set the block address on the emulator so facts are keyed by block.
@@ -198,8 +204,6 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         block_addr = getattr(actual_irsb, "addr", self.addr)
         cast(Any, self.emu)._inertia_current_block_addr = block_addr
         self.emu.set_lifter_instruction(_LifterInstructionFacade(irsb_c, self))
-        self._past_instructions = past_instructions
-        self._future_instructions = future_instructions
         if self.instr.invalid_lock or self.instr.invalid_opcode_extension:
             guard = self.emu.constant(1, Type.int_1)
             target = self.emu.constant(0, Type.int_32)
@@ -303,6 +307,10 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     )
                     else None
                 )
+                dead_flags_wide_register_semantics = bool(
+                    matched_semantics
+                    and matched_semantics[0] == "ror_reg_imm32_dead_flags"
+                )
                 if (
                     segment_override
                     or (
@@ -312,7 +320,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                             and str(matched_semantics[0]).startswith("cmp_")
                         )
                     )
-                    or width_override
+                    or (width_override and not dead_flags_wide_register_semantics)
                     or self.instr.invalid_lock
                     or self.instr.invalid_opcode_extension
                 ):
@@ -501,6 +509,13 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         src_indexed_mem16 = self._indexed_mem(src, width_bytes=2)
         src_reg8 = self._reg8_name(src)
         dst_reg8 = self._reg8_name(dst)
+        dst_reg32 = self._reg32_name(dst)
+
+        if mnemonic == "ror" and dst_reg32 and src_imm8 is not None:
+            count = src_imm8 & 0x1F
+            written = StatusFlag8616.CARRY | StatusFlag8616.OVERFLOW
+            if count == 0 or self.status_flag_write_is_dead_8616(written):
+                return ("ror_reg_imm32_dead_flags", dst_reg32, count)
 
         if mnemonic == "mov" and dst_reg8:
             if src_indexed_mem8 is not None:
@@ -868,6 +883,13 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             return None
         reg_name = self.cs.reg_name(operand.reg).lower()
         return reg_name if reg_name in self._REG16_NAMES else None
+
+    def _reg32_name(self, operand: Any) -> str | None:
+        """Return one exact 32-bit GP register name from a Capstone operand."""
+        if operand.type != 1 or operand.size != 4:
+            return None
+        reg_name = self.cs.reg_name(operand.reg).lower()
+        return reg_name if reg_name in self._REG32_NAMES else None
 
     @staticmethod
     def _imm8_value(operand: Any) -> int | None:
@@ -1655,6 +1677,18 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     width_bits=16,
                     memory_access_insn=self.addr,
                 )
+                if lhs is None:
+                    register_index = self._condition_reg_value_8616(
+                        base_reg,
+                        width_bits=16,
+                    )
+                    if register_index is not None:
+                        lhs = self._condition_indexed_ds_value_8616(
+                            mem_spec,
+                            (register_index, 0),
+                            width_bits=16,
+                            memory_access_insn=self.addr,
+                        )
             rhs = self._condition_const_value_8616(imm, width_bits=16)
             return (lhs, rhs) if lhs is not None else None
         if kind == "cmp_abs_reg16":
@@ -2647,18 +2681,20 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
 
     # Module-level condition cache for transfer from lifter to codegen.
     # Keyed by block address → list[ConditionIR | ConditionFailure].
-    _inertia_module_condition_cache: dict[int, list[ConditionIR | ConditionFailure]] = {}  # noqa: RUF012
-    _inertia_pending_condition_sources_by_addr: dict[int, ConditionSource] = {}  # noqa: RUF012
-    _inertia_condition_reg_affine_state_8616: dict[str, tuple[IRValue, int]] = {}  # noqa: RUF012
-    _inertia_condition_reg_affine_state_snapshots_8616: dict[int, dict[str, tuple[IRValue, int]]] = {}  # noqa: RUF012
-    _inertia_condition_index_reg_state_8616: dict[
+    _inertia_module_condition_cache: ClassVar[dict[int, list[ConditionIR | ConditionFailure]]] = {}
+    _inertia_pending_condition_sources_by_addr: ClassVar[dict[int, ConditionSource]] = {}
+    _inertia_condition_reg_affine_state_8616: ClassVar[dict[str, tuple[IRValue, int]]] = {}
+    _inertia_condition_reg_affine_state_snapshots_8616: ClassVar[
+        dict[int, dict[str, tuple[IRValue, int]]]
+    ] = {}
+    _inertia_condition_index_reg_state_8616: ClassVar[dict[
         str,
         tuple[IRValue | IRBinaryValue, int],
-    ] = {}  # noqa: RUF012
-    _inertia_condition_reg_value_state_8616: dict[
+    ]] = {}
+    _inertia_condition_reg_value_state_8616: ClassVar[dict[
         tuple[int, str],
         _ConditionRegisterValueState8616,
-    ] = {}  # noqa: RUF012
+    ]] = {}
 
     def _record_typed_condition_8616(self, cond: ConditionIR | ConditionFailure) -> None:
         """Record a typed condition on the emulator AND module cache for function-level transfer."""
@@ -2782,6 +2818,17 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     "eax",
                 )
                 self._widen_condition_reg_value_state_8616("eax")
+                return
+            if kind == "ror_reg_imm32_dead_flags":
+                _, reg_name, count = semantics
+                value = self.get(reg_name, Type.int_32)
+                if count:
+                    rotate_count = self.constant(count, Type.int_8)
+                    inverse_count = self.constant(32 - count, Type.int_8)
+                    value = (value >> rotate_count) | (value << inverse_count)
+                self.put(value, reg_name)
+                self._clear_condition_index_reg_state_8616(reg_name)
+                self._clear_condition_reg_value_state_8616(reg_name)
                 return
             if kind == "push_reg16":
                 _, reg_name = semantics
@@ -3070,7 +3117,7 @@ update_abstractmethods(Instruction_ANY)
 class Lifter86_16(GymratLifter):  # type: ignore[misc]  # dynamic pyvex base
     """Gymrat lifter entry point for the 16-bit x86 frontend."""
 
-    instrs: list[type[Instruction_ANY]] = [Instruction_ANY]  # noqa: RUF012
+    instrs: ClassVar[list[type[Instruction_ANY]]] = [Instruction_ANY]
 
     def decode(self) -> list[Any]:
         """Decode a pyvex block into 16-bit instruction objects."""

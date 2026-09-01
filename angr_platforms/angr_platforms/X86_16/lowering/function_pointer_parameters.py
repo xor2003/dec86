@@ -9,6 +9,8 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Protocol, cast
@@ -19,7 +21,6 @@ from angr.sim_type import (
     SimTypeChar,
     SimTypeFunction,
     SimTypeLong,
-    SimTypePointer,
     SimTypeShort,
 )
 from angr.sim_variable import SimStackVariable
@@ -35,6 +36,14 @@ from .function_pointer_parameter_evidence import (
     FunctionPointerParameterFailure8616,
     collect_function_pointer_parameter_evidence_8616,
 )
+from .near_pointer_type import SimTypeNearPointer16_8616, near_pointer_type_8616
+from .stack_prototype_layout import (
+    stack_prototype_argument_layout_8616,
+    stack_prototype_cvar_for_machine_bp_range_8616,
+)
+from .stack_storage_evidence import proven_bp_entry_sp_delta_8616
+
+log: logging.Logger = logging.getLogger(__name__)
 
 
 class _VariableManager8616(Protocol):
@@ -109,14 +118,17 @@ def _integer_type_8616(width: int, arch: Arch) -> SimType:
     return cast(SimType, type_.with_arch(arch))
 
 
-def _function_pointer_type_8616(fact: FunctionPointerParameterFact8616, arch: Arch) -> SimTypePointer:
+def _function_pointer_type_8616(
+    fact: FunctionPointerParameterFact8616,
+    arch: Arch,
+) -> SimTypeNearPointer16_8616:
     """Build a near function-pointer type from one classified binary fact."""
     prototype = SimTypeFunction(
         [_integer_type_8616(width, arch) for width in fact.argument_widths],
         _integer_type_8616(fact.return_width, arch),
         variadic=False,
     ).with_arch(arch)
-    return cast(SimTypePointer, SimTypePointer(prototype).with_arch(arch))
+    return near_pointer_type_8616(cast(SimType, prototype), arch)
 
 
 def _typed_summary_values_8616(codegen: _Codegen8616) -> tuple[CallsiteSummary8616, ...]:
@@ -131,17 +143,75 @@ def _typed_summary_values_8616(codegen: _Codegen8616) -> tuple[CallsiteSummary86
     )
 
 
-def _stack_argument_at_offset_8616(cfunc: _CFunction8616, offset: int) -> tuple[int, CVariable] | None:
-    """Return one uniquely bound positive-BP argument at an exact offset."""
-    matches = tuple(
-        (index, argument)
-        for index, argument in enumerate(cfunc.arg_list)
-        if isinstance(argument, CVariable)
-        and isinstance(argument.variable, SimStackVariable)
-        and argument.variable.offset == offset
-        and argument.variable.base == "bp"
+def _debug_parameter_surface_8616(
+    codegen: _Codegen8616,
+    cfunc: _CFunction8616,
+    evidence: FunctionPointerParameterEvidence8616,
+) -> None:
+    """Report the typed ABI surface only when explicit diagnostics are enabled."""
+    if not os.environ.get("INERTIA_DEBUG_FUNCTION_POINTER_PARAMETERS"):
+        return
+    layout: list[tuple[int, int | None, int | None, str | None]] = []
+    for index, argument in enumerate(cfunc.arg_list):
+        if isinstance(argument, CVariable) and isinstance(argument.variable, SimStackVariable):
+            layout.append(
+                (
+                    index,
+                    argument.variable.offset,
+                    argument.variable.size,
+                    argument.variable.base,
+                )
+            )
+        else:
+            layout.append((index, None, None, None))
+    prototype_count = (
+        len(tuple(cfunc.functy.args or ()))
+        if isinstance(cfunc.functy, SimTypeFunction)
+        else None
     )
-    return matches[0] if len(matches) == 1 else None
+    log.warning(
+        "[function-pointer-parameters] function=%#x facts=%r prototype_count=%r bp_delta=%r arg_layout=%r",
+        cfunc.addr,
+        tuple(fact.stack_offset for fact in evidence.facts),
+        prototype_count,
+        proven_bp_entry_sp_delta_8616(codegen),
+        tuple(layout),
+    )
+
+
+def _stack_argument_at_offset_8616(
+    codegen: _Codegen8616,
+    cfunc: _CFunction8616,
+    offset: int,
+    storage_width: int,
+) -> tuple[int, CVariable] | None:
+    """Resolve one machine-BP slot through the authoritative frame layout."""
+    layout = stack_prototype_argument_layout_8616(cfunc.functy, codegen.project.arch)
+    slots = tuple(
+        (index, slot)
+        for index, slot in enumerate(layout)
+        if slot.offset == offset and slot.storage_width == storage_width
+    )
+    if os.environ.get("INERTIA_DEBUG_FUNCTION_POINTER_PARAMETERS"):
+        log.warning(
+            "[function-pointer-parameters] resolve offset=%d width=%d layout=%r slot_count=%d",
+            offset,
+            storage_width,
+            tuple((slot.offset, slot.storage_width) for slot in layout),
+            len(slots),
+        )
+    if len(slots) != 1:
+        return None
+    argument = stack_prototype_cvar_for_machine_bp_range_8616(
+        codegen,
+        offset,
+        storage_width,
+    )
+    if os.environ.get("INERTIA_DEBUG_FUNCTION_POINTER_PARAMETERS"):
+        log.warning("[function-pointer-parameters] resolve cvar=%s", argument is not None)
+    if argument is None:
+        return None
+    return slots[0][0], argument
 
 
 def _replace_prototype_argument_8616(
@@ -168,17 +238,43 @@ def _replace_prototype_argument_8616(
 
 def _materialize_fact_8616(
     project: _Project8616,
+    codegen: _Codegen8616,
     cfunc: _CFunction8616,
     fact: FunctionPointerParameterFact8616,
 ) -> tuple[bool, FunctionPointerParameterFailure8616 | None]:
     """Persist one classified fact to the argument, AST, manager, and prototypes."""
-    matched = _stack_argument_at_offset_8616(cfunc, fact.stack_offset)
-    if matched is None or not isinstance(cfunc.functy, SimTypeFunction):
+    if not isinstance(cfunc.functy, SimTypeFunction):
+        return False, FunctionPointerParameterFailure8616.PARAMETER_SLOT_MISSING
+    prototype_args = tuple(cfunc.functy.args or ())
+    pointer_type = _function_pointer_type_8616(fact, project.arch)
+    try:
+        pointer_bits = pointer_type.size
+    except ValueError:
+        return False, FunctionPointerParameterFailure8616.PARAMETER_SLOT_MISSING
+    byte_width = project.arch.byte_width
+    if (
+        not isinstance(pointer_bits, int)
+        or not isinstance(byte_width, int)
+        or byte_width <= 0
+        or pointer_bits <= 0
+        or pointer_bits % byte_width != 0
+    ):
+        return False, FunctionPointerParameterFailure8616.PARAMETER_SLOT_MISSING
+    pointer_storage_width = max(2, ((pointer_bits // byte_width) + 1) & ~1)
+    matched = _stack_argument_at_offset_8616(
+        codegen,
+        cfunc,
+        fact.stack_offset,
+        pointer_storage_width,
+    )
+    if matched is None:
         return False, FunctionPointerParameterFailure8616.PARAMETER_SLOT_MISSING
     index, argument = matched
-    if index >= len(tuple(cfunc.functy.args or ())):
+    if index >= len(prototype_args):
         return False, FunctionPointerParameterFailure8616.PARAMETER_SLOT_MISSING
-    pointer_type = _function_pointer_type_8616(fact, project.arch)
+    if not isinstance(argument.variable, SimStackVariable):
+        return False, FunctionPointerParameterFailure8616.PARAMETER_SLOT_MISSING
+    argument_offset = argument.variable.offset
     try:
         cfunc.variable_manager.set_variable_type(
             argument.variable,
@@ -200,7 +296,7 @@ def _materialize_fact_8616(
             if (
                 isinstance(node, CVariable)
                 and isinstance(node.variable, SimStackVariable)
-                and node.variable.offset == fact.stack_offset
+                and node.variable.offset == argument_offset
                 and node.variable.base == "bp"
                 and node.variable_type != pointer_type
             ):
@@ -235,12 +331,13 @@ def materialize_function_pointer_parameters_8616(project_raw: object, codegen_ra
     if cfunc is None or not evidence.facts:
         codegen._inertia_function_pointer_parameter_evidence_8616 = evidence
         return False
+    _debug_parameter_surface_8616(codegen, cfunc, evidence)
 
     changed = False
     materialized_count = 0
     failures = list(evidence.failures)
     for fact in evidence.facts:
-        fact_changed, failure = _materialize_fact_8616(project, cfunc, fact)
+        fact_changed, failure = _materialize_fact_8616(project, codegen, cfunc, fact)
         if failure is not None:
             failures.append(failure)
             continue
@@ -256,7 +353,7 @@ def materialize_function_pointer_parameters_8616(project_raw: object, codegen_ra
     if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
         raise PipelineHardError(
             "function-pointer parameter facts were classified but not materialized "
-            f"at {cfunc.addr:#x}"
+            f"at {cfunc.addr:#x}; failures={tuple(failure.value for failure in evidence.failures)!r}"
         )
     if changed:
         codegen._inertia_codegen_decl_refresh_required_8616 = True

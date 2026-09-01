@@ -3,6 +3,11 @@
 Layer: IR.
 Responsibility: publish and resolve one immutable binary-derived IR artifact per
 function address without rebuilding VEX, SSA, Alias, or semantic projections.
+
+Owns typed Value, Address, Condition, instruction facts, and lossless
+normalization. Do not perform alias-state ownership, widening,
+lowering/materialization, structuring, rewrite, postprocess, or CLI/reporting
+work here.
 """
 
 from __future__ import annotations

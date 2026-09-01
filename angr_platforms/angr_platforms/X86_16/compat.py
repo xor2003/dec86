@@ -6,6 +6,7 @@ Forbidden: recovering alias, type, or validation semantics through compatibility
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 from angr import ailment
@@ -63,8 +64,9 @@ def _normalize_x86_16_io_dirty_statements(
             continue
         raw_fact_count += 1
         operands = tuple(dirty.operands)
-        width = operands[-1].value if len(operands) == 3 and isinstance(operands[-1], ailment.Expr.Const) else None
-        helper = helper_by_width.get(width)
+        width_value = operands[-1].value if len(operands) == 3 and isinstance(operands[-1], ailment.Expr.Const) else None
+        width = width_value if isinstance(width_value, int) else None
+        helper = helper_by_width.get(width) if width is not None else None
         if helper is None:
             failure_count += 1
             statements.append(statement)
@@ -116,8 +118,12 @@ def _apply_function_prototype_source_compatibility() -> None:
 
 
 def _apply_clinic_custom_lifter_compatibility() -> None:
-    """Keep Clinic's native fast relift from bypassing the x86-16 lifter."""
-    current = Clinic._convert_vex_fast
+    """Keep Clinic's native fast relift from bypassing the x86-16 lifter.
+
+    Dynamic boundary: marker attributes belong to third-party angr methods
+    whose compatibility wrappers must remain idempotent across imports.
+    """
+    current = cast(Callable[[_ClinicBoundary8616, object], object | None], Clinic._convert_vex_fast)
     if getattr(current, "_inertia_x86_16_custom_lifter_guard", False):
         return
 
@@ -128,13 +134,13 @@ def _apply_clinic_custom_lifter_compatibility() -> None:
         """Use cached custom VEX for x86-16 and retain angr's fast path otherwise."""
         if clinic.project.arch.name == "86_16":
             return None
-        return current(cast(Any, clinic), cast(Any, block))
+        return current(clinic, block)
 
     guarded = cast(Any, _convert_vex_fast_with_custom_lifter_guard)
     guarded._inertia_x86_16_custom_lifter_guard = True
     Clinic._convert_vex_fast = guarded
 
-    current_convert = Clinic._convert_vex
+    current_convert = cast(Callable[[_ClinicBoundary8616, object], object], Clinic._convert_vex)
     if getattr(current_convert, "_inertia_x86_16_io_dirty_normalizer", False):
         return
 
@@ -143,7 +149,7 @@ def _apply_clinic_custom_lifter_compatibility() -> None:
         block: object,
     ) -> object:
         """Materialize x86-16 port writes immediately after VEX-to-AIL conversion."""
-        converted = current_convert(cast(Any, clinic), cast(Any, block))
+        converted = current_convert(clinic, block)
         if clinic.project.arch.name != "86_16":
             return converted
         converted, raw, _normalized, materialized, failures = _normalize_x86_16_io_dirty_statements(converted)

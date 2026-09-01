@@ -564,6 +564,42 @@ def test_lifted_indexed_word_immediate_cmp_materializes_jcc_condition() -> None:
     assert condition.rhs == IRValue(MemSpace.CONST, const=0xFFFF, size=2, expr=("cmp-imm",))
 
 
+def test_lifted_indexed_cmp_falls_back_to_live_register_after_ds_load() -> None:
+    """A DS-derived index still denotes the live architectural register at CMP."""
+    import pyvex
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.ir.condition_lift_capture import isolated_condition_lift_session_8616
+
+    instruction_addr = 0x4000
+    data = bytes.fromhex("8b36420083bc351a00750390c3")
+    with isolated_condition_lift_session_8616() as capture:
+        pyvex.lift(data, instruction_addr, Arch86_16(), max_bytes=len(data), opt_level=0)
+
+    [condition] = capture.condition_cache[instruction_addr]
+    assert condition.op == "ne"
+    assert condition.lhs == IRValue(
+        MemSpace.DS,
+        offset=0x1A35,
+        size=2,
+        index=IRValue(
+            MemSpace.REG,
+            name="si",
+            offset=0x18,
+            size=2,
+            expr=("cmp-reg",),
+        ),
+        index_shift=0,
+        memory_access_size=2,
+        memory_access_insn=instruction_addr + 4,
+    )
+    assert condition.rhs == IRValue(
+        MemSpace.CONST,
+        const=0,
+        size=2,
+        expr=("cmp-imm",),
+    )
+
+
 def test_indexed_byte_cmp_uses_exact_loaded_rhs_until_register_clobber():
     from angr_platforms.X86_16.arch_86_16 import Arch86_16
     from angr_platforms.X86_16.lift_86_16 import Instruction_ANY

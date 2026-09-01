@@ -7,6 +7,8 @@ conservative fallback when Structuring distributes linear machine carriers
 across more than one nested statement group.
 Consumes alias, widening, and typed facts without deriving semantics from C
 shape, rendered text, symbols, source, or assembly.
+
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

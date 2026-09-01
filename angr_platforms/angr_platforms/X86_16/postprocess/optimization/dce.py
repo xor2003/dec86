@@ -1386,6 +1386,8 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             "_inertia_stack_canonicalization_bridges",
             "_inertia_tail_validation_widened_carriers",
             "_inertia_linear_recurrence_state",
+            "_inertia_gp_stack_restore_snapshots_8616",
+            "_inertia_packed_flags_state_live_ins_8616",
         )
         for attr in attrs:
             obj = _dynamic_dce_getattr_8616(codegen, attr, None)

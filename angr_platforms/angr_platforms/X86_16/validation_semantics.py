@@ -39,7 +39,7 @@ _SIMPLE_ASSIGN_RE_8616 = re.compile(
 )
 _PLACEHOLDER_STACK_RE_8616 = re.compile(
     r"(?<![A-Za-z0-9_])(?:&\s*)?"
-    r"(?:s_[0-9a-f]+|stack_(?!object_[0-9a-f]+\b)\w*|ir_[0-9a-f]+)"
+    r"(?:s_[0-9a-f]+|stack_(?!object_[0-9a-f]+\b)\w*)"
     r"(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )

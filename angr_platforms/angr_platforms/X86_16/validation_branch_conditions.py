@@ -503,7 +503,11 @@ def _post_body_do_while_fingerprint_8616(
     candidate: object,
     condition_fingerprint: Callable[[object], str],
 ) -> str | None:
-    """Return the guard fingerprint after one proven terminal induction update."""
+    """Return the guard fingerprint after one proven terminal induction update.
+
+    Dynamic boundary: loop bodies are third-party angr C-AST nodes whose
+    statement container is not part of an owned Inertia contract.
+    """
     loops = tuple(
         node
         for node in _iter_c_nodes_deep_8616(root)

@@ -375,6 +375,12 @@ def test_structuring_codegen_replays_only_consumers_invalidated_by_rebuild(monke
         or (actual_project is project and actual_codegen is codegen),
     )
     monkeypatch.setattr(
+        stage._condition_refresh,
+        "refresh_structuring_condition_semantics_8616",
+        lambda actual_project, actual_codegen: calls.append("condition")
+        or stage._condition_refresh.StructuringConditionRefreshResult8616.stable(),
+    )
+    monkeypatch.setattr(
         stage,
         "_replay_structuring_lowering_before_validation_8616",
         lambda *_args: pytest.fail("intermediate codegen must not replay all Lowering"),
@@ -388,7 +394,14 @@ def test_structuring_codegen_replays_only_consumers_invalidated_by_rebuild(monke
     changed = stage._run_structuring_codegen_with_lowering_replay_8616(project, codegen)
 
     assert changed is True
-    assert calls == ["codegen", "direct", "segment-global", "call-stack", "carrier"]
+    assert calls == [
+        "codegen",
+        "direct",
+        "segment-global",
+        "call-stack",
+        "condition",
+        "carrier",
+    ]
 
 
 def test_structuring_codegen_skips_lowering_replay_without_rebuild(monkeypatch):
@@ -417,6 +430,11 @@ def test_structuring_codegen_skips_lowering_replay_without_rebuild(monkeypatch):
         lambda actual_project, actual_codegen: calls.append("call-stack") or False,
     )
     monkeypatch.setattr(
+        stage._condition_refresh,
+        "refresh_structuring_condition_semantics_8616",
+        lambda *_args: pytest.fail("unchanged codegen must not refresh conditions"),
+    )
+    monkeypatch.setattr(
         stage,
         "prune_unread_stack_lowered_register_carriers_8616",
         lambda actual_codegen: calls.append("carrier") or False,
@@ -426,6 +444,35 @@ def test_structuring_codegen_skips_lowering_replay_without_rebuild(monkeypatch):
 
     assert changed is False
     assert calls == ["codegen", "call-stack", "carrier"]
+
+
+def test_structuring_codegen_refuses_unclosed_condition_refresh(monkeypatch):
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    monkeypatch.setattr(stage._codegen, "apply_structuring_codegen_8616", lambda *_args: True)
+    monkeypatch.setattr(
+        stage,
+        "_apply_structuring_direct_stack_materialization_8616",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        stage,
+        "_prime_structuring_segment_global_semantics_8616",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        stage,
+        "_replay_materialized_call_stack_metadata_8616",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        stage._condition_refresh,
+        "refresh_structuring_condition_semantics_8616",
+        lambda *_args: stage._condition_refresh.StructuringConditionRefreshResult8616.unclosed(),
+    )
+
+    with pytest.raises(stage.PipelineHardError, match="condition refresh remained unclosed"):
+        stage._run_structuring_codegen_with_lowering_replay_8616(project, codegen)
 
 
 def test_structuring_pointer_arg_indirect_owner_records_pass(monkeypatch):

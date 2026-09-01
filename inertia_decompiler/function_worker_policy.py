@@ -12,6 +12,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+CLEAN_PROCESS_WORKER_CAP_8616: int = 4
+"""Conservative aggregate-memory cap for isolated x86-16 workers.
+
+Each clean interpreter retains its own angr/native state, while the parent may
+also spawn GCC for acceptance checks.  Limiting only the isolated lane keeps
+whole-file audits parallel without treating the per-process memory limit as an
+aggregate budget.
+"""
+
 
 class _FunctionWorkItem8616(Protocol):
     """Minimal work-item surface required by clean-worker scheduling."""
@@ -119,5 +128,12 @@ def select_function_worker_policy_8616(
         return FunctionWorkerPolicy8616(FunctionWorkerMode8616.SHARED, 1)
     return FunctionWorkerPolicy8616(
         FunctionWorkerMode8616.CLEAN_PROCESS,
-        max(1, min(function_count or 1, shared_worker_count)),
+        max(
+            1,
+            min(
+                function_count or 1,
+                shared_worker_count,
+                CLEAN_PROCESS_WORKER_CAP_8616,
+            ),
+        ),
     )

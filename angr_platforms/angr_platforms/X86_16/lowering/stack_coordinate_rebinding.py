@@ -145,11 +145,14 @@ def rebind_restored_stack_coordinate_registry_8616(
     codegen: object,
     root: object,
 ) -> StackCoordinateRebindReport8616:
-    """Rebind registry entries to exact C variables in a restored AST."""
+    """Rebind registry entries to exact C variables in restored AST roots."""
     registry = stack_variable_coordinate_registry_8616(codegen)
+    roots = tuple(root) if isinstance(root, (list, tuple)) else (root,)
+    seen: set[int] = set()
     cvars = tuple(
         node
-        for node in _iter_c_nodes_deep_8616(root)
+        for candidate in roots
+        for node in _iter_c_nodes_deep_8616(candidate, seen)
         if isinstance(node, structured_c.CVariable)
     )
     normalized = 0

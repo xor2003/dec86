@@ -5,6 +5,9 @@ Responsibility: apply a function-wide caller-observed AL signedness proof to
 generated angr Function and CFunction prototypes without changing arguments.
 Consumes alias, widening, typed conditions, and Semantics return storage.
 This module does not inspect assembly, source, COD, or rendered C text.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

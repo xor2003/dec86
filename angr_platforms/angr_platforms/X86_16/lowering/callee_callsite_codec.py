@@ -4,6 +4,9 @@ Layer: Types/Lowering.
 Responsibility: encode and rebind already-derived direct-caller facts while
 preserving target, caller, callsite, summary, and project-owner identities.
 This module does not discover calls or derive arity, width, or value classes.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

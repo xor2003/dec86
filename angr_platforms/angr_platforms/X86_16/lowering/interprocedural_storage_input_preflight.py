@@ -6,6 +6,9 @@ callsite before the storage collector pays for reaching-definition SSA.
 Consumes callsite, stack identity, signedness, and pointer facts. This module
 does not build SSA, resolve reaching definitions, mutate codegen, or infer
 missing evidence.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

@@ -1,0 +1,1238 @@
+"""Replay exact segmented IR loads into retained structured register carriers.
+
+Layer: Types/Lowering
+Responsibility: consume proven function IR LOAD and same-instruction register
+write facts only for unresolved carriers; preserve earlier typed object lowering.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
+Do not guess across missing temporary and instruction provenance.
+"""
+
+from __future__ import annotations
+
+import copy
+import logging
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Protocol, cast
+
+from angr.ailment.expression import VirtualVariableCategory
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimTemporaryVariable
+
+from ..c_ast_utils import (
+    _iter_c_nodes_deep_8616,
+    _replace_c_children_8616,
+    _structured_codegen_node_8616,
+    _structured_slot_names_8616,
+)
+from ..ir.core import AddressStatus, IRAddress, IRBinaryValue, IRValue, MemSpace, SegmentOrigin
+from ..ir.function_ir_registry import (
+    FunctionIRArtifactVerdict8616,
+    registered_function_ir_artifact_8616,
+)
+from ..ir.function_ssa_registry import (
+    FunctionSSAArtifactVerdict8616,
+    registered_function_ssa_artifact_8616,
+)
+from ..ir.logical_memory_register_transfer import trace_logical_word_register_transfer_8616
+from ..ir.logical_memory_register_transfer_contracts import (
+    LogicalMemoryRegisterTransfer8616,
+    LogicalMemoryRegisterTransferKind8616,
+)
+from ..ir.ssa_cfg import build_ssa_cfg_snapshot_8616, compute_ssa_dominators_8616
+from .gp_register_state import (
+    gp_live_in_names_from_ssa_8616,
+    runtime_gp_live_in_name_8616,
+    runtime_gp_state_expr_8616,
+)
+from .segment_access_policy import instruction_addrs_from_node_8616
+from .segment_register_state import runtime_segment_state_cvar_8616
+
+__all__ = ["IRSegmentedLoadCarrierStats8616", "materialize_ir_segmented_load_carriers_8616"]
+
+
+class _ArchRegisters8616(Protocol):
+    """Architecture register map consumed at the third-party boundary."""
+
+    registers: Mapping[str, tuple[int, int]]
+
+
+class _Project8616(Protocol):
+    """Project fields consumed by carrier replay."""
+
+    arch: _ArchRegisters8616
+
+
+class _CFunction8616(Protocol):
+    """Structured function fields mutated by carrier replay."""
+
+    addr: int
+    statements: object
+
+
+class _Codegen8616(Protocol):
+    """Dynamic codegen boundary consumed by carrier replay."""
+
+    project: _Project8616 | None
+    cfunc: _CFunction8616 | None
+    _inertia_ir_segmented_load_carrier_stats_8616: IRSegmentedLoadCarrierStats8616
+
+
+@dataclass(frozen=True, slots=True)
+class IRSegmentedLoadCarrierStats8616:
+    """Closed evidence loop for direct segmented-load carrier replay."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SegmentedLoadFact8616:
+    """One exact IR load fact keyed by temporary and instruction identity."""
+
+    temporary_id: int
+    instruction_addr: int
+    address: IRAddress
+    segment_constant: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisterWriteFact8616:
+    """One exact IR register write containing a proven segmented LOAD leaf."""
+
+    register_name: str
+    instruction_addr: int
+    value: IRValue | IRBinaryValue
+    loads_by_temporary: dict[int, _SegmentedLoadFact8616]
+
+
+@dataclass(frozen=True, slots=True)
+class _LogicalRegisterWriteFact8616:
+    """One proven logical word reload into an exact physical register."""
+
+    register_name: str
+    block_addr: int
+    instruction_addr: int
+    address: IRAddress
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisterSSAIdentity8616:
+    """Exact structured-codegen identity shared with def-use validation."""
+
+    reg: int
+    size: int
+    region: int
+    ident: int | str
+
+
+@dataclass(frozen=True, slots=True)
+class _LogicalAssignmentMaterialization8616:
+    """Inserted reload keys and SSA identities now owned by those assignments."""
+
+    keys: frozenset[tuple[str, str, int]]
+    identities: frozenset[_RegisterSSAIdentity8616]
+
+
+def _store_stats_8616(
+    codegen: _Codegen8616,
+    stats: IRSegmentedLoadCarrierStats8616,
+) -> None:
+    """Publish closed counters and optionally expose worker-process diagnostics."""
+    codegen._inertia_ir_segmented_load_carrier_stats_8616 = stats
+    if os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+        logging.getLogger(__name__).warning(
+            "IR segmented-load carriers function=%#x raw=%d normalized=%d classified=%d materialized=%d failures=%d",
+            codegen.cfunc.addr if codegen.cfunc is not None else -1,
+            stats.raw_fact_count,
+            stats.normalized_fact_count,
+            stats.classified_fact_count,
+            stats.materialized_count,
+            stats.failure_count,
+        )
+
+
+def _debug_assignment_identity_8616(node: structured_c.CAssignment) -> None:
+    """Report bounded third-party AST identity only when explicitly requested."""
+    if not os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+        return
+    lhs = node.lhs
+    variable = lhs.variable if isinstance(lhs, structured_c.CVariable) else None
+    if not isinstance(variable, SimRegisterVariable):
+        return
+    logging.getLogger(__name__).warning(
+        "IR segmented-load carrier AST lhs=%s variable=%s name=%r reg=%r size=%r insn_addrs=%r tags=%r",
+        type(lhs).__name__,
+        type(variable).__name__,
+        variable.name,
+        variable.reg,
+        variable.size,
+        instruction_addrs_from_node_8616(node),
+        node.tags,
+    )
+
+
+def _temporary_id_8616(node: object) -> int | None:
+    """Return an explicit temporary ID without parsing rendered names."""
+    if isinstance(node, structured_c.CDirtyExpression):
+        dirty = node.dirty
+        temporary_id = dirty.tmp_idx
+        if dirty.category is VirtualVariableCategory.TMP and isinstance(temporary_id, int):
+            return temporary_id
+        return None
+    if isinstance(node, structured_c.CVariable) and isinstance(node.variable, SimTemporaryVariable):
+        temporary_id = node.variable.tmp_id
+        return temporary_id if isinstance(temporary_id, int) else None
+    return None
+
+
+def _owned_load_fact_8616(
+    temporary_node: object,
+    provenance_node: object,
+    facts: dict[tuple[int, int], _SegmentedLoadFact8616],
+) -> _SegmentedLoadFact8616 | None:
+    """Select one load only when temporary and instruction identities agree."""
+    temporary_id = _temporary_id_8616(temporary_node)
+    if temporary_id is None:
+        return None
+    matches = tuple(
+        facts[(temporary_id, instruction_addr)]
+        for instruction_addr in instruction_addrs_from_node_8616(provenance_node)
+        if (temporary_id, instruction_addr) in facts
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _register_expr_8616(
+    codegen: _Codegen8616, register_name: str
+) -> structured_c.CVariable | None:
+    """Build one architecture-backed physical-register expression."""
+    project = codegen.project
+    if project is None:
+        return None
+    shape = project.arch.registers.get(register_name)
+    if shape is None or len(shape) < 2:
+        return None
+    offset, size = shape[:2]
+    return structured_c.CVariable(
+        SimRegisterVariable(offset, size, name=register_name),
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+
+
+def _offset_expr_8616(codegen: _Codegen8616, address: IRAddress) -> object | None:
+    """Project one exact register-plus-displacement segmented offset."""
+    project = codegen.project
+    cfunc = codegen.cfunc
+    live_ins: frozenset[str] = frozenset()
+    if project is not None and cfunc is not None:
+        resolution = registered_function_ssa_artifact_8616(project, cfunc.addr)
+        if resolution.verdict is FunctionSSAArtifactVerdict8616.PROVEN and resolution.artifact is not None:
+            live_ins = gp_live_in_names_from_ssa_8616(resolution.artifact)
+    register_names: list[str] = []
+    terms: list[object] = []
+    for value in address.base_values:
+        if value.space is not MemSpace.REG or not isinstance(value.name, str):
+            return None
+        runtime_name = runtime_gp_live_in_name_8616(value.name)
+        register = (
+            runtime_gp_state_expr_8616(
+                value.name,
+                codegen=codegen,
+                function_addr=cfunc.addr,
+            )
+            if cfunc is not None and runtime_name in live_ins
+            else _register_expr_8616(codegen, value.name)
+        )
+        if os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+            logging.getLogger(__name__).warning(
+                "IR segmented-load offset base=%s canonical=%r live_ins=%r runtime=%s",
+                value.name,
+                runtime_name,
+                tuple(sorted(live_ins)),
+                cfunc is not None and runtime_name in live_ins,
+            )
+        if register is None:
+            return None
+        register_names.append(value.name)
+        terms.append(register)
+    if tuple(register_names) != address.base:
+        return None
+    expression: object | None = None
+    for term in terms:
+        expression = term if expression is None else structured_c.CBinaryOp("Add", expression, term, codegen=codegen)
+    if address.offset:
+        displacement = structured_c.CConstant(abs(address.offset), SimTypeShort(False), codegen=codegen)
+        if expression is None:
+            expression = structured_c.CConstant(address.offset & 0xFFFF, SimTypeShort(False), codegen=codegen)
+        else:
+            expression = structured_c.CBinaryOp(
+                "Add" if address.offset > 0 else "Sub", expression, displacement, codegen=codegen
+            )
+    return expression or structured_c.CConstant(0, SimTypeShort(False), codegen=codegen)
+
+
+def _load_facts_8616(codegen: _Codegen8616) -> dict[tuple[int, int], _SegmentedLoadFact8616]:
+    """Collect exact stable loads with explicit VEX temporary provenance."""
+    project = codegen.project
+    cfunc = codegen.cfunc
+    if project is None or cfunc is None:
+        return {}
+    resolution = registered_function_ir_artifact_8616(project, cfunc.addr)
+    if resolution.verdict is not FunctionIRArtifactVerdict8616.PROVEN or resolution.artifact is None:
+        return {}
+    candidates: dict[tuple[int, int], _SegmentedLoadFact8616 | None] = {}
+    for block in resolution.artifact.blocks:
+        register_constants: dict[str, int] = {}
+        segment_constants: dict[MemSpace, int] = {}
+        for instruction in block.instrs:
+            destination = instruction.dst
+            if (
+                instruction.op == "MOV"
+                and isinstance(destination, IRValue)
+                and destination.space is MemSpace.REG
+                and isinstance(destination.name, str)
+                and len(instruction.args) == 1
+                and isinstance(instruction.args[0], IRValue)
+            ):
+                source = instruction.args[0]
+                constant = (
+                    source.const
+                    if source.space is MemSpace.CONST and isinstance(source.const, int)
+                    else register_constants.get(source.name)
+                    if source.space is MemSpace.REG and isinstance(source.name, str)
+                    else None
+                )
+                if constant is None:
+                    register_constants.pop(destination.name, None)
+                else:
+                    register_constants[destination.name] = constant & 0xFFFF
+                if destination.name in {"ds", "es", "ss"}:
+                    segment_space = MemSpace(destination.name)
+                    if constant is None:
+                        segment_constants.pop(segment_space, None)
+                    else:
+                        segment_constants[segment_space] = constant & 0xFFFF
+            if not (
+                instruction.op == "LOAD"
+                and isinstance(instruction.addr, int)
+                and isinstance(destination, IRValue)
+                and destination.space is MemSpace.TMP
+                and isinstance(destination.source_tmp, int)
+                and len(instruction.args) == 1
+                and isinstance(instruction.args[0], IRAddress)
+            ):
+                continue
+            address = instruction.args[0]
+            if (
+                address.space not in {MemSpace.DS, MemSpace.ES, MemSpace.SS}
+                or address.status is not AddressStatus.STABLE
+                or address.segment_origin is not SegmentOrigin.PROVEN
+                or address.size not in {1, 2, 4}
+            ):
+                continue
+            fact = _SegmentedLoadFact8616(
+                destination.source_tmp,
+                instruction.addr,
+                address,
+                segment_constants.get(address.space),
+            )
+            key = (fact.temporary_id, fact.instruction_addr)
+            candidates[key] = fact if key not in candidates else None
+    return {key: fact for key, fact in candidates.items() if fact is not None}
+
+
+def _ir_load_dependencies_8616(
+    value: object, loads_by_temporary: dict[int, _SegmentedLoadFact8616]
+) -> tuple[_SegmentedLoadFact8616, ...] | None:
+    """Return all exact segmented-load leaves of one bounded IR value."""
+    if isinstance(value, IRValue):
+        if value.space is MemSpace.TMP:
+            if not isinstance(value.source_tmp, int):
+                return None
+            fact = loads_by_temporary.get(value.source_tmp)
+            return (fact,) if fact is not None else None
+        return () if value.space in {MemSpace.REG, MemSpace.CONST} else None
+    if isinstance(value, IRBinaryValue):
+        lhs = _ir_load_dependencies_8616(value.lhs, loads_by_temporary)
+        rhs = _ir_load_dependencies_8616(value.rhs, loads_by_temporary)
+        return None if lhs is None or rhs is None else (*lhs, *rhs)
+    return None
+
+
+def _register_write_facts_8616(
+    codegen: _Codegen8616,
+    load_facts: dict[tuple[int, int], _SegmentedLoadFact8616],
+) -> dict[tuple[str, int], _RegisterWriteFact8616]:
+    """Collect unambiguous same-instruction register writes using LOAD leaves."""
+    project = codegen.project
+    cfunc = codegen.cfunc
+    if project is None or cfunc is None:
+        return {}
+    resolution = registered_function_ir_artifact_8616(project, cfunc.addr)
+    if resolution.verdict is not FunctionIRArtifactVerdict8616.PROVEN or resolution.artifact is None:
+        return {}
+    loads_by_addr: dict[int, dict[int, _SegmentedLoadFact8616]] = {}
+    for fact in load_facts.values():
+        loads_by_addr.setdefault(fact.instruction_addr, {})[fact.temporary_id] = fact
+    candidates: dict[tuple[str, int], _RegisterWriteFact8616 | None] = {}
+    for block in resolution.artifact.blocks:
+        for instruction in block.instrs:
+            destination = instruction.dst
+            if not (
+                instruction.op == "MOV"
+                and isinstance(instruction.addr, int)
+                and isinstance(destination, IRValue)
+                and destination.space is MemSpace.REG
+                and isinstance(destination.name, str)
+                and len(instruction.args) == 1
+                and isinstance(instruction.args[0], (IRValue, IRBinaryValue))
+            ):
+                continue
+            loads = loads_by_addr.get(instruction.addr, {})
+            dependencies = _ir_load_dependencies_8616(instruction.args[0], loads)
+            if not dependencies:
+                continue
+            write_fact = _RegisterWriteFact8616(
+                destination.name.lower(), instruction.addr, instruction.args[0], loads
+            )
+            key = (write_fact.register_name, write_fact.instruction_addr)
+            candidates[key] = write_fact if key not in candidates else None
+    return {key: fact for key, fact in candidates.items() if fact is not None}
+
+
+def _logical_register_write_facts_8616(
+    codegen: _Codegen8616,
+) -> dict[tuple[str, int], _LogicalRegisterWriteFact8616]:
+    """Collect exact logical word reloads from the authoritative SSA contract."""
+    project = codegen.project
+    cfunc = codegen.cfunc
+    if project is None or cfunc is None:
+        return {}
+    resolution = registered_function_ssa_artifact_8616(project, cfunc.addr)
+    artifact = resolution.artifact
+    if (
+        resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN
+        or artifact is None
+        or artifact.logical_memory is None
+        or not artifact.logical_memory.closed
+    ):
+        return {}
+    candidates: dict[tuple[str, int], _LogicalRegisterWriteFact8616 | None] = {}
+    instruction_blocks = {
+        instruction.addr: block.addr
+        for block in artifact.blocks
+        for instruction in block.instrs
+        if isinstance(instruction.addr, int)
+    }
+    for access in artifact.logical_memory.accesses:
+        transfer = trace_logical_word_register_transfer_8616(artifact, access)
+        if not (
+            isinstance(transfer, LogicalMemoryRegisterTransfer8616)
+            and transfer.kind is LogicalMemoryRegisterTransferKind8616.RELOAD
+            and transfer.complete
+            and isinstance(transfer.register.name, str)
+        ):
+            continue
+        fact = _LogicalRegisterWriteFact8616(
+            transfer.register.name.lower(),
+            instruction_blocks.get(access.key.insn_addr, -1),
+            access.key.insn_addr,
+            access.address,
+        )
+        if fact.block_addr < 0:
+            continue
+        key = (fact.register_name, fact.instruction_addr)
+        candidates[key] = fact if key not in candidates else None
+    return {key: fact for key, fact in candidates.items() if fact is not None}
+
+
+def _register_ssa_identity_8616(node: object) -> _RegisterSSAIdentity8616 | None:
+    """Return the same exact structured register identity used by validation."""
+    if not isinstance(node, structured_c.CVariable):
+        return None
+    variables = tuple(
+        variable
+        for variable in (node.unified_variable, node.variable)
+        if isinstance(variable, SimRegisterVariable)
+    )
+    variable = next(
+        (
+            candidate
+            for candidate in variables
+            if isinstance(candidate.reg, int)
+            and isinstance(candidate.size, int)
+            and isinstance(candidate.region, int)
+            and isinstance(candidate.ident, (int, str))
+        ),
+        None,
+    )
+    if variable is None:
+        return None
+    return _RegisterSSAIdentity8616(
+        variable.reg,
+        variable.size,
+        variable.region,
+        variable.ident,
+    )
+
+
+def _same_block_reload_for_read_8616(
+    codegen: _Codegen8616,
+    identity: _RegisterSSAIdentity8616,
+    use_addr: int,
+    logical_facts: dict[tuple[str, int], _LogicalRegisterWriteFact8616],
+) -> _LogicalRegisterWriteFact8616 | None:
+    """Prove one same-block reload remains stable until one exact SSA read."""
+    project = codegen.project
+    cfunc = codegen.cfunc
+    if project is None or cfunc is None:
+        return None
+    register_names = {
+        name.lower()
+        for name, shape in project.arch.registers.items()
+        if len(shape) >= 2 and shape[:2] == (identity.reg, identity.size)
+    }
+    if len(register_names) != 1:
+        return None
+    resolution = registered_function_ssa_artifact_8616(project, cfunc.addr)
+    if resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or resolution.artifact is None:
+        return None
+    artifact = resolution.artifact
+    use_blocks = tuple(
+        block
+        for block in artifact.blocks
+        if any(instruction.addr == use_addr for instruction in block.instrs)
+    )
+    if len(use_blocks) != 1:
+        return None
+    block = use_blocks[0]
+    candidates = tuple(
+        fact
+        for fact in logical_facts.values()
+        if fact.register_name in register_names
+        and fact.block_addr == block.addr
+        and fact.instruction_addr <= use_addr
+    )
+    if not candidates:
+        return None
+    candidate = max(candidates, key=lambda fact: fact.instruction_addr)
+    base_registers = {
+        value.name.lower()
+        for value in candidate.address.base_values
+        if value.space is MemSpace.REG and isinstance(value.name, str)
+    }
+    for instruction in block.instrs:
+        if not (candidate.instruction_addr < instruction.addr < use_addr):
+            continue
+        destination = instruction.dst
+        if instruction.op in {"CALL", "STORE"}:
+            return None
+        if (
+            isinstance(destination, IRValue)
+            and destination.space is MemSpace.REG
+            and isinstance(destination.name, str)
+            and destination.name.lower() in base_registers | register_names
+        ):
+            return None
+    return candidate
+
+
+def _inherited_instruction_addresses_8616(
+    root: object,
+) -> dict[int, frozenset[int] | None]:
+    """Map each AST occurrence to its nearest unambiguous instruction provenance."""
+    inherited_addresses: dict[int, frozenset[int] | None] = {}
+
+    def collect(
+        value: object,
+        inherited: frozenset[int] | None,
+        active: frozenset[int],
+    ) -> None:
+        """Propagate one nearest exact instruction identity through AST children."""
+        if isinstance(value, dict):
+            for child in value.values():
+                collect(child, inherited, active)
+            return
+        if isinstance(value, (list, tuple)):
+            for child in value:
+                collect(child, inherited, active)
+            return
+        if not _structured_codegen_node_8616(value) or id(value) in active:
+            return
+        marker = id(value)
+        direct = instruction_addrs_from_node_8616(value)
+        current = direct if len(direct) == 1 else inherited
+        if current is None and isinstance(
+            value,
+            (
+                structured_c.CDoWhileLoop,
+                structured_c.CForLoop,
+                structured_c.CWhileLoop,
+            ),
+        ):
+            body_addresses = {
+                address
+                for child in _iter_c_nodes_deep_8616(value.body)
+                for address in instruction_addrs_from_node_8616(child)
+            }
+            if body_addresses:
+                current = frozenset({min(body_addresses)})
+        previous = inherited_addresses.get(marker, current)
+        inherited_addresses[marker] = current if previous == current else None
+        child_active = active | {marker}
+        for attr in _structured_slot_names_8616(value):
+            try:
+                # Dynamic third-party angr C-AST boundary: slot names vary by release.
+                child = getattr(value, attr)
+            except Exception:
+                continue
+            collect(child, current, child_active)
+
+    collect(root, None, frozenset())
+    return inherited_addresses
+
+
+def _nearest_linear_logical_fact_8616(
+    codegen: _Codegen8616,
+    identity: _RegisterSSAIdentity8616,
+    use_addr: int,
+    logical_facts: dict[tuple[str, int], _LogicalRegisterWriteFact8616],
+) -> _LogicalRegisterWriteFact8616 | None:
+    """Select one nearest reload on a mutation-free unique predecessor chain."""
+    project = codegen.project
+    cfunc = codegen.cfunc
+    if project is None or cfunc is None:
+        return None
+    names = {
+        name.lower()
+        for name, shape in project.arch.registers.items()
+        if len(shape) >= 2 and shape[:2] == (identity.reg, identity.size)
+    }
+    if len(names) != 1:
+        return None
+    resolution = registered_function_ssa_artifact_8616(project, cfunc.addr)
+    if resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or resolution.artifact is None:
+        return None
+    blocks = tuple(
+        block
+        for block in resolution.artifact.blocks
+        if any(instruction.addr == use_addr for instruction in block.instrs)
+    )
+    if len(blocks) != 1:
+        return None
+    if (
+        os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS")
+        and identity.ident in {"ir_3", "ir_4", "ir_5", "ir_6", "ir_9"}
+    ):
+        logging.getLogger(__name__).warning(
+            "IR segmented-load placement identity=%r use=%#x block=%#x facts=%r",
+            identity,
+            use_addr,
+            blocks[0].addr,
+            tuple(
+                (fact.register_name, fact.block_addr, fact.instruction_addr)
+                for fact in logical_facts.values()
+                if fact.register_name in names
+            ),
+        )
+    snapshot = build_ssa_cfg_snapshot_8616(resolution.artifact)
+    dominators = compute_ssa_dominators_8616(snapshot)
+    if not snapshot.complete or not dominators.complete:
+        return None
+    use_block_addr = blocks[0].addr
+    candidates = tuple(
+        fact
+        for fact in logical_facts.values()
+        if fact.register_name in names
+        and dominators.dominates(fact.block_addr, use_block_addr) is True
+        and (fact.block_addr != use_block_addr or fact.instruction_addr < use_addr)
+    )
+    if not candidates:
+        return None
+    depths = {
+        fact.block_addr: len(dominators.dominators(fact.block_addr) or ())
+        for fact in candidates
+    }
+    nearest_depth = max(depths.values())
+    nearest = tuple(fact for fact in candidates if depths[fact.block_addr] == nearest_depth)
+    candidate = max(nearest, key=lambda fact: fact.instruction_addr)
+    base_registers = {
+        value.name.lower()
+        for value in candidate.address.base_values
+        if value.space is MemSpace.REG and isinstance(value.name, str)
+    }
+    blocks_by_addr = {block.addr: block for block in resolution.artifact.blocks}
+    forward = {candidate.block_addr}
+    pending = [candidate.block_addr]
+    while pending:
+        block_addr = pending.pop()
+        if block_addr == use_block_addr:
+            continue
+        for successor in snapshot.successors(block_addr) or ():
+            if successor not in forward:
+                forward.add(successor)
+                pending.append(successor)
+    reverse = {use_block_addr}
+    pending = [use_block_addr]
+    while pending:
+        block_addr = pending.pop()
+        if block_addr == candidate.block_addr:
+            continue
+        for predecessor in snapshot.predecessors(block_addr) or ():
+            if predecessor not in reverse:
+                reverse.add(predecessor)
+                pending.append(predecessor)
+    path_blocks = forward & reverse
+    if candidate.block_addr not in path_blocks or use_block_addr not in path_blocks:
+        return None
+    for block_addr in sorted(path_blocks):
+        block = blocks_by_addr.get(block_addr)
+        if block is None:
+            return None
+        for instruction in block.instrs:
+            if block_addr == candidate.block_addr and instruction.addr <= candidate.instruction_addr:
+                continue
+            if block_addr == use_block_addr and instruction.addr >= use_addr:
+                continue
+            destination = instruction.dst
+            if instruction.op in {"CALL", "STORE"}:
+                return None
+            if (
+                isinstance(destination, IRValue)
+                and destination.space is MemSpace.REG
+                and isinstance(destination.name, str)
+                and destination.name.lower() in base_registers | names
+            ):
+                return None
+    return candidate
+
+
+def _insert_before_unique_following_statement_8616(
+    root: object,
+    load_addr: int,
+    first_use_addr: int,
+    assignment: structured_c.CAssignment,
+    use_occurrences: tuple[structured_c.CVariable, ...],
+) -> bool:
+    """Insert in the structured statement ancestry that owns the exact SSA use."""
+    use_ids = {id(node) for node in use_occurrences}
+    ordinary_owner_paths: list[tuple[int, ...]] = []
+    condition_owner_paths: list[tuple[int, ...]] = []
+
+    def collect_owner_paths(
+        value: object,
+        owners: tuple[int, ...],
+        in_condition: bool,
+        active: frozenset[int],
+    ) -> None:
+        """Record ancestry across the dynamic third-party angr C-AST boundary."""
+        if isinstance(value, dict):
+            for child in value.values():
+                collect_owner_paths(child, owners, in_condition, active)
+            return
+        if isinstance(value, (list, tuple)):
+            for child in value:
+                collect_owner_paths(child, owners, in_condition, active)
+            return
+        if not _structured_codegen_node_8616(value) or id(value) in active:
+            return
+        marker = id(value)
+        current_owners = (*owners, marker) if isinstance(value, structured_c.CStatements) else owners
+        if marker in use_ids:
+            (condition_owner_paths if in_condition else ordinary_owner_paths).append(current_owners)
+        child_active = active | {marker}
+        for attr in _structured_slot_names_8616(value):
+            try:
+                child = getattr(value, attr)
+            except Exception:
+                continue
+            is_loop_condition = isinstance(
+                value,
+                (
+                    structured_c.CDoWhileLoop,
+                    structured_c.CForLoop,
+                    structured_c.CWhileLoop,
+                ),
+            ) and attr == "condition"
+            collect_owner_paths(
+                child,
+                current_owners,
+                in_condition or is_loop_condition,
+                child_active,
+            )
+
+    collect_owner_paths(root, (), False, frozenset())
+    selected_paths = condition_owner_paths or ordinary_owner_paths
+    owner_ids = (
+        set.intersection(*(set(path) for path in selected_paths))
+        if selected_paths
+        else set()
+    )
+    owner_depths = {
+        owner: max(path.index(owner) for path in selected_paths if owner in path)
+        for owner in owner_ids
+    }
+    candidates: list[tuple[int, int, list[object], int, bool]] = []
+    for container in _iter_c_nodes_deep_8616(root):
+        if not isinstance(container, structured_c.CStatements):
+            continue
+        if id(container) not in owner_ids:
+            continue
+        statements = container.statements
+        if not isinstance(statements, list):
+            continue
+        for index, statement in enumerate(tuple(statements)):
+            following = tuple(
+                address
+                for address in instruction_addrs_from_node_8616(statement)
+                if load_addr < address <= first_use_addr
+            )
+            if following:
+                candidates.append(
+                    (
+                        min(following),
+                        owner_depths[id(container)],
+                        statements,
+                        index,
+                        isinstance(
+                            statement,
+                            (
+                                structured_c.CDoWhileLoop,
+                                structured_c.CForLoop,
+                                structured_c.CWhileLoop,
+                            ),
+                        ),
+                    )
+                )
+    if not candidates:
+        return False
+    nearest_addr = min(candidate[0] for candidate in candidates)
+    nearest = tuple(candidate for candidate in candidates if candidate[0] == nearest_addr)
+    deepest_owner = max(candidate[1] for candidate in nearest)
+    nearest = tuple(candidate for candidate in nearest if candidate[1] == deepest_owner)
+    loop_boundaries = tuple(candidate for candidate in nearest if candidate[4])
+    if loop_boundaries:
+        nearest = loop_boundaries
+    locations = {
+        (id(statements), index)
+        for _addr, _depth, statements, index, _is_loop in nearest
+    }
+    if len(locations) != 1:
+        container_ids = {
+            id(statements)
+            for _addr, _depth, statements, _index, _is_loop in nearest
+        }
+        if len(container_ids) == 1:
+            nearest = (min(nearest, key=lambda candidate: candidate[3]),)
+            locations = {(id(nearest[0][2]), nearest[0][3])}
+    if len(locations) != 1:
+        if os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+            logging.getLogger(__name__).warning(
+                "IR segmented-load insertion refused load=%#x use=%#x candidates=%r",
+                load_addr,
+                first_use_addr,
+                tuple(
+                    (addr, depth, index, is_loop)
+                    for addr, depth, _statements, index, is_loop in nearest
+                ),
+            )
+        return False
+    _addr, _depth, statements, index, _is_loop = nearest[0]
+    statements.insert(index, assignment)
+    return True
+
+
+def _materialize_missing_logical_assignments_8616(
+    codegen: _Codegen8616,
+    logical_facts: dict[tuple[str, int], _LogicalRegisterWriteFact8616],
+) -> _LogicalAssignmentMaterialization8616:
+    """Restore exact missing SSA assignments at proven structured boundaries."""
+    cfunc = codegen.cfunc
+    if cfunc is None:
+        return _LogicalAssignmentMaterialization8616(frozenset(), frozenset())
+    provenance = _inherited_instruction_addresses_8616(cfunc.statements)
+    definitions: dict[_RegisterSSAIdentity8616, set[int]] = {}
+    reads: dict[_RegisterSSAIdentity8616, list[structured_c.CVariable]] = {}
+    lhs_ids: set[int] = set()
+    for node in _iter_c_nodes_deep_8616(cfunc.statements):
+        if not isinstance(node, structured_c.CAssignment):
+            continue
+        lhs_ids.add(id(node.lhs))
+        identity = _register_ssa_identity_8616(node.lhs)
+        addresses = instruction_addrs_from_node_8616(node)
+        if identity is not None and len(addresses) == 1:
+            definitions.setdefault(identity, set()).add(next(iter(addresses)))
+    for node in _iter_c_nodes_deep_8616(cfunc.statements):
+        if id(node) in lhs_ids or not isinstance(node, structured_c.CVariable):
+            continue
+        identity = _register_ssa_identity_8616(node)
+        if identity is not None:
+            reads.setdefault(identity, []).append(node)
+    materialized: set[tuple[str, str, int]] = set()
+    materialized_identities: set[_RegisterSSAIdentity8616] = set()
+    for identity, occurrences in reads.items():
+        use_addrs = {
+            next(iter(addresses))
+            for node in occurrences
+            if (addresses := provenance.get(id(node))) is not None and len(addresses) == 1
+        }
+        if not use_addrs:
+            continue
+        first_use = min(use_addrs)
+        if any(address < first_use for address in definitions.get(identity, ())):
+            continue
+        fact = _nearest_linear_logical_fact_8616(
+            codegen,
+            identity,
+            first_use,
+            logical_facts,
+        )
+        if fact is None:
+            continue
+        source = _helper_for_address_8616(codegen, fact.address, fact.instruction_addr)
+        if source is None:
+            continue
+        lhs = copy.copy(occurrences[0])
+        assignment = structured_c.CAssignment(
+            lhs,
+            source,
+            codegen=codegen,
+            tags={
+                "ins_addr": fact.instruction_addr,
+                "inertia_source_instruction_addrs": (fact.instruction_addr,),
+            },
+        )
+        inserted = _insert_before_unique_following_statement_8616(
+            cfunc.statements,
+            fact.instruction_addr,
+            first_use,
+            assignment,
+            tuple(
+                node
+                for node in occurrences
+                if provenance.get(id(node)) == frozenset({first_use})
+            ),
+        )
+        if (
+            os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS")
+            and identity.ident in {"ir_3", "ir_4", "ir_5", "ir_6", "ir_9"}
+        ):
+            logging.getLogger(__name__).warning(
+                "IR segmented-load insertion identity=%r uses=%r definitions=%r fact=(%#x,%#x) inserted=%s",
+                identity,
+                tuple(sorted(use_addrs)),
+                tuple(sorted(definitions.get(identity, ()))),
+                fact.block_addr,
+                fact.instruction_addr,
+                inserted,
+            )
+        if inserted:
+            materialized.add(("reg", fact.register_name, fact.instruction_addr))
+            materialized_identities.add(identity)
+    return _LogicalAssignmentMaterialization8616(
+        frozenset(materialized),
+        frozenset(materialized_identities),
+    )
+
+
+def _read_side_logical_replacements_8616(
+    codegen: _Codegen8616,
+    logical_facts: dict[tuple[str, int], _LogicalRegisterWriteFact8616],
+    assignment_owned_identities: frozenset[_RegisterSSAIdentity8616],
+) -> dict[int, _LogicalRegisterWriteFact8616]:
+    """Classify exact SSA reads that may safely replay a stable logical reload."""
+    cfunc = codegen.cfunc
+    if cfunc is None:
+        return {}
+    lhs_nodes = {
+        id(node.lhs)
+        for node in _iter_c_nodes_deep_8616(cfunc.statements)
+        if isinstance(node, structured_c.CAssignment)
+    }
+    inherited_addresses = _inherited_instruction_addresses_8616(cfunc.statements)
+    replacements: dict[int, _LogicalRegisterWriteFact8616] = {}
+    for node in _iter_c_nodes_deep_8616(cfunc.statements):
+        if id(node) in lhs_nodes:
+            continue
+        identity = _register_ssa_identity_8616(node)
+        variable = node.variable if isinstance(node, structured_c.CVariable) else None
+        display_name = variable.name if isinstance(variable, SimRegisterVariable) else None
+        if identity is None:
+            if (
+                os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS")
+                and isinstance(display_name, str)
+                and display_name in {"ir_3", "ir_4", "ir_5", "ir_6", "ir_9"}
+            ):
+                logging.getLogger(__name__).warning(
+                    "IR segmented-load read refused identity name=%s variable=%r unified=%r",
+                    display_name,
+                    variable,
+                    node.unified_variable,
+                )
+            continue
+        if identity in assignment_owned_identities:
+            continue
+        direct_addresses = instruction_addrs_from_node_8616(node)
+        addresses = direct_addresses or inherited_addresses.get(id(node)) or frozenset()
+        if len(addresses) != 1:
+            if os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+                logging.getLogger(__name__).warning(
+                    "IR segmented-load read refused provenance identity=%r direct=%r inherited=%r",
+                    identity,
+                    direct_addresses,
+                    inherited_addresses.get(id(node)),
+                )
+            continue
+        fact = _same_block_reload_for_read_8616(
+            codegen,
+            identity,
+            next(iter(addresses)),
+            logical_facts,
+        )
+        if fact is not None:
+            replacements[id(node)] = fact
+        elif os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+            logging.getLogger(__name__).warning(
+                "IR segmented-load read refused flow identity=%r use=%#x",
+                identity,
+                next(iter(addresses)),
+            )
+    return replacements
+
+
+def _register_name_from_node_8616(codegen: _Codegen8616, node: object) -> str | None:
+    """Return one exact physical register name from a structured destination."""
+    if isinstance(node, structured_c.CVariable) and isinstance(node.variable, SimRegisterVariable):
+        shape = (node.variable.reg, node.variable.size)
+    elif isinstance(node, structured_c.CDirtyExpression):
+        dirty = node.dirty
+        if dirty.category is not VirtualVariableCategory.REGISTER:
+            return None
+        shape = (dirty.oident, dirty.size)
+    else:
+        return None
+    project = codegen.project
+    if project is None:
+        return None
+    names = {
+        name.lower()
+        for name, register_shape in project.arch.registers.items()
+        if len(register_shape) >= 2 and register_shape[:2] == shape
+    }
+    return next(iter(names)) if len(names) == 1 else None
+
+
+def _ir_value_expr_8616(
+    codegen: _Codegen8616,
+    value: IRValue | IRBinaryValue,
+    loads_by_temporary: dict[int, _SegmentedLoadFact8616],
+) -> object | None:
+    """Project one bounded IR value using only exact owned leaves."""
+    if isinstance(value, IRValue):
+        if value.space is MemSpace.REG and isinstance(value.name, str):
+            return _register_expr_8616(codegen, value.name)
+        if value.space is MemSpace.CONST and isinstance(value.const, int):
+            return cast(
+                object,
+                structured_c.CConstant(value.const, SimTypeShort(False), codegen=codegen),
+            )
+        if value.space is MemSpace.TMP and isinstance(value.source_tmp, int):
+            fact = loads_by_temporary.get(value.source_tmp)
+            return _helper_for_fact_8616(codegen, fact) if fact is not None else None
+        return None
+    lhs = _ir_value_expr_8616(codegen, value.lhs, loads_by_temporary)
+    rhs = _ir_value_expr_8616(codegen, value.rhs, loads_by_temporary)
+    if lhs is None or rhs is None:
+        return None
+    operation = value.op.rstrip("0123456789")
+    c_operation = {name: name for name in ("Add", "And", "Mul", "Or", "Sar", "Shl", "Shr", "Sub", "Xor")}.get(operation)
+    return structured_c.CBinaryOp(c_operation, lhs, rhs, codegen=codegen) if c_operation is not None else None
+
+
+def _helper_for_fact_8616(
+    codegen: _Codegen8616, fact: _SegmentedLoadFact8616
+) -> structured_c.CFunctionCall | None:
+    """Build one segmented helper from a directly owned load fact."""
+    return _helper_for_address_8616(
+        codegen,
+        fact.address,
+        fact.instruction_addr,
+        segment_constant=fact.segment_constant,
+    )
+
+
+def _helper_for_address_8616(
+    codegen: _Codegen8616,
+    address: IRAddress,
+    instruction_addr: int,
+    *,
+    segment_constant: int | None = None,
+) -> structured_c.CFunctionCall | None:
+    """Build one segmented helper from an exact logical address."""
+    cfunc = codegen.cfunc
+    segment_type = SimTypeShort(False).with_arch(codegen.project.arch) if codegen.project is not None else None
+    segment = (
+        structured_c.CConstant(segment_constant, SimTypeShort(False), codegen=codegen)
+        if segment_constant is not None
+        else runtime_segment_state_cvar_8616(
+            address.space.value,
+            codegen=codegen,
+            variable_type=segment_type,
+            function_addr=cfunc.addr,
+        )
+        if cfunc is not None
+        else None
+    )
+    offset = _offset_expr_8616(codegen, address)
+    if segment is None or offset is None:
+        return None
+    helper = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}[address.size]
+    return structured_c.CFunctionCall(
+        helper,
+        None,
+        [segment, offset],
+        codegen=codegen,
+        tags={
+            "inertia_x86_16_runtime_segment_helper": helper,
+            "inertia_source_instruction_addrs": (instruction_addr,),
+        },
+    )
+
+
+def materialize_ir_segmented_load_carriers_8616(codegen: object) -> bool:
+    """Materialize exact segmented LOADs in retained temporary/register carriers."""
+    boundary = cast(_Codegen8616, codegen)
+    facts = _load_facts_8616(boundary)
+    register_facts = _register_write_facts_8616(boundary, facts)
+    logical_register_facts = _logical_register_write_facts_8616(boundary)
+    cfunc = boundary.cfunc
+    if cfunc is None or not (facts or logical_register_facts):
+        _store_stats_8616(
+            boundary,
+            IRSegmentedLoadCarrierStats8616(len(facts), len(facts), 0, 0, 0),
+        )
+        return False
+    inserted_assignments = _materialize_missing_logical_assignments_8616(
+        boundary,
+        logical_register_facts,
+    )
+    classified: set[tuple[str, int, int] | tuple[str, str, int]] = set(inserted_assignments.keys)
+    materialized: set[tuple[str, int, int] | tuple[str, str, int]] = set(inserted_assignments.keys)
+    read_replacements = _read_side_logical_replacements_8616(
+        boundary,
+        logical_register_facts,
+        inserted_assignments.identities,
+    )
+
+    def transform(node: object) -> object:
+        """Replace only nodes with exact temporary/instruction or register/instruction ownership."""
+        read_fact = read_replacements.get(id(node))
+        if read_fact is not None:
+            read_key = ("reg", read_fact.register_name, read_fact.instruction_addr)
+            classified.add(read_key)
+            replacement = _helper_for_address_8616(
+                boundary,
+                read_fact.address,
+                read_fact.instruction_addr,
+            )
+            if replacement is not None:
+                materialized.add(read_key)
+                return replacement
+        if isinstance(node, structured_c.CAssignment):
+            _debug_assignment_identity_8616(node)
+            fact = _owned_load_fact_8616(node.lhs, node, facts)
+            if fact is not None:
+                key = ("tmp", fact.temporary_id, fact.instruction_addr)
+                classified.add(key)
+                replacement = _helper_for_fact_8616(boundary, fact)
+                if replacement is not None:
+                    node.rhs = replacement
+                    materialized.add(key)
+                return node
+            register_name = _register_name_from_node_8616(boundary, node.lhs)
+            if register_name is None:
+                return node
+            if not (
+                isinstance(node.rhs, (structured_c.CConstant, structured_c.CDirtyExpression))
+                or (
+                    isinstance(node.rhs, structured_c.CVariable)
+                    and isinstance(node.rhs.variable, SimTemporaryVariable)
+                )
+            ):
+                return node
+            logical_matches = tuple(
+                logical_register_facts[(register_name, instruction_addr)]
+                for instruction_addr in instruction_addrs_from_node_8616(node)
+                if (register_name, instruction_addr) in logical_register_facts
+            )
+            if logical_matches:
+                logical_fact = max(
+                    logical_matches,
+                    key=lambda candidate: candidate.instruction_addr,
+                )
+                logical_key = (
+                    "reg",
+                    logical_fact.register_name,
+                    logical_fact.instruction_addr,
+                )
+                classified.add(logical_key)
+                replacement = _helper_for_address_8616(
+                    boundary,
+                    logical_fact.address,
+                    logical_fact.instruction_addr,
+                )
+                if replacement is not None:
+                    node.rhs = replacement
+                    materialized.add(logical_key)
+                return node
+            matches = tuple(
+                register_facts[(register_name, instruction_addr)]
+                for instruction_addr in instruction_addrs_from_node_8616(node)
+                if (register_name, instruction_addr) in register_facts
+            )
+            if not matches:
+                return node
+            register_fact = max(matches, key=lambda candidate: candidate.instruction_addr)
+            register_key = ("reg", register_fact.register_name, register_fact.instruction_addr)
+            classified.add(register_key)
+            replacement = _ir_value_expr_8616(
+                boundary, register_fact.value, register_fact.loads_by_temporary
+            )
+            if replacement is not None:
+                node.rhs = replacement
+                materialized.add(register_key)
+            return node
+        if not isinstance(node, structured_c.CDirtyExpression):
+            return node
+        fact = _owned_load_fact_8616(node, node, facts)
+        if fact is None:
+            return node
+        key = ("tmp", fact.temporary_id, fact.instruction_addr)
+        classified.add(key)
+        replacement = _helper_for_fact_8616(boundary, fact)
+        if replacement is None:
+            return node
+        materialized.add(key)
+        return replacement
+
+    transform(cfunc.statements)
+    _replace_c_children_8616(cfunc.statements, transform)
+    _store_stats_8616(
+        boundary,
+        IRSegmentedLoadCarrierStats8616(
+            raw_fact_count=len(facts) + len(register_facts) + len(logical_register_facts),
+            normalized_fact_count=len(facts) + len(register_facts) + len(logical_register_facts),
+            classified_fact_count=len(classified),
+            materialized_count=len(materialized),
+            failure_count=len(classified - materialized),
+        ),
+    )
+    return bool(materialized)

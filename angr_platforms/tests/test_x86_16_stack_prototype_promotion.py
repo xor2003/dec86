@@ -20,6 +20,10 @@ from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
     reconcile_exact_stack_argument_prototype_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_alias_8616,
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1139,6 +1143,8 @@ def test_materialize_preserves_exact_near_pointer_stack_slot_width() -> None:
     assert changed is False
     assert isinstance(cfunc.functy.args[0], SimTypePointer)
     assert values.variable.size == 2
+    assert codegen._inertia_annotated_stack_prototype_materialized_8616 == 1
+    assert postprocess._apply_annotations_8616(project, codegen) is False
     assert codegen._inertia_stack_prototype_width_stats_8616.failure_count == 0
     assert codegen._inertia_function_parameter_width_facts_8616 == (
         FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
@@ -1698,17 +1704,17 @@ def test_annotation_rewrites_do_not_alias_next_argument_to_shifted_placeholder_n
     next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word = SimTypeShort(False).with_arch(arch)
     which = structured_c.CVariable(
-        SimStackVariable(4, 2, base="bp", name="which", region=0x1000),
+        SimStackVariable(2, 2, base="bp", name="which", region=0x1000),
         variable_type=word,
         codegen=c_codegen,
     )
     value = structured_c.CVariable(
-        SimStackVariable(6, 2, base="bp", name="value", region=0x1000),
+        SimStackVariable(4, 2, base="bp", name="value", region=0x1000),
         variable_type=word,
         codegen=c_codegen,
     )
     placeholder = structured_c.CVariable(
-        SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000),
+        SimStackVariable(2, 2, base="bp", name="arg_6", region=0x1000),
         variable_type=word,
         codegen=c_codegen,
     )
@@ -1734,6 +1740,28 @@ def test_annotation_rewrites_do_not_alias_next_argument_to_shifted_placeholder_n
         },
     )
     codegen = SimpleNamespace(cfunc=cfunc)
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=which.variable,
+        cvar=which,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=value.variable,
+        cvar=value,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+    record_stack_variable_coordinate_alias_8616(
+        codegen,
+        bp_offset=4,
+        size=2,
+        variable=placeholder.variable,
+    )
 
     changed = postprocess._apply_annotation_rewrites_8616(
         project=SimpleNamespace(arch=arch),
@@ -1747,7 +1775,7 @@ def test_annotation_rewrites_do_not_alias_next_argument_to_shifted_placeholder_n
 
     assert changed is True
     rewritten_condition = if_stmt.condition_and_nodes[0][0]
-    assert rewritten_condition.lhs.variable.offset == 4
+    assert rewritten_condition.lhs.variable.offset == 2
     assert rewritten_condition.lhs.variable.name == "which"
 
 

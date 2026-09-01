@@ -446,12 +446,21 @@ def _run_structuring_codegen_with_lowering_replay_8616(
     project: AngrProjectSurface,
     codegen: AngrCodegenSurface,
 ) -> bool:
-    """Regenerate C and replay only consumers invalidated by this rebuild."""
-    changed = bool(_codegen.apply_structuring_codegen_8616(codegen))
-    if changed:
+    """Regenerate C and replay every proof consumer invalidated by this rebuild."""
+    regenerated = bool(_codegen.apply_structuring_codegen_8616(codegen))
+    changed = regenerated
+    if regenerated:
         changed = bool(_apply_structuring_direct_stack_materialization_8616(project, codegen)) or changed
         changed = bool(_prime_structuring_segment_global_semantics_8616(project, codegen)) or changed
     changed = bool(_replay_materialized_call_stack_metadata_8616(project, codegen)) or changed
+    if regenerated:
+        condition_refresh = _condition_refresh.refresh_structuring_condition_semantics_8616(
+            project,
+            codegen,
+        )
+        if condition_refresh.requires_broad_lowering_replay:
+            raise PipelineHardError("typed condition refresh remained unclosed after structuring codegen")
+        changed = condition_refresh.changed or changed
     return bool(prune_unread_stack_lowered_register_carriers_8616(codegen)) or changed
 
 
@@ -2435,6 +2444,10 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         _indexed_address_aliases.apply_x86_16_indexed_address_aliases_8616(project, codegen)
         _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
         _segment_stack_restore.apply_x86_16_segment_stack_restore_artifact(project, codegen)
+        _segment_stack_restore.apply_x86_16_stack_register_restore_artifact_8616(
+            project,
+            codegen,
+        )
         changed = bool(prune_proven_segment_stack_restore_carriers_8616(project, codegen)) or changed
         _segment_state.apply_x86_16_segment_state_artifact(project, codegen)
         _segment_contract.apply_x86_16_segment_function_contract(project, codegen)

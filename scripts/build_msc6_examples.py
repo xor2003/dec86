@@ -1773,6 +1773,7 @@ def _is_proc_selection_failure(stderr_text: str) -> bool:
 
 
 def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
+    """Parse selected-result status separately from failed recovery attempts."""
     profile: dict[str, object] = {
         "functions_queued": None,
         "functions_selected": None,
@@ -1784,6 +1785,7 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         "attempted_total": None,
         "timed_out_functions": 0,
         "tail_failures": 0,
+        "attempt_tail_failures": 0,
         "timeout": False,
         "wall_seconds": 0.0,
         "asm_fallback": False,
@@ -1791,6 +1793,7 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         "tail_validation_uncollected": False,
         "tail_validation_changed": False,
         "validation_state": [],
+        "failed_attempt_validation_state": [],
     }
     queued_re = re.compile(r"functions queued for decompilation:\s*(\d+)")
     selected_re = re.compile(r"selected\s+(\d+)\s+function\(s\)\s+for display")
@@ -1897,17 +1900,20 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         if "failure family:" in line:
             family_failed = "status=ok" not in line
             validation_match = validation_state_re.search(line)
-            if validation_match is not None and isinstance(profile.get("validation_state"), list):
+            if validation_match is not None and isinstance(profile.get("failed_attempt_validation_state"), list):
                 validation_state = validation_match.group(1).lower()
-                states = profile["validation_state"]
+                states = profile["failed_attempt_validation_state"]
                 assert isinstance(states, list)
                 if validation_state not in states:
                     states.append(validation_state)
                 if validation_state in {"failed", "changed", "uncollected"}:
                     family_failed = True
             if family_failed:
-                tail_failures = profile["tail_failures"]
-                profile["tail_failures"] = (tail_failures if isinstance(tail_failures, int) else 0) + 1
+                attempt_failures = profile["attempt_tail_failures"]
+                profile["attempt_tail_failures"] = (
+                    attempt_failures if isinstance(attempt_failures, int) else 0
+                ) + 1
+                profile["tail_failures"] = profile["attempt_tail_failures"]
             continue
         attempt_validation_match = attempt_validation_re.search(line)
         if attempt_validation_match is not None and isinstance(profile.get("validation_state"), list):
@@ -1925,6 +1931,7 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         # summary is the acceptance boundary for this harness profile.
         profile["tail_validation_changed"] = False
         profile["tail_validation_uncollected"] = False
+        profile["tail_failures"] = 0
     return profile
 
 
@@ -1932,9 +1939,13 @@ def _decompile_profile_text(stdout_text: str, stderr_text: str) -> str:
     return f"{stderr_text}\n{stdout_text}"
 
 
-def _profile_validation_states(profile: dict[str, object]) -> frozenset[HarnessValidationState]:
-    """Return recognized typed function-level validation states."""
-    raw_states = profile.get("validation_state")
+def _profile_validation_states(
+    profile: dict[str, object],
+    *,
+    field: str = "validation_state",
+) -> frozenset[HarnessValidationState]:
+    """Return recognized typed validation states from one profile field."""
+    raw_states = profile.get(field)
     if not isinstance(raw_states, list):
         return frozenset()
     states: set[HarnessValidationState] = set()
@@ -1971,7 +1982,10 @@ def _is_decompile_output_acceptable(
         return False, HarnessAcceptanceReason.ASM_FALLBACK
 
     if not final_output_accepted:
-        validation_states = _profile_validation_states(profile)
+        validation_states = _profile_validation_states(profile) | _profile_validation_states(
+            profile,
+            field="failed_attempt_validation_state",
+        )
         if HarnessValidationState.FAILED in validation_states:
             return False, HarnessAcceptanceReason.VALIDATION_FAILED
         if HarnessValidationState.CHANGED in validation_states:

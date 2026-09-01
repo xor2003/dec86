@@ -77,6 +77,9 @@ inconsistent external MS C construct subprocess results.
 
 Rejected experiments:
 
+- stat-qualified per-file source-manifest digest reuse passed correctness tests
+  but improved the controlled six-manifest median only from 0.1965 seconds to
+  0.1789 seconds (8.9%); the apparent 0.797-second baseline was contention;
 - broad typed IR/SSA mypyc compilation improved the median by only 8.3% and
   introduced a large cold outlier;
 - whole-lifter mypyc compilation was 3.9% slower;

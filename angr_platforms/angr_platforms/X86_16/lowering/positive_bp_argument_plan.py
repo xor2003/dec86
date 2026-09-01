@@ -9,6 +9,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -45,6 +46,38 @@ class PositiveBpArgumentPlan8616:
     decision: PositiveBpArgumentPlanDecision8616
     entries: tuple[PositiveBpArgumentPlanEntry8616, ...]
     evidence: CalleeArgumentWidthEvidence8616 = field(compare=False)
+
+
+def complete_positive_bp_body_word_access_plan_8616(
+    body_entries: tuple[PositiveBpArgumentPlanEntry8616, ...],
+    word_access_offsets: Collection[int],
+    *,
+    default_argument_type: SimType,
+) -> tuple[PositiveBpArgumentPlanEntry8616, ...]:
+    """Complete one contiguous body plan from exact decoded word accesses.
+
+    Existing typed entries remain authoritative. A missing slot is synthesized
+    only when the binary contains an exact word access at the current ABI
+    cursor; the first gap ends recovery.
+    """
+    entries_by_offset = {entry.bp_offset: entry for entry in body_entries}
+    accesses = frozenset(offset for offset in word_access_offsets if offset >= 4)
+    completed: list[PositiveBpArgumentPlanEntry8616] = []
+    cursor = 4
+    while cursor in entries_by_offset or cursor in accesses:
+        entry = entries_by_offset.get(cursor)
+        if entry is None:
+            entry = PositiveBpArgumentPlanEntry8616(
+                bp_offset=cursor,
+                width=2,
+                name=f"arg_{cursor:x}",
+                argument_type=default_argument_type,
+            )
+        if entry.width < 2 or entry.width % 2:
+            break
+        completed.append(entry)
+        cursor += entry.width
+    return tuple(completed)
 
 
 def _body_layout_matches_all_physical_calls_8616(
@@ -127,4 +160,5 @@ __all__ = [
     "PositiveBpArgumentPlanDecision8616",
     "PositiveBpArgumentPlanEntry8616",
     "complete_positive_bp_argument_plan_8616",
+    "complete_positive_bp_body_word_access_plan_8616",
 ]

@@ -5,6 +5,8 @@ Responsibility: retain one function-wide join of exact caller return uses and
 stable reasons why a return type cannot be published.
 Consumes alias, widening, and typed facts. This module does not inspect IR,
 mutate prototypes, or recover semantics from text.
+
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

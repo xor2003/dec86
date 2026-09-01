@@ -4,6 +4,9 @@ Layer: Types/Lowering.
 Responsibility: define the immutable pointer-parameter evidence contract and
 its authoritative per-project registry. Collection remains in
 ``callee_pointer_evidence``; transport may only copy records accepted here.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

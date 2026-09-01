@@ -46,6 +46,9 @@ from angr_platforms.X86_16.exact_region_diagnostics import (
     classify_region_split_8616,
     format_exact_region_diagnostics_8616,
 )
+from angr_platforms.X86_16.frontend_indirect_jump_targets import (
+    collect_constant_indirect_jump_edges_8616,
+)
 from angr_platforms.X86_16.frontend_instruction_reachability import (
     collect_decoded_block_evidence_8616 as _collect_block_8616,
 )
@@ -1642,13 +1645,25 @@ def _commit_exact_region_function_to_kb_8616(
     return changed
 
 
-def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFunction) -> None:
+def _repair_x86_16_function_graph_8616(
+    project: angr.Project,
+    function: _AngrFunction,
+    *,
+    exact_region: tuple[int, int] | None = None,
+) -> None:
     """Best-effort CFG completion through dynamic angr function internals.
 
     The recovery layer should own this because missing return sites here are
     usually a graph-completion issue from bounded CFGFast extraction, not an
     IR/lowering defect.
     """
+    debug_indirect = os.environ.get("INERTIA_DEBUG_INDIRECT_JUMP") == "1"
+    if debug_indirect:
+        logging.getLogger(__name__).warning(
+            "x86-16 graph repair start function=%r exact_region=%r",
+            _dynamic_attr(function, "addr", None),
+            exact_region,
+        )
     if _dynamic_attr(project, "arch", None) is None or _dynamic_attr(project.arch, "name", None) != "86_16":
         return
 
@@ -1657,14 +1672,20 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFun
         return
 
     if bool(_dynamic_attr(function, "returning", None)):
+        if debug_indirect:
+            logging.getLogger(__name__).warning("x86-16 graph repair refused: function already returning")
         return
 
     existing_ret_sites = tuple(_dynamic_attr(function, "ret_sites", ()) or ())
     if existing_ret_sites:
+        if debug_indirect:
+            logging.getLogger(__name__).warning("x86-16 graph repair refused: existing return sites")
         return
 
     existing_blocks = tuple(_dynamic_attr(function, "blocks", ()) or ())
     if not existing_blocks:
+        if debug_indirect:
+            logging.getLogger(__name__).warning("x86-16 graph repair refused: no existing blocks")
         return
 
     block_addrs = sorted(
@@ -1674,9 +1695,15 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFun
         return
 
     seed_max_byte = sum(max(0, int(_dynamic_attr(block, "size", 0) or 0)) for block in existing_blocks)
-    scan_limit = max(0x200, min(0x2000, max(0x200, seed_max_byte * 4)))
-    start_bound = max(min(block_addrs), entry_addr - 0x100)
-    end_bound = max(block_addrs) + scan_limit
+    if exact_region is not None and exact_region[0] <= entry_addr < exact_region[1]:
+        start_bound = exact_region[0]
+        exact_size = max(1, exact_region[1] - exact_region[0])
+        scan_limit = max(0x200, min(0x2000, exact_size * 4))
+        end_bound = start_bound + scan_limit
+    else:
+        scan_limit = max(0x200, min(0x2000, max(0x200, seed_max_byte * 4)))
+        start_bound = max(min(block_addrs), entry_addr - 0x100)
+        end_bound = max(block_addrs) + scan_limit
 
     def _is_in_scan_bound(addr: int) -> bool:
         return isinstance(addr, int) and start_bound <= addr < end_bound
@@ -1689,39 +1716,66 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFun
     limit_nodes = 512
     seen_targets: set[int] = set()
 
-    while queue and len(visited) < limit_nodes and visited_bytes <= scan_limit:
-        block_addr = queue.pop(0)
-        if block_addr in visited or not _is_in_scan_bound(block_addr):
-            continue
-        visited.add(block_addr)
-        try:
-            block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
-            continue
-        block_size = int(_dynamic_attr(block, "size", 0))
-        if block_size <= 0:
-            continue
-        visited_bytes += block_size
-        if visited_bytes > scan_limit:
-            break
-        discovered[block_addr] = block
-        insns = tuple(_dynamic_attr(_dynamic_attr(block, "capstone", None), "insns", ()) or ())
-        if not insns:
-            continue
-        last_insn = insns[-1]
-        last_mnemonic = str(_dynamic_attr(last_insn, "mnemonic", "")).lower()
-        successors, _is_direct_exit = _x86_16_block_successors_from_capstone_8616(
-            block,
+    indirect_artifact = None
+    while True:
+        while queue and len(visited) < limit_nodes and visited_bytes <= scan_limit:
+            block_addr = queue.pop(0)
+            if block_addr in visited or not _is_in_scan_bound(block_addr):
+                continue
+            visited.add(block_addr)
+            try:
+                block = project.factory.block(block_addr, opt_level=0)
+            except Exception:
+                continue
+            block_size = int(_dynamic_attr(block, "size", 0))
+            if block_size <= 0:
+                continue
+            visited_bytes += block_size
+            if visited_bytes > scan_limit:
+                break
+            discovered[block_addr] = block
+            insns = tuple(_dynamic_attr(_dynamic_attr(block, "capstone", None), "insns", ()) or ())
+            if not insns:
+                continue
+            successors, _is_direct_exit = _x86_16_block_successors_from_capstone_8616(
+                block,
+                region_start=start_bound,
+                region_end=end_bound,
+            )
+            for succ in successors:
+                if _is_in_scan_bound(succ) and succ not in seen_targets:
+                    queue.append(succ)
+                    seen_targets.add(succ)
+                edges.add((block_addr, succ))
+
+        indirect_artifact = collect_constant_indirect_jump_edges_8616(
+            project,
+            blocks=tuple(discovered.values()),
+            successor_edges=tuple(edges),
             region_start=start_bound,
             region_end=end_bound,
         )
-        for succ in successors:
-            if _is_in_scan_bound(succ) and succ not in seen_targets:
-                queue.append(succ)
-                seen_targets.add(succ)
-            edges.add((block_addr, succ))
-        if last_mnemonic in {"ret", "retf", "iret", "retw", "iretq"}:
-            pass
+        if debug_indirect:
+            logging.getLogger(__name__).warning(
+                "x86-16 indirect jump artifact function=%#x records=%r edges=%r",
+                entry_addr,
+                indirect_artifact.records,
+                indirect_artifact.resolved_edges,
+            )
+        queued_indirect_target = False
+        for source_addr, target_addr in indirect_artifact.resolved_edges:
+            edges.add((source_addr, target_addr))
+            if target_addr not in visited and target_addr not in seen_targets:
+                queue.append(target_addr)
+                seen_targets.add(target_addr)
+                queued_indirect_target = True
+        if not queued_indirect_target:
+            break
+
+    if indirect_artifact is not None:
+        function_info = _dynamic_attr(function, "info", None)
+        if isinstance(function_info, dict):
+            function_info["x86_16_indirect_jump_artifact"] = indirect_artifact
 
     if not discovered:
         return
@@ -1775,7 +1829,13 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFun
             function._update_addr_to_block_cache(new_node)
             new_node_object: object = new_node
             return new_node_object
-        except Exception:
+        except Exception as ex:
+            if debug_indirect:
+                logging.getLogger(__name__).warning(
+                    "x86-16 graph repair could not register block=%#x: %s",
+                    block_addr,
+                    ex,
+                )
             return None
 
     _seed_node_address_cache()
@@ -1820,6 +1880,16 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFun
     if discovered_returns > 0:
         with contextlib.suppress(Exception):
             typing.cast(typing.Any, function)._inertia_x86_16_return_repair_applied = True
+    if debug_indirect:
+        transition_graph = _dynamic_attr(function, "transition_graph", None)
+        graph_nodes = tuple(_dynamic_attr(transition_graph, "nodes", ()) or ())
+        logging.getLogger(__name__).warning(
+            "x86-16 graph repair finish discovered=%r local_blocks=%r graph_nodes=%r function_blocks=%r",
+            tuple(hex(address) for address in sorted(discovered)),
+            tuple(sorted((_dynamic_attr(function, "_local_blocks", {}) or {}).keys())),
+            tuple(sorted(_dynamic_attr(node, "addr", -1) for node in graph_nodes)),
+            tuple(sorted(_dynamic_attr(block, "addr", -1) for block in tuple(_dynamic_attr(function, "blocks", ()) or ()))),
+        )
 
 
 def _count_region_local_functions(cfg: _AngrCfg, exact_region: tuple[int, int] | None) -> int:
@@ -2081,8 +2151,11 @@ def _recover_candidate_function_pair(
             except Exception as exc:
                 last_error = exc
         if best_pair is not None:
-            if exact_region is None:
-                _repair_x86_16_function_graph_8616(candidate_project, best_pair[1])
+            _repair_x86_16_function_graph_8616(
+                candidate_project,
+                best_pair[1],
+                exact_region=bounded_exact_region or exact_region,
+            )
             if bounded_exact_region is not None:
                 _mark_function_binary_exact_region_8616(best_pair[1], bounded_exact_region)
             _mark_function_recovery_truncated(best_pair[1], truncated)
@@ -4596,6 +4669,7 @@ def _try_rebased_exact_region_recovery_8616(
     func.name = name
     _commit_exact_region_function_to_kb_8616(slice_project, cfg, func, slice_region)
     mark_function_original_addr(func, exact_region[0])
+    _repair_x86_16_function_graph_8616(slice_project, func, exact_region=slice_region)
     caller_evidence_targets = tuple(dict.fromkeys((*caller_target_addrs, exact_region[0])))
     caller_return_use = _collect_caller_return_use_for_entry_aliases_8616(
         project,
@@ -5301,7 +5375,7 @@ def _try_recover_direct_addr_from_sidecar_region(
         recover_addr = addr if strict_direct_addr else sidecar_addr
         code_name = _lst_code_label(lst_metadata, recover_addr, project.entry) or f"sub_{recover_addr:x}"
         try:
-            return _recover_lst_function(
+            recovered = _recover_lst_function(
                 project,
                 lst_metadata,
                 recover_addr if lst_metadata.absolute_addrs else recover_addr - project.entry,
@@ -5310,14 +5384,32 @@ def _try_recover_direct_addr_from_sidecar_region(
                 window=window,
                 low_memory=low_memory_path,
             )
+            recovered_cfg, recovered_function = recovered
+            recovered_project = _dynamic_attr(recovered_cfg, "project", None)
+            if recovered_project is None:
+                recovered_project = _dynamic_attr(recovered_cfg, "_project", project)
+            original_delta = _dynamic_attr(recovered_project, "_inertia_original_linear_delta", 0)
+            projected_region = sidecar_region_for_addr
+            if isinstance(original_delta, int) and original_delta:
+                projected_region = (
+                    sidecar_region_for_addr[0] - original_delta,
+                    sidecar_region_for_addr[1] - original_delta,
+                )
+            _repair_x86_16_function_graph_8616(
+                recovered_project,
+                recovered_function,
+                exact_region=projected_region,
+            )
+            return recovered
         except _AnalysisTimeout:
             return None
         except Exception as ex:
-            logging.getLogger(__name__).debug(
-                "sidecar region lst recovery failed for %s: %s",
-                hex(recover_addr),
-                ex,
+            log_method = (
+                logging.getLogger(__name__).warning
+                if os.environ.get("INERTIA_DEBUG_INDIRECT_JUMP") == "1"
+                else logging.getLogger(__name__).debug
             )
+            log_method("sidecar region lst recovery failed for %s: %s", hex(recover_addr), ex)
             return None
 
     return _impl()

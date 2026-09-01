@@ -84,7 +84,7 @@ from .ir.condition_ir import JCC_TO_COND_8616, ConditionIR
 from .ir.core import IRValue
 from .lowering.real_mode_linear import (
     proven_wide_stack_pair_low_offset_8616,
-    stack_cvar_for_machine_bp_range_8616,
+    stack_cvar_for_machine_bp_value_range_8616,
 )
 from .lowering.segmented_memory_lowering import lower_runtime_segment_access_8616
 from .lowering.wide_stack_pair_evidence import (
@@ -598,7 +598,7 @@ def _stack_slot_expr_8616(
 
     requested_disp = int(disp)
     requested_size = int(size) or 2
-    proven = stack_cvar_for_machine_bp_range_8616(
+    proven = stack_cvar_for_machine_bp_value_range_8616(
         codegen,
         requested_disp,
         requested_size,

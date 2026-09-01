@@ -5,6 +5,9 @@ Responsibility: classify every fact in a complete caller return-use census and
 join scalar signedness independently of unresolved input parameter evidence.
 Consumes Semantics return storage, Alias identities, exact caller boundaries,
 and ConditionIR. It does not mutate function prototypes or generated C.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

@@ -26,6 +26,7 @@ from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
+from ..structured_tags import copy_structured_tags_8616
 from .call_return_stack_bindings import bind_call_return_stack_assignment_8616
 from .segmented_lowering import _SegmentedAccess
 from .stack_c_ast_matching import _match_bp_stack_dereference_8616
@@ -1740,7 +1741,10 @@ def _canonicalize_stack_cvar_expr(
             if base_expr is not expr_dynamic.variable or index_expr is not expr_dynamic.index:
                 active_expr_ids.discard(expr_id)
                 return structured_c.CIndexedVariable(
-                    cast(Any, base_expr), cast(Any, index_expr), codegen=_structured_c_codegen_owner_8616(expr)
+                    cast(Any, base_expr),
+                    cast(Any, index_expr),
+                    codegen=_structured_c_codegen_owner_8616(expr),
+                    tags=copy_structured_tags_8616(expr.tags) or {},
                 )
             active_expr_ids.discard(expr_id)
             return expr
@@ -1903,7 +1907,10 @@ def _canonicalize_stack_cvar_expr(
             if operand is not expr.operand:
                 active_expr_ids.discard(expr_id)
                 return structured_c.CUnaryOp(
-                    expr.op, cast(Any, operand), codegen=_structured_c_codegen_owner_8616(expr)
+                    expr.op,
+                    cast(Any, operand),
+                    codegen=_structured_c_codegen_owner_8616(expr),
+                    tags=copy_structured_tags_8616(expr.tags) or {},
                 )
             active_expr_ids.discard(expr_id)
             return expr
@@ -1933,7 +1940,13 @@ def _canonicalize_stack_cvar_expr(
                 active_expr_ids.discard(expr_id)
                 _bind_expr_types_to_project_arch_8616(lhs, codegen)
                 _bind_expr_types_to_project_arch_8616(rhs, codegen)
-                return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=expr.codegen)
+                return structured_c.CBinaryOp(
+                    expr.op,
+                    lhs,
+                    rhs,
+                    codegen=expr.codegen,
+                    tags=copy_structured_tags_8616(expr.tags) or {},
+                )
             active_expr_ids.discard(expr_id)
             return expr
         if isinstance(expr, structured_c.CTypeCast):
@@ -1949,7 +1962,11 @@ def _canonicalize_stack_cvar_expr(
             if inner is not expr.expr:
                 active_expr_ids.discard(expr_id)
                 return structured_c.CTypeCast(
-                    None, expr.type, cast(Any, inner), codegen=_structured_c_codegen_owner_8616(expr)
+                    None,
+                    expr.type,
+                    cast(Any, inner),
+                    codegen=_structured_c_codegen_owner_8616(expr),
+                    tags=copy_structured_tags_8616(expr.tags) or {},
                 )
             active_expr_ids.discard(expr_id)
             return expr

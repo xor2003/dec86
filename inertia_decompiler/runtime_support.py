@@ -2037,6 +2037,9 @@ def install_angr_pre_codegen_seqnode_probe_guard(
                     try:
                         from types import SimpleNamespace
 
+                        from angr_platforms.X86_16.structuring.switch_artifact_identity import (
+                            canonicalize_switch_artifacts_8616,
+                        )
                         from angr_platforms.X86_16.structuring_abnormal_loops import (
                             AbnormalLoopStructureAnalysis,
                         )
@@ -2054,13 +2057,36 @@ def install_angr_pre_codegen_seqnode_probe_guard(
                         graph = graph_result.graph_result.graph
                         if graph is not None:
                             structured = AbnormalLoopStructureAnalysis(graph).structure()
-                            artifacts = tuple(
+                            raw_artifacts = tuple(
                                 typing.cast(DynamicRecord, artifact)
                                 for region in structured.nodes
                                 if isinstance(
                                     artifact := region.metadata.get("typed_edge_switch_region_artifact"),
                                     dict,
                                 )
+                            )
+                            canonicalization = canonicalize_switch_artifacts_8616(raw_artifacts)
+                            artifacts = tuple(
+                                typing.cast(DynamicRecord, artifact)
+                                for artifact in canonicalization.artifacts
+                            )
+                            summary["pre_codegen_grouped_switch_raw_artifact_count"] = (
+                                canonicalization.raw_fact_count
+                            )
+                            summary["pre_codegen_grouped_switch_normalized_artifact_count"] = (
+                                canonicalization.normalized_fact_count
+                            )
+                            summary["pre_codegen_grouped_switch_classified_artifact_count"] = (
+                                canonicalization.classified_fact_count
+                            )
+                            summary["pre_codegen_grouped_switch_materialized_artifact_count"] = (
+                                canonicalization.materialized_count
+                            )
+                            summary["pre_codegen_grouped_switch_failure_count"] = (
+                                canonicalization.failure_count
+                            )
+                            summary["pre_codegen_grouped_switch_duplicate_artifact_count"] = (
+                                canonicalization.duplicate_fact_count
                             )
                         else:
                             artifacts = ()

@@ -136,6 +136,36 @@ def test_word_projection_recomposition_materializes_repeated_exact_masks() -> No
     assert stats == WordProjectionRecompositionStats8616(1, 1, 1, 1, 0)
 
 
+def test_word_projection_recomposition_elides_materialized_identity_assignment() -> None:
+    codegen = _DummyCodegen()
+    destination = CVariable(
+        SimMemoryVariable(0x44, 2, name="g_word", region=0x4010),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        destination,
+        _repeated_mask_word_projection(destination, codegen),
+        codegen=codegen,
+    )
+    statements = CStatements([assignment], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=statements)
+
+    changed = materialize_word_projection_recompositions_8616(codegen)
+
+    assert changed is True
+    assert statements.statements == []
+    stats = get_codegen_side_metadata(codegen)["word_projection_recomposition_8616"]
+    assert isinstance(stats, WordProjectionRecompositionStats8616)
+    assert stats == WordProjectionRecompositionStats8616(
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+        identity_elided_count=1,
+    )
+
+
 def test_word_projection_recomposition_refuses_unknown_destination_width() -> None:
     codegen = _DummyCodegen()
     source = _stack_var(4, 2, "x", codegen)

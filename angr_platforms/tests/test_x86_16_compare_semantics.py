@@ -1390,6 +1390,42 @@ def test_outsb_advances_si():
     assert state.solver.eval(state.regs.si) == 0x221
 
 
+def test_rep_outsb_executes_one_iteration_and_returns_to_instruction():
+    state = _run_control_flow_instruction(
+        b"\xf3\x6e",
+        setup=lambda s: (
+            setattr(s.regs, "ds", 0),
+            setattr(s.regs, "si", 0x220),
+            setattr(s.regs, "dx", 0x40),
+            setattr(s.regs, "cx", 2),
+            s.memory.store(0x220, b"XY"),
+        ),
+    )
+
+    assert state.addr == 0x100
+    assert state.solver.eval(state.regs.cx) == 1
+    assert state.solver.eval(state.regs.si) == 0x221
+
+
+def test_instruction_before_rep_outsb_ends_the_vex_block():
+    project = angr.load_shellcode(
+        b"\xb9\x02\x00\xf3\x6e\xc3",
+        arch=Arch86_16(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+
+    setup_block = project.factory.block(0x100, opt_level=0)
+    repeat_block = project.factory.block(0x103, opt_level=0)
+
+    assert setup_block.size == 3
+    assert tuple(insn.mnemonic for insn in setup_block.capstone.insns) == ("mov",)
+    assert repeat_block.size == 2
+    assert repeat_block.vex.next.con.value == 0x103
+
+
 def test_outsw_advances_si_by_word():
     state = _run_control_flow_instruction(
         b"\x6f",

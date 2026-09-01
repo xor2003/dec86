@@ -219,6 +219,7 @@ def _coalesce_direct_ss_local_word_statements(
     match_ss_local_plus_const: Callable[..., object],
     match_shift_right_8_expr: Callable[..., object],
     stack_slot_identity_can_join: Callable[..., object],
+    derived_stack_high_byte_follows_slot: Callable[..., object],
     same_c_expression: Callable[..., object],
     unwrap_c_casts: Callable[..., object],
     promote_direct_stack_cvariable: Callable[..., object],
@@ -256,8 +257,17 @@ def _coalesce_direct_ss_local_word_statements(
                             target_cvar, extra_offset = matched
                             high_expr = match_shift_right_8_expr(next_stmt.rhs)
                             if (
-                                extra_offset == 1
-                                and stack_slot_identity_can_join(target_cvar, stmt.lhs)
+                                (
+                                    (
+                                        extra_offset == 1
+                                        and stack_slot_identity_can_join(target_cvar, stmt.lhs)
+                                    )
+                                    or derived_stack_high_byte_follows_slot(
+                                        target_cvar,
+                                        extra_offset,
+                                        stmt.lhs,
+                                    )
+                                )
                                 and high_expr is not None
                                 and same_c_expression(unwrap_c_casts(high_expr), unwrap_c_casts(stmt.rhs))
                             ):

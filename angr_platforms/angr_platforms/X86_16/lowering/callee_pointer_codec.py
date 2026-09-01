@@ -3,6 +3,9 @@
 Layer: Types/Lowering.
 Responsibility: round-trip the authoritative pointer-parameter evidence map
 across process boundaries and reject malformed or duplicate target records.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

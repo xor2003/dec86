@@ -26,11 +26,16 @@ from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..ir.core import MemSpace
+from ..structuring.string_io_loop_carriers import materialize_string_io_loop_carriers_8616
 from ..widening.segmented_load_identity import SegmentedLoadIdentity8616, segmented_load_tags_8616
+from .assignment_lvalue_casts import normalize_scalar_assignment_lvalues_8616
+from .balanced_memory_stack_restore import materialize_balanced_immediate_register_restores_8616
+from .direction_flag_state import lower_direction_flag_state_8616
 from .gp_register_state import (
     GPRegisterStateLoweringStats8616,
     lower_architectural_gp_register_state_8616,
 )
+from .gp_stack_restore import materialize_gp_stack_restores_8616
 from .linear_global_decomposition_cache import (
     LinearGlobalDecompositionCache8616,
     LinearGlobalDecompositionCacheStats8616,
@@ -1819,8 +1824,9 @@ def lower_runtime_ss_segment_helper_to_stack_8616(
     *,
     codegen: _AngrCodegenBoundary8616,
     project: object,
+    require_lvalue: bool = False,
 ) -> object | None:
-    """Convert proven SS SEG_U* helper accesses back to stack variables."""
+    """Convert a proven SS helper to a readable stack value or exact lvalue."""
     node = _strip_casts_8616(node)
     if not isinstance(node, structured_c.CFunctionCall):
         return None
@@ -1847,7 +1853,14 @@ def lower_runtime_ss_segment_helper_to_stack_8616(
     ):
         return None
     access = RealModeLinearStackAccess8616(displacement=displacement, width=width)
-    return cast(object, stack_cvar_for_stable_ss_linear_access_8616(codegen, access))
+    return cast(
+        object,
+        stack_cvar_for_stable_ss_linear_access_8616(
+            codegen,
+            access,
+            require_lvalue=require_lvalue,
+        ),
+    )
 
 
 def lower_runtime_ss_segment_helpers_to_stack_8616(
@@ -1873,15 +1886,44 @@ def lower_runtime_ss_segment_helpers_to_stack_8616(
     materialized_count = 0
     refused_count = 0
     changed = False
+    refused_lvalue_helper_ids: set[int] = set()
+
+    for assignment in tuple(_iter_c_nodes_deep_8616(root)):
+        if not isinstance(assignment, structured_c.CAssignment):
+            continue
+        lhs = _dynamic_angr_attr_8616(assignment, "lhs", None)
+        if _runtime_segment_helper_width_8616(_runtime_segment_helper_name_8616(lhs)) is None:
+            continue
+        candidate_count += 1
+        replacement = lower_runtime_ss_segment_helper_to_stack_8616(
+            lhs,
+            codegen=typed_codegen,
+            project=project,
+            require_lvalue=True,
+        )
+        if replacement is None:
+            refused_count += 1
+            refused_lvalue_helper_ids.add(id(_strip_casts_8616(lhs)))
+            continue
+        assignment.lhs = replacement
+        changed = True
+        materialized_count += 1
 
     def transform(node: object) -> object:
         nonlocal candidate_count, changed, materialized_count, refused_count
-        if not isinstance(_strip_casts_8616(node), structured_c.CFunctionCall):
+        stripped = _strip_casts_8616(node)
+        if id(stripped) in refused_lvalue_helper_ids:
+            return node
+        if not isinstance(stripped, structured_c.CFunctionCall):
             return node
         if _runtime_segment_helper_width_8616(_runtime_segment_helper_name_8616(node)) is None:
             return node
         candidate_count += 1
-        cvar = lower_runtime_ss_segment_helper_to_stack_8616(node, codegen=typed_codegen, project=project)
+        cvar = lower_runtime_ss_segment_helper_to_stack_8616(
+            node,
+            codegen=typed_codegen,
+            project=project,
+        )
         if cvar is None:
             refused_count += 1
             return node
@@ -1899,6 +1941,27 @@ def lower_runtime_ss_segment_helpers_to_stack_8616(
     _bump_codegen_counter_8616(codegen, "_inertia_runtime_ss_helper_materialized_count_8616", materialized_count)
     _bump_codegen_counter_8616(codegen, "_inertia_runtime_ss_helper_refused_count_8616", refused_count)
     return changed
+
+
+def finalize_runtime_stack_lowering_8616(
+    codegen: object,
+    *,
+    project: object | None = None,
+) -> bool:
+    """Finalize SS helper projection and normalize proven writable scalar views."""
+    helper_changed = lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project)
+    lvalue_changed = normalize_scalar_assignment_lvalues_8616(codegen)
+    return helper_changed or lvalue_changed
+
+
+def replay_final_codegen_projections_8616(codegen: object) -> bool:
+    """Replay exact lowering-owned live-in projections after AST cleanup.
+
+    Cleanup passes may replace structured-C nodes after the initial lowering
+    boundary. Re-materialize only live-ins whose typed lowering evidence still
+    exists; do not infer new semantics at this orchestration boundary.
+    """
+    return lower_packed_flags_live_in_8616(codegen)
 
 
 def apply_runtime_segment_lowering_8616(
@@ -1939,7 +2002,10 @@ def apply_runtime_segment_lowering_8616(
 
     changed = _rematerialize_binary_proven_near_pointer_types_8616(typed_codegen)
     changed = lower_packed_flags_live_in_8616(codegen) or changed
+    changed = lower_direction_flag_state_8616(codegen) or changed
+    changed = materialize_string_io_loop_carriers_8616(project, codegen) or changed
     changed = lower_architectural_gp_register_state_8616(codegen) or changed
+    changed = materialize_gp_stack_restores_8616(codegen) or changed
     initial_segment_changed = lower_architectural_segment_register_state_8616(codegen)
     if initial_segment_changed:
         _invalidate_segmented_address_caches_8616()
@@ -1995,6 +2061,12 @@ def apply_runtime_segment_lowering_8616(
         changed = True
     if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
         changed = True
+    if materialize_balanced_immediate_register_restores_8616(
+        codegen,
+        active_function,
+        project=project,
+    ):
+        changed = True
     if lower_architectural_segment_register_state_8616(codegen):
         _invalidate_segmented_address_caches_8616()
         changed = True
@@ -2002,6 +2074,8 @@ def apply_runtime_segment_lowering_8616(
     if lower_architectural_gp_register_state_8616(codegen):
         changed = True
         typed_codegen._inertia_assignment_maps = None
+    if normalize_scalar_assignment_lvalues_8616(codegen):
+        changed = True
     final_segment_stats = typed_codegen._inertia_segment_register_state_lowering_stats_8616
     typed_codegen._inertia_segment_register_state_lowering_stats_8616 = (
         SegmentRegisterStateLoweringStats8616(
@@ -2038,6 +2112,7 @@ def apply_runtime_segment_lowering_8616(
 __all__ = [
     "SegmentedMemoryExpr",
     "apply_runtime_segment_lowering_8616",
+    "finalize_runtime_stack_lowering_8616",
     "lower_runtime_segment_access_8616",
     "lower_runtime_segment_address_8616",
     "lower_runtime_ss_segment_helper_to_stack_8616",

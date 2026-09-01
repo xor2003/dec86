@@ -5,6 +5,11 @@ Responsibility: project a pretest loop's explicit header and unique leading
 break guard as typed C expressions for Structuring consumers.
 This module identifies only C-AST shape. It does not infer condition meaning,
 invert predicates, recover values or types, or perform rewrite cleanup.
+
+Owns CFG shape, loops, switches, and structured condition lowering from proven
+IR/semantic evidence. Do not perform alias-state ownership, widening,
+type/materialization recovery, rewrite cleanup, postprocess, or CLI/reporting
+work here.
 """
 
 from __future__ import annotations

@@ -64,6 +64,21 @@ def _arithmetic_refusal_8616(
     )
 
 
+def _direct_result_representatives_8616(
+    nodes: tuple[object, ...],
+    representatives: tuple[CBinaryOp, ...],
+) -> tuple[CBinaryOp, ...]:
+    """Keep exact arithmetic that directly defines a structured result."""
+    return tuple(
+        arithmetic
+        for arithmetic in representatives
+        if any(
+            isinstance(node, CAssignment) and _same_c_expression_8616(node.rhs, arithmetic)
+            for node in nodes
+        )
+    )
+
+
 def _predicate_matches_arithmetic_8616(
     predicate: CBinaryOp,
     nodes: tuple[object, ...],
@@ -128,6 +143,29 @@ def _project_unique_static_definition_8616(
     return _clone_c_ast_tree_8616(definitions[0].rhs)
 
 
+def _canonical_addition_carry_predicate_8616(
+    addition: CBinaryOp,
+    nodes: tuple[object, ...],
+) -> CBinaryOp:
+    """Canonicalize equivalent unsigned carry identities for one exact add."""
+    addition_copy = cast(CBinaryOp, _clone_c_ast_tree_8616(addition))
+    lhs_copy = _project_unique_static_definition_8616(addition.lhs, nodes)
+    wrapped = CTypeCast(
+        addition.type,
+        SimTypeShort(signed=False),
+        addition_copy,
+        codegen=addition.codegen,
+        tags=dict(addition.tags),
+    )
+    return CBinaryOp(
+        "CmpLT",
+        wrapped,
+        lhs_copy,
+        codegen=addition.codegen,
+        tags=dict(addition.tags),
+    )
+
+
 def _equivalent_low_result_assignment_8616(
     nodes: tuple[object, ...],
     arithmetic: CBinaryOp,
@@ -161,6 +199,8 @@ def _predicate_from_exact_arithmetic_8616(
 ) -> CBinaryOp | CarryBorrowBitLoweringFailure8616:
     """Build a nonduplicating predicate from one exact low arithmetic projection."""
     representatives = _exact_arithmetic_representatives_8616(nodes, fact, ownership)
+    if len(representatives) > 1:
+        representatives = _direct_result_representatives_8616(nodes, representatives)
     if len(representatives) != 1:
         return _arithmetic_refusal_8616(representatives)
     arithmetic = representatives[0]
@@ -176,7 +216,7 @@ def _predicate_from_exact_arithmetic_8616(
         )
     result_assignment = _equivalent_low_result_assignment_8616(nodes, arithmetic, fact, ownership)
     if result_assignment is None:
-        return _addition_carry_predicate_8616(nodes, fact, ownership)
+        return _canonical_addition_carry_predicate_8616(arithmetic, nodes)
     return CBinaryOp(
         "CmpLT",
         _unsigned_word_operand_8616(result_assignment.lhs, arithmetic),
@@ -245,16 +285,7 @@ def _addition_carry_predicate_8616(
     if len(representatives) != 1:
         return _arithmetic_refusal_8616(tuple(representatives))
     addition = representatives[0]
-    addition_copy = cast(CBinaryOp, _clone_c_ast_tree_8616(addition))
-    lhs_copy = _clone_c_ast_tree_8616(addition.lhs)
-    wrapped = CTypeCast(
-        addition.type,
-        SimTypeShort(signed=False),
-        addition_copy,
-        codegen=addition.codegen,
-        tags=dict(addition.tags),
-    )
-    return CBinaryOp("CmpLT", wrapped, lhs_copy, codegen=addition.codegen, tags=dict(addition.tags))
+    return _canonical_addition_carry_predicate_8616(addition, nodes)
 
 
 def _definition_carry_predicate_8616(
@@ -282,15 +313,17 @@ def _definition_carry_predicate_8616(
         if fact.kind is CarryBorrowKind8616.SUB_WITH_BORROW:
             return _subtraction_borrow_predicate_8616(nodes, fact, ownership)
         return CarryBorrowBitLoweringFailure8616.CARRY_PREDICATE_MISMATCH
+    if fact.kind is CarryBorrowKind8616.ADD_WITH_CARRY:
+        canonical = _predicate_from_exact_arithmetic_8616(nodes, fact, ownership)
+        if not isinstance(canonical, CarryBorrowBitLoweringFailure8616):
+            return canonical
     representatives: list[CBinaryOp] = []
     for node in coherent:
         if not any(_same_c_expression_8616(node, existing) for existing in representatives):
             representatives.append(node)
-    return (
-        representatives[0]
-        if len(representatives) == 1
-        else CarryBorrowBitLoweringFailure8616.CARRY_PREDICATE_AMBIGUOUS
-    )
+    if len(representatives) == 1:
+        return representatives[0]
+    return CarryBorrowBitLoweringFailure8616.CARRY_PREDICATE_AMBIGUOUS
 
 
 def carry_bit_predicate_8616(

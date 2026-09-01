@@ -4439,6 +4439,7 @@ def test_retry_recovered_candidate_is_bounded_by_worker_timeout(monkeypatch, tmp
         lambda payload: ([("portable-flat", payload), ("msc-dos", payload)], None),
     )
     fallback_tail_validation_by_index = {}
+    result_state_by_index = {}
 
     ok = decompile._try_emit_retry_recovered_candidate_8616(
         item=item,
@@ -4449,6 +4450,7 @@ def test_retry_recovered_candidate_is_bounded_by_worker_timeout(monkeypatch, tmp
         cod_metadata=None,
         synthetic_globals=None,
         fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+        result_state_by_index=result_state_by_index,
     )
 
     assert ok is True
@@ -4457,6 +4459,9 @@ def test_retry_recovered_candidate_is_bounded_by_worker_timeout(monkeypatch, tmp
         "thread_name_prefix": "retry-recovered-candidate",
     }
     assert fallback_tail_validation_by_index[1]["structuring"]["status"] == "stable"
+    assert result_state_by_index[1].status == decompile.WorkItemStatus.OK.value
+    assert result_state_by_index[1].payload == "int main(void) { return 0; }"
+    assert result_state_by_index[1].tail_validation["structuring"]["status"] == "stable"
     assert "retry lane: recovered validation-passed candidate" in capsys.readouterr().out
 
 
@@ -6643,6 +6648,68 @@ def test_coalesce_direct_ss_local_word_statements_refuses_region_mismatch(monkey
     assert changed is False
     assert len(cfunc.statements.statements) == 2
     assert low_var.size == 1
+
+
+def test_coalesce_direct_ss_local_word_statements_joins_alias_derived_high_byte(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(
+        cfunc=cfunc,
+        project=project,
+        next_idx=lambda _name: 0,
+        cstyle_null_cmp=False,
+        next_ident=lambda name: f"{name}_0",
+        next_node_idx=lambda: 0,
+    )
+
+    low_var = SimStackVariable(-2, 1, base="bp", name="local_2", region=0x10010)
+    low_cvar = structured_c.CVariable(low_var, codegen=codegen)
+    address_base_var = SimStackVariable(0, 2, base="bp", name="v1", region=0x10010)
+    address_base_cvar = structured_c.CVariable(address_base_var, codegen=codegen)
+    source = structured_c.CConstant(2, SimTypeShort(False), codegen=codegen)
+    high_lhs = object()
+    high_rhs = structured_c.CBinaryOp(
+        "Shr",
+        source,
+        structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_cvar, source, codegen=codegen),
+            structured_c.CAssignment(high_lhs, high_rhs, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_ss_local_plus_const",
+        lambda node, _project: (address_base_cvar, -1) if node is high_lhs else None,
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_match_shift_right_8_expr",
+        lambda node: source if node is high_rhs else None,
+    )
+
+    changed = decompile._coalesce_direct_ss_local_word_statements(project, codegen)
+
+    assert changed is True
+    assert len(cfunc.statements.statements) == 1
+    replacement = cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is low_cvar
+    assert replacement.rhs is source
+    assert low_var.size == 2
 
 
 def test_coalesce_direct_ss_local_word_statements_rewrites_stack_address_split_store_inside_while_loop(monkeypatch):

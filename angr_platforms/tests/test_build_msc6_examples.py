@@ -333,6 +333,10 @@ def test_acceptance_requires_successful_process_to_supersede_failed_attempt():
 
     ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
 
+    assert profile["validation_state"] == []
+    assert profile["failed_attempt_validation_state"] == ["failed"]
+    assert profile["attempt_tail_failures"] == 1
+    assert profile["tail_failures"] == 0
     assert ok is False
     assert reason == "validation_failed"
 

@@ -5,6 +5,9 @@ Responsibility: project an exact DOS interrupt call followed by a physical
 FLAGS-carrier read into an explicit runtime status-output assignment.
 Consumes typed call identity and structured register storage. It does not
 infer branch meaning from rendered C or assembly text.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

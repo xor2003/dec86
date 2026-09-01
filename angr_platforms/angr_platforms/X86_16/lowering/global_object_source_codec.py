@@ -3,6 +3,9 @@
 Layer: Types/Lowering.
 Responsibility: round-trip complete typed source-family facts across process
 boundaries while rejecting malformed counters and index identities.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

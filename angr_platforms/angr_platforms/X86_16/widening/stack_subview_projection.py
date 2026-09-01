@@ -34,6 +34,7 @@ from .stack_subview_proof import (
     StackObjectViewResolutionKind8616,
     current_stack_object_widening_8616,
     resolve_stack_object_view_8616,
+    resolve_widened_stack_object_read_8616,
     stack_variable_range_8616,
 )
 
@@ -144,7 +145,12 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
         if isinstance(node, structured_c.CAssignment) and isinstance(
             node.lhs, structured_c.CVariable
         ):
-            resolution = resolve_stack_object_view_8616(cfunc, artifact, node.lhs)
+            resolution = resolve_stack_object_view_8616(
+                codegen,
+                cfunc,
+                artifact,
+                node.lhs,
+            )
             if resolution.kind is not StackObjectViewResolutionKind8616.NOT_CANDIDATE:
                 stats.raw_fact_count += 1
                 proof = scalar_subview_proof_8616(resolution.proof)
@@ -170,7 +176,12 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
         candidate = _stack_subview_candidate_8616(node)
         if candidate is not None:
             stats.raw_fact_count += 1
-            resolution = resolve_stack_object_view_8616(cfunc, artifact, candidate.subview)
+            resolution = resolve_stack_object_view_8616(
+                codegen,
+                cfunc,
+                artifact,
+                candidate.subview,
+            )
             proof = _word_byte_proof_8616(resolution.proof)
             container_range = (
                 stack_variable_range_8616(candidate.container.variable, artifact.function_addr)
@@ -196,7 +207,14 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
                 return _clone_c_ast_tree_8616(proof.owner)
 
         if isinstance(node, structured_c.CVariable):
-            resolution = resolve_stack_object_view_8616(cfunc, artifact, node)
+            resolution = resolve_stack_object_view_8616(codegen, cfunc, artifact, node)
+            if resolution.kind is StackObjectViewResolutionKind8616.NOT_CANDIDATE:
+                resolution = resolve_widened_stack_object_read_8616(
+                    codegen,
+                    cfunc,
+                    artifact,
+                    node,
+                )
             if resolution.kind is StackObjectViewResolutionKind8616.NOT_CANDIDATE:
                 return node
             stats.raw_fact_count += 1

@@ -16,6 +16,19 @@ def test_final_semantics_gate_allows_generic_vvar_temporaries():
     assert_known_call_semantics_8616(c_text, function_addr=0x1000)
 
 
+def test_final_semantics_gate_allows_nonstack_ir_temporaries():
+    c_text = """
+    void f(void)
+    {
+        unsigned short ir_7;
+        ir_7 = 3;
+        return;
+    }
+    """
+
+    assert_known_call_semantics_8616(c_text, function_addr=0x1000)
+
+
 def test_final_semantics_gate_rejects_raw_stack_placeholders():
     c_text = """
     void f(void)

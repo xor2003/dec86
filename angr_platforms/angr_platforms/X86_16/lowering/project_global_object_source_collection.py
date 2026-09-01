@@ -4,6 +4,9 @@ Layer: Types/Lowering.
 Responsibility: normalize the complete discovered call-target census, classify
 callee pointer parameters at their existing binary functions, and derive the
 layout-bound global-source artifact. CLI supplies boundaries but owns no fact.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

@@ -2,7 +2,8 @@
 
 Layer: Widening.
 Responsibility: replace a complete low/high-byte projection with its shared
-source only when Alias proves the assignment destination is exactly one word.
+source only when Alias proves the assignment destination is exactly one word,
+and elide the resulting identity assignment when source and destination match.
 Do not infer width from rendered C, names, compiler samples, or postprocess.
 Consumes alias-proven storage identity.
 Do not join values from rendered text, cosmetic shape, postprocess, or
@@ -35,6 +36,7 @@ class WordProjectionRecompositionStats8616:
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
+    identity_elided_count: int = 0
 
 
 class _CFunctionSurface8616(Protocol):
@@ -147,6 +149,7 @@ def materialize_word_projection_recompositions_8616(codegen: object) -> bool:
         for node in _iter_c_nodes_deep_8616(root)
         if isinstance(node, structured_c.CAssignment)
     )
+    identity_assignment_ids: set[int] = set()
     for assignment in assignments:
         sources = _word_projection_sources_8616(assignment.rhs)
         if sources is None:
@@ -165,6 +168,15 @@ def materialize_word_projection_recompositions_8616(codegen: object) -> bool:
         stats.classified_fact_count += 1
         assignment.rhs = cast(structured_c.CExpression, _clone_c_ast_tree_8616(low_source))
         stats.materialized_count += 1
+        if _same_c_expression_8616(assignment.lhs, low_source):
+            identity_assignment_ids.add(id(assignment))
+    if identity_assignment_ids:
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, structured_c.CStatements):
+                continue
+            retained = [statement for statement in node.statements if id(statement) not in identity_assignment_ids]
+            stats.identity_elided_count += len(node.statements) - len(retained)
+            node.statements[:] = retained
     get_codegen_side_metadata(codegen)["word_projection_recomposition_8616"] = stats
     if stats.classified_fact_count > 0 and stats.materialized_count == 0:
         raise PipelineHardError(

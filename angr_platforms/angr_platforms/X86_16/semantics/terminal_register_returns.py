@@ -214,7 +214,7 @@ def _instruction_fallthrough_8616(insn: object) -> int | None:
 
 
 def _instruction_address_8616(insn: object) -> int | None:
-    """Return one decoded instruction address across the Capstone boundary."""
+    """Return one decoded instruction address across a dynamic third-party Capstone boundary."""
     address = getattr(_inner_instruction_8616(insn), "address", None)
     return address if isinstance(address, int) else None
 
@@ -226,7 +226,7 @@ def _decoded_instructions_by_block_8616(
 ) -> dict[int, tuple[object, ...]]:
     """Return complete direct evidence or rebuild the legacy exact fallback."""
     if direct_decode.complete:
-        return direct_decode.instructions_by_block()
+        return cast(dict[int, tuple[object, ...]], direct_decode.instructions_by_block())
     decoded: dict[int, tuple[object, ...]] = {}
     for block_addr in sorted(block_addrs):
         try:

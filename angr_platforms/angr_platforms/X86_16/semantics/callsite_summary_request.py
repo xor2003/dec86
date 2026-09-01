@@ -5,6 +5,10 @@ Responsibility: reuse exact terminal stack-cleanup evidence, including typed
 refusals, only while one complete recovered function catalog is summarized.
 Nothing in this request-local cache survives later discovery or project
 mutation.
+
+Owns instruction effects, flags, branch meaning, and expression interpretation.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
 """
 
 from __future__ import annotations

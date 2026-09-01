@@ -126,6 +126,7 @@ from .ir.condition_ir import (
     normalize_condition_fingerprint_string_8616,
 )
 from .ir.status_flag_lift_context import active_status_flag_lift_context_8616
+from .lowering.condition_argument_types import apply_condition_argument_types_8616
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
 from .lowering.global_declarations import ctype_for_global_width_8616, record_global_declaration_spec_8616
@@ -154,8 +155,9 @@ from .lowering.segmented_global_loads import (
     materialize_named_segmented_global_loads_8616,
 )
 from .lowering.segmented_memory_lowering import (
-    lower_runtime_ss_segment_helpers_to_stack_8616,
+    finalize_runtime_stack_lowering_8616,
     materialize_runtime_helper_segment_carriers_8616,
+    replay_final_codegen_projections_8616,
     runtime_segment_push_source_cvar_8616,
 )
 from .lowering.ss_bp_substitution import (
@@ -176,6 +178,7 @@ from .lowering.stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
     positive_stack_specs_8616,
     reconcile_callsite_interface_declarations_8616,
+    reconcile_exact_stack_argument_prototype_8616,
 )
 from .lowering.stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
@@ -582,6 +585,11 @@ from .tail_validation import (
 )
 from .tail_validation_fingerprint import _expr_fingerprint, _stack_slot_fingerprint_from_slot_8616
 from .tail_validation_generation import tail_validation_summary_input_generation_8616
+from .validation_materialized_condition_storage import (
+    capture_materialized_condition_storage_surface_8616,
+    compare_materialized_condition_storage_surfaces_8616,
+    record_materialized_condition_storage_failure_8616,
+)
 
 type AngrProjectValue = Any
 type AngrFunctionValue = Any
@@ -7936,9 +7944,9 @@ def _lower_runtime_ss_segment_helpers_to_stack_final_8616(
         owner="lowering.segmented_memory_lowering.materialize_runtime_helper_segment_carriers_8616",
     )
     lowered = require_result_type_8616(
-        lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project),
+        finalize_runtime_stack_lowering_8616(codegen, project=project),
         bool,
-        owner="lowering.segmented_memory_lowering.lower_runtime_ss_segment_helpers_to_stack_8616",
+        owner="lowering.segmented_memory_lowering.finalize_runtime_stack_lowering_8616",
     )
     return lowered or changed
 
@@ -8443,6 +8451,11 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
         DecompilerPostprocessPassSpec(
             "_apply_affine_compound_assignment_identity_final_8616",
             apply_affine_compound_assignment_identity_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_replay_packed_flags_live_ins_after_cleanup_8616",
+            replay_final_codegen_projections_8616,
             False,
         ),
     )
@@ -9105,6 +9118,16 @@ def _clone_codegen_for_validation_summary_8616(codegen: StructuredAstValue) -> S
         with contextlib.suppress(Exception):
             typing.cast(typing.Any, node).codegen = cloned_codegen
     _clear_tail_validation_clone_caches_8616(cloned_codegen)
+    rebind_report = rebind_restored_stack_coordinate_registry_8616(
+        cloned_codegen,
+        (*tuple(getattr(cloned_codegen.cfunc, "arg_list", ()) or ()), cloned_codegen.cfunc),
+    )
+    cloned_codegen._inertia_validation_clone_stack_coordinate_rebind_8616 = rebind_report
+    if rebind_report.failure_count:
+        raise PipelineHardError(
+            "validation clone stack-coordinate rebinding is incomplete",
+            layer="tail_validation",
+        )
     return cloned_codegen
 
 
@@ -9971,8 +9994,9 @@ def _prime_stack_prototype_before_validation_baseline_8616(
     """Materialize stack interface state before validation baseline capture.
 
     Return-address pruning changes angr's declaration maps and therefore must
-    precede ConditionIR operand materialization. Replay the typed Lowering
-    owner here so later cleanup cannot invalidate condition projections.
+    precede exact type reconciliation and ConditionIR operand materialization.
+    Replay the typed Lowering owners here so later cleanup cannot invalidate
+    condition projections or introduce a new function-parameter type surface.
     """
     if getattr(codegen, "_inertia_pre_validation_stack_prototype_primed", False):
         return False
@@ -9982,6 +10006,8 @@ def _prime_stack_prototype_before_validation_baseline_8616(
             changed = bool(materialize_annotated_stack_prototype_8616(project, codegen))
         with span("x86_16.decompile.prime_stack.return_address"):
             changed = bool(_post._prune_return_address_stack_arguments_8616(project, codegen)) or changed
+        with span("x86_16.decompile.prime_stack.prototype_types"):
+            changed = bool(reconcile_exact_stack_argument_prototype_8616(project, codegen)) or changed
         codegen._inertia_pre_validation_return_address_pruned_8616 = True
         if changed:
             with span("x86_16.decompile.prime_stack.prototype.invalidate_after"):
@@ -10157,12 +10183,18 @@ def _prime_typed_conditions_before_validation_baseline_8616(
         # baseline; delete it when IR/condition transfer owns all guard facts.
         with span("x86_16.decompile.prime_conditions.rewrite_decoded_jcc"):
             changed = bool(_rewrite_decoded_jcc_conditions_pass_8616(project, codegen)) or changed
-        # Signed stack-argument types are ConditionIR-derived semantic
-        # evidence.  Run this after all condition materialization bridges so
-        # cfunc.arg_list/prototype state cannot be made stale again before the
-        # validation baseline snapshot.
-        with span("x86_16.decompile.prime_conditions.apply_stack_arg_signedness"):
-            changed = bool(_apply_typed_condition_stack_arg_signedness_8616(project, codegen)) or changed
+        # Lowering owns condition-proven argument types and their projected
+        # stack coordinates. Run it after all condition materialization bridges
+        # so cfunc.arg_list/prototype state is current at baseline capture.
+        with span("x86_16.decompile.prime_conditions.apply_stack_arg_types"):
+            argument_type_result = apply_condition_argument_types_8616(project, codegen)
+            changed = argument_type_result.changed or changed
+        # Compatibility-only fallback for raw condition wrappers that have not
+        # reached the normalized Lowering fact contract. Never bypass a typed
+        # refusal when normalized facts exist.
+        if argument_type_result.stats.normalized_fact_count == 0:
+            with span("x86_16.decompile.prime_conditions.apply_legacy_stack_arg_signedness"):
+                changed = bool(_apply_typed_condition_stack_arg_signedness_8616(project, codegen)) or changed
         # ConditionIR signedness can narrow a generated argument type. Replay
         # the Types/Lowering interface owner immediately so its parameter-width
         # facts describe that same pre-validation surface instead of the stale
@@ -16201,6 +16233,7 @@ def _decompile_8616(self: StructuredAstValue) -> None:
             )
         _debug_prevalidation_pointer_surface_8616("after-baseline-restore")
         self.codegen._inertia_postprocess_pre_validation_summary = before_summary
+        materialized_condition_storage_before = capture_materialized_condition_storage_surface_8616(self.codegen)
         # Snapshot pre-postprocess codegen for the semantic gate. In the
         # validation-enabled path, mutating postprocess is only safe when a
         # rejected result can be restored.
@@ -16263,11 +16296,22 @@ def _decompile_8616(self: StructuredAstValue) -> None:
                 self.codegen._inertia_postprocess_exception = repr(ex)
                 self.codegen._inertia_postprocess_exception_pass = getattr(self.codegen, "_inertia_last_postprocess_pass", None)
         postprocess_elapsed = time.perf_counter() - postprocess_started
+        materialized_condition_storage_after = capture_materialized_condition_storage_surface_8616(self.codegen)
+        materialized_condition_storage_integrity = compare_materialized_condition_storage_surfaces_8616(
+            materialized_condition_storage_before,
+            materialized_condition_storage_after,
+        )
+        if materialized_condition_storage_integrity.drifted:
+            changed = False
         if not changed and pre_postprocess_cfunc_snapshot is not None:
             _restore_project_function_metadata_8616(pre_postprocess_project_function_snapshot)
             _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
             _restore_codegen_inertia_metadata_8616(self.codegen, pre_postprocess_metadata_snapshot)
             _restore_codegen_text_state_8616(self.codegen, pre_postprocess_text_snapshot)
+        record_materialized_condition_storage_failure_8616(
+            self.codegen,
+            materialized_condition_storage_integrity,
+        )
         function = getattr(self, "function", None) or getattr(self, "func", None)
         if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
             addr = getattr(self.codegen.cfunc, "addr", None)

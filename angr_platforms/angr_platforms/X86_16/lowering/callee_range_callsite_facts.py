@@ -4,6 +4,9 @@ Layer: Types/Lowering.
 Responsibility: decode each supplied caller range once, retain exact direct-call
 coordinates, and bind existing recovery summaries to canonical callee targets.
 This module does not derive argument interfaces or mutate generated C.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

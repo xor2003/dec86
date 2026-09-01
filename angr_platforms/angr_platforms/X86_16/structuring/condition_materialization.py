@@ -458,7 +458,7 @@ def _cfg_reaches_address_8616(
     return False
 
 
-def _condition_key_from_tags_8616(node: object) -> tuple[int, int] | None:
+def condition_key_from_tags_8616(node: object) -> tuple[int, int] | None:
     """Return the first complete instruction/block tag pair in a C expression."""
     for current in _iter_c_nodes_deep_8616(node):
         boundary = cast(_ConditionMaterializationTaggedNode8616, current)
@@ -579,7 +579,7 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
                     "loop",
                     type(node).__name__,
                     id(condition),
-                    _condition_key_from_tags_8616(condition),
+                    condition_key_from_tags_8616(condition),
                     _condition_structure_token_8616(condition),
                     body_entry_tags.first_block_addr,
                     body_entry_tags.first_instruction_addr,
@@ -604,7 +604,7 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
                 (
                     "ifelse",
                     id(condition),
-                    _condition_key_from_tags_8616(condition),
+                    condition_key_from_tags_8616(condition),
                     _condition_structure_token_8616(condition),
                     len(pairs),
                     node.else_node is not None,
@@ -1355,7 +1355,7 @@ def _materialize_existing_wide_call_return_conditions_8616(
             if tags.get("inertia_structuring_wide_call_return_condition_materialized_8616") is True:
                 replacement_pairs.append((expression, body))
                 continue
-            key = _condition_key_from_tags_8616(expression)
+            key = condition_key_from_tags_8616(expression)
             root_condition = conditions_by_src.get(key[0]) if key is not None else None
             if (
                 root_condition is None
@@ -1534,7 +1534,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             replay_evidence = None
             if len(node.condition_and_nodes) == 1:
                 semantic_condition, semantic_body = node.condition_and_nodes[0]
-                key = _condition_key_from_tags_8616(semantic_condition)
+                key = condition_key_from_tags_8616(semantic_condition)
                 semantic_root_fact = conditions_by_src.get(key[0]) if key is not None else None
                 if (
                     semantic_root_fact is not None
@@ -1576,7 +1576,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 classified_count += len(condition_and_nodes)
                 materialized_count += len(condition_and_nodes)
                 continue
-            keys = tuple(_condition_key_from_tags_8616(condition) for condition, _body in condition_and_nodes)
+            keys = tuple(condition_key_from_tags_8616(condition) for condition, _body in condition_and_nodes)
             source_facts = tuple(
                 conditions_by_src.get(key[0]) if key is not None else None
                 for key in keys
@@ -1854,7 +1854,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             classified_count += 1
             materialized_count += 1
             continue
-        key = _condition_key_from_tags_8616(condition)
+        key = condition_key_from_tags_8616(condition)
         node_ins_addr = _direct_tagged_ins_addr_8616(node)
         condition_ins_addr = key[0] if key is not None else None
         condition_fact = conditions_by_src.get(condition_ins_addr) if condition_ins_addr is not None else None

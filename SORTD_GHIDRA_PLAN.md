@@ -18,7 +18,7 @@ Numeric function and global names are acceptable when the executable has no
 debug information. Source names below identify addresses for this report only;
 they must not become recovery evidence.
 
-## Current Checkpoint (2026-08-31)
+## Current Checkpoint (2026-09-01)
 
 Current sidecar-free command:
 
@@ -69,8 +69,9 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
   and prototype conflicts remain typed refusals
 - the `scalar_types_io` gate retains the high-bit case
   `mix_uc(64, 0) == 128`, so a wrongly signed byte return cannot pass through
-  integer promotion unnoticed. Its fresh 2026-08-31 run is red because
-  `add_long` fails Tail Validation and the translation unit is not rebuilt
+  integer promotion unnoticed. Its fresh 2026-09-01 run is green: all ten
+  selected functions decompile, the translation unit recompiles, and the
+  rebuilt executable exits `255`
 - a current-tree stack-object regression inverted the containment predicate and
   selected storage smaller than the requested access. Restoring the owned
   invariant `storage_size >= access_width` preserves byte views of aggregates
@@ -86,66 +87,60 @@ remains in Condition IR, status-flag liveness remains in IR, and loop shape
 remains in Structuring. CLI changes only preserve proven function names and
 persist already accepted retry-lane C artifacts.
 
-The CMP16 coordinate-collision unit and focused executable regressions remain
-closed. A fresh full MS C pipeline on 2026-08-31 exposed a separate accepted-
-payload defect: rebuilt `rel_i16` and `rel_u16` return zero instead of their
-materialized masks. This is not part of the completed loop-shape owner family;
-it remains a mandatory Types/Lowering and Tail Validation task because
-`validation=passed` must not accept a lost return value.
+The accepted-payload CMP16 defect is closed. Widening copy propagation had
+propagated `mask = 0` across conditional `mask |= bit` updates because it did
+not invalidate inherited definitions at a branch join. Widening now refuses
+that stale continuation state. Structuring return-chain integrity also consumes
+the mask-accumulator return fingerprint, so a later pass cannot replace the
+proven return before Tail Validation snapshots it. The regressions failed
+before the fixes; real `rel_i16` returns `mask`, all six comparisons survive,
+and the complete `compare16` compile/decompile/recompile/runtime gate exits
+`255`.
 
-The last complete focused target refresh is red. At `12:49:42 +02:00` it reported
-**3,968 passed and 17 failed in 403.81 seconds** under seven workers. An exact
-17-node retry reported **1 passed and 16 failed in 164.52 seconds**: the
-sidecar HeapSort timeout passed on retry, so it is tracked as performance and
-flakiness debt rather than counted as a reproducible semantic failure. Sleep
-remains closed. Swaps, the independently exposed DrawTime carry-bit failure,
-and all three InitMenu failures are also closed by focused regressions and live
-Tail Validation. The original seven focused SORTD failures were grouped by
-symptom before the earliest owning contract was proved:
+The current focused unit lane passes **1,913 tests** under seven workers. A
+fresh `quality-dev` passes direct Ruff `--fix`, MyPy over 266 files, the
+39-module mypyc compile/import smoke, complexity, architecture, ownership, the
+unit lane, and all three decompilation optimization comparisons. Promoted-file
+coverage now includes the new Frontend, IR, Lowering, Structuring, validation,
+and CLI modules rather than leaving them outside the real Ruff/MyPy gates.
 
-- five call, object, or indexed-storage materialization failures, now closed
-- one DrawFrame structuring/postprocess validation failure, now closed
-- one RunMenu portable-C declaration failure
+The mandatory 2026-09-01 pipeline is fully green. Its 1,913-test unit lane
+finished in 90.773 seconds, all four Ultra QuickC fixtures finished in 50.852
+seconds, and the full MS C tiny pipeline finished in 114.403 seconds. The MS C
+lane covers `compare16`, `simple_control`, `loops_jumps`, `storage_classes`,
+`function_pointers`, `pointer_memory`, and `scalar_types_io`; every selected
+translation unit recompiles and its rebuilt executable exits `255`.
 
-RunMenu's function-fix DoD is now closed. Its binary-proven Escape return,
-call-result assignment, switch cases, and signed wide global declaration all
-survive sidecar-free decompilation; the exact emitted stdout passes strict
-portable-C syntax. The final blocker was not declaration recovery or DCE:
-structured validation had demoted register-backed AIL virtuals to generic
-temporaries, so exact packed-FLAGS preservation evidence could not match the
-`vvar_17{r36|2b}` read. Validation now consumes the existing Lowering-owned
-physical-register view and accepts it only at an IR-proven instruction site.
-The wrong-site refusal remains red, both live RunMenu gates pass, and the
-175-test flag/validation/structuring surface plus file and startup architecture
-gates pass. The next implementation target is the complete focused-lane rerun.
+`simple_control/classify` is closed at Types/Lowering: the GP-state projection
+preserves instruction provenance, and the final pre-validation orchestrator
+replays the existing condition-argument type owner using projected machine-BP
+coordinates. The generated signature is `unsigned short classify(short x)`;
+the selected fallback validates, recompiles, and the rebuilt executable exits
+`255`. Harness reporting now records rejected rebased attempts separately from
+the selected validation result, so a clean accepted fallback reports zero final
+failures without erasing its attempted-failure history.
 
-A complete focused-lane refresh on 2026-08-31 reported **4,020 passed and 23
-failed in 375.08 seconds** under seven workers. Four failures were new-pass
-registry/inventory integration and three were callsite fixture drift after
-typed target identity became persistent; all seven now pass focused
-regressions. The remaining failures are being reclassified from current
-tracebacks rather than carried forward from the stale seven-failure snapshot.
+`function_pointers/select_and_apply` is closed by authoritative stack identity,
+not its stale placeholder name. Types/Lowering publishes verified stack-
+prototype materialization even when the C AST was already physically correct;
+Rewrite no longer aliases arguments by generated names. Tail Validation now
+captures Structuring-materialized condition origin keys and stack coordinates
+on both sides of Rewrite, rolls back drift, and records a hard failure. The
+150-test changed surface, Ruff/MyPy/type ratchets, `quality-dev`, and the real
+four-function gate pass; the emitted guard remains `if (which)` and the returned
+call remains `apply_twice(fn, value)`.
 
-The first live SORTD repair also closed a general Types/Lowering carrier-loss
-defect for wide call outputs. Sleep `0x10f38` now materializes its proven wide
-return instead of failing pipeline accounting. Structuring now materializes
-condition chains before loop conditions and transfers exact CFG-backed
-composite loop-exit ownership without descending into nested loops. The 122-test
-related Structuring surface passes, and the live sidecar-free Sleep body has
-`validation=passed`, two clock calls, no duplicate JCC, and no uninitialized
-`dx` carrier.
+The Ultra QuickC `args` fixture is also closed at Types/Lowering. Stack-C
+canonicalization preserves owned condition tags, exact writable scalar views
+lose only equal-width signedness casts, near data pointers use explicit guest-
+offset projections, and exact function pointers remain callable values. The
+structural fixture contract recognizes equivalent segmented indexed loads from
+the parsed C AST instead of demanding one rendered spelling. Tail Validation,
+portable compilation, MS C compilation, and rebuilt execution all pass.
 
-The permanent Sleep regression is now closed. Its root cause was a
-Types/Lowering precedence error: a contained two-byte access narrowed an exact
-four-byte body storage owner before the closed caller-width census was joined.
-Contained accesses now provide views without shrinking wider body-owned
-storage. The new unit regression failed before the fix; the permanent
-sidecar-free executable check, 18 related Types/Lowering tests, 133 related
-Structuring tests, Ruff, and MyPy over all four touched production modules pass.
-The external MSC6 lane was not rerun at this checkpoint; its last result still
-passed `compare16` and failed `function_pointers` and `pointer_memory`
-validation. The overall goal remains incomplete because the required project
-gates and tasks 3, 5, 6, 7, and 8 are open.
+No test, validation check, or unsupported-input refusal was weakened. The goal
+remains incomplete because Tasks 3, 5, 6, 7, and 8 and the broad full-suite
+refresh remain open.
 
 ## Execution Ledger And Estimation
 
@@ -175,13 +170,13 @@ output do not advance the percentage.
 | --- | ---: | ---: | --- | --- | ---: | ---: | --- |
 | 1. Whole-binary export | 5% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed by canonical stdout and strict compilation evidence. |
 | 2. Behavior proof | 8% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed for all source-selftested non-library functions. |
-| 3. Interprocedural contracts | 20% | 75% | pre-ledger | - | unknown | 30-46h | General indirect, stack, and broader multi-output storage remain; classify the external MSC6 failures and current stack/argument gate failures. |
+| 3. Interprocedural contracts | 20% | 92% | pre-ledger | - | unknown | 21-31h | Signed stack arguments, exact function-pointer values, indirect calls, and typed pointer-memory byte values are closed; broader multi-output storage remains. |
 | 4. Semantic-loss ratchets | 7% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed by the strict 20/20 executable-only gate and permanent tests. |
 | 5. Proof-backed readability | 8% | 0% | not started | - | 0h | 8-12h | Starts only after the semantic and behavior gates remain closed. |
 | 6. Profiling and performance | 10% | 70% | pre-ledger | - | unknown | 8-12h | Measure aggregate PSS and profile the single-function serial tail. |
 | 7. Reko mechanisms | 8% | 0% | not started | - | 0h | 10-16h | Implement only mechanisms supported by owned typed evidence. |
 | 8. Ghidra mechanisms | 34% | 98% | pre-ledger | - | unknown | 38-56h | Finish open call/type/CFG mechanisms and rerun all acceptance gates. |
-| **Total** | **100%** | **75%** | - | - | **historical total unavailable** | **85-120h** | Weighted completion remains 75% after rounding. RunMenu now meets its function-fix DoD. |
+| **Total** | **100%** | **79%** | - | - | **historical total unavailable** | **70-99h** | Weighted completion is 79% after rounding. All mandatory curated unit, Ultra QuickC, and MS C round-trip lanes are green. |
 
 Task-owner estimates above overlap where Tasks 3 and 8 share a mechanism. They
 are not summed. The non-overlapping forecast table below is the authoritative
@@ -216,7 +211,72 @@ source for the total remaining estimate.
 | InitMenu condition, call-result, and final-brace closure | `2026-08-29 14:23 +02:00` (approximate; first command lost at compaction) | `2026-08-29 15:16 +02:00` | 35-45m; waits excluded | 53m | completed | 0h | Frontend publishes the exact dword-OR zero condition; Types/Lowering removes only typed unobserved AX/EAX results and assigned fixed probes with frame proof; Rewrite only forces braces around already-structured multi-statement bodies. All three live tests, 94 focused tests, Ruff, MyPy, type/doc ratchets, and startup architecture checks pass. |
 | Validation-clean loop/control-flow family | `2026-08-29 15:29 +02:00` | `2026-08-29 16:50 +02:00` | exact focused subtotal unavailable after interruption; test waits excluded | 1h21m | completed | 0h | ReInitBars, BubbleSort, ExchangeSort, and PercolateUp pass live Tail Validation; 127 changed-surface tests and the four-test executable lane pass. Generic ambiguity/refusal tests cover storage identity, ordered pretests, duplicate breaks, and pretest condition surfaces. |
 | Retry-lane artifact persistence and checkpoint gates | `2026-08-31 10:54 +02:00` | `2026-08-31 13:30 +02:00` | 25-35m engineering; broad external wait excluded | 2h36m including shared-tree integration and external test wall | completed | 0h | Retry-lane C is persisted only after accepted validation. The final late-integration lane passes 18 focused tests with six fixture-dependent loader skips; Ruff, MyPy over 263 files, the 39-module mypyc smoke, architecture/ownership checks, 1,882 pytest cases, and all three pure-Python/mypyc quality comparisons pass. Measured candidate timing was mixed under shared-machine load: CMP16 1.174x and LOOPS 2.616x faster, FPTR 0.254x of baseline, so no universal speedup is claimed. The clean optimization-input rebuild now enforces the fixtures' intentional exit code 255. The broader `test-pipeline` remains red and is recorded below. |
-| Required project gates after the fix | `2026-08-29 08:51 +02:00` | - | historical subtotal retained; test time excluded | continued through `2026-08-31` | in progress | 10.5-29h | `quality-dev` is green. Fresh `test-pipeline` passed all 1,877 pytest cases but failed five of seven MS C full-pipeline constructs: compare16 exit 4, loops_jumps exit 2, function_pointers recompile failure, pointer_memory exit 1, and scalar_types_io `add_long` validation/recompile failure. No exclusion or weakened check was added. |
+| CMP16 accepted-return closure and pre-validation integrity guard | `2026-09-01 03:28 +02:00` | `2026-09-01 03:55 +02:00` | 15-20m engineering; test waits excluded | 27m | completed | 0h | Failing-before Lowering, Frontend adapter, Widening, and return-integrity regressions isolate the exact stale branch-join definition. Real `rel_i16`, the full `compare16` round trip, 187 related tests, Ruff, MyPy, and the optimization suite pass. |
+| Simple-control signed argument and GP-provenance closure | `2026-09-01 03:56 +02:00` | `2026-09-01 04:54 +02:00` | 25-35m engineering; test waits excluded | 58m | completed | 0h | Two failing-before regressions prove the lost GP tags and wrong raw-BP signedness consumer. The real three-function round trip validates the selected outputs, recompiles, and exits `255`; 157 related tests and the default pipeline's 1,906-test lane pass. |
+| Architecture promotion and accepted-attempt reporting integrity | `2026-09-01 04:20 +02:00` | `2026-09-01 04:57 +02:00` | 18-25m engineering, overlapping the simple-control gate waits | 37m | completed | 0h | Startup architecture is green, quality-dev passes Ruff/MyPy/mypyc and 1,906 tests, and final versus attempted validation failures are separate typed profile fields. Forty-eight harness tests pass. |
+| Function-pointer stack identity and condition-integrity closure | `2026-09-01 05:45 +02:00` (first retained checkpoint) | `2026-09-01 06:20 +02:00` | 30-40m engineering; test waits excluded | 35m | completed | 0h | A failing-before production-shaped regression isolates name-first aliasing of raw stack offset `2` to offset `4`. Alias-owned machine-BP identity is now the only substitution proof, the no-op materialization marker is durable, and Tail Validation rejects any later condition-storage drift. The 150-test surface, file gates, `quality-dev` with 1,906 tests, and the complete four-function runtime gate pass with rebuilt exit `255`. |
+| Pointer-memory typed value/storage closure | `2026-09-01 06:20 +02:00` (diagnosis checkpoint) | `2026-09-01 06:41 +02:00` | 15-20m engineering; test waits excluded | 21m | completed | 0h | The stack-coordinate registry now distinguishes an 8-bit semantic value from its 16-bit ABI slot. It refuses the high byte and an adjacent word argument. The 389-test architecture/coordinate surface, Ruff, MyPy, startup guard, and clean three-function compile/decompile/recompile/runtime gate pass with rebuilt exit `255`. |
+| Ultra arguments, GP-frame scope, and function-pointer projection closure | `2026-09-01 09:41 +02:00` | `2026-09-01 11:04 +02:00` | 45-60m engineering; test waits excluded | 1h23m | completed | 0h | Condition tags survive stack canonicalization; writable scalar lvalues normalize only with exact physical-width proof; data pointers retain guest-offset semantics; exact function pointers remain callable; canonical `push bp`/`pop bp` is excluded from the GP snapshot consumer and remains owned by frame lowering. Focused regressions fail before and pass after. Ruff, MyPy over 266 files, mypyc smoke, architecture/ownership, 1,913 unit tests, Ultra QuickC, all MS C tiny constructs, and optimization comparisons pass. |
+| Required project gates after the fix | `2026-08-29 08:51 +02:00` | - | historical subtotal retained; test time excluded | continued through `2026-09-01` | in progress | 4-12h | The mandatory curated pipeline is green: 1,913 unit tests, all Ultra QuickC fixtures, and all seven MS C tiny round trips pass. Ruff, MyPy over 266 files, mypyc smoke, architecture checks, ownership checks, and optimization comparisons pass. The next boundary is the broad full-suite refresh and any failures outside the curated lane. No exclusion or weakened check was added. |
+
+#### Simple-control signed-argument closure contract
+
+Reason: condition-proven signedness belongs to Types/Lowering, while the final
+AST orchestrator may only replay that owner after late condition regeneration.
+Losing GP assignment tags also made canonical frame pruning unable to identify
+the original `mov bp, sp` carrier.
+
+Definition of done: provenance survives GP subregister projection; normalized
+ConditionIR facts use authoritative machine-BP coordinates; the selected
+`classify`, `sum_to`, and `switch_fold` outputs have clean Tail Validation;
+generated C recompiles; the rebuilt executable exits `255`; focused Ruff,
+MyPy, architecture, unit, and default-pipeline gates retain the evidence.
+
+Definition of failure: raw positive-BP inference in Rewrite, rendered-C or
+assembly matching, an architecture-guard exception that moves semantics late,
+loss of an argument/sign/branch, conflating a rejected attempt with the selected
+result, rebuilt exit other than `255`, or any required regression/gate failure.
+
+#### Function-pointer stack-identity closure contract
+
+Reason: Structuring had materialized the exact `which` condition at machine
+`BP+4`, but Rewrite replaced it through the stale display name `arg_6` with the
+next argument at `BP+6`. Tail Validation then canonicalized both surfaces and
+missed the storage redirect.
+
+Definition of done: argument substitution consumes only Alias-owned stack
+identity; verified stack-prototype materialization is published even when the
+AST needs no physical change; Tail Validation compares keyed stack coordinates
+across Rewrite and hard-fails drift; `select_and_apply` tests `which`, retains
+both function targets, and returns `apply_twice(fn, value)`; the four-function
+translation unit recompiles and exits `255`; focused tests, Ruff, MyPy,
+type/doc ratchets, `quality-dev`, and optimization comparisons pass.
+
+Definition of failure: argument recovery by display name, rendered C, source,
+or assembly text; semantic repair in Rewrite; accepting changed or uncollected
+condition storage; loss of either function target or a call argument; rebuilt
+exit other than `255`; or any required test, type, documentation, lint,
+architecture, validation, or optimization gate failure.
+
+#### Pointer-memory typed value/storage closure contract
+
+Reason: MS C passes an `unsigned char` in a two-byte stack slot, but the load
+at machine `BP+6` consumes only its typed low-byte value. Treating the missing
+one-byte projection as a raw angr offset redirected it to the following word
+argument at `BP+8`.
+
+Definition of done: Types/Lowering records storage width and semantic value
+width separately; exact and low-value lookups consume the same Alias-owned
+machine-BP identity; high-byte and adjacent-word byte requests refuse; the
+generated fill loop assigns `value`, all three functions have clean Tail
+Validation, the translation unit recompiles, the rebuilt executable exits
+`255`, and focused Ruff, MyPy, architecture, and unit gates pass.
+
+Definition of failure: inferring the argument from a name, rendered C, COD, or
+assembly text; implementing value/storage recovery in Rewrite; accepting a
+high-byte or adjacent-slot collision; emitting `dst[i] = count`; rebuilt exit
+other than `255`; or any required type, lint, architecture, validation, unit,
+compile, or runtime gate failure.
 
 #### InitMenu step 5c closure contract
 
@@ -317,7 +377,7 @@ The final cell in each row is that row's DoD. Missing any listed condition,
 weakening a gate, or moving semantics to a later layer is its definition of
 failure; the detailed reason and failure clauses remain authoritative in the
 numbered task section below.
-The rows are non-overlapping and currently sum to the same rounded 85-120h total
+The rows are non-overlapping and currently sum to the same rounded 75-105h total
 as the weighted task ledger. Estimates for the remaining live families are deliberately
 separate: a passing test count cannot hide an independent semantic owner or a
 validation blind spot.
@@ -335,13 +395,17 @@ validation blind spot.
 | 5e | Close the five call/object/indexed-storage materialization failures | `2026-08-31 21:43 +02:00` | `2026-08-31 22:22 +02:00` | 24-30m focused; final 54.31s test wall separate | complete | Five live regressions plus supporting unit contracts pass; exact typed target identity removes stale numeric declarations and lower-level IR replay cannot overwrite stronger object lowering. |
 | 5f | Close the DrawFrame validation failure | `2026-08-31 22:27 +02:00` | `2026-08-31 22:59 +02:00` | 18-24m focused; final 10.86s related-suite wall separate | complete | DrawFrame passes Tail Validation with no semantic repair in Structuring cleanup or Rewrite; the source-equivalent loop and every required call survive. |
 | 5g | Close the RunMenu portable-C declaration failure | `2026-08-31 23:29 +02:00` | `2026-08-31 23:54 +02:00` | 17-20m focused; final two-test live wall 50.04s | complete | RunMenu validates, compiles as portable C, retains the Escape path and call result, and consumes packed-FLAGS evidence only through exact physical-register identity. |
-| 6 | Rerun the complete focused pytest lane and classify any newly exposed failures | not started after live-family closure | - | 0h; latest baseline test wall is 6m44s plus 2m45s retry | 0.25-0.75h focused | The complete lane passes; any new failure is assigned to its earliest owned contract and added as a separately timed row. |
-| 7 | Fix and rerun external MSC6 `function_pointers` and `pointer_memory` gates | diagnosis observed `2026-08-29 11:24 +02:00`; implementation not started | - | diagnosis time unknown | 3-8h | Correct the shared machine-BP/entry-SP consumer defect at Types/Lowering, add runtime-shaped regressions, and obtain validation-clean compile/decompile/recompile/runtime results. |
-| 8 | Run `quality-hard`, `test-pipeline`, and required expanded acceptance gates | not started | - | 0h | 3-8h focused plus test wall time | Every mandatory lint, type, architecture, focused, tiny-example, and pipeline gate passes without exclusions or weakened checks. |
-| 9 | Finish remaining general interprocedural contracts and open Ghidra mechanisms | not started | - | 0h | 53-63h | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, and CFG mechanisms. |
+| 6 | Rerun the complete focused pytest lane and classify any newly exposed failures | `2026-09-01` (exact start not retained) | `2026-09-01 03:55 +02:00` | test wall recorded separately | complete | The complete unit lane passes 1,906 tests; each external MS C failure has a concrete function-level symptom. |
+| 6a | Close CMP16 stale accepted-return propagation and its validation blind spot | `2026-09-01 03:28 +02:00` | `2026-09-01 03:55 +02:00` | 15-20m focused; test waits excluded | complete | Widening invalidates branch-joined definitions, Structuring guards the proven return fingerprint, and the full `compare16` round trip exits `255`. |
+| 7a | Close `simple_control` GP provenance and signed argument projection | `2026-09-01 03:56 +02:00` | `2026-09-01 04:54 +02:00` | 25-35m focused; test waits excluded | complete | The existing Types/Lowering owner consumes projected machine-BP coordinates; all three selected functions validate and the rebuilt executable exits `255`. |
+| 7b | Close function-pointer stack identity and condition integrity | `2026-09-01 05:45 +02:00` (first retained checkpoint) | `2026-09-01 06:20 +02:00` | 30-40m focused; test waits excluded | complete | Alias-owned storage identity survives Rewrite; the generic validation guard rejects argument redirects; the full `function_pointers` gate exits `255`. |
+| 7c | Close `pointer_memory` typed byte-value storage | `2026-09-01 06:20 +02:00` | `2026-09-01 06:41 +02:00` | 15-20m focused; test waits excluded | complete | Types/Lowering owns the typed low-byte projection inside the word ABI slot; the full gate exits `255`. |
+| 7d | Fix and rerun the remaining `scalar_types_io` gate | diagnosis refreshed `2026-09-01 06:20 +02:00` | - | 0h | 1-4h | Isolate `byteops_unsigned` and `add_long` independently at their earliest owners; the complete compile/decompile/recompile/runtime gate exits `255`. |
+| 8 | Run `quality-hard`, `test-pipeline`, and required expanded acceptance gates | started `2026-09-01` | - | current quality-dev and default-pipeline waits recorded separately | 1-3h focused plus test wall time | Every mandatory lint, type, architecture, focused, tiny-example, and pipeline gate passes without exclusions or weakened checks. |
+| 9 | Finish remaining general interprocedural contracts and open Ghidra mechanisms | not started | - | 0h | 48-58h | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, and CFG mechanisms. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
-| 12 | Implement evidence-supported Reko mechanisms | not started | - | 0h | 10-16h | Task 7 per-step DoD passes; unsupported mechanisms remain explicit refusals. |
+| 12 | Implement evidence-supported Reko mechanisms | not started | - | 0h | 9-15h | Task 7 per-step DoD passes; unsupported mechanisms remain explicit refusals. |
 
 ### Estimate History
 
@@ -360,11 +424,15 @@ validation blind spot.
 | `2026-08-31 22:22 +02:00` | 87-124h | -3h / -8h | Step 5e closed faster than forecast after three shared root causes were isolated: lowering precedence, validated rollback cleanup completeness, and typed call/declaration target coherence. Five live regressions, 161 supporting cases, file gates, and startup architecture checks pass. |
 | `2026-08-31 22:59 +02:00` | 86-121h | -1h / -3h | Step 5f closed through two generic validation contracts: exact identical-return delta cardinality and typed postprocess transaction completion. DrawFrame passes sidecar-free with source-equivalent control flow; 167 related tests and all changed-surface gates pass. |
 | `2026-08-31 23:54 +02:00` | 85-120h | -1h / -1h | Step 5g closed faster than forecast after pass isolation proved the defect pre-existed postprocess. Register-backed AIL virtuals now retain exact physical-register identity in validation; wrong-site packed-FLAGS reads still fail. Both live RunMenu gates, 175 related tests, changed-file gates, startup architecture checks, and strict C syntax pass. |
+| `2026-09-01 03:55 +02:00` | 82-116h | -3h / -4h | CMP16's accepted-return defect closed at Widening, with a Structuring integrity guard that prevents Tail Validation from blessing the same loss later. The current unit lane and three of seven MS C constructs pass; four constructs remain independently red. |
+| `2026-09-01 04:57 +02:00` | 80-113h | -2h / -3h | `simple_control` closes in 25-35 focused minutes at GP projection and condition-argument Types/Lowering. Quality-dev is fully green, the unit lane remains 1,906/1,906, four of seven MS C constructs pass, and selected-versus-attempted validation reporting is explicit. |
+| `2026-09-01 06:20 +02:00` | 75-105h | -5h / -8h | `function_pointers` closes after pass tracing isolates a name-first Rewrite alias. The correction consumes machine-BP identity only, and a typed Tail Validation surface now rejects future stack-coordinate redirects. The 150-test surface, quality-dev, optimization suite, and complete runtime gate pass. |
+| `2026-09-01 06:41 +02:00` | 74-103h | -1h / -2h | `pointer_memory` closes after separating a byte value from its word ABI storage slot in Types/Lowering. Exact refusal tests, 389 related tests, architecture startup, and the clean three-function runtime gate pass. |
 
-Current expected finish for the complete plan is **85-120 focused engineering
-hours**, approximately **2.2-4.0 working weeks** at 30-40 focused hours per
-week, or roughly **2026-09-15 through 2026-09-28** if work continues at that
-rate. The midpoint forecast is about **103 focused hours / 2026-09-19**.
+Current expected finish for the complete plan is **74-103 focused engineering
+hours**, approximately **1.9-3.4 working weeks** at 30-40 focused hours per
+week, or roughly **2026-09-14 through 2026-09-24** if work continues at that
+rate. The midpoint forecast is about **89 focused hours / 2026-09-18**.
 This is a range, not a calendar promise: newly exposed semantic failures can
 increase it. The next recalibration occurs after the complete focused-lane
 rerun, then after every subsequent family, using measured focused time per

@@ -45,6 +45,8 @@ def write_generated_translation_unit_c(
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text(payload, encoding="utf-8")
     os.replace(temporary, destination)
+    counterpart_name = "partial-translation-unit.c" if complete else "translation-unit.c"
+    (output_dir / counterpart_name).unlink(missing_ok=True)
     return destination
 
 

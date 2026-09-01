@@ -13,10 +13,15 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.c_ast_utils import _same_c_expression_8616
 from angr_platforms.X86_16.lowering.carry_borrow_bit_contracts import (
     CarryBorrowBitLoweringFact8616,
+    CarryBorrowBitLoweringFailure8616,
     CarryBorrowBitLoweringVerdict8616,
 )
 from angr_platforms.X86_16.lowering.carry_borrow_bit_placement import (
     materialize_carry_borrow_bit_value_8616,
+)
+from angr_platforms.X86_16.lowering.carry_borrow_bit_predicate import (
+    carry_bit_predicate_8616,
+    carry_bit_predicate_from_arithmetic_8616,
 )
 from angr_platforms.X86_16.lowering.carry_borrow_bit_values import lower_carry_borrow_bit_values_8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -132,6 +137,131 @@ def _fact(block_addr: int, low_addr: int, high_addr: int) -> CarryBorrowBitLower
         high_block_addr=block_addr,
         high_ins_addr=high_addr,
     )
+
+
+def test_symmetric_addition_carry_predicates_share_one_low_site() -> None:
+    """Treat ``sum < lhs`` and ``sum < rhs`` as one carry meaning."""
+    codegen = _FakeCodegen()
+    lhs = _vvar(codegen, "ax", "lhs", 10)
+    rhs = _vvar(codegen, "bx", "rhs", 11)
+    tags = {"vex_block_addr": _ARM_A, "ins_addr": _LOW_A}
+    addition = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, tags=tags)
+    symmetric_addition = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, tags=tags)
+    candidates = (
+        structured_c.CBinaryOp("CmpLT", addition, lhs, codegen=codegen, tags=tags),
+        structured_c.CBinaryOp(
+            "CmpLT",
+            symmetric_addition,
+            rhs,
+            codegen=codegen,
+            tags=tags,
+        ),
+    )
+    fact = CarryBorrowBitLoweringFact8616(
+        function_addr=_ENTRY,
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        low_block_addr=_ARM_A,
+        low_ins_addr=_LOW_A,
+        high_block_addr=_ARM_A,
+        high_ins_addr=_HIGH_A,
+    )
+
+    predicate = carry_bit_predicate_8616(
+        ((candidates[0], addition), (candidates[1], symmetric_addition)),
+        fact,
+        build_test_cfg_ownership_8616({_ARM_A: (_LOW_A, _HIGH_A)}),
+    )
+
+    assert not isinstance(predicate, CarryBorrowBitLoweringFailure8616)
+    assert predicate.op == "CmpLT"
+
+
+def test_same_site_flag_additions_do_not_compete_with_proven_carry() -> None:
+    """Ignore tagged flag bookkeeping outside the coherent carry comparison."""
+    codegen = _FakeCodegen()
+    lhs = _vvar(codegen, "ax", "lhs", 10)
+    rhs = _vvar(codegen, "bx", "rhs", 11)
+    tags = {"vex_block_addr": _ARM_A, "ins_addr": _LOW_A}
+    addition = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, tags=tags)
+    candidate = structured_c.CBinaryOp("CmpLT", addition, lhs, codegen=codegen, tags=tags)
+    flag_offset = structured_c.CBinaryOp(
+        "Add",
+        _constant(codegen, 0),
+        _constant(codegen, 4),
+        codegen=codegen,
+        tags=tags,
+    )
+    flag_bit = structured_c.CBinaryOp(
+        "Add",
+        flag_offset,
+        _constant(codegen, 1),
+        codegen=codegen,
+        tags=tags,
+    )
+    fact = CarryBorrowBitLoweringFact8616(
+        function_addr=_ENTRY,
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        low_block_addr=_ARM_A,
+        low_ins_addr=_LOW_A,
+        high_block_addr=_ARM_A,
+        high_ins_addr=_HIGH_A,
+    )
+
+    predicate = carry_bit_predicate_8616(
+        ((candidate, addition, flag_offset, flag_bit),),
+        fact,
+        build_test_cfg_ownership_8616({_ARM_A: (_LOW_A, _HIGH_A)}),
+    )
+
+    assert not isinstance(predicate, CarryBorrowBitLoweringFailure8616)
+    assert predicate.op == "CmpLT"
+
+
+def test_arithmetic_fallback_selects_unique_direct_low_result() -> None:
+    """Select the assigned low result when tagged flag additions survive."""
+    codegen = _FakeCodegen()
+    lhs = _vvar(codegen, "ax", "lhs", 10)
+    rhs = _vvar(codegen, "bx", "rhs", 11)
+    tags = {"vex_block_addr": _ARM_A, "ins_addr": _LOW_A}
+    addition = structured_c.CBinaryOp("Add", lhs, rhs, codegen=codegen, tags=tags)
+    low_assignment = structured_c.CAssignment(
+        _vvar(codegen, "ax", "low_result", 12),
+        addition,
+        codegen=codegen,
+        tags=tags,
+    )
+    flag_offset = structured_c.CBinaryOp(
+        "Add",
+        _constant(codegen, 0),
+        _constant(codegen, 4),
+        codegen=codegen,
+        tags=tags,
+    )
+    flag_bit = structured_c.CBinaryOp(
+        "Add",
+        flag_offset,
+        _constant(codegen, 1),
+        codegen=codegen,
+        tags=tags,
+    )
+    fact = CarryBorrowBitLoweringFact8616(
+        function_addr=_ENTRY,
+        kind=CarryBorrowKind8616.ADD_WITH_CARRY,
+        low_block_addr=_ARM_A,
+        low_ins_addr=_LOW_A,
+        high_block_addr=_ARM_A,
+        high_ins_addr=_HIGH_A,
+    )
+
+    predicate = carry_bit_predicate_from_arithmetic_8616(
+        (low_assignment, addition, flag_offset, flag_bit),
+        fact,
+        build_test_cfg_ownership_8616({_ARM_A: (_LOW_A, _HIGH_A)}),
+    )
+
+    assert not isinstance(predicate, CarryBorrowBitLoweringFailure8616)
+    assert predicate.op == "CmpLT"
+    assert _same_c_expression_8616(predicate.lhs.expr, low_assignment.lhs)
 
 
 def test_branch_owned_borrow_sites_do_not_cross_select_shared_flags_identity() -> None:

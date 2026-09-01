@@ -23,6 +23,7 @@ from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.alias.alias_model_impl import (
     _CopyAliasState,
+    _derived_stack_high_byte_follows_slot,
     _stack_slot_identity_for_variable,
     _StackPointerAliasState,
 )
@@ -1257,6 +1258,23 @@ def _stack_slot_identity_can_join(lhs: StructuredAstValue, rhs: StructuredAstVal
     lvar = getattr(lhs, "variable", None)
     rvar = getattr(rhs, "variable", None)
     return _stack_slot_identity_can_join_var(lvar, rvar)
+
+
+def _derived_stack_high_byte_follows_cvar(
+    address_base: StructuredAstValue,
+    address_byte_offset: int,
+    low_byte: StructuredAstValue,
+) -> bool:
+    """Adapt structured CVariables to the Alias-owned derived-byte proof."""
+    if not isinstance(address_base, structured_c.CVariable) or not isinstance(low_byte, structured_c.CVariable):
+        return False
+    return bool(
+        _derived_stack_high_byte_follows_slot(
+            address_base.variable,
+            address_byte_offset,
+            low_byte.variable,
+        )
+    )
 
 
 def _is_c_constant_int(node: StructuredAstValue, value: int) -> bool:
@@ -4240,6 +4258,7 @@ def _coalesce_direct_ss_local_word_statements(project: AngrProjectValue, codegen
         match_ss_local_plus_const=_match_ss_local_plus_const,
         match_shift_right_8_expr=_match_shift_right_8_expr,
         stack_slot_identity_can_join=_stack_slot_identity_can_join,
+        derived_stack_high_byte_follows_slot=_derived_stack_high_byte_follows_cvar,
         same_c_expression=_same_c_expression,
         unwrap_c_casts=_unwrap_c_casts,
         promote_direct_stack_cvariable=_promote_direct_stack_cvariable,

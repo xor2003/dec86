@@ -24,6 +24,12 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from angr_platforms.X86_16 import decompiler_postprocess_stage as _postprocess_stage
 from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
+from angr_platforms.X86_16.analysis.stack_frame_ir import (
+    BPFrameCoordinateEvidence8616,
+    FrameAccessArtifact,
+    FrameCoordinateStats8616,
+    FrameCoordinateStatus8616,
+)
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
@@ -60,6 +66,9 @@ from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     build_typed_stack_probe_return_facts_8616,
 )
 from angr_platforms.X86_16.lowering.stack_variable_binding import StackBaseBpBiasEvidence8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    stack_variable_coordinate_registry_8616,
+)
 from angr_platforms.X86_16.segmented_memory_reasoning import (
     SegmentAssignment,
     SegmentRegister,
@@ -106,6 +115,17 @@ def _codegen(statements):
         unified_local_vars={},
     )
     return project, codegen
+
+
+def _attach_standard_bp_coordinate(codegen):
+    codegen._inertia_vex_ir_frame = FrameAccessArtifact(
+        bp_coordinate=BPFrameCoordinateEvidence8616(
+            status=FrameCoordinateStatus8616.PROVEN,
+            bp_entry_sp_delta=-2,
+            detail="standard push-bp frame",
+            stats=FrameCoordinateStats8616(1, 1, 1, 1, 0),
+        )
+    )
 
 
 def test_assignment_map_debug_dirty_lhs_refuses_throwing_properties(monkeypatch):
@@ -1279,7 +1299,7 @@ def test_real_mode_linear_stack_base_bias_uses_recovered_arg_list_offsets_withou
 
 
 def test_real_mode_linear_stack_carrier_delta_uses_recovered_arg_list_offsets_without_alias_facts():
-    project, codegen = _codegen([])  # noqa: RUF059
+    project, codegen = _codegen([])
     arg_a = CVariable(
         SimStackVariable(4, 2, base="bp", name="a", region=0x4010),
         variable_type=SimTypeShort(False),
@@ -1313,7 +1333,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_recovered_arg_list_offsets_wi
 
 
 def test_real_mode_linear_stack_carrier_delta_uses_arg_offsets_to_disambiguate_bp_slots():
-    project, codegen = _codegen([])  # noqa: RUF059
+    project, codegen = _codegen([])
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 0, 2, region=0x4010),
@@ -1367,7 +1387,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_arg_offsets_to_disambiguate_b
 
 
 def test_real_mode_linear_stack_carrier_delta_prefers_abi_arg_region_over_return_address_slot():
-    project, codegen = _codegen([])  # noqa: RUF059
+    project, codegen = _codegen([])
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 2, 2, region=0x4010),
@@ -1696,6 +1716,7 @@ def test_real_mode_linear_stack_lowering_does_not_reuse_wide_carrier_for_byte_ac
 
 def test_runtime_ss_segment_helper_lowering_materializes_stack_base_offset():
     project, codegen = _codegen([])
+    _attach_standard_bp_coordinate(codegen)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -4, 2, region=0x4010)
     ]
@@ -1725,8 +1746,11 @@ def test_runtime_ss_segment_helper_lowering_materializes_stack_base_offset():
     rhs = codegen.cfunc.statements.statements[0].rhs
     assert isinstance(rhs, CVariable)
     assert isinstance(rhs.variable, SimStackVariable)
-    assert rhs.variable.offset == -4
+    assert rhs.variable.offset == -6
     assert rhs.variable.size == 2
+    projection = stack_variable_coordinate_registry_8616(codegen).for_variable(rhs.variable)
+    assert projection is not None
+    assert projection.bp_offset == -4
     assert codegen._inertia_runtime_ss_helper_candidate_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_refused_count_8616 == 0
@@ -1734,6 +1758,7 @@ def test_runtime_ss_segment_helper_lowering_materializes_stack_base_offset():
 
 def test_runtime_ss_segment_helper_lowering_materializes_ss_register_carrier_stack_base_offset():
     project, codegen = _codegen([])
+    _attach_standard_bp_coordinate(codegen)
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -6, 2, region=0x4010)
     ]
@@ -1764,8 +1789,11 @@ def test_runtime_ss_segment_helper_lowering_materializes_ss_register_carrier_sta
     rhs = codegen.cfunc.statements.statements[0].rhs
     assert isinstance(rhs, CVariable)
     assert isinstance(rhs.variable, SimStackVariable)
-    assert rhs.variable.offset == -6
+    assert rhs.variable.offset == -8
     assert rhs.variable.size == 2
+    projection = stack_variable_coordinate_registry_8616(codegen).for_variable(rhs.variable)
+    assert projection is not None
+    assert projection.bp_offset == -6
     assert codegen._inertia_runtime_ss_helper_candidate_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_refused_count_8616 == 0

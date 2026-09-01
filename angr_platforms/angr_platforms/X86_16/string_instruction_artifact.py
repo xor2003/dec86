@@ -205,6 +205,10 @@ def _string_family(base: str) -> tuple[str, int, str | None, str | None, bool] |
         return "scas", _width_for_base(base), None, "es", True
     if base.startswith("cmps"):
         return "cmps", _width_for_base(base), "ds", "es", True
+    if base.startswith("outs"):
+        return "outs", _width_for_base(base), "ds", None, False
+    if base.startswith("ins"):
+        return "ins", _width_for_base(base), None, "es", False
     return None
 
 

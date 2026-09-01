@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBinaryOp,
     CBreak,
     CConstant,
     CExpressionStatement,
@@ -15,10 +16,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypeFixedSizeArray, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeFixedSizeArray, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.ir.core import SegmentOrigin
 from angr_platforms.X86_16.ir.segment_state import SegmentRegisterState, SegmentStateArtifact
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.tail_validation import (
     X86_16TailValidationSummary,
     _def_use_entry_segment_register_offsets_8616,
@@ -33,6 +35,7 @@ from angr_platforms.X86_16.validation.status_flag_preservation import (
 )
 from angr_platforms.X86_16.validation_dataflow import (
     DefUseCallOutputDefinition8616,
+    DefUseEntryStackRange8616,
     validate_structured_def_use_8616,
 )
 from archinfo import ArchX86
@@ -41,6 +44,7 @@ from archinfo import ArchX86
 class _Codegen:
     def __init__(self) -> None:
         self._next_index = 0
+        self.cstyle_null_cmp = False
         self.project = _Project()
 
     def next_idx(self, _kind: str) -> int:
@@ -76,6 +80,12 @@ def _local_view(offset: int, width: int, codegen: _Codegen, name: str = "local")
 
 def _const(value: int, codegen: _Codegen) -> CConstant:
     return CConstant(value, SimTypeShort(False), codegen=codegen)
+
+
+_ENTRY_STACK_ARGUMENTS = (
+    DefUseEntryStackRange8616(4, 2),
+    DefUseEntryStackRange8616(6, 2),
+)
 
 
 def _register_carrier(
@@ -282,6 +292,64 @@ def test_def_use_indexed_array_lvalue_does_not_read_destination_storage():
 
     assert report.passed
     assert report.raw_fact_count == 0
+
+
+def test_def_use_semantic_cast_lvalue_defines_low_byte_only() -> None:
+    codegen = _codegen()
+    local = _local(-2, codegen, "word")
+    low_byte = CSemanticCast8616(
+        SimTypeShort(False),
+        SimTypeChar(False),
+        local,
+        codegen=codegen,
+    )
+    root = CStatements(
+        [
+            CAssignment(low_byte, _const(7, codegen), codegen=codegen),
+            local,
+        ],
+        codegen=codegen,
+    )
+
+    report = validate_structured_def_use_8616(root)
+
+    assert report.raw_fact_count == 1
+    assert report.materialized_count == 0
+    assert report.issue_tokens() == (
+        "uninitialized-read:stack-local:SS:BP-0x2:size2:root.stmt1",
+    )
+
+
+def test_def_use_semantic_cast_lvalue_byte_pair_defines_word() -> None:
+    codegen = _codegen()
+    local = _local(-2, codegen, "word")
+    byte_type = SimTypeChar(False)
+    low_byte = CSemanticCast8616(
+        SimTypeShort(False),
+        byte_type,
+        local,
+        codegen=codegen,
+    )
+    high_byte = CSemanticCast8616(
+        SimTypeShort(False),
+        byte_type,
+        CBinaryOp("Shr", local, _const(8, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements(
+        [
+            CAssignment(low_byte, _const(7, codegen), codegen=codegen),
+            CAssignment(high_byte, _const(0, codegen), codegen=codegen),
+            local,
+        ],
+        codegen=codegen,
+    )
+
+    report = validate_structured_def_use_8616(root)
+
+    assert report.passed
+    assert report.raw_fact_count == 1
+    assert report.materialized_count == 1
 
 
 def test_def_use_indexed_array_read_requires_exact_element_definition() -> None:
@@ -648,11 +716,14 @@ def test_def_use_accepts_definition_under_repeated_exact_predicate():
         codegen=codegen,
     )
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.passed
-    assert report.raw_fact_count == 1
-    assert report.materialized_count == 1
+    assert report.raw_fact_count == 5
+    assert report.materialized_count == 5
 
 
 def test_def_use_refuses_guarded_definition_after_predicate_write():
@@ -697,10 +768,13 @@ def test_def_use_refuses_guarded_definition_after_predicate_write():
         codegen=codegen,
     )
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.failure_count == 1
-    assert report.materialized_count == 0
+    assert report.materialized_count == 2
 
 
 def test_def_use_refuses_guarded_definition_for_different_storage_predicate():
@@ -738,10 +812,13 @@ def test_def_use_refuses_guarded_definition_for_different_storage_predicate():
         codegen=codegen,
     )
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.failure_count == 1
-    assert report.materialized_count == 0
+    assert report.materialized_count == 2
 
 
 def test_def_use_refuses_guarded_definition_after_predicate_address_escape():
@@ -791,10 +868,13 @@ def test_def_use_refuses_guarded_definition_after_predicate_address_escape():
         codegen=codegen,
     )
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.failure_count == 1
-    assert report.materialized_count == 0
+    assert report.materialized_count == 2
 
 
 def test_def_use_does_not_treat_while_body_assignment_as_definite_after_loop():
@@ -838,10 +918,13 @@ def test_def_use_carries_definitions_from_all_unconditional_loop_breaks() -> Non
     )
     root = CStatements([loop, read], codegen=codegen)
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.passed
-    assert report.materialized_count == 1
+    assert report.materialized_count == 2
 
 
 def test_def_use_refuses_unconditional_loop_definition_after_possible_break() -> None:
@@ -870,10 +953,13 @@ def test_def_use_refuses_unconditional_loop_definition_after_possible_break() ->
     )
     root = CStatements([loop, read], codegen=codegen)
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.failure_count == 1
-    assert report.materialized_count == 0
+    assert report.materialized_count == 1
 
 
 def test_def_use_refuses_conditional_loop_definition_even_with_break() -> None:
@@ -893,20 +979,23 @@ def test_def_use_refuses_conditional_loop_definition_even_with_break() -> None:
     )
     root = CStatements([loop, read], codegen=codegen)
 
-    report = validate_structured_def_use_8616(root)
+    report = validate_structured_def_use_8616(
+        root,
+        entry_defined_stack_ranges=_ENTRY_STACK_ARGUMENTS,
+    )
 
     assert report.failure_count == 1
-    assert report.materialized_count == 0
+    assert report.materialized_count == 1
 
 
-def test_def_use_ignores_positive_bp_argument_reads():
+def test_def_use_refuses_positive_bp_read_without_explicit_argument_range() -> None:
     codegen = _codegen()
     root = CStatements([_local(4, codegen, "arg_4")], codegen=codegen)
 
     report = validate_structured_def_use_8616(root)
 
-    assert report.passed
-    assert report.raw_fact_count == 0
+    assert report.failure_count == 1
+    assert report.raw_fact_count == 1
 
 
 def test_def_use_refuses_structured_register_carrier_read_before_assignment() -> None:

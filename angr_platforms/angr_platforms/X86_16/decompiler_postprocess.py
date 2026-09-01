@@ -4304,7 +4304,6 @@ def _apply_annotation_rewrites_8616(
     def _impl() -> bool:
         changed = False
         preferred_stack_cvars_by_identity: dict[object, CVariable] = {}
-        generated_arg_cvars_by_name: dict[str, CVariable] = {}
         for cvar in getattr(codegen.cfunc, "arg_list", ()) or ():
             if not isinstance(cvar, CVariable):
                 continue
@@ -4314,8 +4313,6 @@ def _apply_annotation_rewrites_8616(
             identity = machine_bp_stack_identity_8616(codegen, variable)
             if identity is not None:
                 preferred_stack_cvars_by_identity[identity] = cvar
-                if identity.offset > 0:
-                    generated_arg_cvars_by_name[f"arg_{identity.offset}"] = cvar
         for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if not isinstance(variable, SimStackVariable):
                 continue
@@ -4342,15 +4339,6 @@ def _apply_annotation_rewrites_8616(
         def transform_stack_aliases(node: object) -> object:
             if not isinstance(node, CVariable):
                 return node
-            node_names = (
-                node.name,
-                getattr(node.variable, "name", None),
-                getattr(node.unified_variable, "name", None),
-            )
-            for node_name in node_names:
-                replacement = generated_arg_cvars_by_name.get(node_name) if isinstance(node_name, str) else None
-                if replacement is not None and replacement is not node:
-                    return replacement
             variable = node.variable
             if not isinstance(variable, SimStackVariable):
                 return node

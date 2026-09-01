@@ -3,7 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: project typed SSA-proven 16/32-bit GP-register live-ins into
 coherent 32-bit runtime lanes instead of uninitialized automatic C locals.
-Consumes IR/SSA facts. Do not infer semantics from listings or rendered C.
+Consumes alias, widening, and typed facts, including IR/SSA facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations
@@ -31,20 +32,25 @@ from .global_declarations import (
 
 __all__ = [
     "GPRegisterStateLoweringStats8616",
+    "RuntimeGPExpressionView8616",
     "gp_live_in_names_from_ssa_8616",
     "lower_architectural_gp_register_state_8616",
+    "runtime_gp_expression_view_8616",
     "runtime_gp_live_in_name_8616",
     "runtime_gp_name_for_variable_8616",
+    "runtime_gp_state_assignment_8616",
     "runtime_gp_state_expr_8616",
 ]
 
 _RUNTIME_GP_STATE_SYMBOLS_8616 = {
     "eax": "inertia_eax",
+    "ebp": "inertia_ebp",
     "ebx": "inertia_ebx",
     "ecx": "inertia_ecx",
     "edx": "inertia_edx",
     "edi": "inertia_edi",
     "esi": "inertia_esi",
+    "esp": "inertia_esp",
 }
 _RUNTIME_GP_STATE_ADDRESSES_8616 = {
     "eax": 0x1_0000,
@@ -53,6 +59,8 @@ _RUNTIME_GP_STATE_ADDRESSES_8616 = {
     "edx": 0x1_000C,
     "esi": 0x1_0010,
     "edi": 0x1_0014,
+    "esp": 0x1_0018,
+    "ebp": 0x1_001C,
 }
 _GP_REGISTER_VIEWS_8616 = {
     "eax": ("eax", 0, 4),
@@ -75,7 +83,21 @@ _GP_REGISTER_VIEWS_8616 = {
     "si": ("esi", 0, 2),
     "edi": ("edi", 0, 4),
     "di": ("edi", 0, 2),
+    "esp": ("esp", 0, 4),
+    "sp": ("esp", 0, 2),
+    "ebp": ("ebp", 0, 4),
+    "bp": ("ebp", 0, 2),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeGPExpressionView8616:
+    """One structured-C projection of an owned architectural GP lane."""
+
+    register_name: str
+    parent_name: str
+    bit_shift: int
+    width: int
 
 
 def runtime_gp_name_for_variable_8616(variable: object) -> str | None:
@@ -94,6 +116,56 @@ def runtime_gp_name_for_variable_8616(variable: object) -> str | None:
             if symbol_name == name
         ),
         None,
+    )
+
+
+def runtime_gp_expression_view_8616(
+    expression: object,
+) -> RuntimeGPExpressionView8616 | None:
+    """Classify the exact structured projection emitted by this owner."""
+    while isinstance(expression, structured_c.CTypeCast):
+        expression = expression.expr
+    mask: int | None = None
+    if isinstance(expression, structured_c.CBinaryOp) and expression.op == "And":
+        if not isinstance(expression.rhs, structured_c.CConstant) or not isinstance(
+            expression.rhs.value,
+            int,
+        ):
+            return None
+        mask = expression.rhs.value
+        expression = expression.lhs
+    bit_shift = 0
+    if isinstance(expression, structured_c.CBinaryOp) and expression.op == "Shr":
+        if not isinstance(expression.rhs, structured_c.CConstant) or not isinstance(
+            expression.rhs.value,
+            int,
+        ):
+            return None
+        bit_shift = expression.rhs.value
+        expression = expression.lhs
+    if not isinstance(expression, structured_c.CVariable):
+        return None
+    parent_name = runtime_gp_name_for_variable_8616(expression.variable)
+    if parent_name is None:
+        return None
+    width = 4 if mask is None else {0xFF: 1, 0xFFFF: 2, 0xFFFF_FFFF: 4}.get(mask)
+    if width is None:
+        return None
+    register_name = next(
+        (
+            name
+            for name, view in _GP_REGISTER_VIEWS_8616.items()
+            if view == (parent_name, bit_shift, width)
+        ),
+        None,
+    )
+    if register_name is None:
+        return None
+    return RuntimeGPExpressionView8616(
+        register_name=register_name,
+        parent_name=parent_name,
+        bit_shift=bit_shift,
+        width=width,
     )
 
 
@@ -140,6 +212,47 @@ def runtime_gp_state_expr_8616(
         projected,
         structured_c.CConstant((1 << (view_width * 8)) - 1, SimTypeInt(False), codegen=codegen),
         codegen=codegen,
+    )
+
+
+def runtime_gp_state_assignment_8616(
+    register_name: str,
+    value: structured_c.CExpression,
+    *,
+    codegen: object,
+    function_addr: int,
+) -> structured_c.CAssignment | None:
+    """Materialize one proven architectural GP write into coherent runtime state."""
+    view = _GP_REGISTER_VIEWS_8616.get(register_name.strip().lower())
+    if view is None:
+        return None
+    parent_name, bit_shift, view_width = view
+    record_global_declaration_spec_8616(
+        codegen,
+        ctype=GlobalDeclarationCType8616.UNSIGNED_LONG,
+        name=_RUNTIME_GP_STATE_SYMBOLS_8616[parent_name],
+        array_len=None,
+    )
+    source = structured_c.CVariable(
+        SimMemoryVariable(
+            _RUNTIME_GP_STATE_ADDRESSES_8616[parent_name],
+            4,
+            name=_RUNTIME_GP_STATE_SYMBOLS_8616[parent_name],
+            region=function_addr,
+            category="inertia_gp_register_state",
+        ),
+        variable_type=SimTypeInt(False),
+        codegen=codegen,
+    )
+    if view_width == 4:
+        return structured_c.CAssignment(source, value, codegen=codegen)
+    return _runtime_gp_subview_write_8616(
+        parent_name,
+        bit_shift,
+        view_width,
+        source,
+        value,
+        function_addr,
     )
 
 
@@ -325,8 +438,10 @@ def _runtime_gp_subview_write_8616(
     source: structured_c.CVariable | structured_c.CDirtyExpression,
     value: structured_c.CExpression,
     function_addr: int,
+    *,
+    tags: Mapping[str, object] | None = None,
 ) -> structured_c.CAssignment:
-    """Project one narrow-register write into its coherent 32-bit parent."""
+    """Project one narrow-register write while preserving its origin tags."""
     codegen = source.codegen
     parent_lhs = _runtime_gp_cvar_8616(register_name, source, function_addr)
     parent_read = _runtime_gp_cvar_8616(register_name, source, function_addr)
@@ -355,6 +470,7 @@ def _runtime_gp_subview_write_8616(
         parent_lhs,
         structured_c.CBinaryOp("Or", preserved, inserted, codegen=codegen),
         codegen=codegen,
+        tags=tags,
     )
 
 
@@ -418,6 +534,7 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
                         lhs,
                         node.rhs,
                         cfunc.addr,
+                        tags=node.tags,
                     )
         projection: tuple[str, int, int] | None = None
         if isinstance(node, structured_c.CDirtyExpression):

@@ -486,6 +486,42 @@ def _stack_slot_identity_can_join(lhs: object, rhs: object) -> bool:
     return lhs_identity.can_join(rhs_identity)
 
 
+def _derived_stack_high_byte_follows_slot(
+    address_base: object,
+    address_byte_offset: int,
+    low_byte: object,
+) -> bool:
+    """Prove that an alias-derived stack byte immediately follows a low byte slot.
+
+    Address expressions may retain an angr stack carrier such as ``&v1 - 1``
+    after the byte at ``BP-2`` has already become a named stack CVariable.  The
+    carrier and the named variable still share one Alias-owned frame coordinate;
+    widening may join them only when this proof establishes the exact low/high
+    byte order in the same base and region.
+    """
+    if not isinstance(address_byte_offset, int):
+        return False
+    base_identity = _stack_slot_identity_for_variable(address_base)
+    low_identity = _stack_slot_identity_for_variable(low_byte)
+    if base_identity is None or low_identity is None or low_identity.width != 1:
+        return False
+    derived_high = _StackSlotIdentity(
+        base_identity.base,
+        base_identity.offset + address_byte_offset,
+        1,
+        region=base_identity.region,
+    )
+    if derived_high.base != low_identity.base:
+        return False
+    if (
+        derived_high.region is not None
+        and low_identity.region is not None
+        and derived_high.region != low_identity.region
+    ):
+        return False
+    return derived_high.offset == low_identity.offset + 1
+
+
 def _storage_domain_for_expr(expr: object) -> _StorageDomainSignature:
     from ..semantics.alias_query import _storage_domain_for_expr as _impl
 
@@ -695,6 +731,7 @@ __all__ = [
     "_StackSlotIdentity",
     "_StorageDomainSignature",
     "_StorageView",
+    "_derived_stack_high_byte_follows_slot",
     "_merge_storage_domains",
     "_same_stack_slot_identity",
     "_stack_slot_identity_can_join",

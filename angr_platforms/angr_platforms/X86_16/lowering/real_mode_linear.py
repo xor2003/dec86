@@ -163,6 +163,7 @@ from .global_declarations import (
     record_global_declaration_spec_8616,
     record_scalar_global_declaration_spec_8616,
 )
+from .gp_register_state import runtime_gp_expression_view_8616
 from .instruction_bp_stack_access import (
     InstructionBpStackAccessIndex8616,
     ensure_instruction_bp_stack_access_index_8616,
@@ -208,6 +209,10 @@ from .stack_lowering_from_facts import (
 )
 from .stack_probe_return_facts import TypedStackProbeReturnFact8616
 from .stack_storage_evidence import alias_proves_stack_range_8616
+from .stack_value_projection import (
+    StackValueProjectionStatus8616,
+    project_stack_value_range_8616,
+)
 from .stack_variable_binding import (
     StackBaseBpBiasEvidence8616,
     StackVariableBinding,
@@ -218,6 +223,9 @@ from .stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
     publish_selected_stack_cvar_projection_8616,
     stack_cvar_for_machine_bp_range_8616,
+)
+from .stack_variable_coordinates import (
+    stack_cvar_for_machine_bp_value_range_8616 as stack_cvar_for_machine_bp_value_range_8616,
 )
 from .stack_word_load_materialization import (
     materialize_stack_word_load_recompositions_8616,
@@ -1096,8 +1104,10 @@ def _ensure_positive_bp_stack_arg_8616(
 def stack_cvar_for_stable_ss_linear_access_8616(
     codegen: StructuredAstValue,
     access: RealModeLinearStackAccess8616,
+    *,
+    require_lvalue: bool = False,
 ) -> StructuredAstValue | None:
-    """Materialize a proven SS linear stack access as a C stack variable."""
+    """Materialize a proven SS stack access as a readable value or exact lvalue."""
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return None
@@ -1112,24 +1122,44 @@ def stack_cvar_for_stable_ss_linear_access_8616(
     target_type = _type_for_access_width_8616(access.width)
     requested_size = int(access.width) if isinstance(access.width, int) and access.width > 0 else None
     variables_in_use = getattr(cfunc, "variables_in_use", None)
-    projected = (
-        stack_cvar_for_machine_bp_range_8616(
-            codegen,
-            displacement,
-            requested_size,
-        )
+    projected_value = (
+        project_stack_value_range_8616(codegen, displacement, requested_size)
         if requested_size is not None
         else None
     )
-    if isinstance(projected, structured_c.CVariable):
-        if projected.variable_type is None:
-            projected.variable_type = target_type
-        _apply_preferred_stack_cvar_name_8616(projected, displacement, codegen)
-        variable = projected.variable
+    owner_projection = projected_value.owner if projected_value is not None else None
+    projected_owner = owner_projection.cvar if owner_projection is not None else None
+    if (
+        projected_value is not None
+        and projected_value.materialized
+        and owner_projection is not None
+        and isinstance(projected_owner, structured_c.CVariable)
+    ):
+        if projected_owner.variable_type is None:
+            projected_owner.variable_type = target_type
+        owner_offset = owner_projection.bp_offset
+        _apply_preferred_stack_cvar_name_8616(projected_owner, owner_offset, codegen)
+        variable = projected_owner.variable
         if isinstance(variables_in_use, dict) and isinstance(variable, SimStackVariable):
-            variables_in_use.setdefault(variable, projected)
-        _ensure_positive_bp_stack_arg_8616(codegen, projected, target_type)
-        return projected
+            variables_in_use.setdefault(variable, projected_owner)
+        _ensure_positive_bp_stack_arg_8616(codegen, projected_owner, target_type)
+        if require_lvalue:
+            return (
+                projected_owner
+                if projected_value.status is StackValueProjectionStatus8616.EXACT_VALUE
+                else None
+            )
+        return projected_value.expression
+    if (
+        projected_value is not None
+        and projected_value.status
+        in {
+            StackValueProjectionStatus8616.AMBIGUOUS_OWNER,
+            StackValueProjectionStatus8616.OUTSIDE_VALUE,
+            StackValueProjectionStatus8616.OWNER_NOT_EXPRESSION,
+        }
+    ):
+        return None
     for arg in getattr(cfunc, "arg_list", ()) or ():
         variable = getattr(arg, "variable", None)
         if (
@@ -1142,6 +1172,8 @@ def stack_cvar_for_stable_ss_linear_access_8616(
         ):
             existing_size = _cvar_storage_size_bytes_8616(arg, variable)
             if requested_size is not None and isinstance(existing_size, int) and existing_size < requested_size:
+                continue
+            if require_lvalue and requested_size is not None and existing_size != requested_size:
                 continue
             if (
                 displacement < 0
@@ -1168,6 +1200,8 @@ def stack_cvar_for_stable_ss_linear_access_8616(
             ):
                 existing_size = _cvar_storage_size_bytes_8616(cvar, variable)
                 if requested_size is not None and isinstance(existing_size, int) and existing_size < requested_size:
+                    continue
+                if require_lvalue and requested_size is not None and existing_size != requested_size:
                     continue
                 if (
                     displacement < 0
@@ -3149,6 +3183,11 @@ def _stack_offset_from_expr_8616(
         if const is not None:
             offset_cache[node_id] = const
             return const
+
+        runtime_gp_view = runtime_gp_expression_view_8616(node)
+        if runtime_gp_view is not None and runtime_gp_view.register_name == "bp":
+            offset_cache[node_id] = 0
+            return 0
 
         stack_base_bias = _stack_base_bp_bias_8616(node, codegen)
         if stack_base_bias is not None:

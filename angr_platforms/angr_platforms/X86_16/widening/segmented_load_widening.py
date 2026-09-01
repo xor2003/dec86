@@ -11,18 +11,32 @@ CLI/reporting evidence.
 from __future__ import annotations
 
 import builtins
+import logging
+import os
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from angr.ailment.expression import VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CFunctionCall,
     CStatements,
     CTypeCast,
+    CVariable,
 )
+from angr.sim_variable import SimRegisterVariable, SimTemporaryVariable
+from capstone.x86_const import X86_INS_MOV, X86_OP_MEM, X86_OP_REG
 
-from ..c_ast_utils import _replace_c_children_8616, _same_c_expression_8616
+from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
+from ..frontend_function_instructions import collect_function_instruction_inventory_8616
+from ..ir.core import IRAddress, IRValue, MemSpace
+from ..ir.function_ssa_registry import (
+    FunctionSSAArtifactVerdict8616,
+    registered_function_ssa_artifact_8616,
+)
 from .segmented_load_identity import (
     SegmentedLoadIdentity8616,
     segmented_load_identity_8616,
@@ -35,11 +49,20 @@ __all__ = [
     "join_adjacent_segmented_load_identities_8616",
 ]
 
+log: logging.Logger = logging.getLogger(__name__)
+
+
+class _CFunctionBoundary8616(Protocol):
+    """Owned fields consumed from the dynamic angr C-function boundary."""
+
+    addr: int
+
 
 class _CodegenBoundary8616(Protocol):
     """Owned view of widening metadata attached to the dynamic angr codegen."""
 
-    cfunc: object
+    cfunc: _CFunctionBoundary8616
+    project: object
     _inertia_segmented_load_widening_report_8616: SegmentedLoadWideningReport8616
 
 
@@ -185,6 +208,248 @@ def _shifted_high_byte_8616(node: object) -> tuple[CFunctionCall, object, object
     return None
 
 
+def _instruction_addrs_8616(node: object) -> frozenset[int]:
+    """Return exact instruction addresses attached at the structured-C boundary."""
+    tags = node.tags if isinstance(node, (CAssignment, CFunctionCall)) else None
+    if not isinstance(tags, dict):
+        return frozenset()
+    values: set[int] = set()
+    direct = tags.get("ins_addr")
+    if isinstance(direct, int):
+        values.add(direct)
+    source_addrs = tags.get("inertia_source_instruction_addrs")
+    if isinstance(source_addrs, (list, tuple, set, frozenset)):
+        values.update(value for value in source_addrs if isinstance(value, int))
+    return frozenset(values)
+
+
+def _ssa_segmented_word_mov_addrs_8616(codegen: _CodegenBoundary8616) -> frozenset[int]:
+    """Return SSA-proven ``MOV reg16, segmented-address`` instruction sites."""
+    cfunc_addr = codegen.cfunc.addr
+    if not isinstance(cfunc_addr, int):
+        return frozenset()
+    resolution = registered_function_ssa_artifact_8616(codegen.project, cfunc_addr)
+    if resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or resolution.artifact is None:
+        return frozenset()
+    proven: set[int] = set()
+    for block in resolution.artifact.blocks:
+        for instruction in block.instrs:
+            destination = instruction.dst
+            if (
+                instruction.op.upper() != "MOV"
+                or instruction.size != 2
+                or not isinstance(destination, IRValue)
+                or destination.space is not MemSpace.REG
+                or destination.size != 2
+                or len(instruction.args) != 1
+                or not isinstance(instruction.args[0], IRAddress)
+                or instruction.args[0].space not in {MemSpace.DS, MemSpace.ES, MemSpace.SS}
+            ):
+                continue
+            if isinstance(instruction.addr, int):
+                proven.add(instruction.addr)
+    return frozenset(proven)
+
+
+_GP_WORD_REGISTER_NAMES_8616 = frozenset({"ax", "bp", "bx", "cx", "di", "dx", "si", "sp"})
+
+
+def _decoded_segmented_word_mov_addr_8616(wrapper: object) -> int | None:
+    """Return one ``MOV reg16, mem16`` site across the dynamic third-party Capstone boundary."""
+    raw = builtins.getattr(wrapper, "insn", wrapper)
+    if builtins.getattr(raw, "id", None) != X86_INS_MOV:
+        return None
+    raw_operands = builtins.getattr(raw, "operands", ())
+    if not isinstance(raw_operands, (list, tuple)) or len(raw_operands) != 2:
+        return None
+    destination, source = raw_operands
+    if (
+        builtins.getattr(destination, "type", None) != X86_OP_REG
+        or builtins.getattr(source, "type", None) != X86_OP_MEM
+        or builtins.getattr(destination, "size", None) != 2
+        or builtins.getattr(source, "size", None) != 2
+    ):
+        return None
+    register_id = builtins.getattr(destination, "reg", None)
+    reg_name = builtins.getattr(raw, "reg_name", None)
+    if not isinstance(register_id, int) or not callable(reg_name):
+        return None
+    try:
+        destination_name = str(reg_name(register_id)).lower()
+    except (TypeError, ValueError):
+        return None
+    if destination_name not in _GP_WORD_REGISTER_NAMES_8616:
+        return None
+    address = builtins.getattr(raw, "address", builtins.getattr(wrapper, "address", None))
+    return address if isinstance(address, int) else None
+
+
+def _decoded_segmented_word_mov_addrs_8616(codegen: _CodegenBoundary8616) -> frozenset[int]:
+    """Return complete frontend-decoded ``MOV reg16, mem16`` evidence sites."""
+    function_entry = codegen.cfunc.addr
+    inventory = collect_function_instruction_inventory_8616(
+        codegen.project,
+        function_entry=function_entry if isinstance(function_entry, int) else None,
+    )
+    if not inventory.complete:
+        return frozenset()
+    return frozenset(
+        address
+        for instruction in inventory.instructions
+        if (address := _decoded_segmented_word_mov_addr_8616(instruction)) is not None
+    )
+
+
+def _temporary_byte_load_assignment_8616(
+    statement: object,
+) -> tuple[CAssignment, CFunctionCall, object, object] | None:
+    """Return one byte-load assignment to a non-observable VEX temporary."""
+    if not isinstance(statement, CAssignment) or not isinstance(statement.lhs, CVariable):
+        return None
+    if (
+        not isinstance(statement.lhs.variable, SimTemporaryVariable)
+        or statement.lhs.variable.size not in {1, 2}
+    ):
+        return None
+    load = _segmented_byte_load_8616(statement.rhs)
+    if load is None:
+        return None
+    call, segment, offset = load
+    return statement, call, segment, offset
+
+
+def _word_register_assignment_8616(statement: object) -> CAssignment | None:
+    """Return one exact 16-bit architectural-register assignment."""
+    if not isinstance(statement, CAssignment):
+        return None
+    lhs = statement.lhs
+    if isinstance(lhs, CVariable):
+        variable = lhs.variable
+        return statement if isinstance(variable, SimRegisterVariable) and variable.size == 2 else None
+    if isinstance(lhs, CDirtyExpression):
+        dirty = lhs.dirty
+        if dirty.category is VirtualVariableCategory.REGISTER and dirty.bits == 16:
+            return statement
+    return None
+
+
+def _pure_register_assignment_8616(statement: object) -> bool:
+    """Return whether a delayed recomposition may move before this register effect."""
+    if not isinstance(statement, CAssignment):
+        return False
+    lhs = statement.lhs
+    if isinstance(lhs, CVariable):
+        return isinstance(lhs.variable, SimRegisterVariable)
+    if isinstance(lhs, CDirtyExpression):
+        return lhs.dirty.category is VirtualVariableCategory.REGISTER
+    return False
+
+
+def _widen_statement_byte_loads_8616(
+    root: object,
+    *,
+    codegen: _CodegenBoundary8616,
+    proven_mov_addrs: frozenset[int],
+) -> tuple[bool, int, int, int, int]:
+    """Collapse typed-evidence-authorized split bytes into one word-register load."""
+    changed = False
+    raw = normalized = classified = materialized = 0
+    statement_groups = (
+        node
+        for node in (root, *_iter_c_nodes_deep_8616(root))
+        if isinstance(node, CStatements)
+    )
+    seen_groups: set[int] = set()
+    for group in statement_groups:
+        if id(group) in seen_groups:
+            continue
+        seen_groups.add(id(group))
+        statements = list(group.statements)
+        rebuilt: list[object] = []
+        index = 0
+        while index < len(statements):
+            if index + 2 >= len(statements):
+                rebuilt.extend(statements[index:])
+                break
+            first = _temporary_byte_load_assignment_8616(statements[index])
+            second = _temporary_byte_load_assignment_8616(statements[index + 1])
+            if first is None or second is None:
+                rebuilt.append(statements[index])
+                index += 1
+                continue
+            raw += 1
+            first_assignment, first_call, first_segment, first_offset = first
+            second_assignment, second_call, second_segment, second_offset = second
+            if not _same_c_expression_8616(first_segment, second_segment):
+                rebuilt.append(statements[index])
+                index += 1
+                continue
+            if _adjacent_offsets_8616(first_offset, second_offset):
+                low_call, low_segment, low_offset = first_call, first_segment, first_offset
+                high_call = second_call
+            elif _adjacent_offsets_8616(second_offset, first_offset):
+                low_call, low_segment, low_offset = second_call, second_segment, second_offset
+                high_call = first_call
+            else:
+                rebuilt.append(statements[index])
+                index += 1
+                continue
+            normalized += 1
+            load_addrs = (
+                _instruction_addrs_8616(first_assignment)
+                | _instruction_addrs_8616(first_call)
+            ) & (
+                _instruction_addrs_8616(second_assignment)
+                | _instruction_addrs_8616(second_call)
+            )
+            destination_index: int | None = None
+            destination: CAssignment | None = None
+            authorized: frozenset[int] = frozenset()
+            for candidate_index in range(index + 2, min(index + 7, len(statements))):
+                candidate = _word_register_assignment_8616(statements[candidate_index])
+                if candidate is not None:
+                    candidate_authorized = (
+                        load_addrs & _instruction_addrs_8616(candidate) & proven_mov_addrs
+                    )
+                    if len(candidate_authorized) == 1:
+                        destination_index = candidate_index
+                        destination = candidate
+                        authorized = candidate_authorized
+                        break
+                if not _pure_register_assignment_8616(statements[candidate_index]):
+                    break
+            if destination is None or destination_index is None:
+                rebuilt.append(statements[index])
+                index += 1
+                continue
+            classified += 1
+            identity = join_adjacent_segmented_load_identities_8616(
+                segmented_load_identity_8616(low_call),
+                segmented_load_identity_8616(high_call),
+            )
+            tags: dict[str, object] = {
+                "inertia_x86_16_runtime_segment_helper": "SEG_U16",
+                "inertia_source_instruction_addrs": tuple(sorted(authorized)),
+            }
+            if identity is not None:
+                tags = segmented_load_tags_8616(identity, existing=tags)
+            destination.rhs = CFunctionCall(
+                "SEG_U16",
+                None,
+                [low_segment, low_offset],
+                codegen=codegen,
+                tags=tags,
+            )
+            rebuilt.append(destination)
+            rebuilt.extend(statements[index + 2 : destination_index])
+            materialized += 1
+            changed = True
+            index = destination_index + 1
+        if changed and rebuilt != statements:
+            group.statements = rebuilt
+    return changed, raw, normalized, classified, materialized
+
+
 def apply_segmented_load_widening_8616(codegen: object) -> bool:
     """Widen proven adjacent segmented byte loads in one structured C tree."""
     typed_codegen = cast(_CodegenBoundary8616, codegen)
@@ -258,6 +523,22 @@ def apply_segmented_load_widening_8616(codegen: object) -> bool:
                 break
             changed = True
 
+    proven_mov_addrs = _ssa_segmented_word_mov_addrs_8616(
+        typed_codegen
+    ) | _decoded_segmented_word_mov_addrs_8616(typed_codegen)
+    statement_changed, statement_raw, statement_normalized, statement_classified, statement_materialized = (
+        _widen_statement_byte_loads_8616(
+            _dynamic_cfunc_attr_8616(cfunc, "statements"),
+            codegen=typed_codegen,
+            proven_mov_addrs=proven_mov_addrs,
+        )
+    )
+    changed = statement_changed or changed
+    raw += statement_raw
+    normalized += statement_normalized
+    classified += statement_classified
+    materialized += statement_materialized
+
     typed_codegen._inertia_segmented_load_widening_report_8616 = SegmentedLoadWideningReport8616(
         raw_fact_count=raw,
         normalized_fact_count=normalized,
@@ -265,4 +546,15 @@ def apply_segmented_load_widening_8616(codegen: object) -> bool:
         materialized_count=materialized,
         failure_count=raw - materialized,
     )
+    if os.environ.get("INERTIA_DEBUG_SEGMENTED_LOAD_WIDENING"):
+        log.warning(
+            "[segmented-load-widening] function=%#x proven_movs=%s raw=%d normalized=%d "
+            "classified=%d materialized=%d",
+            typed_codegen.cfunc.addr,
+            tuple(sorted(proven_mov_addrs)),
+            raw,
+            normalized,
+            classified,
+            materialized,
+        )
     return changed

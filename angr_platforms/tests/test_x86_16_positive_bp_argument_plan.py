@@ -24,6 +24,7 @@ from angr_platforms.X86_16.lowering.positive_bp_argument_plan import (
     PositiveBpArgumentPlanDecision8616,
     PositiveBpArgumentPlanEntry8616,
     complete_positive_bp_argument_plan_8616,
+    complete_positive_bp_body_word_access_plan_8616,
 )
 from angr_platforms.X86_16.lowering.positive_bp_arguments import (
     _merge_existing_and_body_argument_type_8616,
@@ -255,6 +256,37 @@ def test_body_partition_accepts_matching_incomplete_physical_caller_shape() -> N
 
     assert plan.decision is PositiveBpArgumentPlanDecision8616.BODY_CALLER_PHYSICAL
     assert plan.entries == entries
+
+
+def test_body_word_access_plan_restores_contiguous_erased_tail() -> None:
+    word = SimTypeShort(False)
+    first = PositiveBpArgumentPlanEntry8616(4, 2, "left", word)
+
+    completed = complete_positive_bp_body_word_access_plan_8616(
+        (first,),
+        (4, 6, 8),
+        default_argument_type=word,
+    )
+
+    assert completed[0] is first
+    assert tuple((entry.bp_offset, entry.width) for entry in completed) == (
+        (4, 2),
+        (6, 2),
+        (8, 2),
+    )
+    assert tuple(entry.cvar for entry in completed) == (None, None, None)
+
+
+def test_body_word_access_plan_refuses_to_bridge_binary_gap() -> None:
+    word = SimTypeShort(False)
+
+    completed = complete_positive_bp_body_word_access_plan_8616(
+        (),
+        (4, 8),
+        default_argument_type=word,
+    )
+
+    assert tuple((entry.bp_offset, entry.width) for entry in completed) == ((4, 2),)
 
 
 def test_positive_bp_pointer_class_join_preserves_existing_pointee() -> None:

@@ -25,6 +25,7 @@ if __package__:
         GeneratedCContractResult,
         GeneratedCContractStatus,
     )
+    from .generated_c_indexed_argument_contract import IndexedArgumentUseRequirement
 else:
     from generated_c_contracts import (
         CallGuardedAssignmentRequirement,
@@ -32,6 +33,7 @@ else:
         GeneratedCContractResult,
         GeneratedCContractStatus,
     )
+    from generated_c_indexed_argument_contract import IndexedArgumentUseRequirement
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -74,22 +76,26 @@ ARGS_FIXTURE: QuickCFixtureSpec = QuickCFixtureSpec(
     expected_stdout_contains=("total: 2",),
     run_args=("-v", "alpha", "beta"),
     generated_c_contract=GeneratedCContract(
-        required_fragments=(
-            "sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 104)",
-            "sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 118)",
-        ),
         forbidden_fragments=(
             "SEG_U16(ds, arg_5 + (local_2 << 1))",
             "local_2 = 104;",
             "local_2 = 118;",
         ),
-        minimum_occurrences=(("arg_6[local_2]", 3),),
         guarded_assignments=(
             CallGuardedAssignmentRequirement(
                 guard_call="sub_10010",
                 guard_argument=118,
                 assignment_name="local_4",
                 assignment_value=1,
+            ),
+        ),
+        indexed_argument_uses=(
+            IndexedArgumentUseRequirement(
+                base_name="arg_6",
+                index_name="local_2",
+                minimum_count=3,
+                guard_call="sub_10010",
+                required_guard_arguments=(104, 118),
             ),
         ),
     ),

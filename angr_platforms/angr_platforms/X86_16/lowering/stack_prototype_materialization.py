@@ -1233,25 +1233,37 @@ def materialize_annotated_stack_prototype_8616(
             cvar.variable_type
             for cvar in _iter_existing_stack_cvars_at_offset_8616(codegen, offset)
             if isinstance(cvar.variable_type, SimType)
-            and _exact_typed_cvar_width_8616(cvar, arch) == slot_width
+            and (
+                _exact_typed_cvar_width_8616(cvar, arch) == slot_width
+                or (
+                    isinstance(cvar.variable_type, SimTypeChar)
+                    and isinstance(slot_width, int)
+                    and (_exact_typed_cvar_width_8616(cvar, arch) or 0) < slot_width
+                )
+            )
         )
         if _type_size_bytes_8616(arg_type, arch=arch) != slot_width and exact_existing_types and all(
             candidate == exact_existing_types[0] for candidate in exact_existing_types[1:]
         ):
             arg_type = exact_existing_types[0]
-        raw_width_fact = int(slot_width is not None)
-        normalized_width_fact = int(isinstance(slot_width, int) and slot_width > 0)
+        value_width = (
+            _type_size_bytes_8616(arg_type, arch=arch)
+            if isinstance(arg_type, SimTypeChar)
+            else slot_width
+        )
+        raw_width_fact = int(value_width is not None)
+        normalized_width_fact = int(isinstance(value_width, int) and value_width > 0)
         if normalized_width_fact:
-            assert isinstance(slot_width, int)
+            assert isinstance(value_width, int)
             width_facts.append(
                 FunctionParameterWidthFact8616(
                     stack_offset=offset,
-                    width_bytes=slot_width,
+                    width_bytes=value_width,
                 )
             )
         arg_type, _, width_failure = _constrain_scalar_arg_type_to_stack_slot_8616(
             arg_type,
-            slot_width=slot_width,
+            slot_width=value_width,
             arch=arch,
         )
         width_classified = bool(normalized_width_fact and not width_failure)
@@ -1331,13 +1343,14 @@ def materialize_annotated_stack_prototype_8616(
     if not _prototype_equivalent_8616(typed_cfunc.functy, new_proto):
         typed_cfunc.functy = new_proto
         changed = True
+    try:
+        materialized_count = typed_codegen._inertia_annotated_stack_prototype_materialized_8616
+    except AttributeError:
+        materialized_count = 0
+    typed_codegen._inertia_annotated_stack_prototype_materialized_8616 = max(
+        int(materialized_count or 0),
+        len(arg_cvars),
+    )
     if changed:
-        try:
-            materialized_count = typed_codegen._inertia_annotated_stack_prototype_materialized_8616
-        except AttributeError:
-            materialized_count = 0
-        typed_codegen._inertia_annotated_stack_prototype_materialized_8616 = (
-            int(materialized_count or 0) + len(arg_cvars)
-        )
         typed_codegen._inertia_codegen_decl_refresh_required_8616 = True
     return changed

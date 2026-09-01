@@ -41,7 +41,16 @@ def test_generated_translation_unit_distinguishes_complete_and_partial_output(tm
         complete=False,
     )
 
-    assert complete.name == "translation-unit.c"
     assert partial.name == "partial-translation-unit.c"
-    assert complete.read_text(encoding="utf-8") == "int first(void) { return 1; }\n"
+    assert not complete.exists()
     assert partial.read_text(encoding="utf-8") == "int second(void) { return 2; }\n"
+
+    complete = write_generated_translation_unit_c(
+        tmp_path,
+        payload="int first(void) { return 1; }\n",
+        complete=True,
+    )
+
+    assert complete.name == "translation-unit.c"
+    assert complete.read_text(encoding="utf-8") == "int first(void) { return 1; }\n"
+    assert not partial.exists()

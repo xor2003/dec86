@@ -3,13 +3,24 @@
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.errors import SimEngineError
 from angr.sim_type import SimTypeChar
-from angr.sim_variable import SimMemoryVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.lowering.balanced_memory_stack_restore import (
+    materialize_balanced_immediate_register_restores_8616,
     rebind_balanced_memory_stack_restores_8616,
 )
+from angr_platforms.X86_16.lowering.gp_register_state import runtime_gp_name_for_variable_8616
 from archinfo import ArchX86
-from capstone.x86_const import X86_GRP_JUMP, X86_INS_CALL, X86_INS_POP, X86_INS_PUSH, X86_OP_MEM
+from capstone.x86_const import (
+    X86_GRP_JUMP,
+    X86_INS_CALL,
+    X86_INS_POP,
+    X86_INS_PUSH,
+    X86_OP_IMM,
+    X86_OP_MEM,
+    X86_OP_REG,
+)
 
 
 class _Codegen(SimpleNamespace):
@@ -60,6 +71,66 @@ def _memory_variable(codegen: _Codegen) -> structured_c.CVariable:
         variable_type=SimTypeChar(False),
         codegen=codegen,
     )
+
+
+def test_materializes_immediate_push_register_pop_across_neutral_call() -> None:
+    """A caller cleanup POP retains its exact pushed selector value."""
+    codegen = _Codegen(project=SimpleNamespace(arch=ArchX86()))
+    si_offset, si_size = codegen.project.arch.registers["si"]
+    sp_offset, sp_size = codegen.project.arch.registers["sp"]
+    marker = structured_c.CAssignment(
+        structured_c.CVariable(
+            SimRegisterVariable(sp_offset, sp_size, name="sp"),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(0, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x108},
+    )
+    si_read = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CVariable(
+            SimRegisterVariable(si_offset, si_size, name="si"),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=structured_c.CStatements([marker, si_read], codegen=codegen),
+    )
+    push_operand = SimpleNamespace(type=X86_OP_IMM, size=2, imm=2)
+    pop_operand = SimpleNamespace(type=X86_OP_REG, size=2, reg=7)
+    instructions = (
+        SimpleNamespace(address=0x100, id=X86_INS_PUSH, operands=(push_operand,), groups=()),
+        _instruction(0x103, X86_INS_CALL),
+        SimpleNamespace(
+            address=0x108,
+            id=X86_INS_POP,
+            operands=(pop_operand,),
+            groups=(),
+            reg_name=lambda register_id: "si" if register_id == 7 else "",
+        ),
+    )
+    function = SimpleNamespace(
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),)
+    )
+
+    assert materialize_balanced_immediate_register_restores_8616(
+        codegen,
+        function,
+    ) is True
+    assignment = codegen.cfunc.statements.statements[0]
+    assert isinstance(assignment, structured_c.CAssignment)
+    assert runtime_gp_name_for_variable_8616(assignment.lhs.variable) == "esi"
+    replacement = codegen.cfunc.statements.statements[2]
+    assert isinstance(replacement, structured_c.CBinaryOp)
+    assert isinstance(replacement.lhs, structured_c.CBinaryOp)
+    assert runtime_gp_name_for_variable_8616(replacement.lhs.lhs.variable) == "esi"
+    stats = codegen._inertia_balanced_immediate_register_restore_stats_8616
+    assert stats.raw_fact_count == stats.materialized_count == 1
+    assert stats.failure_count == 0
 
 
 def test_rebinds_memory_restore_across_caller_neutral_call() -> None:
@@ -196,4 +267,57 @@ def test_accepts_semantically_identical_overlapping_block_decode() -> None:
     )
 
     assert rebind_balanced_memory_stack_restores_8616(codegen, function) is True
+    assert pop_assignment.rhs.variable.offset == -2
+
+
+def test_rebased_decode_skips_unmapped_original_candidate() -> None:
+    """Original AST tags map to slice bytes after an unmapped candidate refusal."""
+    delta = 0x10000
+    push = _instruction(0x100, X86_INS_PUSH, displacement=0x42)
+    pop = _instruction(0x108, X86_INS_POP, displacement=0x42)
+    decoded = {push.address: push, pop.address: pop}
+
+    class _Factory:
+        def block(self, address: int, *, num_inst: int, opt_level: int) -> SimpleNamespace:
+            assert num_inst == 1
+            assert opt_level == 0
+            instruction = decoded.get(address)
+            if instruction is None:
+                raise SimEngineError(f"no bytes at {address:#x}")
+            wrapper = SimpleNamespace(insn=instruction)
+            return SimpleNamespace(capstone=SimpleNamespace(insns=(wrapper,)))
+
+    project = SimpleNamespace(
+        arch=ArchX86(),
+        factory=_Factory(),
+        _inertia_original_linear_delta=delta,
+    )
+    codegen = _Codegen(project=project)
+    pushed = _stack_variable(codegen, -2, "local_2")
+    popped = _stack_variable(codegen, -4, "local_4")
+    push_assignment = structured_c.CAssignment(
+        pushed,
+        structured_c.CConstant(1, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": push.address + delta},
+    )
+    pop_assignment = structured_c.CAssignment(
+        _memory_variable(codegen),
+        popped,
+        codegen=codegen,
+        tags={"ins_addr": pop.address + delta},
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [push_assignment, pop_assignment],
+            codegen=codegen,
+        )
+    )
+    function = SimpleNamespace(blocks=())
+
+    assert rebind_balanced_memory_stack_restores_8616(
+        codegen,
+        function,
+        project=project,
+    ) is True
     assert pop_assignment.rhs.variable.offset == -2

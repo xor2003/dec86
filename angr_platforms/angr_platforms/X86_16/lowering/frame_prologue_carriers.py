@@ -223,7 +223,7 @@ def is_exact_push_bp_carrier_8616(
         return True
     if not isinstance(statement, CAssignment) or _statement_addr_8616(statement) != function_addr:
         return False
-    lhs = statement.lhs
+    lhs = _unwrap_casts_8616(statement.lhs)
     if not (
         isinstance(lhs, CVariable)
         and isinstance(lhs.variable, SimStackVariable)

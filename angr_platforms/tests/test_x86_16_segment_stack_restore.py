@@ -10,12 +10,14 @@ from angr_platforms.X86_16.alias.segment_stack_fragments import (
 from angr_platforms.X86_16.alias.segment_stack_restore import (
     SegmentStackRestoreVerdict8616,
     build_x86_16_segment_stack_restore_artifact,
+    build_x86_16_stack_register_restore_artifact_8616,
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_structuring_stage import DECOMPILER_STRUCTURING_PASSES
 from angr_platforms.X86_16.ir import (
     IRAddress,
     IRBlock,
+    IRCallStackEffect8616,
     IRFunctionArtifact,
     IRInstr,
     IRValue,
@@ -164,6 +166,30 @@ def test_real_vex_push_pop_restores_ds_through_exact_stack_bytes() -> None:
     assert "ds" not in contract.clobbered_registers
 
 
+def test_real_vex_push_pop_restores_ax_through_exact_stack_bytes() -> None:
+    """The generic Alias owner proves a mid-function AX save/restore pair."""
+    artifact = _lift_function(bytes.fromhex("50 b8 00 00 58 c3"))
+
+    restoration = build_x86_16_stack_register_restore_artifact_8616(
+        artifact,
+        tracked_registers=frozenset({"ax"}),
+    )
+
+    assert restoration.summary == {
+        "raw_fact_count": 1,
+        "normalized_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+        "cross_block_restore_count": 0,
+    }
+    fact = restoration.facts[0]
+    assert fact.verdict is SegmentStackRestoreVerdict8616.PROVEN
+    assert fact.saved_register == "ax"
+    assert fact.restore_register == "ax"
+    assert fact.stack_offsets == (-2, -1)
+
+
 def test_unknown_ss_alias_invalidates_saved_stack_identity() -> None:
     stack_bytes = {
         -2: SegmentStackByteOrigin8616("ds", 0x2000, 0, 0, -2),
@@ -250,6 +276,61 @@ def test_cross_block_stack_bytes_restore_entry_ds_identity() -> None:
     contract = build_x86_16_segment_function_contract(artifact, state)
     assert contract.restored_registers == ("ds",)
     assert "ds" not in contract.clobbered_registers
+
+
+def test_neutral_call_contract_discards_only_transient_return_push() -> None:
+    """A complete neutral CALL preserves caller stack bytes across its VEX push."""
+    call_addr = 0x4010
+    artifact = IRFunctionArtifact(
+        function_addr=0x4000,
+        blocks=(
+            IRBlock(addr=0x4000, instrs=_push_ds_ir(0x4000), successor_addrs=(call_addr,)),
+            IRBlock(
+                addr=call_addr,
+                instrs=(
+                    IRInstr(
+                        "MOV",
+                        IRValue(MemSpace.REG, name="sp", size=2),
+                        (IRValue(MemSpace.REG, name="sp", offset=-2, size=2),),
+                        addr=call_addr,
+                    ),
+                    IRInstr(
+                        "STORE",
+                        None,
+                        (
+                            IRAddress(
+                                MemSpace.SS,
+                                ("sp",),
+                                -4,
+                                2,
+                                AddressStatus.STABLE,
+                                SegmentOrigin.PROVEN,
+                            ),
+                            _const(0x4013),
+                        ),
+                        addr=call_addr,
+                    ),
+                    IRInstr(
+                        "CALL",
+                        None,
+                        (_const(0x5000),),
+                        addr=call_addr,
+                        call_stack_effect=IRCallStackEffect8616(
+                            net_stack_delta=0,
+                            complete=True,
+                        ),
+                    ),
+                ),
+                successor_addrs=(0x4020,),
+            ),
+            IRBlock(addr=0x4020, instrs=_pop_ds_ir(0x4020)),
+        ),
+    )
+
+    restoration = build_x86_16_segment_stack_restore_artifact(artifact)
+
+    assert restoration.summary["materialized_count"] == 1
+    assert restoration.summary["cross_block_restore_count"] == 1
 
 
 def test_conflicting_predecessor_without_save_refuses_cross_block_restore() -> None:

@@ -316,7 +316,7 @@ def test_refuses_reload_assignment_without_pre_mutation_boundary(monkeypatch):
 
 
 def test_selects_reload_across_unique_mutation_free_predecessor(monkeypatch):
-    """A unique linear CFG edge preserves a preceding logical reload."""
+    """A unique linear CFG edge preserves only an unmodified logical reload."""
     arch = SimpleNamespace(registers={"di": (0x24, 2), "si": (0x18, 2), "ds": (0x30, 2)})
     project = SimpleNamespace(arch=arch)
     codegen = _Codegen(project=project, cfunc=SimpleNamespace(addr=0x100))
@@ -362,6 +362,35 @@ def test_selects_reload_across_unique_mutation_free_predecessor(monkeypatch):
     )
 
     assert selected == fact
+
+    mutated_entry = SSABlock(
+        0x100,
+        (
+            IRInstr("MOV", IRValue(MemSpace.REG, name="si", size=2), (), 2, 0x104),
+            IRInstr("ADD", IRValue(MemSpace.REG, name="si", size=2), (), 2, 0x106),
+        ),
+        (),
+    )
+    mutated_artifact = SSAFunctionArtifact(
+        0x100,
+        (mutated_entry, use),
+        predecessor_map={0x100: (), 0x108: (0x100,)},
+    )
+    monkeypatch.setattr(
+        carriers,
+        "registered_function_ssa_artifact_8616",
+        lambda *_args: SimpleNamespace(
+            verdict=FunctionSSAArtifactVerdict8616.PROVEN,
+            artifact=mutated_artifact,
+        ),
+    )
+
+    assert carriers._nearest_linear_logical_fact_8616(
+        codegen,
+        carriers._RegisterSSAIdentity8616(0x18, 2, 0x100, "ir_4"),
+        0x108,
+        {("si", 0x104): fact},
+    ) is None
 
 
 def test_insertion_uses_statement_ancestry_of_exact_loop_condition() -> None:

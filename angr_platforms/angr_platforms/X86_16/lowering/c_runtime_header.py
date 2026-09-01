@@ -42,7 +42,19 @@ LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616: dict[str, str] = {
 }
 
 LOWERED_RUNTIME_MACROS_8616: frozenset[str] = frozenset(
-    {"MEM_U8", "MEM_U16", "MEM_U32", "MK_FP", "SEG_LINEAR", "SEG_PTR", "SEG_U8", "SEG_U16", "SEG_U32"}
+    {
+        "MEM_U8",
+        "MEM_U16",
+        "MEM_U32",
+        "MK_FP",
+        "PTR_U16",
+        "PTR_U32",
+        "SEG_LINEAR",
+        "SEG_PTR",
+        "SEG_U8",
+        "SEG_U16",
+        "SEG_U32",
+    }
 )
 
 # Exact external return ABIs override caller-use inference. An unused result
@@ -105,7 +117,7 @@ def interrupt_helper_declarations_8616(
         for call in calls
         if call.vector == 0x21 or interrupt_service_spec(call) is not None
     ]
-    declarations = interrupt_service_declarations(service_calls, api_style)
+    declarations: list[str] = list(interrupt_service_declarations(service_calls, api_style))
     seen = set(declarations)
     for call in calls:
         handler = get_interrupt_handler_class(call.vector)
@@ -162,6 +174,8 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "#define MEM_U8(ptr)        (*(uint8_t  *)(ptr))\n"
             "#define MEM_U16(ptr)       (*(uint16_t *)(ptr))\n"
             "#define MEM_U32(ptr)       (*(uint32_t *)(ptr))\n"
+            "#define PTR_U16(ptr)       ((uint16_t)(ptr))\n"
+            "#define PTR_U32(ptr)       ((uint32_t)(ptr))\n"
         )
     if normalized == "portable-flat":
         compiler_helper_declarations = "\n".join(_PORTABLE_COMPILER_RUNTIME_HELPER_DECLARATIONS_8616)
@@ -191,6 +205,8 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "#define MEM_U8(ptr)          (*(uint8_t  *)(ptr))\n"
             "#define MEM_U16(ptr)         (*(uint16_t *)(ptr))\n"
             "#define MEM_U32(ptr)         (*(uint32_t *)(ptr))\n"
+            "#define PTR_U16(ptr)         ((uint16_t)(uintptr_t)(ptr))\n"
+            "#define PTR_U32(ptr)         ((uint32_t)(uintptr_t)(ptr))\n"
         )
     return ""
 

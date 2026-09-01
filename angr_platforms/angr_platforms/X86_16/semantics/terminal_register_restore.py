@@ -3,6 +3,10 @@
 Layer: Semantics.
 Responsibility: identify exact POP instructions that restore entry-saved
 registers without treating those restores as newly computed return values.
+
+Owns instruction effects, flags, branch meaning, and expression interpretation.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
 """
 
 from __future__ import annotations

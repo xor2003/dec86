@@ -260,8 +260,14 @@ def test_pre_validation_typed_condition_prime_runs_before_baseline(monkeypatch):
     )
     monkeypatch.setattr(
         post_stage,
+        "apply_condition_argument_types_8616",
+        lambda *_args: calls.append("types")
+        or SimpleNamespace(changed=True, stats=SimpleNamespace(normalized_fact_count=1)),
+    )
+    monkeypatch.setattr(
+        post_stage,
         "_apply_typed_condition_stack_arg_signedness_8616",
-        lambda *_args: calls.append("signedness") or True,
+        lambda *_args: calls.append("legacy-signedness") or True,
     )
     monkeypatch.setattr(
         post_stage,
@@ -286,7 +292,7 @@ def test_pre_validation_typed_condition_prime_runs_before_baseline(monkeypatch):
         "transfer",
         "conditions",
         "jcc",
-        "signedness",
+        "types",
         "interface",
         "invalidate",
     ]

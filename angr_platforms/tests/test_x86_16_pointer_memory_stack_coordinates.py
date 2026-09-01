@@ -5,22 +5,250 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CConstant,
+    CFunctionCall,
     CIndexedVariable,
     CStatements,
     CVariable,
 )
-from angr.sim_type import SimTypeFunction, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.decompiler_postprocess_jcc import _stack_slot_expr_8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _ensure_pointer_stack_arg_expr_8616,
 )
 from angr_platforms.X86_16.lowering.pointer_memory_idioms import (
     splice_proven_pointer_swap_statements_8616,
 )
+from angr_platforms.X86_16.lowering.real_mode_linear import (
+    RealModeLinearStackAccess8616,
+    stack_cvar_for_stable_ss_linear_access_8616,
+)
+from angr_platforms.X86_16.lowering.stack_value_projection import (
+    StackValueProjectionStatus8616,
+    project_stack_value_range_8616,
+    stack_value_projection_stats_8616,
+)
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     record_stack_variable_coordinate_projection_8616,
+    stack_cvar_for_machine_bp_value_range_8616,
 )
+
+
+def test_byte_fill_reuses_typed_value_inside_word_abi_slot() -> None:
+    """Keep a byte formal distinct from the following word formal."""
+    arch = Arch86_16()
+    codegen = SimpleNamespace(
+        cstyle_null_cmp=False,
+        next_ident=lambda name: name,
+        next_node_idx=lambda: 0,
+        project=SimpleNamespace(arch=arch),
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x1000)
+    value_storage = SimStackVariable(4, 2, base="bp", name="value", ident="arg_1")
+    count_storage = SimStackVariable(6, 2, base="bp", name="count", ident="arg_2")
+    value = CVariable(
+        value_storage,
+        variable_type=SimTypeChar(False).with_arch(arch),
+        codegen=codegen,
+    )
+    count = CVariable(
+        count_storage,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=codegen,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=value_storage,
+        cvar=value,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=count_storage,
+        cvar=count,
+        bp_offset=8,
+        entry_sp_offset=6,
+        size=2,
+    )
+
+    assert stack_cvar_for_machine_bp_value_range_8616(codegen, 6, 1) is value
+    assert stack_cvar_for_machine_bp_value_range_8616(codegen, 7, 1) is None
+    assert stack_cvar_for_machine_bp_value_range_8616(codegen, 8, 1) is None
+    assert _stack_slot_expr_8616(codegen, 6, 1) is value
+    assert _stack_slot_expr_8616(codegen, 8, 2) is count
+
+
+def test_runtime_byte_load_projects_unsigned_value_inside_word_abi_slot() -> None:
+    """Preserve SEG_U8 zero extension while reusing a signed C formal."""
+    arch = Arch86_16()
+    codegen = SimpleNamespace(
+        cstyle_null_cmp=False,
+        next_ident=lambda name: name,
+        next_node_idx=lambda: 0,
+        project=SimpleNamespace(arch=arch),
+    )
+    storage = SimStackVariable(2, 2, base="bp", name="value", ident="arg_0")
+    value = CVariable(
+        storage,
+        variable_type=SimTypeChar(True).with_arch(arch),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=[value],
+        variables_in_use={storage: value},
+        unified_local_vars={},
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=storage,
+        cvar=value,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+
+    projected = project_stack_value_range_8616(codegen, 4, 1)
+
+    assert projected.status is StackValueProjectionStatus8616.EXACT_VALUE
+    assert projected.owner is not None
+    assert projected.owner.cvar is value
+    assert projected.expression is not None
+    assert projected.expression.expr is value
+    assert projected.expression.dst_type.signed is False
+    writable = stack_cvar_for_stable_ss_linear_access_8616(
+        codegen,
+        RealModeLinearStackAccess8616(displacement=4, width=1),
+        require_lvalue=True,
+    )
+    assert writable is value
+    assert stack_value_projection_stats_8616(codegen).materialized_count == 2
+
+
+def test_runtime_high_byte_load_projects_word_argument_not_padding() -> None:
+    """Map BP+5 to the high byte of a word formal and refuse char padding."""
+    arch = Arch86_16()
+    codegen = SimpleNamespace(
+        cstyle_null_cmp=False,
+        next_ident=lambda name: name,
+        next_node_idx=lambda: 0,
+        project=SimpleNamespace(arch=arch),
+    )
+    word_storage = SimStackVariable(2, 2, base="bp", name="word", ident="arg_0")
+    word = CVariable(
+        word_storage,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(arg_list=[word])
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=word_storage,
+        cvar=word,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    overlapping_storage = SimStackVariable(
+        5,
+        2,
+        base="bp",
+        name="local_5",
+        ident="is_5",
+    )
+    overlapping = CVariable(
+        overlapping_storage,
+        variable_type=SimTypeShort(False).with_arch(arch),
+        codegen=codegen,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=overlapping_storage,
+        cvar=overlapping,
+        bp_offset=5,
+        entry_sp_offset=5,
+        size=2,
+    )
+
+    high = project_stack_value_range_8616(codegen, 5, 1)
+
+    assert high.status is StackValueProjectionStatus8616.CONTAINED_VALUE
+    assert high.owner is not None
+    assert high.owner.cvar is word
+    assert high.expression is not None
+    assert high.expression.expr.op == "Shr"
+    assert high.expression.expr.lhs is word
+    assert high.expression.expr.rhs.value == 8
+    word.variable_type = SimTypePointer(SimTypeChar(False)).with_arch(arch)
+    pointer_high = project_stack_value_range_8616(codegen, 5, 1)
+    assert pointer_high.expression is not None
+    assert isinstance(pointer_high.expression.expr.lhs, CFunctionCall)
+    assert pointer_high.expression.expr.lhs.callee_target == "PTR_U16"
+
+    char_codegen = SimpleNamespace(
+        cstyle_null_cmp=False,
+        next_ident=lambda name: name,
+        next_node_idx=lambda: 0,
+        project=SimpleNamespace(arch=arch),
+    )
+    char_storage = SimStackVariable(2, 2, base="bp", name="byte", ident="arg_0")
+    char = CVariable(
+        char_storage,
+        variable_type=SimTypeChar(False).with_arch(arch),
+        codegen=char_codegen,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        char_codegen,
+        variable=char_storage,
+        cvar=char,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+
+    padding = project_stack_value_range_8616(char_codegen, 5, 1)
+
+    assert padding.status is StackValueProjectionStatus8616.OUTSIDE_VALUE
+    assert padding.expression is None
+    assert stack_value_projection_stats_8616(char_codegen).failure_count == 1
+
+
+def test_exact_function_pointer_stack_load_preserves_callable_type() -> None:
+    """Do not turn an exact function-pointer argument into a guest data offset."""
+    arch = Arch86_16()
+    codegen = SimpleNamespace(
+        cstyle_null_cmp=False,
+        next_ident=lambda name: name,
+        next_node_idx=lambda: 0,
+        project=SimpleNamespace(arch=arch),
+    )
+    storage = SimStackVariable(2, 2, base="bp", name="fn", ident="arg_0")
+    function_type = SimTypeFunction(
+        [SimTypeShort(False)],
+        SimTypeShort(False),
+    ).with_arch(arch)
+    pointer = CVariable(
+        storage,
+        variable_type=SimTypePointer(function_type).with_arch(arch),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(arg_list=[pointer])
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=storage,
+        cvar=pointer,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+
+    projected = project_stack_value_range_8616(codegen, 4, 2)
+
+    assert projected.status is StackValueProjectionStatus8616.EXACT_VALUE
+    assert projected.expression is pointer
 
 
 def test_pointer_memory_arguments_reuse_exact_machine_bp_projections() -> None:

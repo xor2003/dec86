@@ -4,6 +4,9 @@ Layer: Types/Lowering.
 Responsibility: normalize one complete recovered function catalog into the
 authoritative per-callee callsite registry before isolated workers are started.
 Arity, width, value class, and generated-C interfaces remain downstream work.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

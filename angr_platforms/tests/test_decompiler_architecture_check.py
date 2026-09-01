@@ -804,11 +804,12 @@ def test_architecture_check_rejects_new_postprocess_protected_import(tmp_path):
     assert any(item.rule == "postprocess-protected-import" for item in violations)
 
 
-def test_architecture_check_admits_typed_stack_aggregate_consumer_only_from_stage(tmp_path):
+def test_architecture_check_admits_typed_lowering_consumers_only_from_stage(tmp_path):
     root, _cli = _write_minimal_tree(tmp_path)
     (root / "decompiler_postprocess_stage.py").write_text(
         '"""Decompiler postprocess orchestrator; do not make it a semantics layer."""\n'
         "from __future__ import annotations\n"
+        "from .lowering.condition_argument_types import apply_condition_argument_types_8616\n"
         "from .lowering.stack_aggregate_objects import decay_stack_aggregate_call_arguments_8616\n",
         encoding="utf-8",
     )

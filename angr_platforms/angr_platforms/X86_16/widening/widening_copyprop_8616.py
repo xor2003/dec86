@@ -604,6 +604,11 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                 virtual_defs.clear()
             _propagate_direct_condition(stmt)
             _walk_node(stmt)
+            if isinstance(stmt, (structured_c.CIfElse, structured_c.CSwitchCase)) and _is_side_effecting(stmt):
+                # A branch-local write may reach the continuation. Without a
+                # path-sensitive join, every inherited definition is stale.
+                block_defs.clear()
+                virtual_defs.clear()
 
     def _walk_node(node: object) -> None:
         """Walk nested nodes through the dynamic third-party angr C AST boundary."""

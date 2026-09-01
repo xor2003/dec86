@@ -60,6 +60,11 @@ def test_gp_live_in_names_supports_eax_full_width_state() -> None:
     assert gp_live_in_names_from_ssa_8616(_gp_live_in_artifact("eax")) == frozenset({"eax"})
 
 
+def test_gp_live_in_names_supports_sp_parent_state() -> None:
+    """A PUSH address read exposes the coherent ESP architectural live-in."""
+    assert gp_live_in_names_from_ssa_8616(_gp_live_in_artifact("sp")) == frozenset({"esp"})
+
+
 def test_runtime_gp_name_uses_typed_state_category() -> None:
     """Synthetic runtime addresses retain architectural register identity."""
     variable = SimMemoryVariable(
@@ -201,7 +206,7 @@ def test_gp_runtime_state_projects_al_from_coherent_ax_parent() -> None:
 
 
 def test_gp_runtime_state_projects_dl_write_into_coherent_dx_parent() -> None:
-    """A DL write preserves the high byte of the SSA-proven DX live-in."""
+    """A DL write preserves the high byte and instruction origin."""
     arch = Arch86_16()
     dl_offset, dl_size = arch.registers["dl"]
     artifact = _gp_live_in_artifact("dx")
@@ -231,6 +236,7 @@ def test_gp_runtime_state_projects_dl_write_into_coherent_dx_parent() -> None:
         dl,
         CConstant(0, SimTypeShort(False), codegen=codegen),
         codegen=codegen,
+        tags={"ins_addr": 0x10E90},
     )
     codegen.cfunc = SimpleNamespace(
         addr=artifact.function_addr,
@@ -249,6 +255,7 @@ def test_gp_runtime_state_projects_dl_write_into_coherent_dx_parent() -> None:
     assert replacement.rhs.lhs.rhs.value == 0xFFFFFF00
     assert replacement.rhs.rhs.op == "And"
     assert replacement.rhs.rhs.rhs.value == 0xFF
+    assert replacement.tags == assignment.tags
 
 
 def test_gp_runtime_state_materializes_eax_as_32bit_lane() -> None:
@@ -291,4 +298,49 @@ def test_gp_runtime_state_materializes_eax_as_32bit_lane() -> None:
     assert isinstance(replacement.type, SimTypeInt)
     assert codegen._inertia_global_declaration_specs_8616 == (
         ("unsigned long", "inertia_eax", None),
+    )
+
+
+def test_gp_runtime_state_projects_entry_sp_from_coherent_esp_lane() -> None:
+    """An SSA-proven entry SP is explicit runtime state, not an uninitialized local."""
+    arch = Arch86_16()
+    sp_offset, sp_size = arch.registers["sp"]
+    artifact = _gp_live_in_artifact("sp")
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_function_ssa_artifacts_8616={artifact.function_addr: artifact},
+        _inertia_function_ssa_stages_8616={artifact.function_addr: FunctionSSAArtifactStage8616.IR},
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    sp = CDirtyExpression(
+        Expr.VirtualVariable(
+            1,
+            3,
+            sp_size * 8,
+            VirtualVariableCategory.REGISTER,
+            oident=sp_offset,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=artifact.function_addr,
+        statements=sp,
+        unified_local_vars={},
+    )
+
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    replacement = codegen.cfunc.statements
+    assert isinstance(replacement, CBinaryOp)
+    assert replacement.op == "And"
+    assert isinstance(replacement.lhs, CVariable)
+    assert replacement.lhs.variable.name == "inertia_esp"
+    assert replacement.rhs.value == 0xFFFF
+    assert codegen._inertia_global_declaration_specs_8616 == (
+        ("unsigned long", "inertia_esp", None),
     )

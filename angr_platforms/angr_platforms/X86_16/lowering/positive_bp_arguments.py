@@ -41,6 +41,7 @@ from .positive_bp_argument_plan import (
     PositiveBpArgumentPlanDecision8616,
     PositiveBpArgumentPlanEntry8616,
     complete_positive_bp_argument_plan_8616,
+    complete_positive_bp_body_word_access_plan_8616,
 )
 from .stack_c_ast_matching import _stack_variable_read_offsets_8616
 from .stack_frame_projection import (
@@ -300,8 +301,8 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
     for cvar in existing_arg_list:
         collect(cvar, body=False)
 
-    raw_count = sum(len(bucket) for bucket in candidates.values())
-    normalized_count = len(candidates)
+    raw_count = sum(len(bucket) for bucket in candidates.values()) + len(word_access_offsets)
+    normalized_count = len(set(candidates).union(word_access_offsets))
     read_offsets = _stack_variable_read_offsets_8616(cfunc.statements)
     try:
         project_arch = cast(Any, project).arch
@@ -393,6 +394,18 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
         )
         cursor += width
 
+    eligible_word_access_offsets = tuple(
+        offset
+        for offset in word_access_offsets
+        if authoritative_layout_end is None or offset < authoritative_layout_end
+    )
+    body_plan_entries = list(
+        complete_positive_bp_body_word_access_plan_8616(
+            tuple(body_plan_entries),
+            eligible_word_access_offsets,
+            default_argument_type=SimTypeShort(False),
+        )
+    )
     candidate_count = len(body_plan_entries)
     if not body_plan_entries:
         existing_argument_count = len(existing_arg_list)

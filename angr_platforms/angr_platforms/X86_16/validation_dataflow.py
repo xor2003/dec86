@@ -46,6 +46,7 @@ from .c_ast_utils import (
     _structured_slot_names_8616,
 )
 from .lowering.physical_registers import physical_register_view_8616
+from .lowering.semantic_cast import CSemanticCast8616
 from .semantics.expression_analysis import (
     VirtualValueIdentityKind8616,
     describe_virtual_value_identity_8616,
@@ -56,6 +57,7 @@ from .validation_predicates import PredicateToken8616, invert_predicate_token_86
 
 __all__ = [
     "DefUseCallOutputDefinition8616",
+    "DefUseEntryStackRange8616",
     "DefUseIssue8616",
     "DefUseStorageKey8616",
     "DefUseStorageKind8616",
@@ -197,6 +199,27 @@ class DefUseCallOutputDefinition8616:
         )
 
 
+@dataclass(frozen=True, order=True, slots=True)
+class DefUseEntryStackRange8616:
+    """One machine-BP argument range proven initialized at function entry."""
+
+    base_offset: int
+    width: int
+
+    def __post_init__(self) -> None:
+        """Reject locals, frame metadata, and empty argument ranges."""
+        if self.base_offset < 4 or self.width <= 0:
+            raise ValueError("entry stack range must be a positive-BP argument")
+
+    def storage_key(self) -> DefUseStorageKey8616:
+        """Return the validator storage identity for this argument range."""
+        return DefUseStorageKey8616(
+            kind=DefUseStorageKind8616.STACK_LOCAL,
+            offset=self.base_offset,
+            width=self.width,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class DefUseValidationReport8616:
     """Closed-loop counters and issues from structured def-use validation."""
@@ -317,6 +340,7 @@ def _indexed_stack_storage_key_8616(
     node: object,
     *,
     dynamic_array_as_object: bool,
+    include_arguments: bool = False,
     stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return the exact element or conservative full-object stack identity."""
@@ -342,7 +366,7 @@ def _indexed_stack_storage_key_8616(
         if stack_variable_offset_resolver is not None
         else variable.offset
     )
-    if not isinstance(offset, int) or offset >= 0:
+    if not isinstance(offset, int) or (offset >= 0 and not include_arguments):
         return None
     name = variable.name if isinstance(variable.name, str) else ""
     element_width = _type_width_bytes_8616(node.type)
@@ -492,18 +516,21 @@ def _storage_key_8616(
     *,
     dynamic_array_as_object: bool = False,
     include_virtual_carriers: bool = False,
+    include_stack_arguments: bool = False,
     stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return one exact architectural or opt-in virtual storage identity."""
     indexed_key = _indexed_stack_storage_key_8616(
         node,
         dynamic_array_as_object=dynamic_array_as_object,
+        include_arguments=include_stack_arguments,
         stack_variable_offset_resolver=stack_variable_offset_resolver,
     )
     if indexed_key is not None:
         return indexed_key
     stack_key = _stack_storage_key_8616(
         node,
+        include_arguments=include_stack_arguments,
         stack_variable_offset_resolver=stack_variable_offset_resolver,
     )
     if stack_key is not None:
@@ -523,6 +550,54 @@ def _storage_key_8616(
         width=width or 1,
         region=0,
         ssa_id=f"{virtual_identity.kind.value}-{virtual_identity.value}",
+    )
+
+
+def _semantic_partial_lvalue_storage_key_8616(
+    node: object,
+    segment_register_offsets: frozenset[int],
+    *,
+    include_stack_arguments: bool = False,
+    stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
+) -> DefUseStorageKey8616 | None:
+    """Resolve one exact byte-addressed semantic-cast assignment target."""
+    if not isinstance(node, CSemanticCast8616):
+        return None
+    width = _type_width_bytes_8616(node.dst_type)
+    expression = node.expr
+    byte_offset = 0
+    if isinstance(expression, CVariable):
+        base = expression
+    elif (
+        isinstance(expression, CBinaryOp)
+        and expression.op == "Shr"
+        and isinstance(expression.lhs, CVariable)
+        and isinstance(expression.rhs, CConstant)
+        and isinstance(expression.rhs.value, int)
+        and not isinstance(expression.rhs.value, bool)
+        and expression.rhs.value >= 0
+        and expression.rhs.value % 8 == 0
+    ):
+        base = expression.lhs
+        byte_offset = expression.rhs.value // 8
+    else:
+        return None
+    storage = _storage_key_8616(
+        base,
+        segment_register_offsets,
+        include_stack_arguments=include_stack_arguments,
+        stack_variable_offset_resolver=stack_variable_offset_resolver,
+    )
+    if width is None or storage is None or byte_offset + width > storage.width:
+        return None
+    return DefUseStorageKey8616(
+        kind=storage.kind,
+        offset=storage.offset + byte_offset,
+        width=width,
+        region=storage.region,
+        ssa_id=storage.ssa_id,
+        definition_trackable=storage.definition_trackable,
+        display_name=storage.display_name,
     )
 
 
@@ -590,6 +665,7 @@ def _value_read_keys_8616(
     segment_register_offsets: frozenset[int],
     *,
     include_virtual_carriers: bool = False,
+    include_stack_arguments: bool = False,
     stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> tuple[_DefUseValueRead8616, ...]:
     """Collect tracked storage views whose stored values are evaluated."""
@@ -635,6 +711,7 @@ def _value_read_keys_8616(
             segment_register_offsets,
             dynamic_array_as_object=True,
             include_virtual_carriers=include_virtual_carriers,
+            include_stack_arguments=include_stack_arguments,
             stack_variable_offset_resolver=stack_variable_offset_resolver,
         )
         if key is None:
@@ -899,6 +976,7 @@ def validate_structured_def_use_8616(
     *,
     call_output_definitions: Mapping[int, tuple[DefUseCallOutputDefinition8616, ...]] | None = None,
     indexed_stack_read_proofs: Mapping[int, IndexedStackReadProof8616] | None = None,
+    entry_defined_stack_ranges: tuple[DefUseEntryStackRange8616, ...] = (),
     entry_defined_registers: tuple[object, ...] = (),
     segment_register_offsets: frozenset[int] = frozenset(),
     entry_defined_segment_register_offsets: frozenset[int] = frozenset(),
@@ -908,12 +986,12 @@ def validate_structured_def_use_8616(
 ) -> DefUseValidationReport8616:
     """Validate definitely assigned stack and register reads in structured C.
 
-    Positive ``BP`` slots are function arguments and therefore initialized at
-    entry. Register arguments are initialized only when the caller supplies
-    their exact C variables. Segment carriers are initialized only when typed
-    IR state proves their architectural live-in offsets. Other register and
-    segment carriers without complete angr region/SSA identity remain
-    classified but are not treated as defined.
+    Positive ``BP`` reads are always classified, but only explicit machine-BP
+    argument ranges are initialized at entry. Register arguments are initialized
+    only when the caller supplies their exact C variables. Segment carriers are
+    initialized only when typed IR state proves their architectural live-in
+    offsets. Other register and segment carriers without complete angr
+    region/SSA identity remain classified but are not treated as defined.
     Constant indexed stack-array accesses use their exact element range.
     Dynamic indexed reads conservatively require the complete bounded array to
     be definitely assigned; a dynamic store never defines the complete array.
@@ -947,6 +1025,7 @@ def validate_structured_def_use_8616(
             expr,
             segment_register_offsets,
             include_virtual_carriers=include_virtual_carriers,
+            include_stack_arguments=True,
             stack_variable_offset_resolver=stack_variable_offset_resolver,
         )
         report.raw_fact_count += len(reads)
@@ -1078,6 +1157,13 @@ def validate_structured_def_use_8616(
                 segment_register_offsets,
                 stack_variable_offset_resolver=stack_variable_offset_resolver,
             )
+            if predicate_lhs_key is None:
+                predicate_lhs_key = _semantic_partial_lvalue_storage_key_8616(
+                    node.lhs,
+                    segment_register_offsets,
+                    include_stack_arguments=True,
+                    stack_variable_offset_resolver=stack_variable_offset_resolver,
+                )
             if predicate_lhs_key is not None:
                 _invalidate_guarded_definitions_8616(
                     state,
@@ -1087,8 +1173,16 @@ def validate_structured_def_use_8616(
                 node.lhs,
                 segment_register_offsets,
                 include_virtual_carriers=include_virtual_carriers,
+                include_stack_arguments=True,
                 stack_variable_offset_resolver=stack_variable_offset_resolver,
             )
+            if lhs_key is None:
+                lhs_key = _semantic_partial_lvalue_storage_key_8616(
+                    node.lhs,
+                    segment_register_offsets,
+                    include_stack_arguments=True,
+                    stack_variable_offset_resolver=stack_variable_offset_resolver,
+                )
             if lhs_key is None:
                 _check_lvalue_reads(node.lhs, state.defined, context=f"{context}.lhs")
             elif lhs_key.definition_trackable:
@@ -1237,6 +1331,8 @@ def validate_structured_def_use_8616(
         return state
 
     entry_defined: set[_DefUseStorageByte8616] = set()
+    for stack_range in entry_defined_stack_ranges:
+        entry_defined.update(_storage_bytes_8616(stack_range.storage_key()))
     for register_node in entry_defined_registers:
         key = _register_storage_key_8616(register_node, segment_register_offsets)
         if key is not None and key.definition_trackable:

@@ -119,6 +119,7 @@ from .tail_validation_generation import (
 from .tail_validation_routing import build_tail_validation_family_routing
 from .tail_validation_selector_returns import collect_selector_return_fingerprints_8616
 from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
+from .validation.entry_stack_ranges import entry_stack_ranges_from_codegen_8616
 from .validation.status_flag_preservation import packed_status_flag_preservation_evidence_8616
 from .validation_branch_conditions import validate_materialized_branch_conditions_8616
 from .validation_call_multiplicity import (
@@ -5406,6 +5407,7 @@ def refresh_x86_16_final_semantic_validation_8616(
             codegen,
             root,
         ),
+        entry_defined_stack_ranges=entry_stack_ranges_from_codegen_8616(codegen).ranges,
         entry_defined_registers=_def_use_entry_registers_8616(codegen),
         segment_register_offsets=_def_use_segment_register_offsets_8616(project),
         entry_defined_segment_register_offsets=_def_use_entry_segment_register_offsets_8616(
@@ -5603,6 +5605,7 @@ def collect_x86_16_tail_validation_summary(
                 codegen,
                 root,
             ),
+            entry_defined_stack_ranges=entry_stack_ranges_from_codegen_8616(codegen).ranges,
             entry_defined_registers=_def_use_entry_registers_8616(codegen),
             segment_register_offsets=_def_use_segment_register_offsets_8616(project),
             entry_defined_segment_register_offsets=_def_use_entry_segment_register_offsets_8616(

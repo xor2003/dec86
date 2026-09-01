@@ -4,6 +4,9 @@ Layer: Types/Lowering.
 Responsibility: define exact callee callsite facts, closed census accounting,
 and the authoritative project-owned registry consumed by interface lowering.
 No callsites are discovered, summarized, or classified in this module.
+
+Consumes alias, widening, and typed facts. Do not recover semantics from COD,
+source, assembly, or rendered C text.
 """
 
 from __future__ import annotations
