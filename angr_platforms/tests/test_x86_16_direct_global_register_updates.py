@@ -122,3 +122,31 @@ def test_refuses_update_without_exact_source_global(monkeypatch: pytest.MonkeyPa
     assert updates.materialize_direct_global_register_updates_8616(project, codegen, {}) is False
     assert assignment.rhs.__class__ is object
     assert codegen._inertia_direct_global_register_update_stats_8616.failure_count == 1
+
+
+def test_materializer_reuses_binary_facts_until_function_surface_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codegen = _Codegen()
+    codegen.cfunc = SimpleNamespace(
+        addr=0x12D2C,
+        statements=structured_c.CStatements([], codegen=codegen),
+    )
+    function = SimpleNamespace(addr=0x12D2C, size=1, blocks=())
+    project = SimpleNamespace(kb=SimpleNamespace(functions={0x12D2C: function}))
+    collect_count = 0
+
+    def collect(*_args: object) -> tuple[updates.DirectGlobalRegisterUpdate8616, ...]:
+        nonlocal collect_count
+        collect_count += 1
+        return ()
+
+    monkeypatch.setattr(updates, "collect_direct_global_register_updates_8616", collect)
+
+    assert updates.materialize_direct_global_register_updates_8616(project, codegen, {}) is False
+    assert updates.materialize_direct_global_register_updates_8616(project, codegen, {}) is False
+    assert collect_count == 1
+
+    function.size = 2
+    assert updates.materialize_direct_global_register_updates_8616(project, codegen, {}) is False
+    assert collect_count == 2

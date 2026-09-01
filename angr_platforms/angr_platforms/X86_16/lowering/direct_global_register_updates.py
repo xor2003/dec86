@@ -12,8 +12,6 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass
-from enum import StrEnum
 from itertools import pairwise
 from typing import Any, Protocol, cast
 
@@ -23,7 +21,16 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 from capstone.x86_const import X86_INS_AND, X86_INS_MOV, X86_INS_OR, X86_INS_XOR, X86_OP_MEM, X86_OP_REG
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..function_evidence_inventory import (
+    FunctionEvidenceKind8616,
+    collect_function_binary_evidence_8616,
+)
 from ..pipeline.structured_ast_query_index import StructuredAstQuerySession8616
+from .direct_global_register_update_contracts import (
+    DirectGlobalRegisterUpdate8616,
+    DirectGlobalRegisterUpdateOp8616,
+    DirectGlobalRegisterUpdateStats8616,
+)
 from .real_mode_linear import _capstone_insns_for_direct_global_update_8616, _direct_global_update_blocks_8616
 from .segment_access_policy import instruction_addrs_from_node_8616
 
@@ -42,46 +49,6 @@ def _boundary_attr_8616(value: object, name: str, default: object = None) -> obj
     """Read one dynamic third-party angr or Capstone boundary attribute."""
     # Dynamic boundary: angr and Capstone objects expose version-dependent fields.
     return getattr(value, name, default)
-
-
-class DirectGlobalRegisterUpdateOp8616(StrEnum):
-    """Supported logical operation proven by one machine instruction."""
-
-    AND = "And"
-    OR = "Or"
-    XOR = "Xor"
-
-
-@dataclass(frozen=True, slots=True)
-class DirectGlobalRegisterUpdate8616:
-    """One adjacent global-load and global-update instruction pair."""
-
-    source_offset: int
-    destination_offset: int
-    width: int
-    register_id: int
-    operation: DirectGlobalRegisterUpdateOp8616
-    load_insn_addr: int
-    update_insn_addr: int
-
-
-@dataclass(frozen=True, slots=True)
-class DirectGlobalRegisterUpdateStats8616:
-    """Closed materialization counters for register-carried updates."""
-
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-
-    @property
-    def complete(self) -> bool:
-        """Return whether every binary fact was materialized or refused."""
-        return (
-            self.raw_fact_count == self.materialized_count + self.failure_count
-            and self.normalized_fact_count == self.classified_fact_count == self.raw_fact_count
-        )
 
 
 def _direct_memory_identity_8616(operand: object) -> tuple[int, int] | None:
@@ -257,7 +224,16 @@ def materialize_direct_global_register_updates_8616(
     else:
         function = None
     root = _boundary_attr_8616(cfunc, "statements", None)
-    facts = collect_direct_global_register_updates_8616(project, function) if function is not None else ()
+    facts = (
+        collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.DIRECT_GLOBAL_REGISTER_UPDATES,
+            builder=collect_direct_global_register_updates_8616,
+        )
+        if function is not None
+        else ()
+    )
     query_index = query_session.current() if query_session is not None and facts else None
     if query_index is not None:
         query_index.require_root(root)

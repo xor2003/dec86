@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+from angr_platforms.X86_16.structuring import simple_loop_recovery
 from angr_platforms.X86_16.structuring.simple_loop_recovery import (
     InsnSummary8616,
+    recover_counted_stack_loop_c_8616,
     recover_counted_stack_loop_from_summaries_8616,
 )
 
@@ -43,3 +48,29 @@ def test_recover_counted_stack_loop_refuses_without_accumulator_return_load():
     ]
 
     assert recover_counted_stack_loop_from_summaries_8616(summaries) is None
+
+
+def test_source_recovery_does_not_decode_after_authoritative_inventory_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        simple_loop_recovery,
+        "_function_instruction_summaries_8616",
+        lambda *_args: [],
+    )
+
+    def reject_duplicate_decode(*_args: object, **_kwargs: object) -> list[InsnSummary8616]:
+        raise AssertionError("authoritative instruction summaries must not be decoded again")
+
+    monkeypatch.setattr(
+        simple_loop_recovery,
+        "_linear_instruction_summaries_8616",
+        reject_duplicate_decode,
+    )
+
+    result = recover_counted_stack_loop_c_8616(
+        object(),
+        SimpleNamespace(addr=0x1000, name="no_loop"),
+    )
+
+    assert result is None

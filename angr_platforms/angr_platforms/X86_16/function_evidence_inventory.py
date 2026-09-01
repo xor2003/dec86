@@ -26,6 +26,7 @@ class FunctionEvidenceKind8616(Enum):
     FAR_POINTER_SEGMENTED_LOADS = "far_pointer_segmented_loads"
     NEIGHBOR_CALL_TARGETS = "neighbor_call_targets"
     DIRECT_GLOBAL_INSTRUCTION_VIEWS = "direct_global_instruction_views"
+    DIRECT_GLOBAL_REGISTER_UPDATES = "direct_global_register_updates"
     REGISTER_SOURCE_BLOCKS = "register_source_blocks"
     TERMINAL_AX_RETURNS = "terminal_ax_returns"
 

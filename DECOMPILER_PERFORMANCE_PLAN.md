@@ -102,9 +102,23 @@ with function and whole-tail validation clean. Profile totals were affected by
 concurrent load, so this is a scan-count acceptance only and does not satisfy
 the remaining Step 2 end-to-end 10% requirement.
 
-Cache-focused and indexed-Alias integration tests pass, `architecture-check-fast`
-passes, and the current fast pipeline passes 1,914 tests plus its required
-external lane. Final broad acceptance remains pending; an earlier broad run was
+Direct-register global update facts now use the authoritative function-evidence
+inventory instead of rescanning every function block on each Lowering replay.
+On the same representative function, binary collection calls fell from 15 to
+one and cumulative direct-register materialization cost fell from 0.0736 to
+0.0097 profiled seconds (86.8% isolated). The typed fact contracts were moved
+to a dedicated Lowering module, reducing the implementation from 349 to 325
+lines. One obsolete counted-loop fallback decode was also removed after proving
+that the primary inventory already contains a strict byte-range superset; it
+removed only one of 29 decodes and is recorded as simplification, not a
+material speedup. Generated C remained byte-identical at the hash above and
+both validation gates stayed clean.
+
+Cache-focused and indexed-Alias integration tests pass, and
+`architecture-check-fast` passes. The latest broad pipeline reached 1,911
+passing tests but failed three stack-argument recovery tests; all three failures
+reproduce on a clean checkout of the committed baseline, outside this cache
+change. Final broad acceptance remains pending; an earlier broad run was
 blocked by unrelated in-flight GP stack-restore materialization work and two
 inconsistent external MS C construct subprocess results.
 

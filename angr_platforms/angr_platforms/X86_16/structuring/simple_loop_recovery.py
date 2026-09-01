@@ -322,9 +322,6 @@ def recover_counted_stack_loop_c_8616(project: object, function: object) -> str 
     summaries = _function_instruction_summaries_8616(project, function)
     evidence = recover_counted_stack_loop_from_summaries_8616(summaries)
     if evidence is None:
-        summaries = _linear_instruction_summaries_8616(project, function)
-        evidence = recover_counted_stack_loop_from_summaries_8616(summaries)
-    if evidence is None:
         return None
     raw_name = _dynamic_attr_8616(function, "name", None)
     raw_addr = _dynamic_int_8616(_dynamic_attr_8616(function, "addr", 0))
