@@ -1,0 +1,85 @@
+"""Focused tests for explicit packed-FLAGS runtime live-ins."""
+
+from types import SimpleNamespace
+
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
+from angr_platforms.X86_16.ir.status_flag_lift_context import StatusFlagLiftArtifact8616
+from angr_platforms.X86_16.lowering import packed_flags_state
+
+
+class _Codegen(SimpleNamespace):
+    """Minimal structured-codegen identity allocator."""
+
+    _next_index = 0
+    cstyle_null_cmp = False
+
+    def next_node_idx(self) -> int:
+        """Return one deterministic node identity."""
+        self._next_index += 1
+        return self._next_index
+
+    def next_ident(self, name: str) -> str:
+        """Return one deterministic display identity."""
+        return name
+
+
+def test_packed_preservation_matches_rebased_instruction_address() -> None:
+    """Typed lift evidence retains its original-to-slice linear delta."""
+    artifact = StatusFlagLiftArtifact8616(
+        0x1000,
+        (),
+        frozenset({0x13CE9}),
+        0x12C93,
+    )
+
+    assert artifact.covers_packed_preservation_8616(0x1056)
+
+
+def test_initializes_incoming_identity_of_proven_flags_update(monkeypatch) -> None:
+    """A preservation-covered packed update receives one explicit FLAGS live-in."""
+    codegen = _Codegen(project=SimpleNamespace(arch=SimpleNamespace(registers={"flags": (36, 2)})))
+    incoming_flags = structured_c.CVariable(
+        SimRegisterVariable(36, 2, ident="ir_9", region=0x100),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    outgoing_flags = structured_c.CVariable(
+        SimRegisterVariable(36, 2, ident="ir_11", region=0x100),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    update = structured_c.CAssignment(
+        outgoing_flags,
+        structured_c.CBinaryOp(
+            "And",
+            incoming_flags,
+            structured_c.CConstant(0xF72A, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x104},
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=structured_c.CStatements([update], codegen=codegen),
+    )
+    monkeypatch.setattr(
+        packed_flags_state,
+        "active_status_flag_lift_artifact_8616",
+        lambda _addr: SimpleNamespace(
+            covers_packed_preservation_8616=lambda address: address == 0x104,
+        ),
+    )
+    monkeypatch.setattr(packed_flags_state, "record_global_declaration_spec_8616", lambda *_args, **_kwargs: None)
+
+    assert packed_flags_state.lower_packed_flags_live_in_8616(codegen) is True
+    initializer = codegen.cfunc.statements.statements[0]
+    assert isinstance(initializer, structured_c.CAssignment)
+    assert isinstance(initializer.rhs, structured_c.CVariable)
+    assert isinstance(initializer.rhs.variable, SimMemoryVariable)
+    assert initializer.rhs.variable.name == "inertia_flags"
+    assert isinstance(initializer.lhs, structured_c.CVariable)
+    assert initializer.lhs.variable.ident == "ir_9"
+    assert codegen.cfunc.statements.statements[1] is update
