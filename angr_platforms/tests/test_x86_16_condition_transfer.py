@@ -505,6 +505,65 @@ def test_indexed_byte_cmp_condition_operands_use_stack_index_state():
     assert rhs == IRValue(MemSpace.REG, name="al", offset=0, size=1, expr=("cmp-reg",))
 
 
+def test_indexed_word_immediate_cmp_uses_architectural_di_index() -> None:
+    """An ordinary DS:[DI+disp] compare keeps exact typed index evidence."""
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(Instruction_ANY._inertia_condition_index_reg_state_8616)
+    instruction = Instruction_ANY.__new__(Instruction_ANY)
+    instruction.arch = Arch86_16()
+    instruction.addr = 0x11386
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {}
+        operands = instruction._condition_operands_from_cmp_semantics_8616(
+            ("cmp_mem_imm16", ("di", 0x25F6, 0x25F6), 0xFFFF),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
+
+    assert operands == (
+        IRValue(
+            MemSpace.DS,
+            offset=0x25F6,
+            size=2,
+            index=IRValue(MemSpace.REG, name="di", offset=0x1C, size=2, expr=("cmp-reg",)),
+            index_shift=0,
+            memory_access_size=2,
+            memory_access_insn=0x11386,
+        ),
+        IRValue(MemSpace.CONST, const=0xFFFF, size=2, expr=("cmp-imm",)),
+    )
+
+
+def test_lifted_indexed_word_immediate_cmp_materializes_jcc_condition() -> None:
+    """The full CMP/JZ lift must retain its typed indexed-memory condition."""
+    import pyvex
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.ir.condition_lift_capture import isolated_condition_lift_session_8616
+
+    instruction_addr = 0x11386
+    data = bytes.fromhex("81 bd f6 25 ff ff 74 05")
+    with isolated_condition_lift_session_8616() as capture:
+        pyvex.lift(data, instruction_addr, Arch86_16(), max_bytes=len(data), opt_level=0)
+
+    conditions = capture.condition_cache[instruction_addr]
+    assert len(conditions) == 1
+    condition = conditions[0]
+    assert condition.op == "eq"
+    assert condition.lhs == IRValue(
+        MemSpace.DS,
+        offset=0x25F6,
+        size=2,
+        index=IRValue(MemSpace.REG, name="di", offset=0x1C, size=2, expr=("cmp-reg",)),
+        index_shift=0,
+        memory_access_size=2,
+        memory_access_insn=instruction_addr,
+    )
+    assert condition.rhs == IRValue(MemSpace.CONST, const=0xFFFF, size=2, expr=("cmp-imm",))
+
+
 def test_indexed_byte_cmp_uses_exact_loaded_rhs_until_register_clobber():
     from angr_platforms.X86_16.arch_86_16 import Arch86_16
     from angr_platforms.X86_16.lift_86_16 import Instruction_ANY

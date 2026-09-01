@@ -13,6 +13,8 @@ and leaves the existing loop condition unchanged.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -26,6 +28,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CDoWhileLoop,
     CExpression,
     CForLoop,
+    CIfBreak,
+    CIfElse,
+    CStatements,
     CUnaryOp,
     CVariable,
     CWhileLoop,
@@ -44,6 +49,17 @@ from .loop_condition_ownership import (
     CompositeLoopExitOwnershipStatus8616,
     classify_composite_loop_exit_ownership_8616,
 )
+from .pretest_condition_surface import pretest_condition_surface_8616
+
+log: logging.Logger = logging.getLogger(__name__)
+
+
+def _debug_loop_selection_8616(**fields: object) -> None:
+    """Report exact loop-condition ownership evidence when diagnostics are enabled."""
+    if os.environ.get("INERTIA_DEBUG_CONDITION_MATERIALIZATION") != "1":
+        return
+    details = " ".join(f"{key}={value!r}" for key, value in sorted(fields.items()))
+    log.warning("[loop-condition-materialization] %s", details)
 
 
 class LoopContinuationEdge8616(Enum):
@@ -184,7 +200,7 @@ def _materialize_plain_loop_counter_update_8616(
             or rhs.op not in {"Add", "Sub"}
             or not isinstance(dirty_varid, int)
             or not isinstance(rhs.rhs, CConstant)
-            or rhs.rhs.value != 1
+            or not isinstance(rhs.rhs.value, int)
         ):
             continue
         matches.append((node, rhs, dirty_varid))
@@ -271,6 +287,23 @@ def _bind_existing_loop_condition_register_8616(
     return replacement_count
 
 
+def _loop_header_carries_condition_register_8616(
+    current: CExpression,
+    condition: ConditionIR,
+) -> bool:
+    """Return whether an untagged header visibly carries the typed register."""
+    operand = condition.lhs
+    if not isinstance(operand, IRValue) or operand.space is not MemSpace.REG or not isinstance(operand.name, str):
+        return False
+    return any(
+        isinstance(node, CVariable)
+        and isinstance(node.variable, SimRegisterVariable)
+        and node.variable.name == operand.name.lower()
+        and node.variable.size == operand.size
+        for node in _iter_c_nodes_deep_8616(current)
+    )
+
+
 def _enters_body_through_linear_trampoline_8616(
     successors: Mapping[int, tuple[int, ...]],
     start: int,
@@ -323,13 +356,39 @@ def _continuation_edge_8616(
         body_block_addrs,
         block_addr,
     )
-    if taken_owned != fallthrough_owned:
-        return LoopContinuationEdge8616.TAKEN if taken_owned else LoopContinuationEdge8616.FALLTHROUGH
     taken_reaches = _reaches_8616(successors, taken_target, block_addr)
     fallthrough_reaches = _reaches_8616(successors, fallthrough_target, block_addr)
-    if taken_reaches == fallthrough_reaches:
-        return None
-    return LoopContinuationEdge8616.TAKEN if taken_reaches else LoopContinuationEdge8616.FALLTHROUGH
+    owned_edge = (
+        LoopContinuationEdge8616.TAKEN
+        if taken_owned and not fallthrough_owned
+        else LoopContinuationEdge8616.FALLTHROUGH if fallthrough_owned and not taken_owned else None
+    )
+    reachable_edge = (
+        LoopContinuationEdge8616.TAKEN
+        if taken_reaches and not fallthrough_reaches
+        else LoopContinuationEdge8616.FALLTHROUGH if fallthrough_reaches and not taken_reaches else None
+    )
+    if reachable_edge is not None:
+        return None if owned_edge is not None and owned_edge is not reachable_edge else reachable_edge
+    return owned_edge
+
+
+def _consume_owned_pretest_guard_8616(
+    loop: _LoopBoundary8616,
+    guard: CIfBreak | CIfElse,
+    codegen: object,
+) -> bool:
+    """Remove one exact leading break guard after promoting it to the header."""
+    empty = CStatements([], codegen=codegen)
+    if loop.body is guard:
+        loop.body = empty
+        return True
+    return bool(
+        _replace_c_children_8616(
+            loop.body,
+            lambda child: empty if child is guard else child,
+        )
+    )
 
 
 def _expression_tags_8616(expression: CExpression) -> dict[str, object]:
@@ -447,12 +506,58 @@ def materialize_typed_loop_continuation_conditions_8616(
         current = loop.condition
         if not isinstance(current, CExpression):
             continue
-        matching_keys = _tag_pairs_8616(current).intersection(conditions_by_key)
-        if not matching_keys:
-            matching_keys = _tag_pairs_8616(loop.body).intersection(conditions_by_key)
+        leading_break_guard = (
+            pretest_condition_surface_8616(node).leading_break_guard
+            if isinstance(node, (CForLoop, CWhileLoop))
+            else None
+        )
+        current_keys = _tag_pairs_8616(current).intersection(conditions_by_key)
+        body_keys = _tag_pairs_8616(loop.body).intersection(conditions_by_key)
+        matching_keys = current_keys | body_keys
         if not matching_keys:
             continue
         raw_count += 1
+        body_block_addrs = _structured_body_block_addrs_8616(loop.body)
+        pretest_keys: frozenset[tuple[int, int]] = frozenset()
+        owned_pretest_keys: frozenset[tuple[int, int]] = frozenset()
+        if len(matching_keys) > 1 and leading_break_guard is not None:
+            pretest_keys = _tag_pairs_8616(leading_break_guard).intersection(matching_keys)
+            owned_pretest_keys = frozenset(
+                key
+                for key in pretest_keys
+                if len(conditions_by_key[key]) == 1
+                and classify_composite_loop_exit_ownership_8616(
+                    loop.body,
+                    key,
+                    successors,
+                    leading_break_guard=leading_break_guard,
+                ).owned_pretest_guard
+                is leading_break_guard
+            )
+            if len(owned_pretest_keys) == 1:
+                matching_keys = owned_pretest_keys
+        if len(matching_keys) > 1 and not pretest_keys and len(current_keys) == 1:
+            matching_keys = current_keys
+        _debug_loop_selection_8616(
+            body_keys=body_keys,
+            current_keys=current_keys,
+            leading_guard_type=(type(leading_break_guard).__name__ if leading_break_guard is not None else None),
+            matching_keys=matching_keys,
+            owned_pretest_keys=owned_pretest_keys,
+            pretest_keys=pretest_keys,
+        )
+        if len(matching_keys) > 1:
+            matching_keys = frozenset(
+                key
+                for key in matching_keys
+                if len(conditions_by_key[key]) == 1
+                and _continuation_edge_8616(
+                    conditions_by_key[key][0],
+                    successors,
+                    body_block_addrs=body_block_addrs,
+                )
+                is not None
+            )
         if len(matching_keys) != 1:
             continue
         key = next(iter(matching_keys))
@@ -464,23 +569,31 @@ def materialize_typed_loop_continuation_conditions_8616(
             loop.body,
             key,
             successors,
+            leading_break_guard=leading_break_guard,
         )
-        if composite_ownership.status is CompositeLoopExitOwnershipStatus8616.UNIQUE:
+        if (
+            composite_ownership.status is CompositeLoopExitOwnershipStatus8616.UNIQUE
+            and composite_ownership.owned_pretest_guard is None
+        ):
             classified_count += 1
             materialized_count += 1
             composite_loop_exit_owned_count += 1
             continue
-        if composite_ownership.status is CompositeLoopExitOwnershipStatus8616.AMBIGUOUS:
+        if composite_ownership.status is CompositeLoopExitOwnershipStatus8616.AMBIGUOUS or (
+            not current_keys
+            and composite_ownership.status is not CompositeLoopExitOwnershipStatus8616.UNIQUE
+            and not _loop_header_carries_condition_register_8616(current, candidates[0])
+        ):
             continue
-        _mark_condition_binding_8616(current, key)
         condition = candidates[0]
         edge = _continuation_edge_8616(
             condition,
             successors,
-            body_block_addrs=_structured_body_block_addrs_8616(loop.body),
+            body_block_addrs=body_block_addrs,
         )
         if edge is None:
             continue
+        _mark_condition_binding_8616(current, key)
         classified_count += 1
         if edge is LoopContinuationEdge8616.TAKEN:
             taken_count += 1
@@ -493,8 +606,17 @@ def materialize_typed_loop_continuation_conditions_8616(
             continue
         if edge is LoopContinuationEdge8616.FALLTHROUGH:
             replacement = _invert_condition_8616(replacement, codegen)
+        pretest_consumed = composite_ownership.owned_pretest_guard is not None
+        if pretest_consumed and not _consume_owned_pretest_guard_8616(
+            loop,
+            composite_ownership.owned_pretest_guard,
+            codegen,
+        ):
+            continue
+        composite_loop_exit_owned_count += int(pretest_consumed)
         if _is_owned_materialization_8616(current, key, edge) and _same_c_expression_8616(current, replacement):
             materialized_count += 1
+            changed_count += int(pretest_consumed)
             continue
         _mark_materialization_8616(replacement, key, edge)
         loop.condition = replacement

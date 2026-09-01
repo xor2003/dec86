@@ -154,9 +154,15 @@ def _statement_value_roots_8616(statement: object) -> tuple[object, ...]:
 
 
 def _flags_carriers_8616(statement: object, flags_offset: int) -> tuple[structured_c.CExpression, ...]:
-    """Collect unique physical FLAGS reads in one structured statement."""
+    """Collect one representative per physical FLAGS storage identity.
+
+    Structured condition trees may clone the same register read into several
+    boolean subexpressions.  Those nodes are distinct C-AST objects but consume
+    one post-interrupt FLAGS definition, so object identity must not turn them
+    into competing status outputs.
+    """
     carriers: list[structured_c.CExpression] = []
-    seen: set[int] = set()
+    seen_registers: set[int] = set()
     for root in _statement_value_roots_8616(statement):
         assignment_lhs_ids = {
             id(node.lhs)
@@ -168,10 +174,10 @@ def _flags_carriers_8616(statement: object, flags_offset: int) -> tuple[structur
             if (
                 register_offset != flags_offset
                 or id(node) in assignment_lhs_ids
-                or id(node) in seen
+                or register_offset in seen_registers
             ):
                 continue
-            seen.add(id(node))
+            seen_registers.add(register_offset)
             carriers.append(cast(structured_c.CExpression, node))
     return tuple(carriers)
 

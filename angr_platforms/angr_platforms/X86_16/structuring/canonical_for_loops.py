@@ -32,7 +32,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 
-from ..c_ast_utils import _iter_c_node_children_8616, _same_c_expression_8616
+from ..c_ast_utils import (
+    _iter_c_node_children_8616,
+    _same_c_expression_8616,
+)
 from ..ir.condition_ir import inverted_comparison_op_8616
 
 
@@ -290,24 +293,38 @@ def _break_control_node_ids_8616(statement: CStatement) -> frozenset[int]:
 
 def _pretest_loop_components_8616(
     loop: CWhileLoop,
-) -> tuple[CVariable, CExpression, CStatement, CAssignment] | None:
-    """Prove a leading break and affine iterator without control-flow policy."""
+) -> tuple[CVariable, CExpression, CStatement | None, CAssignment] | None:
+    """Prove a direct or break-guarded pretest with an affine iterator."""
     if not isinstance(loop.body, CStatements):
         return None
     body_locations = _linear_statement_locations_8616(loop.body)
-    if len(body_locations) < 2:
+    if not body_locations:
         return None
-    guard = body_locations[0].statement
     iterator = body_locations[-1].statement
-    guard_condition = _pretest_break_condition_8616(guard)
     if (
-        not isinstance(guard_condition, CExpression)
-        or not isinstance(iterator, CAssignment)
+        not isinstance(iterator, CAssignment)
         or not isinstance(iterator.lhs, CVariable)
         or not _affine_self_update_8616(iterator, iterator.lhs)
     ):
         return None
     induction = iterator.lhs
+    guard = body_locations[0].statement
+    guard_condition = _pretest_break_condition_8616(guard)
+    if guard_condition is None and not _unconditional_while_8616(loop):
+        condition = loop.condition
+        if not isinstance(condition, CExpression):
+            return None
+        nonzero = _nonzero_loop_induction_8616(condition)
+        if (
+            (nonzero is not None
+            and _same_variable_8616(nonzero, induction))
+            or _ordered_comparison_uses_induction_8616(condition, induction)
+        ):
+            return induction, condition, None, iterator
+    if len(body_locations) < 2:
+        return None
+    if not isinstance(guard_condition, CExpression):
+        return None
     continuation = _pretest_continuation_condition_8616(
         guard_condition,
         induction,
@@ -373,7 +390,9 @@ def canonical_loop_validation_shape_8616(
     induction, continuation, guard, iterator = components
     return CanonicalLoopValidationShape8616(
         condition=continuation,
-        suppressed_control_node_ids=_break_control_node_ids_8616(guard),
+        suppressed_control_node_ids=(
+            _break_control_node_ids_8616(guard) if guard is not None else frozenset()
+        ),
         suppressed_body_write_node_ids=frozenset({id(iterator)}),
     )
 
@@ -443,18 +462,21 @@ def _materialize_canonical_for_loop_8616(
     if not isinstance(loop.body, CStatements):
         return False
     body_locations = _linear_statement_locations_8616(loop.body)
-    if len(body_locations) < 2:
+    if not body_locations:
         return False
-    guard_location = body_locations[0]
     iterator_location = body_locations[-1]
-    guard = guard_location.statement
     iterator = iterator_location.statement
-    if not isinstance(guard, CStatement) or not isinstance(iterator, CAssignment):
+    if not isinstance(iterator, CAssignment):
         return False
     counts.raw += 1
     components = _pretest_loop_components_8616(loop)
     induction = components[0] if components is not None else None
     continuation = components[1] if components is not None else None
+    guard = components[2] if components is not None else None
+    guard_location = next(
+        (location for location in body_locations if location.statement is guard),
+        None,
+    )
     if (
         not isinstance(initializer.lhs, CVariable)
         or induction is None
@@ -481,7 +503,6 @@ def _materialize_canonical_for_loop_8616(
     location_indexes = (
         _identity_index_8616(initializer_location),
         _identity_index_8616(loop_location),
-        _identity_index_8616(guard_location),
         _identity_index_8616(iterator_location),
     )
     if any(index is None for index in location_indexes):
@@ -489,7 +510,10 @@ def _materialize_canonical_for_loop_8616(
         return False
     loop_index = cast(int, location_indexes[1])
     loop_location.parent.statements[loop_index] = canonical
-    for location in (initializer_location, guard_location, iterator_location):
+    consumed_locations = [initializer_location, iterator_location]
+    if guard_location is not None:
+        consumed_locations.append(guard_location)
+    for location in consumed_locations:
         index = _identity_index_8616(location)
         if index is None:
             counts.failures += 1

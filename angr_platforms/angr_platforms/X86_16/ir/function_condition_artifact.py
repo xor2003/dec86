@@ -116,7 +116,7 @@ class IRFunctionConditionArtifact8616:
             and self.source.stats.complete
             and self.source.stats.raw_fact_count == len(expected)
             and self.source.stats.materialized_count == len(expected)
-            and expected <= materialized
+            and expected == materialized
             and all(
                 condition.block_addr == address
                 for address, conditions in self.source.conditions_by_block

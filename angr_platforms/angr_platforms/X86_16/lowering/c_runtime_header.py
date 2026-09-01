@@ -108,8 +108,6 @@ def interrupt_helper_declarations_8616(
     declarations = interrupt_service_declarations(service_calls, api_style)
     seen = set(declarations)
     for call in calls:
-        if call.vector == 0x21 or interrupt_service_spec(call) is not None:
-            continue
         handler = get_interrupt_handler_class(call.vector)
         return_type = "void" if handler.NO_RET else "unsigned short"
         if call.vector == 0x33 and call.ax == 0x0004:

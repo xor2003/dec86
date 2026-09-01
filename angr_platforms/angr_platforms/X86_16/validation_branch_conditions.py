@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CConstant,
     CDoWhileLoop,
@@ -40,7 +41,18 @@ from .ir.condition_ir import (
     normalize_condition_fingerprint_string_8616,
 )
 from .ir.core import IRValue, MemSpace
+from .ir.function_ssa_registry import (
+    FunctionSSAArtifactVerdict8616,
+    registered_function_ssa_artifact_8616,
+)
+from .ir.logical_memory_register_transfer import trace_logical_word_register_transfer_8616
+from .ir.logical_memory_register_transfer_contracts import (
+    LogicalMemoryRegisterTransfer8616,
+    LogicalMemoryRegisterTransferKind8616,
+)
+from .ir.ssa_cfg import build_ssa_cfg_snapshot_8616, compute_ssa_dominators_8616
 from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
+from .validation_condition_chains import validate_complete_condition_chain_8616
 from .validation_condition_precision import condition_precision_evidence_8616
 
 __all__ = [
@@ -114,6 +126,13 @@ class _TypedConditionCodegen8616(Protocol):
     _inertia_callsite_summaries: dict[int, CallsiteSummary8616]
     _inertia_callsite_summary_inventory_8616: dict[int, CallsiteSummary8616]
     project: _ConditionProject8616
+    cfunc: _ConditionCFunction8616
+
+
+class _ConditionCFunction8616(Protocol):
+    """Function identity needed to consume its proven SSA artifact."""
+
+    addr: int
 
 
 class _ConditionArch8616(Protocol):
@@ -301,6 +320,229 @@ def _normalized_fingerprint_8616(
     return normalized
 
 
+def _logical_reload_address_fingerprint_8616(
+    transfer: LogicalMemoryRegisterTransfer8616,
+) -> str | None:
+    """Serialize one proven segmented logical reload using validation grammar."""
+    address = transfer.access.address
+    if address.space not in {MemSpace.DS, MemSpace.ES, MemSpace.SS}:
+        return None
+    base_names = tuple(
+        value.name.lower()
+        for value in address.base_values
+        if value.space is MemSpace.REG and isinstance(value.name, str)
+    )
+    if base_names != address.base:
+        return None
+    parts = [f"reg:{name}" for name in base_names]
+    if address.offset or not parts:
+        parts.append(f"const:{address.offset & 0xFFFF}")
+    return (
+        f"Dereference(Add(Mul(reg:{address.space.value},const:16),"
+        f"{','.join(parts)}))"
+    )
+
+
+def _proven_logical_reload_condition_fingerprints_8616(
+    codegen: object,
+    fact: ConditionIR,
+    expected: str,
+    normalizer: Callable[[str], str] | None,
+) -> frozenset[str]:
+    """Project exact versioned register operands through proven logical reloads."""
+    surface = cast(_TypedConditionCodegen8616, codegen)
+    try:
+        resolution = registered_function_ssa_artifact_8616(
+            surface.project,
+            surface.cfunc.addr,
+        )
+    except AttributeError:
+        return frozenset()
+    if resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or resolution.artifact is None:
+        return frozenset()
+    register_operands = tuple(
+        value
+        for value in (fact.lhs, fact.rhs)
+        if isinstance(value, IRValue)
+        and value.space is MemSpace.REG
+        and isinstance(value.name, str)
+    )
+    if not register_operands:
+        return frozenset()
+    snapshot = build_ssa_cfg_snapshot_8616(resolution.artifact)
+    dominators = compute_ssa_dominators_8616(snapshot)
+    logical_memory = resolution.artifact.logical_memory
+    if (
+        not snapshot.complete
+        or not dominators.complete
+        or logical_memory is None
+        or not logical_memory.closed
+    ):
+        return frozenset()
+    blocks_by_addr = {block.addr: block for block in resolution.artifact.blocks}
+    transfers: list[LogicalMemoryRegisterTransfer8616] = []
+    for access in logical_memory.accesses:
+        traced = trace_logical_word_register_transfer_8616(resolution.artifact, access)
+        if not (
+            isinstance(traced, LogicalMemoryRegisterTransfer8616)
+            and traced.kind is LogicalMemoryRegisterTransferKind8616.RELOAD
+            and traced.complete
+        ):
+            continue
+        transfers.append(traced)
+    replacements: dict[str, str] = {}
+    for operand in register_operands:
+        candidates = tuple(
+            transfer
+            for transfer in transfers
+            if isinstance(transfer.register.name, str)
+            and transfer.register.name.lower() == operand.name.lower()
+            and transfer.register.size == operand.size
+            and dominators.dominates(transfer.register_site.block_addr, fact.block_addr) is True
+            and (
+                transfer.register_site.block_addr != fact.block_addr
+                or transfer.register_site.instr_addr < fact.src_insn
+            )
+        )
+        if not candidates:
+            continue
+        depths = {
+            transfer.register_site.block_addr: len(
+                dominators.dominators(transfer.register_site.block_addr) or ()
+            )
+            for transfer in candidates
+        }
+        nearest_depth = max(depths.values())
+        nearest = tuple(
+            transfer
+            for transfer in candidates
+            if depths[transfer.register_site.block_addr] == nearest_depth
+        )
+        candidate = max(nearest, key=lambda transfer: transfer.register_site.instr_addr)
+        base_registers = {
+            value.name.lower()
+            for value in candidate.access.address.base_values
+            if value.space is MemSpace.REG and isinstance(value.name, str)
+        }
+        forward = {candidate.register_site.block_addr}
+        pending = [candidate.register_site.block_addr]
+        while pending:
+            block_addr = pending.pop()
+            if block_addr == fact.block_addr:
+                continue
+            for successor in snapshot.successors(block_addr) or ():
+                if successor not in forward:
+                    forward.add(successor)
+                    pending.append(successor)
+        reverse = {fact.block_addr}
+        pending = [fact.block_addr]
+        while pending:
+            block_addr = pending.pop()
+            if block_addr == candidate.register_site.block_addr:
+                continue
+            for predecessor in snapshot.predecessors(block_addr) or ():
+                if predecessor not in reverse:
+                    reverse.add(predecessor)
+                    pending.append(predecessor)
+        path_blocks = forward & reverse
+        if candidate.register_site.block_addr not in path_blocks or fact.block_addr not in path_blocks:
+            continue
+        stable = True
+        for block_addr in path_blocks:
+            block = blocks_by_addr.get(block_addr)
+            if block is None:
+                stable = False
+                break
+            for instr_index, instruction in enumerate(block.instrs):
+                if (
+                    block_addr == candidate.register_site.block_addr
+                    and instr_index <= candidate.register_site.instr_index
+                ):
+                    continue
+                if block_addr == fact.block_addr and instruction.addr >= fact.src_insn:
+                    continue
+                destination = instruction.dst
+                if instruction.op in {"CALL", "STORE"}:
+                    stable = False
+                    break
+                if (
+                    isinstance(destination, IRValue)
+                    and destination.space is MemSpace.REG
+                    and isinstance(destination.name, str)
+                    and destination.name.lower() in {operand.name.lower(), *base_registers}
+                ):
+                    stable = False
+                    break
+            if not stable:
+                break
+        address_fingerprint = _logical_reload_address_fingerprint_8616(candidate)
+        if not stable or address_fingerprint is None:
+            continue
+        token = f"reg:{operand.name.lower()}"
+        previous = replacements.get(token)
+        if previous is not None and previous != address_fingerprint:
+            return frozenset()
+        replacements[token] = address_fingerprint
+    if not replacements:
+        return frozenset()
+    projected = expected
+    for token, replacement in sorted(replacements.items()):
+        projected = projected.replace(token, replacement)
+    normalized = _normalized_fingerprint_8616(projected, normalizer)
+    inverted_raw = invert_condition_fingerprint_string_8616(projected)
+    inverted = (
+        _normalized_fingerprint_8616(inverted_raw, normalizer)
+        if inverted_raw is not None
+        else None
+    )
+    return frozenset(value for value in (normalized, inverted) if value is not None)
+
+
+def _post_body_do_while_fingerprint_8616(
+    root: object,
+    candidate: object,
+    condition_fingerprint: Callable[[object], str],
+) -> str | None:
+    """Return the guard fingerprint after one proven terminal induction update."""
+    loops = tuple(
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CDoWhileLoop) and node.condition is candidate
+    )
+    if len(loops) != 1 or not isinstance(candidate, CBinaryOp):
+        return None
+    statements = tuple(getattr(loops[0].body, "statements", ()) or ())
+    if not statements:
+        return None
+    iterator = statements[-1]
+    if (
+        not isinstance(iterator, CAssignment)
+        or not isinstance(iterator.lhs, CVariable)
+        or not isinstance(iterator.rhs, CBinaryOp)
+        or iterator.rhs.op not in {"Add", "Sub"}
+        or not isinstance(iterator.rhs.lhs, CVariable)
+        or not isinstance(iterator.rhs.rhs, CConstant)
+    ):
+        return None
+    target = condition_fingerprint(iterator.lhs)
+    if condition_fingerprint(iterator.rhs.lhs) != target:
+        return None
+    replacement = condition_fingerprint(iterator.rhs)
+    occurrence_count = 0
+
+    def _fingerprint(node: object) -> str:
+        nonlocal occurrence_count
+        if isinstance(node, CVariable) and condition_fingerprint(node) == target:
+            occurrence_count += 1
+            return replacement
+        if isinstance(node, CBinaryOp):
+            return f"{node.op}({_fingerprint(node.lhs)},{_fingerprint(node.rhs)})"
+        return condition_fingerprint(node)
+
+    result = _fingerprint(candidate)
+    return result if occurrence_count == 1 else None
+
+
 def validate_materialized_branch_conditions_8616(
     codegen: object,
     root: object,
@@ -376,6 +618,19 @@ def validate_materialized_branch_conditions_8616(
             condition_fingerprint(candidates[0]),
             condition_fingerprint_normalizer,
         )
+        post_body_raw = _post_body_do_while_fingerprint_8616(
+            root,
+            candidates[0],
+            condition_fingerprint,
+        )
+        post_body_actual = (
+            _normalized_fingerprint_8616(
+                post_body_raw,
+                condition_fingerprint_normalizer,
+            )
+            if post_body_raw is not None
+            else None
+        )
         expected = _normalized_fingerprint_8616(
             expected_raw,
             condition_fingerprint_normalizer,
@@ -390,9 +645,25 @@ def validate_materialized_branch_conditions_8616(
             else None
         )
         precision_after = precision_after_by_jcc.get(jcc_addr, set())
+        logical_reload_fingerprints = _proven_logical_reload_condition_fingerprints_8616(
+            codegen,
+            facts[0],
+            expected,
+            condition_fingerprint_normalizer,
+        )
+        chain_validation = validate_complete_condition_chain_8616(
+            candidates[0],
+            root_jcc_addr=jcc_addr,
+            facts_by_jcc=facts_by_jcc,
+            actual_fingerprint=actual,
+            precision_candidates=frozenset(precision_after),
+        )
         if (
             actual in {expected, inverted}
+            or post_body_actual in {expected, inverted}
             or precision_after == {actual}
+            or actual in logical_reload_fingerprints
+            or chain_validation.proven
             or _proven_call_return_condition_8616(codegen, facts[0], candidates[0])
             or _proven_stored_call_return_condition_8616(codegen, facts[0], candidates[0])
         ):

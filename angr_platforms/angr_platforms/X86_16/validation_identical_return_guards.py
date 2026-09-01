@@ -112,7 +112,7 @@ def consume_identical_return_guard_validation_delta_8616(
     if (
         len(conditions) != 1
         or not isinstance(conditions[0], str)
-        or len(control) not in {1, 3}
+        or len(control) not in {1, 2, 3}
         or any(not isinstance(item, str) for item in control)
     ):
         return IdenticalReturnGuardValidationResult8616(

@@ -424,3 +424,53 @@ def test_lowering_materializes_dos_interrupt_carry_output_before_branch() -> Non
         SoftwareInterruptStatusOutputStats8616(1, 1, 1, 1, 0)
     )
     assert materialize_software_interrupt_status_outputs_8616(codegen) is False
+
+
+def test_lowering_coalesces_cloned_reads_of_one_flags_register() -> None:
+    """Cloned boolean uses still consume one physical interrupt status output."""
+    codegen = _Codegen()
+    flags_offset, flags_size = codegen.project.arch.registers["flags"]
+
+    def flags_read() -> structured_c.CDirtyExpression:
+        """Build one structured clone of the same physical FLAGS register."""
+        return structured_c.CDirtyExpression(
+            VirtualVariable(
+                codegen.next_idx("flags"),
+                17,
+                flags_size * 8,
+                VirtualVariableCategory.REGISTER,
+                oident=flags_offset,
+            ),
+            codegen=codegen,
+        )
+
+    call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags={"ins_addr": 0x104},
+        codegen=codegen,
+    )
+    condition = structured_c.CBinaryOp(
+        "LogicalOr",
+        structured_c.CBinaryOp("And", flags_read(), _const(1, codegen), codegen=codegen),
+        structured_c.CBinaryOp("And", flags_read(), _const(0x40, codegen), codegen=codegen),
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    branch = structured_c.CIfElse(
+        [(condition, structured_c.CStatements([], codegen=codegen))],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([call, branch], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert materialize_software_interrupt_status_outputs_8616(codegen) is True
+    definition = root.statements[1]
+    assert isinstance(definition, structured_c.CAssignment)
+    assert definition.lhs.dirty.oident == flags_offset
+    assert definition.rhs.callee_target == "dos_int21_flags"
+    assert codegen._inertia_software_interrupt_status_output_stats_8616 == (
+        SoftwareInterruptStatusOutputStats8616(1, 1, 1, 1, 0)
+    )

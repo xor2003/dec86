@@ -254,7 +254,7 @@ def test_callsite_materialization_hard_fails_when_classified_facts_materialize_n
     codegen._inertia_callsite_summaries = {
         id(call): CallsiteSummary8616(
             callsite_addr=0x4012,
-            target_addr=0x1544,
+            target_addr=None,
             return_addr=0x4015,
             kind="direct_near",
             arg_count=1,
@@ -269,7 +269,7 @@ def test_callsite_materialization_hard_fails_when_classified_facts_materialize_n
         _finalize_callsite_materialization_stats_8616(codegen)
     except PipelineHardError as ex:
         assert ex.layer == "callsite_materialization"
-        assert ex.details["classified_fact_count"] == 2
+        assert ex.details["classified_fact_count"] == 1
         assert ex.details["materialized_count"] == 0
     else:
         raise AssertionError("expected PipelineHardError")
@@ -513,7 +513,7 @@ def test_callsite_materialization_counts_direct_bp_arg_materialization():
     assert codegen._inertia_callsite_materialization_stats.call_arg_materialized_count == 1
 
 
-def test_callsite_materialization_refuses_args_when_known_target_rebind_refused(monkeypatch):
+def test_callsite_materialization_rebinds_target_without_guessing_pointer_args(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen(project)
     call = CFunctionCall("SwapBars", None, [], codegen=codegen)
@@ -546,11 +546,12 @@ def test_callsite_materialization_refuses_args_when_known_target_rebind_refused(
 
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
-    assert changed is False
-    assert call.callee_target == "SwapBars"
-    assert call.args == []
+    assert changed is True
+    assert call.callee_target == "Swaps"
+    assert all(isinstance(arg, CVariable) for arg in call.args)
+    assert tuple(arg.variable.offset for arg in call.args) == (-2, -4)
     stats = codegen._inertia_callsite_materialization_stats
-    assert stats.call_arg_materialized_count == 0
+    assert stats.call_arg_materialized_count == 2
 
 
 def test_callsite_materialization_cache_hit_decision_short_circuits_second_pass(monkeypatch):
@@ -1462,7 +1463,7 @@ def test_ordered_callsite_pairs_refuses_tagged_stack_probe_for_normal_summary(mo
     assert pairs == []
 
 
-def test_normalize_call_target_names_skips_source_stack_probe_for_normal_summary(monkeypatch):
+def test_normalize_call_target_names_uses_binary_target_when_source_floor_disabled(monkeypatch):
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
     call = CFunctionCall(None, None, [], codegen=codegen)
@@ -1503,8 +1504,8 @@ def test_normalize_call_target_names_skips_source_stack_probe_for_normal_summary
     changed = _normalize_call_target_names_8616(codegen)
 
     assert changed is True
-    assert call.callee_target == "UserFunc"
-    assert call.callee_func is target
+    assert call.callee_target == "sub_2000"
+    assert call.callee_func is None
 
 
 def test_normalize_call_target_prefers_sidecar_range_label_over_conflicting_callee():

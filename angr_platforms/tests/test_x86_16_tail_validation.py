@@ -16,6 +16,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CContinue,
     CDirtyExpression,
+    CDoWhileLoop,
     CExpressionStatement,
     CForLoop,
     CFunctionCall,
@@ -2501,6 +2502,48 @@ def test_tail_validation_counts_loop_body_call_nested_in_assignment_rhs():
     summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
 
     assert "for-body-calls:CmpGT(ds_global:0xba2,stack_slot:SS:BP-0x2:size2):name:rand" in summary.control_flow_effects
+
+
+def test_tail_validation_fingerprints_do_while_condition_after_terminal_induction() -> None:
+    project = _project()
+    codegen = _DummyCodegen()
+    iterator_lhs = _reg(project, "si", codegen)
+    iterator = CAssignment(
+        iterator_lhs,
+        CBinaryOp(
+            "Add",
+            _reg(project, "si", codegen),
+            _const(2, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    condition = CBinaryOp(
+        "CmpLT",
+        CBinaryOp(
+            "Add",
+            _reg(project, "si", codegen),
+            _const(2, codegen),
+            codegen=codegen,
+        ),
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+    )
+    loop = CDoWhileLoop(
+        condition,
+        CStatements([iterator], codegen=codegen),
+        codegen=codegen,
+    )
+
+    summary = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([loop], codegen),
+        mode="live_out",
+    )
+
+    expected = "CmpLT(Add(Add(reg:si,const:2),const:2),reg:ax)"
+    assert expected in summary.conditions
+    assert f"dowhile:{expected}" in summary.control_flow_effects
 
 
 def test_tail_validation_counts_shared_loop_body_call_node_once():

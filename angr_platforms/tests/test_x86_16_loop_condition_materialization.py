@@ -140,7 +140,7 @@ def test_refuses_ambiguous_loop_continuation_polarity() -> None:
     assert stats.failure_count == 1
     assert stats.changed is False
     assert loop.condition is original
-    assert loop.condition.tags["inertia_typed_loop_condition_bound_8616"] is True
+    assert loop.condition.tags.get("inertia_typed_loop_condition_bound_8616") is not True
 
 
 def test_linear_jump_trampoline_preserves_nested_loop_edge_ownership() -> None:
@@ -381,8 +381,8 @@ def test_reentering_composite_target_does_not_own_loop_exit() -> None:
     assert stats.changed_count == 1
 
 
-def test_plain_loop_binds_dirty_counter_read_from_exact_typed_assignment() -> None:
-    """Plain LOOP replaces only its exact dirty counter read with the owned register local."""
+def test_plain_loop_binds_dirty_counter_read_for_nonunit_stride() -> None:
+    """A typed loop binds its exact dirty register read for stride two."""
     codegen = _Codegen()
     value_type = SimTypeShort(False).with_arch(codegen.project.arch)
     counter_variable = SimRegisterVariable(
@@ -398,7 +398,7 @@ def test_plain_loop_binds_dirty_counter_read_from_exact_typed_assignment() -> No
         CBinaryOp(
             "Sub",
             CDirtyExpression(SimpleNamespace(varid=1), codegen=codegen),
-            CConstant(1, value_type, codegen=codegen),
+            CConstant(2, value_type, codegen=codegen),
             codegen=codegen,
         ),
         codegen=codegen,

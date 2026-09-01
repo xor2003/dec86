@@ -165,7 +165,13 @@ def test_x86_retry_falls_back_to_pure_binary_clean_worker(
         if metadata_available
         else None
     )
-    args = SimpleNamespace(binary=binary, timeout=60, api_style="default", alternate_source_c=True)
+    args = SimpleNamespace(
+        binary=binary,
+        timeout=60,
+        api_style="default",
+        alternate_source_c=True,
+        output_c_dir=None,
+    )
     failed_snapshot = {
         "structuring": {"status": "stable", "changed": False},
         "postprocess": {"status": "changed", "changed": True},

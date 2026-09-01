@@ -27,6 +27,7 @@ from .carry_borrow_stack_storage import (
     WideCarryBorrowStackArtifact8616,
     project_wide_carry_borrow_stack_storage_8616,
 )
+from .stack_coordinate_rebinding import reset_local_stack_coordinate_projections_8616
 from .stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 from .stack_lowering_result import StackLoweringResult, StackLoweringStatus
 from .stack_memory_ssa_contracts import (
@@ -37,7 +38,6 @@ from .stack_memory_ssa_contracts import (
     StackMemorySSALoweringRefusalKind8616,
     StackMemorySSALoweringStats8616,
 )
-from .stack_variable_coordinates import reset_stack_variable_coordinate_registry_8616
 
 type _StorageKey8616 = tuple[str, tuple[str, ...], int, int]
 
@@ -291,7 +291,7 @@ def lower_x86_16_stack_memory_ssa_alias_artifact(
         )
         boundary._inertia_wide_carry_borrow_stack_artifact = wide_stack
     if candidates:
-        reset_stack_variable_coordinate_registry_8616(codegen)
+        reset_local_stack_coordinate_projections_8616(codegen)
     boundary._inertia_semantic_alias_facts = [candidate.storage for candidate in candidates]
     result = (
         lower_stack_accesses_from_alias_facts_8616(

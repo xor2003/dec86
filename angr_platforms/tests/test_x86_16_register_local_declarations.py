@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr.ailment import Expr
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CIfElse,
     CStatements,
     CVariable,
 )
+from angr.rustylib.ailment import VirtualVariableCategory
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -176,6 +179,39 @@ def test_materialize_typed_register_locals_derives_type_from_exact_register_widt
     assert result.materialized_count == 1
     assert declaration.variable_type is not None
     assert declaration.variable_type.size == variable.size * 8
+
+
+def test_materialize_typed_register_locals_resolves_untagged_register_shape() -> None:
+    """An exact unique physical shape is sufficient when angr omits reg_name."""
+    codegen = _Codegen()
+    offset, size = codegen.project.arch.registers["di"]
+    dirty = CDirtyExpression(
+        Expr.VirtualVariable(
+            1,
+            3,
+            size * 8,
+            VirtualVariableCategory.REGISTER,
+            oident=offset,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements([dirty], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=root,
+        body=root,
+        variables_in_use={},
+        unified_local_vars={},
+        variable_manager=_VariableManager({}),
+    )
+
+    result = materialize_typed_register_locals_8616(codegen)
+
+    assert result.failure_count == 0
+    assert result.materialized_count == 1
+    replacement = root.statements[0]
+    assert isinstance(replacement, CVariable)
+    assert replacement.variable.name == "di"
 
 
 def test_postprocess_metadata_repair_does_not_publish_declarations() -> None:

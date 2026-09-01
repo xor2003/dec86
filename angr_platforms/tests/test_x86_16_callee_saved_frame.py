@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from angr_platforms.X86_16.lowering.callee_saved_frame import callee_saved_frame_pairs_8616
 from capstone.x86_const import (
+    X86_INS_CALL,
     X86_INS_POP,
     X86_INS_PUSH,
     X86_INS_RET,
@@ -78,4 +79,44 @@ def test_callee_saved_frame_pairs_accept_explicit_caller_saved_register_pair() -
 
     assert [(pair.register_name, pair.push_addr, pair.pop_addr) for pair in pairs] == [
         ("ax", 0x1010, 0x1020)
+    ]
+
+
+def test_callee_saved_frame_pairs_keep_sequential_pairs_for_one_register() -> None:
+    pairs = callee_saved_frame_pairs_8616(
+        (
+            _instruction(0x1010, X86_INS_PUSH, X86_REG_DI),
+            _instruction(0x1020, X86_INS_POP, X86_REG_DI),
+            _instruction(0x1030, X86_INS_PUSH, X86_REG_DI),
+            _instruction(0x1040, X86_INS_POP, X86_REG_DI),
+            _instruction(0x1041, X86_INS_RET),
+        ),
+        frozenset(("di",)),
+    )
+
+    assert [(pair.push_addr, pair.pop_addr) for pair in pairs] == [
+        (0x1010, 0x1020),
+        (0x1030, 0x1040),
+    ]
+
+
+def test_callee_saved_frame_pairs_keep_push_before_call_as_argument_with_delayed_cleanup() -> None:
+    """A matching late POP cannot steal an exact PUSH/CALL argument pair."""
+    pairs = callee_saved_frame_pairs_8616(
+        (
+            _instruction(0x1010, X86_INS_PUSH, X86_REG_DI),
+            _instruction(0x1020, X86_INS_POP, X86_REG_DI),
+            _instruction(0x1030, X86_INS_PUSH, X86_REG_DI),
+            _instruction(0x1031, X86_INS_CALL),
+            _instruction(0x1040, X86_INS_PUSH, X86_REG_SI),
+            _instruction(0x1041, X86_INS_CALL),
+            _instruction(0x1050, X86_INS_POP, X86_REG_SI),
+            _instruction(0x1051, X86_INS_POP, X86_REG_DI),
+            _instruction(0x1052, X86_INS_RET),
+        ),
+        frozenset(("di", "si")),
+    )
+
+    assert [(pair.register_name, pair.push_addr, pair.pop_addr) for pair in pairs] == [
+        ("di", 0x1010, 0x1020),
     ]

@@ -29,9 +29,12 @@ from angr_platforms.X86_16.callsite_summary import (
     CallsitePushExprOp8616,
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
+    bind_structured_callsite_identity_8616,
     record_caller_return_use_evidence_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
+    CallsiteMaterializationStats,
+    _accumulate_callsite_materialization_stats_8616,
     _align_cod_call_names_8616,
     _annotated_function_pointer_stack_offsets_8616,
     _attach_callsite_summaries_8616,
@@ -358,6 +361,40 @@ def test_normalize_call_target_names_prefers_sidecar_label_for_sub_target_withou
     assert changed is True
     assert call.callee_func.name == "InitMenu"
     assert call.callee_target == "InitMenu"
+
+
+def test_normalize_call_target_names_replaces_unproved_name_with_direct_target():
+    project = _project()
+    generated = SimpleNamespace(addr=0x13AE0, name="generated_target", is_default_name=True)
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda **kwargs: generated if kwargs.get("addr") == 0x13AE0 else None
+        ),
+        labels={},
+    )
+    codegen = _empty_codegen(project)
+    call = CFunctionCall("generated_target", generated, [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([call], addr=0x13D27, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x13D27,
+            target_addr=0x13AE0,
+            return_addr=0x13D2A,
+            kind="near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=None,
+            return_register=None,
+            return_used=False,
+        )
+    }
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    assert changed is True
+    assert call.callee_func is None
+    assert call.callee_target == "sub_13ae0"
 
 
 def test_normalize_call_target_names_refuses_unproved_source_name_for_unknown_call(monkeypatch):
@@ -6235,6 +6272,37 @@ def test_callsite_stats_count_materialized_args():
     assert stats.call_arg_fact_count == 1
     assert stats.call_arg_materialized_count == 1
     assert stats.known_prototype_arg_mismatch_count == 0
+
+
+def test_callsite_target_stats_accept_persisted_typed_target_identity() -> None:
+    """A cloned call keeps its exact callee fact even without angr callee metadata."""
+    project = _project()
+    codegen = _empty_codegen(project)
+    summary = CallsiteSummary8616(
+        callsite_addr=0x4012,
+        target_addr=0x1544,
+        return_addr=0x4015,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register=None,
+        return_used=False,
+    )
+    call = CFunctionCall("DrawBar", None, [], codegen=codegen)
+    bind_structured_callsite_identity_8616(call, summary)
+    stats = CallsiteMaterializationStats()
+
+    _accumulate_callsite_materialization_stats_8616(
+        stats=stats,
+        node=call,
+        summary=summary,
+        expected_source_name=None,
+        project=project,
+    )
+
+    assert stats.call_target_fact_count == 1
+    assert stats.call_target_materialized_count == 1
 
 
 def test_materialize_callsite_stack_arguments_normalizes_bp_slot_values_and_pointer_args():

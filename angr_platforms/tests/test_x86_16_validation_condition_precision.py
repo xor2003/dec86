@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr_platforms.X86_16 import tail_validation as tail_validation_module
+from angr_platforms.X86_16.structuring.condition_evidence_closure import (
+    ConditionEvidenceClosure8616,
+)
+from angr_platforms.X86_16.validation_condition_closure_delta import (
+    ConditionClosureDeltaStatus8616,
+    validate_condition_closure_delta_8616,
+)
 from angr_platforms.X86_16.validation_condition_precision import (
     ConditionPrecisionEvidence8616,
     condition_precision_validation_delta_8616,
@@ -68,4 +76,144 @@ def test_condition_precision_validation_refuses_extra_semantic_field() -> None:
     )
 
     assert result.accepted is False
+    assert result.stats.failure_count == 1
+
+
+def test_condition_precision_validation_accepts_compacted_exact_pair() -> None:
+    before = "CmpNE(" + "lhs" * 180 + ",const:0)"
+    after = "CmpEQ(" + "rhs" * 180 + ",const:0)"
+    compact_before = tail_validation_module._compact_tail_validation_observable_8616(
+        "conditions",
+        before,
+    )
+    compact_after = tail_validation_module._compact_tail_validation_observable_8616(
+        "conditions",
+        after,
+    )
+    control_before = tail_validation_module._compact_tail_validation_observable_8616(
+        "control_flow_effects",
+        f"if:{before}",
+    )
+    control_after = tail_validation_module._compact_tail_validation_observable_8616(
+        "control_flow_effects",
+        f"if:{after}",
+    )
+    codegen = SimpleNamespace(
+        _inertia_condition_precision_evidence_8616=(
+            ConditionPrecisionEvidence8616(before, after),
+        )
+    )
+    validation = {
+        "changed": True,
+        "delta": {
+            "conditions": {
+                "added": (compact_after,),
+                "removed": (compact_before,),
+            },
+            "control_flow_effects": {
+                "added": (control_after,),
+                "removed": (control_before,),
+            },
+        },
+    }
+
+    result = condition_precision_validation_delta_8616(codegen, validation)
+
+    assert control_before == f"if:{compact_before}"
+    assert control_after == f"if:{compact_after}"
+    assert result.accepted is True
+    assert result.stats.failure_count == 0
+
+
+def _closed_condition_surface() -> ConditionEvidenceClosure8616:
+    keys = frozenset({(0x101B0, 0x101A9), (0x10174, 0x1016F)})
+    return ConditionEvidenceClosure8616(
+        required_keys=keys,
+        materialized_keys=keys,
+        unresolved_branch_owners=frozenset(),
+    )
+
+
+def _closed_condition_validation() -> dict[str, object]:
+    before = "conditions:sha256:before:len:855"
+    after = "conditions:sha256:after:len:612"
+    return {
+        "changed": True,
+        "semantic_failures": None,
+        "delta": {
+            "conditions": {"added": (after,), "removed": (before,)},
+            "control_flow_effects": {
+                "added": (f"if:{after}",),
+                "removed": (f"if:{before}",),
+            },
+            "helper_calls": {"added": (), "removed": ()},
+            "global_writes": {"added": (), "removed": ()},
+        },
+    }
+
+
+def test_condition_closure_accepts_condition_only_raw_flag_rewrite() -> None:
+    result = validate_condition_closure_delta_8616(
+        _closed_condition_surface(),
+        _closed_condition_validation(),
+    )
+
+    assert result.status is ConditionClosureDeltaStatus8616.ACCEPTED
+    assert result.stats.raw_fact_count == 2
+    assert result.stats.materialized_count == 2
+    assert result.stats.failure_count == 0
+
+
+def test_condition_closure_refuses_incomplete_typed_owners() -> None:
+    closure = _closed_condition_surface()
+    incomplete = ConditionEvidenceClosure8616(
+        required_keys=closure.required_keys,
+        materialized_keys=frozenset({(0x101B0, 0x101A9)}),
+        unresolved_branch_owners=frozenset(),
+    )
+
+    result = validate_condition_closure_delta_8616(
+        incomplete,
+        _closed_condition_validation(),
+    )
+
+    assert result.status is ConditionClosureDeltaStatus8616.REFUSED_INCOMPLETE_CLOSURE
+    assert result.stats.failure_count == 1
+
+
+def test_condition_closure_refuses_semantic_effect_or_failure() -> None:
+    changed_write = _closed_condition_validation()
+    delta = changed_write["delta"]
+    assert isinstance(delta, dict)
+    delta["global_writes"] = {"added": ("global:0x132",), "removed": ()}
+    write_result = validate_condition_closure_delta_8616(
+        _closed_condition_surface(),
+        changed_write,
+    )
+
+    failed_semantics = _closed_condition_validation()
+    failed_semantics["semantic_failures"] = {"control_flow": ("predicate_mismatch",)}
+    semantic_result = validate_condition_closure_delta_8616(
+        _closed_condition_surface(),
+        failed_semantics,
+    )
+
+    assert write_result.status is ConditionClosureDeltaStatus8616.REFUSED_EFFECT_SURFACE
+    assert semantic_result.status is ConditionClosureDeltaStatus8616.REFUSED_SEMANTIC_FAILURE
+
+
+def test_condition_closure_refuses_nonmatching_control_guard() -> None:
+    validation = _closed_condition_validation()
+    delta = validation["delta"]
+    assert isinstance(delta, dict)
+    controls = delta["control_flow_effects"]
+    assert isinstance(controls, dict)
+    controls["added"] = ("if-body-calls:addr:0x1234",)
+
+    result = validate_condition_closure_delta_8616(
+        _closed_condition_surface(),
+        validation,
+    )
+
+    assert result.status is ConditionClosureDeltaStatus8616.REFUSED_GUARD_MISMATCH
     assert result.stats.failure_count == 1

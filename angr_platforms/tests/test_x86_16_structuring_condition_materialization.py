@@ -24,6 +24,10 @@ from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     WideCallReturnConditionStats8616,
 )
 from angr_platforms.X86_16.structuring import condition_materialization
+from angr_platforms.X86_16.structuring.condition_chain_provenance import (
+    ConditionChainProvenance8616,
+    condition_chain_provenance_8616,
+)
 
 
 class _Codegen:
@@ -82,6 +86,7 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
         "decoded_jcc_changed": False,
         "loop_conditions_changed": False,
         "segment_access_provenance_changed": False,
+        "condition_evidence_complete": True,
         "changed": True,
         "owner": "structuring.condition_materialization",
     }
@@ -233,6 +238,7 @@ def test_structuring_condition_replay_cleanup_delegates_flag_cleanup_in_order(mo
         "typed_conditions_changed": False,
         "condition_chains_changed": False,
         "decoded_jcc_changed": True,
+        "condition_evidence_complete": True,
         "flag_condition_pairs_changed": True,
         "flag_bit_values_changed": False,
         "interval_guards_changed": True,
@@ -276,9 +282,50 @@ def test_final_structuring_dead_flag_cleanup_runs_overwrite_fixed_point_first(mo
     assert result.changed is True
     assert calls == ["overwritten", "unused"]
     assert codegen._inertia_structuring_dead_flag_cleanup_8616 == {
+        "condition_evidence_complete": True,
         "overwritten_flag_assignments_pruned": True,
         "unused_flag_assignments_pruned": True,
         "changed": True,
+        "owner": "structuring.condition_materialization",
+    }
+
+
+def test_final_structuring_dead_flag_cleanup_refuses_unclosed_condition_evidence(monkeypatch):
+    calls: list[str] = []
+    codegen = _Codegen()
+    codegen._inertia_structuring_condition_materialization_result_8616 = (
+        condition_materialization.StructuringConditionMaterializationResult8616(
+            False,
+            False,
+            False,
+            False,
+            False,
+            condition_evidence_complete=False,
+        )
+    )
+    monkeypatch.setattr(
+        condition_materialization._flags_cleanup,
+        "_prune_overwritten_flag_assignments_8616",
+        lambda *_args: calls.append("overwritten") or True,
+    )
+    monkeypatch.setattr(
+        condition_materialization._flags_cleanup,
+        "_prune_unused_flag_assignments_8616",
+        lambda *_args: calls.append("unused") or True,
+    )
+
+    result = condition_materialization.prune_dead_flag_assignments_after_structuring_8616(
+        _Project(),
+        codegen,
+    )
+
+    assert result.changed is False
+    assert calls == []
+    assert codegen._inertia_structuring_dead_flag_cleanup_8616 == {
+        "condition_evidence_complete": False,
+        "overwritten_flag_assignments_pruned": False,
+        "unused_flag_assignments_pruned": False,
+        "changed": False,
         "owner": "structuring.condition_materialization",
     }
 
@@ -414,7 +461,9 @@ def test_structuring_condition_chain_materializes_three_branch_short_circuit(mon
     root_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
     root_condition.tags = {"ins_addr": 0x103F, "vex_block_addr": 0x103B}
     true_body = _tagged_statements(0x1056, codegen)
+    true_body.tags["vex_block_addr"] = 0x1056
     false_body = _tagged_statements(0x105E, codegen)
+    false_body.tags["vex_block_addr"] = 0x105E
     branch = CIfElse(
         [(root_condition, true_body)],
         else_node=false_body,
@@ -436,7 +485,19 @@ def test_structuring_condition_chain_materializes_three_branch_short_circuit(mon
             fallthrough_target=0x1053,
         ),
     )
-    graph = _Graph(((0x1041, 0x1056), (0x104A, 0x1056), (0x1053, 0x105E)))
+    graph = _Graph(
+        (
+            (0x103B, 0x1044),
+            (0x103B, 0x1041),
+            (0x1041, 0x1056),
+            (0x1044, 0x104D),
+            (0x1044, 0x104A),
+            (0x104A, 0x1056),
+            (0x104D, 0x1056),
+            (0x104D, 0x1053),
+            (0x1053, 0x105E),
+        )
+    )
     function = SimpleNamespace(transition_graph=graph, block_addrs_set=set(graph.nodes) | {0x103B, 0x1044, 0x104D})
     project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
     codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
@@ -465,6 +526,12 @@ def test_structuring_condition_chain_materializes_three_branch_short_circuit(mon
     assert replacement.rhs.lhs.lhs.value == 0x1048
     assert replacement.rhs.rhs.op == "CmpEQ"
     assert replacement.rhs.rhs.lhs.value == 0x1051
+    assert condition_chain_provenance_8616(replacement) == (
+        ConditionChainProvenance8616((0x103F, 0x1048, 0x1051))
+    )
+    assert replacement.lhs.tags["ins_addr"] == 0x103F
+    assert replacement.rhs.lhs.tags["ins_addr"] == 0x1048
+    assert replacement.rhs.rhs.tags["ins_addr"] == 0x1051
     assert replacement.tags["inertia_structuring_condition_chain_materialized_8616"] is True
     assert codegen._inertia_structuring_condition_chain_stats_8616 == (
         condition_materialization.StructuringConditionChainStats8616(
@@ -475,6 +542,70 @@ def test_structuring_condition_chain_materializes_three_branch_short_circuit(mon
             failure_count=0,
         )
     )
+
+
+def test_structuring_complementary_if_else_prefers_direct_root_condition(monkeypatch):
+    codegen = _Codegen()
+    original = CConstant(1, SimTypeShort(False), codegen=codegen)
+    original.tags = {"ins_addr": 0x1002, "vex_block_addr": 0x1000}
+    true_body = _tagged_statements(0x1010, codegen)
+    true_body.tags["vex_block_addr"] = 0x1010
+    false_body = _tagged_statements(0x1020, codegen)
+    false_body.tags["vex_block_addr"] = 0x1020
+    branch = CIfElse(
+        [(original, true_body)],
+        else_node=false_body,
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    root = CStatements([branch], codegen=codegen)
+    fact = _targeted_condition(0x1002, 0x1000, 0x1010, 0x1020)
+    graph = _Graph(
+        (
+            (0x1000, 0x1010),
+            (0x1000, 0x1020),
+            (0x1010, 0x1030),
+            (0x1020, 0x1030),
+        )
+    )
+    function = SimpleNamespace(
+        transition_graph=graph,
+        block_addrs_set=set(graph.nodes),
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function))
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen._inertia_typed_conditions = (fact,)
+
+    monkeypatch.setattr(
+        condition_materialization._legacy_typed_conditions,
+        "_build_c_condition_expr",
+        lambda *_args: CBinaryOp(
+            "CmpNE",
+            CConstant(0x1002, SimTypeShort(False), codegen=codegen),
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "_materialize_cfg_condition_chain_expr_8616",
+        lambda *_args, **_kwargs: CConstant(0xDEAD, SimTypeShort(False), codegen=codegen),
+    )
+
+    assert condition_materialization.materialize_structuring_condition_chains_8616(
+        project,
+        codegen,
+    )
+    replacement = branch.condition_and_nodes[0][0]
+    assert isinstance(replacement, CBinaryOp)
+    assert replacement.op == "CmpNE"
+    assert replacement.lhs.value == 0x1002
+    replay = condition_materialization.condition_replay_facts_8616(codegen)
+    assert len(replay) == 1
+    assert replay[0].true_target == 0x1010
+    assert replay[0].false_target == 0x1020
 
 
 def test_structuring_condition_chain_collapses_cfg_proven_assignment_diamond(monkeypatch):

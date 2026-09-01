@@ -118,6 +118,7 @@ from .lowering.real_mode_linear import (
     materialize_direct_global_incdec_instructions_8616,
     materialize_direct_stack_incdec_instructions_8616,
     materialize_direct_stack_mov_instructions_8616,
+    materialize_proven_control_stack_escape_8616,
     prune_callee_saved_stack_spills_8616,
     prune_frame_prologue_stack_assignments_8616,
     prune_materialized_call_push_stack_assignments_8616,
@@ -131,6 +132,7 @@ from .lowering.segment_global_materialization import (
     cod_metadata_for_codegen_8616,
     run_segment_global_materialization_8616,
 )
+from .lowering.segment_stack_restore_carriers import prune_proven_segment_stack_restore_carriers_8616
 from .lowering.segmented_global_loads import (
     DwordGlobalZeroTestMaterializationRecord8616,
     IndexedGlobalReadCarrierMaterializationRecord8616,
@@ -269,6 +271,7 @@ from .tail_validation import (
     x86_16_tail_validation_result_passed,
 )
 from .tail_validation_frame_spills import callee_saved_frame_prune_delta_8616
+from .validation_condition_closure_delta import validate_condition_closure_delta_8616
 from .validation_condition_precision import condition_precision_validation_delta_8616
 from .validation_identical_return_guards import (
     consume_identical_return_guard_validation_delta_8616,
@@ -283,6 +286,7 @@ from .widening.segmented_load_widening import apply_segmented_load_widening_8616
 from .widening.stack_memory_objects import apply_x86_16_stack_memory_object_widening_8616
 from .widening.stack_subview_projection import materialize_contained_stack_subviews_8616
 from .widening.widening_copyprop_8616 import _widening_copy_propagation_8616
+from .widening.word_projection_recomposition import materialize_word_projection_recompositions_8616
 
 # angr project/codegen objects are plugin surfaces whose compatibility
 # metadata is attached dynamically across angr versions. Keep that boundary
@@ -364,6 +368,9 @@ class SeqNodeSwitchReplayFinalizeResult8616:
     condition_dce_changed: bool
     post_condition_segment_replay_changed: bool
     post_condition_segment_dce_changed: bool
+    word_projection_replay_changed: bool
+    word_projection_dce_changed: bool
+    selector_replay_changed: bool
 
     @property
     def changed(self) -> bool:
@@ -377,6 +384,9 @@ class SeqNodeSwitchReplayFinalizeResult8616:
             or self.condition_dce_changed
             or self.post_condition_segment_replay_changed
             or self.post_condition_segment_dce_changed
+            or self.word_projection_replay_changed
+            or self.word_projection_dce_changed
+            or self.selector_replay_changed
         )
 
 
@@ -388,6 +398,7 @@ class DirectInstructionMaterializationResult8616:
     direct_stack_incdec_changed: bool
     direct_global_incdec_changed: bool
     callee_saved_spill_prune_changed: bool
+    control_stack_escape_changed: bool
 
     @property
     def changed(self) -> bool:
@@ -397,6 +408,7 @@ class DirectInstructionMaterializationResult8616:
             or self.direct_stack_incdec_changed
             or self.direct_global_incdec_changed
             or self.callee_saved_spill_prune_changed
+            or self.control_stack_escape_changed
         )
 
 
@@ -560,6 +572,11 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
         DecompilerStructuringPassSpec(
             "_segment_stack_restore_artifact_8616",
             _segment_stack_restore.apply_x86_16_segment_stack_restore_artifact,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_segment_stack_restore_carriers_8616",
+            prune_proven_segment_stack_restore_carriers_8616,
             True,
         ),
         DecompilerStructuringPassSpec(
@@ -933,6 +950,11 @@ def run_direct_instruction_materialization_8616(
             function=current_function,
         )
     )
+    control_stack_escape_changed = materialize_proven_control_stack_escape_8616(
+        codegen,
+        project,
+        function=current_function,
+    )
     direct_stack_mov_changed = False
     if include_direct_stack_mov:
         direct_stack_mov_changed = bool(
@@ -991,6 +1013,7 @@ def run_direct_instruction_materialization_8616(
         direct_stack_incdec_changed=direct_stack_incdec_changed,
         direct_global_incdec_changed=direct_global_incdec_changed,
         callee_saved_spill_prune_changed=callee_saved_spill_prune_changed,
+        control_stack_escape_changed=control_stack_escape_changed,
     )
     if result.changed:
         codegen._inertia_direct_instruction_materialization_8616 = {
@@ -1134,10 +1157,11 @@ def finalize_seqnode_switch_replay_after_replacement_8616(
 ) -> SeqNodeSwitchReplayFinalizeResult8616:
     """Finalize SeqNode switch replay sequencing after late AST replacement.
 
-    The structuring stage owns replay order for segment/global lowering and
-    condition materialization.  The supplied DCE callback remains CLI-owned
-    because it raises pipeline hard errors with function-context policy when a
-    replay-triggered cleanup would lose call expressions.
+    The structuring stage owns replay order for segment/global lowering,
+    condition materialization, Widening projection folding, and the existing
+    Types/Lowering selector identity owner. The supplied DCE callback remains
+    CLI-owned because it raises pipeline hard errors with function-context
+    policy when a replay-triggered cleanup would lose call expressions.
     """
     segment_replay_changed = replay_seqnode_switch_segment_lowering_after_replacement_8616(
         project,
@@ -1186,6 +1210,20 @@ def finalize_seqnode_switch_replay_after_replacement_8616(
                 guarded_dce_runner("SeqNode switch post-condition segment replay DCE removed call expressions")
             )
 
+    replacement_changed = seqnode_switch_replacement_changed_for_codegen_8616(project, codegen)
+    word_projection_replay_changed = False
+    word_projection_dce_changed = False
+    if replacement_changed:
+        word_projection_replay_changed = materialize_word_projection_recompositions_8616(codegen)
+        if word_projection_replay_changed:
+            word_projection_dce_changed = _dce_result_changed_8616(
+                guarded_dce_runner("SeqNode switch Widening replay DCE removed call expressions")
+            )
+
+    selector_replay_changed = False
+    if replacement_changed:
+        selector_replay_changed = replay_call_return_switch_selectors_8616(codegen)
+
     result = SeqNodeSwitchReplayFinalizeResult8616(
         segment_replay_changed=bool(segment_replay_changed),
         segment_dce_changed=bool(segment_dce_changed),
@@ -1195,6 +1233,9 @@ def finalize_seqnode_switch_replay_after_replacement_8616(
         condition_dce_changed=bool(condition_dce_changed),
         post_condition_segment_replay_changed=bool(post_condition_segment_replay_changed),
         post_condition_segment_dce_changed=bool(post_condition_segment_dce_changed),
+        word_projection_replay_changed=bool(word_projection_replay_changed),
+        word_projection_dce_changed=bool(word_projection_dce_changed),
+        selector_replay_changed=bool(selector_replay_changed),
     )
     if result.changed:
         codegen._inertia_codegen_decl_refresh_required_8616 = True
@@ -1209,6 +1250,9 @@ def finalize_seqnode_switch_replay_after_replacement_8616(
             "condition_dce_changed": result.condition_dce_changed,
             "post_condition_segment_replay_changed": result.post_condition_segment_replay_changed,
             "post_condition_segment_dce_changed": result.post_condition_segment_dce_changed,
+            "word_projection_replay_changed": result.word_projection_replay_changed,
+            "word_projection_dce_changed": result.word_projection_dce_changed,
+            "selector_replay_changed": result.selector_replay_changed,
             "changed": result.changed,
             "owner": "structuring.stage",
         }
@@ -2127,13 +2171,18 @@ def _apply_structuring_direct_stack_materialization_8616(project: AngrProjectSur
         codegen._inertia_typed_conditions_transferred = True
     _bind_direct_stack_move_branch_ownership_8616(project, codegen, function)
     component_started = time.perf_counter()
+    control_stack_escape_changed = materialize_proven_control_stack_escape_8616(
+        codegen,
+        project,
+        function=function,
+    )
     callee_saved_changed = prune_callee_saved_stack_spills_8616(
         codegen,
         project,
         function=function,
     )
     callee_saved_elapsed = time.perf_counter() - component_started
-    changed = callee_saved_changed
+    changed = control_stack_escape_changed or callee_saved_changed
     component_started = time.perf_counter()
     mov_changed = materialize_direct_stack_mov_instructions_8616(
         codegen,
@@ -2250,6 +2299,7 @@ def _replay_structuring_lowering_before_validation_8616(
     changed = bool(_apply_structuring_direct_stack_materialization_8616(project, codegen)) or changed
     changed = bool(materialize_software_interrupt_calls_8616(codegen)) or changed
     changed = bool(materialize_software_interrupt_status_outputs_8616(codegen)) or changed
+    changed = lower_unobserved_call_result_assignments_8616(codegen) or changed
     changed = bool(_prime_structuring_segment_global_semantics_8616(project, codegen)) or changed
     function = _current_structuring_function_8616(project, codegen)
     changed = bool(
@@ -2385,6 +2435,7 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         _indexed_address_aliases.apply_x86_16_indexed_address_aliases_8616(project, codegen)
         _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
         _segment_stack_restore.apply_x86_16_segment_stack_restore_artifact(project, codegen)
+        changed = bool(prune_proven_segment_stack_restore_carriers_8616(project, codegen)) or changed
         _segment_state.apply_x86_16_segment_state_artifact(project, codegen)
         _segment_contract.apply_x86_16_segment_function_contract(project, codegen)
         _segment_function_summary.apply_x86_16_segment_function_summary(project, codegen)
@@ -3358,8 +3409,17 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
         return True
 
     precision_result = condition_precision_validation_delta_8616(codegen, validation)
-    if precision_result.accepted:
-        codegen._inertia_structuring_condition_precision_validation_accepts_8616 = 1
+    try:
+        condition_closure = codegen._inertia_structuring_condition_evidence_closure_8616
+    except AttributeError:
+        condition_closure = None
+    closure_result = validate_condition_closure_delta_8616(condition_closure, validation)
+    codegen._inertia_structuring_condition_closure_validation_result_8616 = closure_result
+    if precision_result.accepted or (spec_name == "final" and closure_result.accepted):
+        if precision_result.accepted:
+            codegen._inertia_structuring_condition_precision_validation_accepts_8616 = 1
+        if closure_result.accepted:
+            codegen._inertia_structuring_condition_closure_validation_accepts_8616 = 1
         validation["changed"] = False
         validation["status"] = "stable"
         validation["summary_text"] = "no observable whole-tail changes"

@@ -1,8 +1,9 @@
-"""Classify typed condition-chain ownership of structured loop exits.
+"""Classify typed condition ownership of structured loop exits.
 
 Layer: Structuring.
-Responsibility: identify exact composite exits in the current loop scope so one
-binary condition fact is not represented again as a loop-header guard.
+Responsibility: identify exact condition-chain and pretest exits in the current
+loop scope so one binary condition fact is not represented again as a
+loop-header guard.
 """
 
 from __future__ import annotations
@@ -13,11 +14,13 @@ from enum import Enum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CBreak,
     CDoWhileLoop,
     CExpression,
     CForLoop,
     CIfBreak,
     CIfElse,
+    CStatements,
     CWhileLoop,
 )
 
@@ -43,6 +46,7 @@ class CompositeLoopExitOwnership8616:
     key: tuple[int, int]
     status: CompositeLoopExitOwnershipStatus8616
     matching_exit_count: int
+    owned_pretest_guard: CIfBreak | CIfElse | None
 
 
 class _TaggedExpression8616(Protocol):
@@ -132,16 +136,76 @@ def _condition_chain_exit_8616(
     return condition
 
 
+def _condition_tag_pairs_8616(condition_owner: object) -> frozenset[tuple[int, int]]:
+    """Return exact JCC/block identities retained by one condition owner."""
+    pairs: set[tuple[int, int]] = set()
+    for node in _iter_current_loop_scope_nodes_8616(condition_owner):
+        boundary = cast(_TaggedExpression8616, node)
+        try:
+            tags = boundary.tags
+        except AttributeError:
+            continue
+        ins_addr = tags.get("ins_addr")
+        block_addr = tags.get("vex_block_addr")
+        if isinstance(ins_addr, int) and isinstance(block_addr, int):
+            pairs.add((ins_addr, block_addr))
+    return frozenset(pairs)
+
+
+def _typed_pretest_exit_8616(
+    node: object,
+    key: tuple[int, int],
+    successors: Mapping[int, tuple[int, ...]],
+) -> CExpression | None:
+    """Return one exact pretest break whose JCC has one exit edge."""
+    if isinstance(node, CIfBreak):
+        condition = node.condition
+    elif isinstance(node, CIfElse) and node.else_node is None:
+        pairs = tuple(node.condition_and_nodes)
+        if len(pairs) != 1:
+            return None
+        condition, body = pairs[0]
+        if isinstance(body, CStatements):
+            statements = tuple(body.statements or ())
+            body = statements[0] if len(statements) == 1 else None
+        if not isinstance(body, CBreak):
+            return None
+    else:
+        return None
+    if not isinstance(condition, CExpression):
+        return None
+    if _condition_tag_pairs_8616(node) != {key}:
+        return None
+    targets = successors.get(key[1], ())
+    if len(targets) != 2:
+        return None
+    reentry_count = sum(
+        _reaches_loop_header_8616(successors, target, key[1]) for target in targets
+    )
+    return condition if reentry_count == 1 else None
+
+
 def classify_composite_loop_exit_ownership_8616(
     body: object,
     key: tuple[int, int],
     successors: Mapping[int, tuple[int, ...]],
+    *,
+    leading_break_guard: CIfBreak | CIfElse | None = None,
 ) -> CompositeLoopExitOwnership8616:
-    """Classify exact CFG-materialized loop exits that consume ``key``."""
-    matching_exit_count = sum(
-        _condition_chain_exit_8616(node, key, successors) is not None
-        for node in _iter_current_loop_scope_nodes_8616(body)
+    """Classify exact CFG-owned loop exits that consume ``key``."""
+    matched_expression_ids: set[int] = set()
+    for node in _iter_current_loop_scope_nodes_8616(body):
+        expression = _condition_chain_exit_8616(node, key, successors)
+        if expression is not None:
+            matched_expression_ids.add(id(expression))
+    pretest_expression = (
+        _typed_pretest_exit_8616(leading_break_guard, key, successors)
+        if leading_break_guard is not None
+        else None
     )
+    if pretest_expression is not None:
+        matched_expression_ids.add(id(pretest_expression))
+    matching_exit_count = len(matched_expression_ids)
     status = (
         CompositeLoopExitOwnershipStatus8616.NONE
         if matching_exit_count == 0
@@ -153,4 +217,5 @@ def classify_composite_loop_exit_ownership_8616(
         key=key,
         status=status,
         matching_exit_count=matching_exit_count,
+        owned_pretest_guard=leading_break_guard if pretest_expression is not None else None,
     )

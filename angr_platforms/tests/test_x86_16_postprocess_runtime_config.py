@@ -1,8 +1,14 @@
 """Tests for typed postprocess runtime policy."""
 
+from types import SimpleNamespace
+
+from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.postprocess.pass_runtime import (
     build_postprocess_runtime_config_8616,
     postprocess_optional_reject_budget_8616,
+)
+from angr_platforms.X86_16.postprocess.validation_contracts import (
+    PostprocessFunctionComplexity8616,
 )
 
 
@@ -54,3 +60,66 @@ def test_invalid_reject_budget_uses_owned_default() -> None:
     assert postprocess_optional_reject_budget_8616(
         {"INERTIA_POSTPROCESS_OPTIONAL_REJECT_BUDGET": "invalid"}
     ) == postprocess_optional_reject_budget_8616({})
+
+
+def test_initialized_change_flag_does_not_bypass_baseline_clone(monkeypatch) -> None:
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1234),
+        _inertia_postprocess_changed=False,
+    )
+    clone = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1234))
+    collected: list[object] = []
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_postprocess_function_complexity_8616",
+        lambda *_args: PostprocessFunctionComplexity8616(),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_prepare_tail_validation_baseline_clone_8616",
+        lambda *_args, **_kwargs: clone,
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_repair_cfunc_statements_wrapper",
+        lambda _codegen: False,
+    )
+    monkeypatch.setattr(
+        postprocess_stage._post,
+        "_repair_unresolved_function_exit_gotos_8616",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda _project, active_codegen, **_kwargs: collected.append(active_codegen),
+    )
+
+    postprocess_stage._collect_tail_validation_summary_with_baseline_canonicalization_8616(
+        SimpleNamespace(),
+        codegen,
+        mode="live_out",
+    )
+
+    assert collected == [clone]
+
+
+def test_completed_transaction_uses_direct_final_summary(monkeypatch) -> None:
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1234),
+        _inertia_postprocess_mutation_generation_8616=object(),
+    )
+    collected: list[object] = []
+    monkeypatch.setattr(
+        postprocess_stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda _project, active_codegen, **_kwargs: collected.append(active_codegen),
+    )
+
+    postprocess_stage._collect_tail_validation_summary_with_baseline_canonicalization_8616(
+        SimpleNamespace(),
+        codegen,
+        mode="live_out",
+    )
+
+    assert collected == [codegen]

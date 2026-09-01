@@ -77,6 +77,8 @@ from .return_type_evidence import (
 
 __all__ = [
     "CallTargetIdentityStats8616",
+    "CallsiteCResultContract8616",
+    "CallsiteCResultKind8616",
     "canonicalize_callsite_target_identities_8616",
     "materialize_callsite_prototype_declarations_8616",
 ]
@@ -93,6 +95,7 @@ class _CodegenSurface8616(Protocol):
 
     cfunc: object
     _inertia_callsite_summaries: object
+    _inertia_callsite_c_result_contracts_8616: dict[int, CallsiteCResultContract8616]
     _inertia_call_target_identity_stats_8616: CallTargetIdentityStats8616
 
 
@@ -181,6 +184,21 @@ class _CallsiteReturnClass8616(Enum):
     UNKNOWN = "unknown"
     AX = "unsigned short"
     DX_AX = "unsigned long"
+
+
+class CallsiteCResultKind8616(Enum):
+    """Typed C result categories published by declaration Lowering."""
+
+    VOID = "void"
+    VALUE = "value"
+
+
+@dataclass(frozen=True, slots=True)
+class CallsiteCResultContract8616:
+    """Final C result contract for one exactly resolved structured call."""
+
+    kind: CallsiteCResultKind8616
+    c_type: str
 
 
 def _structured_root_8616(cfunc: object) -> object | None:
@@ -787,6 +805,16 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
         if summary is None:
             summary = _summary_for_call_8616(project, node, inventory)
         resolved_calls.append((node, summary))
+    active_call_names = frozenset(
+        name for node, _summary in resolved_calls if (name := _call_name_8616(node)) is not None
+    )
+    obsolete_numeric_names = frozenset(
+        numeric_name
+        for node, summary in resolved_calls
+        if summary is not None and isinstance(summary.target_addr, int)
+        and (numeric_name := f"sub_{summary.target_addr:x}") not in active_call_names
+        and _call_name_8616(node) != numeric_name
+    )
     materialize_callsite_pointer_table_types_8616(
         project,
         codegen,
@@ -797,6 +825,7 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
     fallback_declarations_by_name: dict[str, set[str]] = {}
     required_forward_decls: set[str] = set()
     ambiguous_names: set[str] = set()
+    result_contracts: dict[int, CallsiteCResultContract8616] = {}
     call_count = 0
     matched_count = 0
     for node, summary in resolved_calls:
@@ -835,6 +864,15 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
             if call_name is not None
             else inferred_return_type
         )
+        if return_type is not None:
+            result_contracts[summary.callsite_addr] = CallsiteCResultContract8616(
+                kind=(
+                    CallsiteCResultKind8616.VOID
+                    if return_type == "void"
+                    else CallsiteCResultKind8616.VALUE
+                ),
+                c_type=return_type,
+            )
         runtime_declaration = (
             runtime_helper_declaration_8616(call_name, _project_c_target_8616(project))
             if call_name is not None
@@ -914,6 +952,7 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
         fallback_declarations = fallback_declarations_by_name.get(name, set())
         if len(fallback_declarations) == 1:
             desired_by_name[name] = next(iter(fallback_declarations))
+    surface._inertia_callsite_c_result_contracts_8616 = result_contracts
     if not desired_by_name:
         if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
             _LOGGER.warning(
@@ -930,6 +969,8 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
     materialized_names: set[str] = set()
     for declaration in existing:
         name = _declaration_name_8616(declaration)
+        if name in obsolete_numeric_names:
+            continue
         desired = desired_by_name.get(name or "")
         if desired is None:
             merged.append(declaration)

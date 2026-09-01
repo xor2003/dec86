@@ -14,7 +14,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import typing
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, cast
@@ -40,6 +40,7 @@ from .near_pointer_argument import (
     collect_near_pointer_argument_facts_8616,
 )
 from .near_pointer_type import near_pointer_type_8616, with_near_pointer_parameter_8616
+from .packed_flags_state import lower_packed_flags_live_in_8616
 from .physical_registers import physical_register_name_8616
 from .positive_bp_arguments import materialize_positive_bp_arguments_8616
 from .real_mode_linear import (
@@ -1928,9 +1929,21 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_refusals_8616 = []
+    def _invalidate_segmented_address_caches_8616() -> None:
+        """Discard address classifications whose segment child was replaced."""
+        rewrite_cache = getattr(project, "_inertia_rewrite_cache", None)
+        if not isinstance(rewrite_cache, MutableMapping):
+            return
+        rewrite_cache.pop("segment_reg_name", None)
+        rewrite_cache.pop("segmented_addr_expr", None)
+
     changed = _rematerialize_binary_proven_near_pointer_types_8616(typed_codegen)
+    changed = lower_packed_flags_live_in_8616(codegen) or changed
     changed = lower_architectural_gp_register_state_8616(codegen) or changed
-    changed = lower_architectural_segment_register_state_8616(codegen) or changed
+    initial_segment_changed = lower_architectural_segment_register_state_8616(codegen)
+    if initial_segment_changed:
+        _invalidate_segmented_address_caches_8616()
+        changed = True
     initial_segment_stats = typed_codegen._inertia_segment_register_state_lowering_stats_8616
     typed_codegen._inertia_assignment_maps = None
 
@@ -1983,6 +1996,7 @@ def apply_runtime_segment_lowering_8616(
     if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
         changed = True
     if lower_architectural_segment_register_state_8616(codegen):
+        _invalidate_segmented_address_caches_8616()
         changed = True
         typed_codegen._inertia_assignment_maps = None
     if lower_architectural_gp_register_state_8616(codegen):

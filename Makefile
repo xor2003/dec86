@@ -70,6 +70,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/direct_stack_replay_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_local_declarations.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_variable_identity.py \
+	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/result_contracts.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/structured_assignment_index.py \
@@ -458,6 +459,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_binary_cfg.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_cfg_projection.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_lift_context.py \
+	angr_platforms/angr_platforms/X86_16/ir/status_flag_lift_codec.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
 	angr_platforms/angr_platforms/X86_16/segment_function_summary.py \
 	angr_platforms/angr_platforms/X86_16/segment_offset_execution.py \
@@ -527,6 +529,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
+	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_instruction_kinds.py \
 	angr_platforms/angr_platforms/X86_16/frontend_instruction_reachability.py \
@@ -854,6 +857,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
+	angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py \
@@ -900,6 +904,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/wide_stack_pair_evidence.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/__init__.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/affine_compound_assignment.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/cleanup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/flags_cleanup.py \
@@ -1369,6 +1374,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_binary_cfg.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_cfg_projection.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_lift_context.py \
+	angr_platforms/angr_platforms/X86_16/ir/status_flag_lift_codec.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
 	angr_platforms/angr_platforms/X86_16/segment_function_summary.py \
 	angr_platforms/angr_platforms/X86_16/segment_offset_execution.py \
@@ -1438,6 +1444,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_boundary_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py \
+	angr_platforms/angr_platforms/X86_16/frontend_caller_return_use_program.py \
 	angr_platforms/angr_platforms/X86_16/frontend_direct_callsite_index.py \
 	angr_platforms/angr_platforms/X86_16/frontend_instruction_kinds.py \
 	angr_platforms/angr_platforms/X86_16/frontend_instruction_reachability.py \
@@ -1765,6 +1772,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
+	angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py \
@@ -1811,6 +1819,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/wide_stack_pair_evidence.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/__init__.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/affine_compound_assignment.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/cleanup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/flags_cleanup.py \

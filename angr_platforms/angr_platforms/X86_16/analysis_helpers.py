@@ -50,6 +50,7 @@ __all__ = (
     "EntryScore",
     "FarCallTarget",
     "InterruptCall",
+    "InterruptServiceResultKind8616",
     "InterruptServiceSpec",
     "canonicalize_x86_16_padding_call_target_8616",
     "collect_direct_far_call_targets",
@@ -74,6 +75,7 @@ __all__ = (
     "interrupt_service_addr",
     "interrupt_service_declarations",
     "interrupt_service_name",
+    "interrupt_service_result_kind_at_addr_8616",
     "interrupt_service_spec",
     "known_helper_signature_decl",
     "normalize_api_style",
@@ -366,6 +368,13 @@ class InterruptCall:
 type DOSInt21Call = InterruptCall
 
 
+class InterruptServiceResultKind8616(StrEnum):
+    """Typed generated-C result category for a resolved interrupt service."""
+
+    VOID = "void"
+    VALUE = "value"
+
+
 @dataclass(frozen=True)
 class InterruptServiceSpec:
     """Stable naming and rendering metadata for a DOS or BIOS interrupt service."""
@@ -379,6 +388,7 @@ class InterruptServiceSpec:
     pseudo_decl: str | None = None
     dos_decl: str | None = None
     modern_decl: str | None = None
+    result_kind: InterruptServiceResultKind8616 = InterruptServiceResultKind8616.VALUE
 
 
 INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
@@ -391,6 +401,7 @@ INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
         pseudo_decl="void dos_print_dollar_string(const char *s);",
         dos_decl="void _dos_print_dollar_string(const char far *s);",
         modern_decl="void print_dos_string(const char *s);",
+        result_kind=InterruptServiceResultKind8616.VOID,
     ),
     0x0E: InterruptServiceSpec(
         0x21,
@@ -411,6 +422,7 @@ INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
         pseudo_decl="void dos_setvect(int vector, void (*handler)(void));",
         dos_decl="void _dos_setvect(unsigned int interruptno, void (far *isr)(void));",
         modern_decl="void setvect(int interruptno, void (*isr)(void));",
+        result_kind=InterruptServiceResultKind8616.VOID,
     ),
     0x30: InterruptServiceSpec(
         0x21,
@@ -561,6 +573,7 @@ INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
         pseudo_decl="void dos_exit(int status);",
         dos_decl="void _dos_exit(unsigned char status);",
         modern_decl="void exit(int status);",
+        result_kind=InterruptServiceResultKind8616.VOID,
     ),
 }
 
@@ -732,6 +745,21 @@ def interrupt_service_spec(call: InterruptCall) -> InterruptServiceSpec | None:
     if call.vector == 0x21:
         return None
     return INTERRUPT_SERVICE_SPECS.get(call.vector)
+
+
+def interrupt_service_result_kind_at_addr_8616(
+    target_addr: int,
+) -> InterruptServiceResultKind8616 | None:
+    """Return typed result semantics for one exact synthetic interrupt target."""
+    dos_selector = target_addr - int(DOS_SERVICE_BASE_ADDR)
+    if 0 <= dos_selector <= 0xFF:
+        spec = INT21_SERVICE_SPECS.get(dos_selector)
+        return None if spec is None else spec.result_kind
+    vector = target_addr - int(INTERRUPT_SERVICE_BASE_ADDR)
+    if 0 <= vector <= 0xFF:
+        spec = INTERRUPT_SERVICE_SPECS.get(vector)
+        return None if spec is None else spec.result_kind
+    return None
 
 
 def _interrupt_service_spec_for_call(call: InterruptCall) -> InterruptServiceSpec | None:

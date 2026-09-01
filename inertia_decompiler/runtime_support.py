@@ -2527,7 +2527,10 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
                 return block, False, False
             if block is not None and getattr(project, "_inertia_tiny_core_disable_peephole", False):
                 return block, False, False
-            if block is not None and getattr(project, "_inertia_fast_block_peephole", False):
+            if block is not None and (
+                getattr(project, "_inertia_fast_block_peephole", False)
+                or getattr(getattr(project, "arch", None), "name", None) == "86_16"
+            ):
                 statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
                 new_block = block.copy(statements=statements) if stmts_updated else block
                 statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)

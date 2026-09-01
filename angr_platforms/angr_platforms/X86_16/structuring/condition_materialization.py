@@ -86,6 +86,11 @@ from .branch_return_expressions import (
     sole_return_statement_8616,
 )
 from .condition_binding import select_unique_condition_by_expression_8616
+from .condition_chain_provenance import bind_condition_chain_provenance_8616
+from .condition_evidence_closure import (
+    ConditionEvidenceClosure8616,
+    classify_condition_evidence_closure_8616,
+)
 from .condition_lowering import lower_ir_value_to_c_expr_8616
 from .condition_ownership import structured_node_owns_condition_fact_8616 as _structured_node_owns_condition_fact_8616
 from .condition_provenance import (
@@ -94,6 +99,7 @@ from .condition_provenance import (
     structured_loop_segment_provenance_surface_8616,
 )
 from .condition_replay import (
+    bind_condition_replay_identity_8616,
     condition_replay_facts_8616,
     record_condition_replay_fact_8616,
     select_condition_replay_fact_8616,
@@ -150,6 +156,8 @@ def materialize_condition_ir_expression_8616(
     function performs no condition discovery or instruction decoding.
     """
     expression = _legacy_typed_conditions._build_c_condition_expr(project, condition, codegen)
+    if isinstance(expression, CExpression):
+        bind_condition_replay_identity_8616(expression, condition)
     if os.environ.get("INERTIA_DEBUG_CONDITION_MATERIALIZATION") == "1":
         _debug_condition_chain_8616(
             "lowered-expression",
@@ -171,10 +179,12 @@ class _ConditionMaterializationCodegen8616(Protocol):
     """Dynamic codegen metadata slots written by structuring condition materialization."""
 
     _inertia_structuring_condition_materialization_8616: dict[str, object]
+    _inertia_structuring_condition_materialization_result_8616: StructuringConditionMaterializationResult8616
     _inertia_structuring_condition_replay_cleanup_8616: dict[str, object]
     _inertia_structuring_dead_flag_cleanup_8616: dict[str, object]
     _inertia_condition_materialization_structuring_pass_ran_8616: bool
     _inertia_structuring_condition_chain_stats_8616: StructuringConditionChainStats8616
+    _inertia_structuring_condition_evidence_closure_8616: ConditionEvidenceClosure8616
     _inertia_typed_loop_condition_stats_8616: LoopConditionMaterializationStats8616
     _inertia_structured_condition_provenance_stats_8616: StructuredConditionProvenanceStats8616
     _inertia_multi_arm_return_chain_materialized_8616: bool
@@ -272,6 +282,7 @@ class StructuringConditionMaterializationResult8616:
     decoded_jcc_changed: bool
     loop_conditions_changed: bool
     segment_access_provenance_changed: bool
+    condition_evidence_complete: bool = True
 
     @property
     def changed(self) -> bool:
@@ -619,10 +630,13 @@ def invert_structured_condition_8616(condition: CExpression, codegen: object) ->
         "CmpGE": "CmpLT",
     }
     if isinstance(condition, CBinaryOp) and condition.op in inverted_ops:
-        return CBinaryOp(inverted_ops[condition.op], condition.lhs, condition.rhs, codegen=codegen)
-    if isinstance(condition, CUnaryOp) and condition.op == "Not":
-        return condition.operand
-    return CUnaryOp("Not", condition, codegen=codegen)
+        result = CBinaryOp(inverted_ops[condition.op], condition.lhs, condition.rhs, codegen=codegen)
+    elif isinstance(condition, CUnaryOp) and condition.op == "Not":
+        result = condition.operand
+    else:
+        result = CUnaryOp("Not", condition, codegen=codegen)
+    result.tags = {**_copied_condition_tags_8616(result), **_copied_condition_tags_8616(condition)}
+    return result
 
 
 def _combine_condition_outcomes_8616(
@@ -786,6 +800,10 @@ def _materialize_cfg_condition_chain_expr_8616(
         )
         return None
     lowering = lower_call_output_stack_fields_in_condition_8616(codegen, result, tuple(consumed_conditions))
+    bind_condition_chain_provenance_8616(
+        lowering.expression,
+        tuple(consumed_conditions),
+    )
     return lowering.expression
 
 
@@ -1381,7 +1399,7 @@ def _materialize_existing_wide_call_return_conditions_8616(
                 failure_count += 1
                 replacement_pairs.append((expression, body))
                 continue
-            replacement.tags = tags
+            replacement.tags = {**_copied_condition_tags_8616(replacement), **tags}
             replacement.tags["inertia_structuring_condition_cfg_materialized_8616"] = True
             replacement.tags["inertia_structuring_wide_call_return_condition_materialized_8616"] = True
             replacement_pairs.append((replacement, body))
@@ -1803,7 +1821,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             tags["inertia_structuring_condition_cfg_materialized_8616"] = True
             tags["inertia_structuring_shared_body_condition_chain_materialized_8616"] = True
             tags["inertia_structuring_shared_body_target_8616"] = body_target
-            replacement.tags = tags
+            replacement.tags = {**_copied_condition_tags_8616(replacement), **tags}
             record_condition_precision_evidence_8616(
                 project, codegen, first_condition, replacement
             )
@@ -2047,19 +2065,36 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             true_orientation = arm_orientation.true_arm
             false_orientation = arm_orientation.false_arm
             true_polarity = arm_orientation.true_polarity
-            replacement = (
-                _materialize_cfg_condition_chain_expr_8616(
+            true_target = _first_tagged_cfg_target_8616(body)
+            false_target = _first_tagged_cfg_target_8616(node.else_node)
+            direct_true_target = (
+                root_fact.taken_target if true_polarity else root_fact.fallthrough_target
+            )
+            direct_false_target = (
+                root_fact.fallthrough_target if true_polarity else root_fact.taken_target
+            )
+            direct_complementary_arms = (
+                arm_orientation.is_complementary
+                and true_target == direct_true_target
+                and false_target == direct_false_target
+            )
+            replay_true_target = replay.true_target if replay is not None else true_target
+            replay_false_target = replay.false_target if replay is not None else false_target
+            replacement = None
+            if (
+                replay is not None
+                and replay_true_target is not None
+                and replay_false_target is not None
+            ):
+                replacement = _materialize_cfg_condition_chain_expr_8616(
                     project,
                     codegen,
                     root_fact,
                     conditions_by_block,
                     successors,
-                    replay.true_target,
-                    replay.false_target,
+                    replay_true_target,
+                    replay_false_target,
                 )
-                if replay is not None
-                else None
-            )
             if assignment_replay_required and replacement is None:
                 _debug_condition_chain_8616(
                     "assignment-diamond-replay-materialization-refused",
@@ -2068,7 +2103,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 )
                 failure_count += 1
                 continue
-            if replacement is None and arm_orientation.is_complementary:
+            if replacement is None and direct_complementary_arms:
                 materialized = materialize_condition_ir_expression_8616(project, codegen, root_fact)
                 if materialized is not None:
                     replacement = materialized if true_polarity else invert_structured_condition_8616(
@@ -2076,38 +2111,40 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                         codegen,
                     )
                     prune_call_output_carriers = False
-            if replacement is not None:
-                record_condition_replay_fact_8616(
+                    replay_true_target = (
+                        root_fact.taken_target if true_polarity else root_fact.fallthrough_target
+                    )
+                    replay_false_target = (
+                        root_fact.fallthrough_target if true_polarity else root_fact.taken_target
+                    )
+            if (
+                replacement is None
+                and replay is None
+                and replay_true_target is not None
+                and replay_false_target is not None
+            ):
+                replacement = _materialize_cfg_condition_chain_expr_8616(
+                    project,
                     codegen,
                     root_fact,
-                    root_fact.taken_target if true_polarity else root_fact.fallthrough_target,
-                    root_fact.fallthrough_target if true_polarity else root_fact.taken_target,
+                    conditions_by_block,
+                    successors,
+                    replay_true_target,
+                    replay_false_target,
                 )
+            if replacement is not None:
+                if replay_true_target is not None and replay_false_target is not None:
+                    record_condition_replay_fact_8616(
+                        codegen,
+                        root_fact,
+                        replay_true_target,
+                        replay_false_target,
+                    )
                 _debug_condition_chain_8616(
                     "if-else-arm-ownership-materialized",
                     false_evidence=false_orientation,
                     true_evidence=true_orientation,
                 )
-            else:
-                true_target = _first_tagged_cfg_target_8616(body)
-                false_target = _first_tagged_cfg_target_8616(node.else_node)
-                replacement = (
-                    _materialize_cfg_condition_chain_expr_8616(
-                        project,
-                        codegen,
-                        root_fact,
-                        conditions_by_block,
-                        successors,
-                        true_target,
-                        false_target,
-                    )
-                    if true_target is not None and false_target is not None
-                    else None
-                )
-                if replacement is not None and true_target is not None and false_target is not None:
-                    record_condition_replay_fact_8616(
-                        codegen, root_fact, true_target, false_target
-                    )
             marker = "inertia_structuring_condition_chain_materialized_8616"
         if replacement is None:
             _debug_condition_chain_8616(
@@ -2145,7 +2182,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             tags["condition_producer_insn"] = root_fact.producer_insn
         tags["inertia_structuring_condition_cfg_materialized_8616"] = True
         tags[marker] = True
-        replacement.tags = tags
+        replacement.tags = {**_copied_condition_tags_8616(replacement), **tags}
         record_condition_precision_evidence_8616(
             project, codegen, cast(CExpression, condition), replacement
         )
@@ -2250,13 +2287,27 @@ def materialize_structuring_conditions_8616(
         loop_surface=structured_loop_segment_provenance_surface_8616(root),
         stats=provenance_stats,
     )
+    condition_closure = classify_condition_evidence_closure_8616(
+        root,
+        typed_conditions,
+        condition_chain_successors_8616(project, codegen),
+    )
+    metadata_codegen._inertia_structuring_condition_evidence_closure_8616 = (
+        condition_closure
+    )
+    _debug_condition_chain_8616("evidence-closure", closure=condition_closure)
     result = StructuringConditionMaterializationResult8616(
         typed_conditions_changed=typed_changed,
         condition_chains_changed=chains_changed,
         decoded_jcc_changed=jcc_changed,
         loop_conditions_changed=loop_stats.changed,
         segment_access_provenance_changed=provenance_stats.changed,
+        condition_evidence_complete=(
+            condition_closure.complete
+            and provenance_stats.failure_count == 0
+        ),
     )
+    metadata_codegen._inertia_structuring_condition_materialization_result_8616 = result
     metadata_codegen._inertia_condition_materialization_structuring_pass_ran_8616 = True
     metadata_codegen._inertia_structuring_condition_materialization_8616 = {
         "typed_conditions_changed": result.typed_conditions_changed,
@@ -2264,6 +2315,7 @@ def materialize_structuring_conditions_8616(
         "decoded_jcc_changed": result.decoded_jcc_changed,
         "loop_conditions_changed": result.loop_conditions_changed,
         "segment_access_provenance_changed": result.segment_access_provenance_changed,
+        "condition_evidence_complete": result.condition_evidence_complete,
         "changed": result.changed,
         "owner": "structuring.condition_materialization",
     }
@@ -2292,10 +2344,21 @@ def cleanup_structuring_conditions_after_replay_8616(
     flag_condition_pairs_changed = bool(_flags_cleanup._rewrite_flag_condition_pairs_8616(legacy_codegen))
     flag_bit_values_changed = bool(_flags_cleanup._rewrite_flag_bit_value_uses_8616(legacy_codegen))
     interval_guards_changed = bool(_flags_cleanup._fix_interval_guard_conditions_8616(legacy_codegen))
-    unused_flag_assignments_pruned = bool(_flags_cleanup._prune_unused_flag_assignments_8616(legacy_project, legacy_codegen))
-    overwritten_flag_assignments_pruned = bool(
-        _flags_cleanup._prune_overwritten_flag_assignments_8616(legacy_project, legacy_codegen)
-    )
+    unused_flag_assignments_pruned = False
+    overwritten_flag_assignments_pruned = False
+    if materialization.condition_evidence_complete:
+        unused_flag_assignments_pruned = bool(
+            _flags_cleanup._prune_unused_flag_assignments_8616(
+                legacy_project,
+                legacy_codegen,
+            )
+        )
+        overwritten_flag_assignments_pruned = bool(
+            _flags_cleanup._prune_overwritten_flag_assignments_8616(
+                legacy_project,
+                legacy_codegen,
+            )
+        )
     result = StructuringConditionReplayCleanupResult8616(
         materialization=materialization,
         flag_condition_pairs_changed=flag_condition_pairs_changed,
@@ -2309,6 +2372,7 @@ def cleanup_structuring_conditions_after_replay_8616(
         "typed_conditions_changed": materialization.typed_conditions_changed,
         "condition_chains_changed": materialization.condition_chains_changed,
         "decoded_jcc_changed": materialization.decoded_jcc_changed,
+        "condition_evidence_complete": materialization.condition_evidence_complete,
         "flag_condition_pairs_changed": result.flag_condition_pairs_changed,
         "flag_bit_values_changed": result.flag_bit_values_changed,
         "interval_guards_changed": result.interval_guards_changed,
@@ -2330,6 +2394,26 @@ def prune_dead_flag_assignments_after_structuring_8616(
     self-contained expression after normal condition cleanup. Run only the
     existing proof-based flag DCE here; never initialize unknown incoming flags.
     """
+    metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
+    try:
+        evidence_complete = (
+            metadata_codegen._inertia_structuring_condition_materialization_result_8616.condition_evidence_complete
+        )
+    except AttributeError:
+        evidence_complete = True
+    if not evidence_complete:
+        result = StructuringDeadFlagCleanupResult8616(
+            overwritten_flag_assignments_pruned=False,
+            unused_flag_assignments_pruned=False,
+        )
+        metadata_codegen._inertia_structuring_dead_flag_cleanup_8616 = {
+            "condition_evidence_complete": False,
+            "overwritten_flag_assignments_pruned": False,
+            "unused_flag_assignments_pruned": False,
+            "changed": False,
+            "owner": "structuring.condition_materialization",
+        }
+        return result
     legacy_project = cast(SimpleNamespace, project)
     legacy_codegen = cast(SimpleNamespace, codegen)
     overwritten = bool(
@@ -2348,8 +2432,8 @@ def prune_dead_flag_assignments_after_structuring_8616(
         overwritten_flag_assignments_pruned=overwritten,
         unused_flag_assignments_pruned=unused,
     )
-    metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
     metadata_codegen._inertia_structuring_dead_flag_cleanup_8616 = {
+        "condition_evidence_complete": True,
         "overwritten_flag_assignments_pruned": overwritten,
         "unused_flag_assignments_pruned": unused,
         "changed": result.changed,

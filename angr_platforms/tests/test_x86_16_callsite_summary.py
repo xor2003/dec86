@@ -27,6 +27,7 @@ from angr_platforms.X86_16.callsite_summary import (
     logical_argument_widths_from_callsite_8616,
     rebind_cloned_structured_callsite_identity_8616,
     structured_call_kind_8616,
+    structured_callsite_target_addr_8616,
     summarize_x86_16_callsite,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -117,6 +118,7 @@ def test_structured_callsite_identity_accepts_rust_backed_ail_tags() -> None:
     bind_structured_callsite_identity_8616(call, summary)
 
     assert call.tags["ins_addr"] == summary.callsite_addr
+    assert structured_callsite_target_addr_8616(call) == summary.target_addr
     assert call.tags["block_addr"] == 0x4000
 
 
@@ -1281,6 +1283,27 @@ def test_callsite_summary_refuses_return_carrier_when_cfg_path_bypasses_producer
     summary = summarize_x86_16_callsite(function, 0x100F)
 
     assert summary.push_arg_sources == (None,)
+
+
+def test_callsite_summary_records_live_callee_saved_register_argument(monkeypatch):
+    """An exact PUSH DI remains representable when no earlier definition is local."""
+    reg_names = {1: "sp", 4: "di"}
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "push", [_Operand(reg=4, size=2)], reg_names=reg_names),
+            _Insn(0x1001, "call", [_Operand(imm=0x3000)], reg_names=reg_names, size=3),
+            _Insn(0x1004, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names=reg_names),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1001, 0x3000, 0x1004, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1001)
+
+    assert summary.push_arg_sources == (("reg", "di"),)
+    assert summary.push_arg_instruction_addrs == (0x1000,)
 
 
 @pytest.mark.parametrize(

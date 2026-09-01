@@ -4,18 +4,32 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBinaryOp,
+    CConstant,
     CExpressionStatement,
     CFunctionCall,
     CStatements,
+    CUnaryOp,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
+from angr_platforms.X86_16.analysis_helpers import InterruptCall
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.caller_return_use_contracts import CallsiteReturnUseKind8616
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.interrupt_contract import interrupt_core_addr_8616
+from angr_platforms.X86_16.lowering import unobserved_call_results as unobserved_module
+from angr_platforms.X86_16.lowering.callsite_prototype_declarations import (
+    CallsiteCResultContract8616,
+    CallsiteCResultKind8616,
+)
 from angr_platforms.X86_16.lowering.unobserved_call_results import (
     lower_unobserved_call_result_assignments_8616,
+)
+from angr_platforms.X86_16.semantics.software_interrupt_inputs import (
+    SoftwareInterruptInputArtifact8616,
+    SoftwareInterruptInputFact8616,
 )
 
 
@@ -27,13 +41,14 @@ def _call_result_codegen(
 ):
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=Arch86_16()),
+        cstyle_null_cmp=False,
         next_idx=lambda _name: 0,
         next_ident=lambda name: name,
         next_node_idx=lambda: 0,
     )
     call = CFunctionCall(
         "callee",
-        SimpleNamespace(addr=0x12000),
+        SimpleNamespace(addr=0x12000, prototype=None, prototype_libname=None),
         [],
         tags={"ins_addr": 0x10100},
         codegen=codegen,
@@ -104,6 +119,221 @@ def test_lowers_typed_unused_ax_assignment_at_void_exit() -> None:
         return_used=False,
         return_use_kind=None,
         return_register=None,
+    )
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is True
+    [statement] = root.statements
+    assert isinstance(statement, CExpressionStatement)
+    assert statement.expr is call
+
+
+def test_lowers_typed_clobbered_wide_projection_to_standalone_call() -> None:
+    """A generated high-word projection cannot retain a clobbered call result."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=False,
+        return_use_kind=CallsiteReturnUseKind8616.CLOBBERED,
+    )
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is True
+    [statement] = root.statements
+    assert isinstance(statement, CExpressionStatement)
+    assert statement.expr is call
+
+
+def test_keeps_used_wide_call_projection() -> None:
+    """A caller-observed projected result remains intact."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.VALUE,
+    )
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is False
+    assert root.statements == [assignment]
+
+
+def test_lowers_typed_void_projection_without_summary_identity() -> None:
+    """A cloned call may consume its explicit void contract after summary replay."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.VALUE,
+    )
+    call.callee_func.prototype = SimTypeFunction(
+        [],
+        SimTypeBottom(label="void"),
+    ).with_arch(codegen.project.arch)
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {}
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is True
+    [statement] = root.statements
+    assert isinstance(statement, CExpressionStatement)
+    assert statement.expr is call
+
+
+def test_lowers_declaration_typed_void_projection_without_summary_identity() -> None:
+    """Final declaration metadata survives cloned-call summary identity loss."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.VALUE,
+    )
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {}
+    codegen._inertia_callsite_c_result_contracts_8616 = {
+        0x10100: CallsiteCResultContract8616(
+            CallsiteCResultKind8616.VOID,
+            "void",
+        )
+    }
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is True
+    [statement] = root.statements
+    assert isinstance(statement, CExpressionStatement)
+    assert statement.expr is call
+
+
+def test_lowers_rebased_declaration_typed_void_projection() -> None:
+    """An active slice address resolves the final contract at its original address."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.VALUE,
+    )
+    call.tags["ins_addr"] = 0x100
+    codegen.project._inertia_original_linear_delta = 0x10000
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {}
+    codegen._inertia_callsite_c_result_contracts_8616 = {
+        0x10100: CallsiteCResultContract8616(
+            CallsiteCResultKind8616.VOID,
+            "void",
+        )
+    }
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is True
+    [statement] = root.statements
+    assert isinstance(statement, CExpressionStatement)
+    assert statement.expr is call
+
+
+def test_lowers_semantics_typed_void_interrupt_projection() -> None:
+    """An exact interrupt ABI fact with no result register preserves only the call."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.VALUE,
+    )
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {}
+    codegen._inertia_software_interrupt_input_artifact_8616 = (
+        SoftwareInterruptInputArtifact8616(
+            facts=(
+                SoftwareInterruptInputFact8616(
+                    callsite_addr=0x10100,
+                    target_addr=0x12000,
+                    vector=0x21,
+                    selector_value=0x09,
+                    argument_registers=("dx",),
+                    argument_values=(),
+                    result_register=None,
+                ),
+            ),
+        )
+    )
+
+    assert lower_unobserved_call_result_assignments_8616(codegen) is True
+    [statement] = root.statements
+    assert isinstance(statement, CExpressionStatement)
+    assert statement.expr is call
+
+
+def test_lowers_exact_binary_inventory_typed_void_interrupt_projection(
+    monkeypatch,
+) -> None:
+    """Exact binary callsite evidence types a raw interrupt-core call as void."""
+    codegen, root, call, assignment = _call_result_codegen(
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.VALUE,
+    )
+    call.callee_func = None
+    call.callee_target = CConstant(
+        interrupt_core_addr_8616(0x21),
+        SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment.rhs = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", call, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    function = SimpleNamespace(get_call_target=lambda _addr: interrupt_core_addr_8616(0x21))
+    codegen.cfunc.addr = 0x10000
+    codegen.project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda **_kwargs: function)
+    )
+    codegen._inertia_callsite_summaries = {}
+    monkeypatch.setattr(
+        unobserved_module,
+        "collect_interrupt_service_calls",
+        lambda _function: [InterruptCall(insn_addr=0x10100, vector=0x21, ah=0x09)],
     )
 
     assert lower_unobserved_call_result_assignments_8616(codegen) is True

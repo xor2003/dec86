@@ -45,7 +45,11 @@ from .c_ast_utils import (
     _structured_codegen_node_8616,
     _structured_slot_names_8616,
 )
-from .semantics.expression_analysis import describe_virtual_value_identity_8616
+from .lowering.physical_registers import physical_register_view_8616
+from .semantics.expression_analysis import (
+    VirtualValueIdentityKind8616,
+    describe_virtual_value_identity_8616,
+)
 from .structuring.indexed_stack_ranges import IndexedStackReadProof8616
 from .validation.status_flag_preservation import PackedStatusFlagPreservationEvidence8616
 from .validation_predicates import PredicateToken8616, invert_predicate_token_8616
@@ -415,7 +419,32 @@ def _register_storage_key_8616(
     node: object,
     segment_register_offsets: frozenset[int],
 ) -> DefUseStorageKey8616 | None:
-    """Return exact register SSA storage, or an explicit untrackable carrier."""
+    """Return exact C-variable or AIL-virtual register storage identity."""
+    if isinstance(node, CDirtyExpression):
+        view = physical_register_view_8616(node)
+        if view is None:
+            return None
+        identity = describe_virtual_value_identity_8616(node)
+        structured_identity = (
+            identity is not None
+            and identity.kind is VirtualValueIdentityKind8616.VARIABLE_ID
+        )
+        return DefUseStorageKey8616(
+            kind=(
+                DefUseStorageKind8616.SEGMENT_CARRIER
+                if view.reg_offset in segment_register_offsets
+                else DefUseStorageKind8616.REGISTER_CARRIER
+            ),
+            offset=view.reg_offset,
+            width=view.width,
+            region=0 if structured_identity else None,
+            ssa_id=(
+                f"{identity.kind.value}-{identity.value}"
+                if structured_identity and identity is not None
+                else ""
+            ),
+            definition_trackable=structured_identity,
+        )
     if not isinstance(node, CVariable):
         return None
     candidates = (node.unified_variable, node.variable)
@@ -613,12 +642,13 @@ def _value_read_keys_8616(
         reads.append(_DefUseValueRead8616(node=node, storage=key))
         if os.environ.get("INERTIA_DEBUG_DEF_USE") == "1":
             logging.getLogger(__name__).warning(
-                "def-use value-node storage=%s name=%s node_type=%s variable=%r tags=%r",
+                "def-use value-node storage=%s name=%s node_type=%s variable=%r dirty=%r tags=%r",
                 key.token(),
                 key.display_name,
                 type(node).__name__,
                 node.variable if isinstance(node, CVariable) else None,
-                node.tags if isinstance(node, CVariable) else None,
+                node.dirty if isinstance(node, CDirtyExpression) else None,
+                node.tags if isinstance(node, (CVariable, CDirtyExpression)) else None,
             )
     return tuple(reads)
 

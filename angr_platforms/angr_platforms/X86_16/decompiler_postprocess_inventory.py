@@ -128,6 +128,7 @@ _POSTPROCESS_SEMANTIC_MATERIALIZATION_PASS_NAMES_8616 = frozenset(
 )
 
 _POSTPROCESS_PASS_OWNER_8616 = {
+    "_materialize_ir_segmented_load_carriers_8616": "Types/Lowering IR segmented-load carrier owner",
     "_apply_typed_conditions_to_codegen_8616": "Step 8: move ConditionIR guard materialization to structuring",
     "_rewrite_decoded_jcc_conditions_8616": "Step 8: move decoded JCC guard materialization to structuring",
     "_rewrite_decoded_jcc_conditions_after_calls_8616": "Step 8: move decoded JCC guard materialization to structuring",

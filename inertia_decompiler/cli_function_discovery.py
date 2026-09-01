@@ -37,6 +37,7 @@ from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
     CallerReturnUseVerdict8616,
     caller_return_use_evidence_by_addr_8616,
+    caller_return_use_program_scope_8616,
     collect_caller_return_use_evidence_8616,
     record_caller_return_use_evidence_8616,
 )
@@ -3456,21 +3457,22 @@ def _recover_pre_entry_source_catalog_8616(
         failed_addrs=tuple(failed_addrs),
     )
     function_ranges = _pre_entry_source_function_ranges_8616(project, ordered_seeds)
-    for _function_cfg, function in recovered:
-        function_addr = _dynamic_attr(function, "addr", None)
-        if not isinstance(function_addr, int):
-            continue
-        caller_return_use = _collect_caller_return_use_for_entry_aliases_8616(
-            project,
-            _binary_padding_entry_aliases_8616(project, function_addr),
-            function_ranges,
-        )
-        if caller_return_use is not None:
-            _record_caller_return_use_evidence_8616(
+    with caller_return_use_program_scope_8616(project, function_ranges):
+        for _function_cfg, function in recovered:
+            function_addr = _dynamic_attr(function, "addr", None)
+            if not isinstance(function_addr, int):
+                continue
+            caller_return_use = _collect_caller_return_use_for_entry_aliases_8616(
                 project,
-                function_addr,
-                replace(caller_return_use, target_addr=function_addr),
+                _binary_padding_entry_aliases_8616(project, function_addr),
+                function_ranges,
             )
+            if caller_return_use is not None:
+                _record_caller_return_use_evidence_8616(
+                    project,
+                    function_addr,
+                    replace(caller_return_use, target_addr=function_addr),
+                )
     print(source_region_catalog_evidence_comment_8616(evidence))
     if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
         raise RuntimeError("source-region discovery classified entries but materialized none")

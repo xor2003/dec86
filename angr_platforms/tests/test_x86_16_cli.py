@@ -5762,6 +5762,61 @@ def test_coalesce_segmented_word_store_statements_accepts_stable_ds_segment_cons
     assert replacement.rhs is word_rhs
 
 
+def test_coalesce_segmented_word_store_statements_joins_indexed_runtime_ds_byte_pair(monkeypatch):
+    from angr_platforms.X86_16.ir.core import MemSpace
+    from angr_platforms.X86_16.widening import widening_rules
+
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
+    cfunc = SimpleNamespace(addr=0x10010)
+    codegen = SimpleNamespace(
+        cfunc=cfunc,
+        project=project,
+        next_ident=lambda name: f"{name}_0",
+        next_node_idx=lambda: 0,
+    )
+    segment = object()
+    low_offset = object()
+    high_offset = object()
+    low_lhs = structured_c.CFunctionCall("SEG_U8", None, [segment, low_offset], codegen=codegen)
+    high_lhs = structured_c.CFunctionCall("SEG_U8", None, [segment, high_offset], codegen=codegen)
+    low_rhs = structured_c.CConstant(0x400, SimTypeShort(False), codegen=codegen)
+    high_rhs = structured_c.CConstant(4, SimTypeChar(False), codegen=codegen)
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_lhs, low_rhs, codegen=codegen),
+            structured_c.CAssignment(high_lhs, high_rhs, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(
+        widening_rules,
+        "runtime_segment_access_offset_expr_8616",
+        lambda _project, _codegen, access, *, expected_space, width, context: (
+            low_offset
+            if expected_space is MemSpace.DS and width == 1 and access is low_lhs
+            else high_offset
+            if expected_space is MemSpace.DS and width == 1 and access is high_lhs
+            else None
+        ),
+    )
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda low, high, _project: (low, high) == (low_offset, high_offset))
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    assert len(root.statements) == 1
+    replacement = root.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert isinstance(replacement.lhs, structured_c.CFunctionCall)
+    assert replacement.lhs.callee_target == "SEG_U16"
+    assert tuple(replacement.lhs.args or ()) == (segment, low_offset)
+    assert isinstance(replacement.rhs, structured_c.CConstant)
+    assert replacement.rhs.value == 0x400
+
+
 def test_coalesce_segmented_word_store_statements_refuses_over_associated_ds_pair(monkeypatch):
     project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
     cfunc = SimpleNamespace(
@@ -9914,7 +9969,8 @@ def test_main_full_pure_binary_uses_parallel_clean_process_lane_by_default(
     ]
     seen = []
     clean_process_calls = []
-    parallel_gate = threading.Barrier(2)
+    later_artifact_written = threading.Event()
+    output_c_dir = tmp_path / "generated"
 
     monkeypatch.setattr(cli_core, "_build_project", lambda *_args, **_kwargs: project)
     monkeypatch.setattr(cli_core, "_load_lst_metadata", lambda *_args, **_kwargs: None)
@@ -9938,7 +9994,8 @@ def test_main_full_pure_binary_uses_parallel_clean_process_lane_by_default(
                 item.recovery_addr,
             )
         )
-        parallel_gate.wait(timeout=2)
+        if item.function.addr == 0x10010:
+            assert later_artifact_written.wait(timeout=2), "later completed artifact was not persisted promptly"
         return cli_core.FunctionWorkResult(
             index=item.index,
             status="ok",
@@ -9950,8 +10007,17 @@ def test_main_full_pure_binary_uses_parallel_clean_process_lane_by_default(
         )
 
     monkeypatch.setattr(cli_core, "_run_serial_clean_process_work_item_8616", _fake_clean_process)
+    original_write = cli_core.write_generated_function_c
 
-    rc = cli_core.main([str(binary), "--timeout", "2"])
+    def _record_artifact(output_dir, *, address, name, payload):
+        destination = original_write(output_dir, address=address, name=name, payload=payload)
+        if address == 0x10020:
+            later_artifact_written.set()
+        return destination
+
+    monkeypatch.setattr(cli_core, "write_generated_function_c", _record_artifact)
+
+    rc = cli_core.main([str(binary), "--timeout", "2", "--output-c-dir", str(output_c_dir)])
     captured = capsys.readouterr()
     out = captured.out
 
@@ -9966,6 +10032,9 @@ def test_main_full_pure_binary_uses_parallel_clean_process_lane_by_default(
     ]
     assert "/* parallel function decompilation: 2 clean processes, one function per process */" in out
     assert "[dbg] clean parallel function worker: start 0x10010 sub_10010" in captured.err
+    assert (output_c_dir / "00010010-sub_10010.c").is_file()
+    assert (output_c_dir / "00010020-sub_10020.c").is_file()
+    assert (output_c_dir / "translation-unit.c").is_file()
 
 
 def test_prepare_ranked_binary_preview_items_uses_fork_lane_on_main_thread(monkeypatch):

@@ -1274,12 +1274,23 @@ def test_seqnode_switch_replay_finalizer_sequences_replay_and_guarded_dce(monkey
         calls.append(("condition", _project, _codegen))
         return True
 
+    def _selector(_codegen):
+        calls.append(("selector", _codegen))
+        return True
+
+    def _word_projection(_codegen):
+        calls.append(("word_projection", _codegen))
+        return True
+
     def _dce(message):
         calls.append(("dce", message))
         return SimpleNamespace(changed=True)
 
     monkeypatch.setattr(stage, "replay_seqnode_switch_segment_lowering_after_replacement_8616", _segment)
     monkeypatch.setattr(stage, "replay_seqnode_switch_condition_materialization_after_replacement_8616", _condition)
+    monkeypatch.setattr(stage, "seqnode_switch_replacement_changed_for_codegen_8616", lambda *_args: True)
+    monkeypatch.setattr(stage, "materialize_word_projection_recompositions_8616", _word_projection)
+    monkeypatch.setattr(stage, "replay_call_return_switch_selectors_8616", _selector)
 
     result = stage.finalize_seqnode_switch_replay_after_replacement_8616(
         project,
@@ -1298,6 +1309,9 @@ def test_seqnode_switch_replay_finalizer_sequences_replay_and_guarded_dce(monkey
     assert result.condition_dce_changed is True
     assert result.post_condition_segment_replay_changed is True
     assert result.post_condition_segment_dce_changed is True
+    assert result.word_projection_replay_changed is True
+    assert result.word_projection_dce_changed is True
+    assert result.selector_replay_changed is True
     assert calls == [
         ("segment", project, codegen, synthetic_globals, cod_metadata),
         ("dce", "SeqNode switch segment replay DCE removed call expressions"),
@@ -1307,6 +1321,9 @@ def test_seqnode_switch_replay_finalizer_sequences_replay_and_guarded_dce(monkey
         ("dce", "SeqNode switch condition replay DCE removed call expressions"),
         ("segment", project, codegen, synthetic_globals, cod_metadata),
         ("dce", "SeqNode switch post-condition segment replay DCE removed call expressions"),
+        ("word_projection", codegen),
+        ("dce", "SeqNode switch Widening replay DCE removed call expressions"),
+        ("selector", codegen),
     ]
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
     assert codegen._inertia_force_codegen_regeneration_8616 is True
@@ -1319,6 +1336,9 @@ def test_seqnode_switch_replay_finalizer_sequences_replay_and_guarded_dce(monkey
         "condition_dce_changed": True,
         "post_condition_segment_replay_changed": True,
         "post_condition_segment_dce_changed": True,
+        "word_projection_replay_changed": True,
+        "word_projection_dce_changed": True,
+        "selector_replay_changed": True,
         "changed": True,
         "owner": "structuring.stage",
     }
@@ -1343,10 +1363,14 @@ def test_seqnode_switch_replay_finalizer_leaves_refresh_clear_when_unchanged(mon
 
     monkeypatch.setattr(stage, "replay_seqnode_switch_segment_lowering_after_replacement_8616", _segment)
     monkeypatch.setattr(stage, "replay_seqnode_switch_condition_materialization_after_replacement_8616", _condition)
+    monkeypatch.setattr(stage, "seqnode_switch_replacement_changed_for_codegen_8616", lambda *_args: False)
 
     result = stage.finalize_seqnode_switch_replay_after_replacement_8616(project, codegen, object(), _dce)
 
     assert result.changed is False
+    assert result.word_projection_replay_changed is False
+    assert result.word_projection_dce_changed is False
+    assert result.selector_replay_changed is False
     assert calls == ["segment", "condition"]
     assert not hasattr(codegen, "_inertia_codegen_decl_refresh_required_8616")
     assert not hasattr(codegen, "_inertia_force_codegen_regeneration_8616")
@@ -2173,6 +2197,11 @@ def test_structuring_lowering_replay_orders_call_and_pointer_consumers_before_co
         consumed_push_replay,
     )
     monkeypatch.setattr(stage, "materialize_software_interrupt_calls_8616", no_op_type_consumer)
+    monkeypatch.setattr(
+        stage,
+        "materialize_software_interrupt_status_outputs_8616",
+        no_op_type_consumer,
+    )
     monkeypatch.setattr(
         stage,
         "prune_unused_structured_insert_intrinsics_8616",

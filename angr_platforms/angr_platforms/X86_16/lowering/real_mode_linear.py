@@ -117,6 +117,7 @@ from ..semantics.call_contracts import (
 from ..semantics.carry_borrow_contracts import CarryBorrowKind8616
 from ..structured_tags import copy_structured_tags_8616
 from ..widening.stack_widening import prove_adjacent_storage_slices
+from .balanced_memory_stack_restore import rebind_balanced_memory_stack_restores_8616
 from .c_runtime_header import LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616
 from .call_argument_carrier_liveness import (
     CallArgumentCarrierLivenessVerdict8616,
@@ -131,6 +132,7 @@ from .callee_saved_frame import (
     CalleeSavedFrameCarrierKind8616,
     CalleeSavedFrameInstructionRole8616,
     CalleeSavedFramePair8616,
+    CalleeSavedFramePairSemantics8616,
     CalleeSavedFramePruneFact8616,
     CalleeSavedFramePruneRecord8616,
     callee_saved_frame_pairs_8616,
@@ -139,6 +141,10 @@ from .condition_stack_operands import materialize_typed_condition_stack_operand_
 from .consumed_call_push_evidence import (
     ConsumedCallPushEvidenceStatus8616,
     normalize_consumed_call_push_evidence_8616,
+)
+from .control_stack_escape import (
+    classify_control_stack_escape_8616,
+    materialize_control_stack_escape_8616,
 )
 from .direct_stack_replay import (
     DirectStackMaterializationResult8616,
@@ -3711,11 +3717,24 @@ def _callee_saved_register_names_from_frame_evidence_8616(
     cached = cache.get(cache_key)
     if isinstance(cached, frozenset):
         return cached
-    insns = _decode_function_insns_8616(
+    decoded_insns = _decode_function_insns_8616(
         project,
         function_addr,
         function=function,
     )
+    normalized_insns: list[StructuredAstValue] = []
+    seen_instruction_keys: set[tuple[int, int]] = set()
+    for insn in decoded_insns:
+        address = getattr(insn, "address", None)
+        instruction_id = getattr(insn, "id", None)
+        if not isinstance(address, int) or not isinstance(instruction_id, int):
+            continue
+        key = (address, instruction_id)
+        if key in seen_instruction_keys:
+            continue
+        seen_instruction_keys.add(key)
+        normalized_insns.append(insn)
+    insns = tuple(normalized_insns)
     if debug:
         log.warning(
             "[callee-save-prune] decoded func=%#x count=%d first=%r last=%r",
@@ -3746,25 +3765,40 @@ def _callee_saved_register_names_from_frame_evidence_8616(
     if ret_index is None:
         return frozenset()
     restored: list[str] = []
-    scan = ret_index - 1
-    while scan >= 0:
-        insn = insns[scan]
+    registers_written_after: set[str] = set()
+    canonical_register_names = {
+        "al": "ax",
+        "ah": "ax",
+        "bl": "bx",
+        "bh": "bx",
+        "cl": "cx",
+        "ch": "cx",
+        "dl": "dx",
+        "dh": "dx",
+    }
+    for insn in reversed(insns[:ret_index]):
         insn_id = getattr(insn, "id", None)
         if insn_id == X86_INS_POP:
             reg_id = _op_reg_id_8616(insn, 0)
-            if reg_id == X86_REG_BP:
-                scan -= 1
-                continue
-            if isinstance(reg_id, int):
+            if isinstance(reg_id, int) and reg_id != X86_REG_BP:
                 reg_name = insn.reg_name(reg_id)
-                if reg_name in preservable:
-                    restored.append(reg_name)
-                    scan -= 1
-                    continue
-        if _is_mov_sp_bp_8616(insn):
-            scan -= 1
+                canonical_name = canonical_register_names.get(reg_name, reg_name)
+                if canonical_name in preservable and canonical_name not in registers_written_after:
+                    restored.append(canonical_name)
+                if canonical_name in preservable:
+                    registers_written_after.add(canonical_name)
             continue
-        break
+        try:
+            _read_registers, written_register_ids = insn.regs_access()
+        except (AttributeError, TypeError):
+            written_register_ids = ()
+        for written_register_id in written_register_ids:
+            if not isinstance(written_register_id, int):
+                continue
+            written_name = insn.reg_name(written_register_id)
+            canonical_name = canonical_register_names.get(written_name, written_name)
+            if canonical_name in preservable:
+                registers_written_after.add(canonical_name)
     if debug:
         log.warning("[callee-save-prune] decoded restores=%r ret_index=%r", tuple(restored), ret_index)
     if not restored:
@@ -3814,18 +3848,36 @@ def _remove_callee_saved_stack_spills_8616(
         function_addr,
         function=function,
     )
-    if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-        log.warning("[callee-save-prune] func=%#x saved_regs=%r", function_addr, sorted(saved_regs))
-    if not saved_regs:
-        return False
-    frame_pairs = callee_saved_frame_pairs_8616(
-        _decode_function_insns_8616(
-            project,
-            function_addr,
-            function=function,
-        ),
-        saved_regs,
+    decoded_insns = _decode_function_insns_8616(
+        project,
+        function_addr,
+        function=function,
     )
+    preservable = frozenset({"ax", "bx", "cx", "dx", "si", "di"})
+    pushed: set[str] = set()
+    popped: set[str] = set()
+    for insn in decoded_insns:
+        instruction_id = getattr(insn, "id", None)
+        if instruction_id not in {X86_INS_PUSH, X86_INS_POP}:
+            continue
+        reg_id = _op_reg_id_8616(insn, 0)
+        if not isinstance(reg_id, int):
+            continue
+        register_name = insn.reg_name(reg_id)
+        if register_name not in preservable:
+            continue
+        (pushed if instruction_id == X86_INS_PUSH else popped).add(register_name)
+    round_trip_regs = frozenset(pushed & popped)
+    if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+        log.warning(
+            "[callee-save-prune] func=%#x saved_regs=%r round_trip_regs=%r",
+            function_addr,
+            sorted(saved_regs),
+            sorted(round_trip_regs),
+        )
+    if not round_trip_regs:
+        return False
+    frame_pairs = callee_saved_frame_pairs_8616(decoded_insns, round_trip_regs)
     frame_instruction_roles: dict[
         int,
         tuple[CalleeSavedFramePair8616, CalleeSavedFrameInstructionRole8616],
@@ -3912,6 +3964,11 @@ def _remove_callee_saved_stack_spills_8616(
         frame_owner = frame_instruction_roles.get(ins_addr)
         if frame_owner is not None:
             pair, role = frame_owner
+            pair_semantics = (
+                CalleeSavedFramePairSemantics8616.PRESERVED
+                if pair.register_name in saved_regs
+                else CalleeSavedFramePairSemantics8616.RESTORED_BEFORE_UPDATE
+            )
             carrier_kind, displacement, access_width = carrier_storage(stmt, pair, role)
             stats["raw_fact_count"] = int(stats.get("raw_fact_count", 0) or 0) + 1
             stats["normalized_fact_count"] = int(stats.get("normalized_fact_count", 0) or 0) + 1
@@ -3929,6 +3986,7 @@ def _remove_callee_saved_stack_spills_8616(
                     carrier_kind=carrier_kind,
                     stack_displacement=displacement,
                     access_width=access_width,
+                    pair_semantics=pair_semantics,
                 )
             )
             return True
@@ -3987,6 +4045,27 @@ def prune_callee_saved_stack_spills_8616(
         project,
         function=function,
     )
+
+
+def materialize_proven_control_stack_escape_8616(
+    codegen: StructuredCodegenValue,
+    project: AngrProjectValue,
+    *,
+    function: StructuredAstValue | None = None,
+) -> bool:
+    """Materialize an exact entry-POP/terminal-RET non-local escape."""
+    function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    if not isinstance(function_addr, int):
+        return False
+    fact = classify_control_stack_escape_8616(
+        _decode_function_insns_8616(
+            project,
+            function_addr,
+            function=function,
+        ),
+        function_addr,
+    )
+    return bool(fact is not None and materialize_control_stack_escape_8616(codegen, fact))
 
 
 def match_stable_ds_es_linear_global_address_8616(
@@ -4239,6 +4318,8 @@ def lower_stable_ds_es_linear_global_dereferences_8616(
         else:
             with contextlib.suppress(Exception):
                 delattr(codegen, "_inertia_active_stack_base_bp_bias_8616")
+    if materialize_proven_control_stack_escape_8616(codegen, project):
+        changed = True
     if prune_callee_saved_stack_spills_8616(codegen, project):
         changed = True
     if _materialize_return_register_assignments_8616(codegen, project):
@@ -11632,7 +11713,12 @@ def prune_call_return_frame_stack_assignments_8616(
         materialized=materialized_count,
         failures=result.failure_count,
     )
-    return bool(materialized_count > 0)
+    restore_changed = rebind_balanced_memory_stack_restores_8616(
+        codegen,
+        function,
+        project=project,
+    )
+    return bool(materialized_count > 0 or restore_changed)
 
 
 def prune_frame_prologue_stack_assignments_8616(

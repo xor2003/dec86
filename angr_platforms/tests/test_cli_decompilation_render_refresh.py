@@ -593,6 +593,7 @@ def test_regenerate_replays_indexed_segmented_globals_after_regeneration(monkeyp
     class _FakeCFunc:
         def __init__(self):
             self.text = stale_text
+            self.statements = object()
 
         def c_repr(self):
             return self.text

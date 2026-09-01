@@ -67,15 +67,20 @@ def _constant_is_8616(node: object, expected: int) -> bool:
 
 
 def _masked_byte_source_8616(node: object) -> object | None:
-    """Return the source of one exact low-byte mask."""
-    node = _unwrap_casts_8616(node)
-    if not isinstance(node, structured_c.CBinaryOp) or node.op != "And":
-        return None
-    if _constant_is_8616(node.rhs, 0xFF):
-        return _unwrap_casts_8616(node.lhs)
-    if _constant_is_8616(node.lhs, 0xFF):
-        return _unwrap_casts_8616(node.rhs)
-    return None
+    """Return the source beneath one or more exact low-byte masks."""
+    current = _unwrap_casts_8616(node)
+    masked = False
+    while isinstance(current, structured_c.CBinaryOp) and current.op == "And":
+        if _constant_is_8616(current.rhs, 0xFF):
+            current = _unwrap_casts_8616(current.lhs)
+            masked = True
+            continue
+        if _constant_is_8616(current.lhs, 0xFF):
+            current = _unwrap_casts_8616(current.rhs)
+            masked = True
+            continue
+        break
+    return current if masked else None
 
 
 def _high_byte_source_8616(node: object) -> object | None:

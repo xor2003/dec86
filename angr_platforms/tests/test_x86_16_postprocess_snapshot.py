@@ -642,6 +642,16 @@ def test_discard_cleanup_salvage_runs_virtual_cleanup_when_dce_is_stable(monkeyp
         "_inline_single_assignment_virtual_expressions_8616",
         lambda _codegen: calls.append("virtual-cleanup") or True,
     )
+    monkeypatch.setattr(
+        post_stage,
+        "normalize_multi_statement_braces_8616",
+        lambda _codegen: calls.append("braces") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "apply_affine_compound_assignment_identity_8616",
+        lambda _codegen: calls.append("affine") or True,
+    )
     monkeypatch.setattr(post_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regenerate"))
     monkeypatch.setattr(
         post_stage,
@@ -660,7 +670,7 @@ def test_discard_cleanup_salvage_runs_virtual_cleanup_when_dce_is_stable(monkeyp
     )
 
     assert changed is True
-    assert calls == ["virtual-cleanup", "regenerate", "persist"]
+    assert calls == ["virtual-cleanup", "braces", "affine", "regenerate", "persist"]
     assert codegen._inertia_dce_salvaged_after_discard_8616 is True
 
 

@@ -1,8 +1,9 @@
-"""Rebind stack-coordinate projections after C AST snapshot restoration.
+"""Rebind and scope stack-coordinate projections across Lowering replays.
 
 Layer: Types/Lowering.
 Responsibility: reconcile the machine-BP/entry-SP registry with live angr
-``CVariable`` objects after validation rollback deep-copies the C AST.
+``CVariable`` objects after validation rollback deep-copies the C AST, and
+refresh only the coordinate ranges owned by a partial Lowering producer.
 Consumes only typed coordinate projections and structured AST identity. It
 does not infer new stack storage or inspect rendered text.
 Consumes alias, widening, and typed facts.
@@ -124,6 +125,22 @@ def _retain_projection_8616(
         )
 
 
+def reset_local_stack_coordinate_projections_8616(codegen: object) -> None:
+    """Drop local projections while preserving nonlocal coordinate owners.
+
+    Stack-memory SSA materializes only negative-BP local ranges. Its replay
+    must not erase positive-BP argument projections owned by prototype and
+    argument lowering.
+    """
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    retained = tuple(
+        projection for projection in registry.projections if projection.bp_offset >= 0
+    )
+    reset_stack_variable_coordinate_registry_8616(codegen)
+    for projection in retained:
+        _retain_projection_8616(codegen, projection)
+
+
 def rebind_restored_stack_coordinate_registry_8616(
     codegen: object,
     root: object,
@@ -189,4 +206,5 @@ __all__ = [
     "StackCoordinateRebindRefusal8616",
     "StackCoordinateRebindReport8616",
     "rebind_restored_stack_coordinate_registry_8616",
+    "reset_local_stack_coordinate_projections_8616",
 ]

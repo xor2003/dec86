@@ -137,6 +137,7 @@ class SwitchLoopExitReturnRepairDecision8616(Enum):
     REFUSED_NO_CFUNC = "refused_no_cfunc"
     REFUSED_NO_STATEMENTS = "refused_no_statements"
     REFUSED_NO_MATCHING_LOOP = "refused_no_matching_loop"
+    REFUSED_AMBIGUOUS_LOOP = "refused_ambiguous_loop"
     REFUSED_LOOP_HAS_BREAK = "refused_loop_has_break"
     REFUSED_NO_SWITCH = "refused_no_switch"
     REFUSED_CASE_ALREADY_PRESENT = "refused_case_already_present"
@@ -368,6 +369,7 @@ class SwitchLoopExitReturnRepairStats8616:
     refused_no_cfunc: int = 0
     refused_no_statements: int = 0
     refused_no_matching_loop: int = 0
+    refused_ambiguous_loop: int = 0
     refused_loop_has_break: int = 0
     refused_no_switch: int = 0
     refused_case_already_present: int = 0
@@ -386,6 +388,8 @@ class SwitchLoopExitReturnRepairStats8616:
             self.refused_no_statements += 1
         elif decision is SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_MATCHING_LOOP:
             self.refused_no_matching_loop += 1
+        elif decision is SwitchLoopExitReturnRepairDecision8616.REFUSED_AMBIGUOUS_LOOP:
+            self.refused_ambiguous_loop += 1
         elif decision is SwitchLoopExitReturnRepairDecision8616.REFUSED_LOOP_HAS_BREAK:
             self.refused_loop_has_break += 1
         elif decision is SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_SWITCH:
@@ -965,7 +969,7 @@ def repair_conditional_continue_guards_from_evidence_8616(project: object, codeg
 
 
 def repair_switch_loop_exit_returns_from_evidence_8616(project: object, codegen: object) -> bool:
-    """Add proven switch exit-return cases to unconditional loop bodies."""
+    """Add proven switch exit-return cases to one uniquely owned loop body."""
     stats = SwitchLoopExitReturnRepairStats8616()
     cfunc = _codegen_cfunc_8616(codegen)
     if cfunc is None:
@@ -987,8 +991,14 @@ def repair_switch_loop_exit_returns_from_evidence_8616(project: object, codegen:
         stats.record(SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_EVIDENCE)
         _store_switch_loop_exit_return_stats_8616(codegen, stats)
         return False
-    if not _has_switch_loop_exit_return_candidate_8616(roots):
-        stats.record(SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_MATCHING_LOOP)
+    candidate_count = _switch_loop_exit_return_candidate_count_8616(roots)
+    if candidate_count != 1:
+        decision = (
+            SwitchLoopExitReturnRepairDecision8616.REFUSED_AMBIGUOUS_LOOP
+            if candidate_count > 1
+            else SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_MATCHING_LOOP
+        )
+        stats.record(decision)
         _store_switch_loop_exit_return_stats_8616(codegen, stats)
         return False
     changed = False
@@ -1002,17 +1012,18 @@ def repair_switch_loop_exit_returns_from_evidence_8616(project: object, codegen:
     return changed
 
 
-def _has_switch_loop_exit_return_candidate_8616(roots: tuple[object, ...]) -> bool:
-    """Return true when the C AST has a switch-in-unconditional-loop candidate."""
+def _switch_loop_exit_return_candidate_count_8616(roots: tuple[object, ...]) -> int:
+    """Count unique loop bodies that could own one proven switch exit."""
+    candidate_ids: set[int] = set()
     for root in roots:
         for node in _iter_node_and_children_8616(root):
             loop = _statement_as_single_wrapped_while_loop_8616(node)
-            if loop is None or not _is_const_true_8616(getattr(loop, "condition", None)):
+            if loop is None:
                 continue
             body = getattr(loop, "body", None)
             if any(isinstance(child, CSwitchCase) for child in _iter_node_and_children_8616(body)):
-                return True
-    return False
+                candidate_ids.add(id(loop))
+    return len(candidate_ids)
 
 
 def repair_pretest_loop_break_guards_from_evidence_8616(project: object, codegen: object) -> bool:
@@ -1769,13 +1780,14 @@ def _store_switch_loop_exit_return_stats_8616(
     codegen: object,
     stats: SwitchLoopExitReturnRepairStats8616,
 ) -> None:
+    """Publish closed switch-exit evidence counters on the codegen boundary."""
     if codegen is not None:
         cast(Any, codegen)._inertia_structuring_switch_loop_exit_return_stats_8616 = stats
     if os.environ.get("INERTIA_DEBUG_SWITCH_LOOP_EXIT_RETURN_REPAIR"):
         log.warning(
             "[switch-loop-exit-return-repair] raw=%d normalized=%d classified=%d materialized=%d failures=%d "
-            "pruned=%d no_evidence=%d no_cfunc=%d no_statements=%d no_loop=%d has_break=%d no_switch=%d "
-            "case_present=%d",
+            "pruned=%d no_evidence=%d no_cfunc=%d no_statements=%d no_loop=%d ambiguous_loop=%d "
+            "has_break=%d no_switch=%d case_present=%d",
             stats.raw_fact_count,
             stats.normalized_fact_count,
             stats.classified_fact_count,
@@ -1786,6 +1798,7 @@ def _store_switch_loop_exit_return_stats_8616(
             stats.refused_no_cfunc,
             stats.refused_no_statements,
             stats.refused_no_matching_loop,
+            stats.refused_ambiguous_loop,
             stats.refused_loop_has_break,
             stats.refused_no_switch,
             stats.refused_case_already_present,
@@ -1912,7 +1925,7 @@ def _repair_switch_loop_exit_return_in_statement_list_8616(
         return False
     for index, statement in enumerate(tuple(statements)):
         loop = _statement_as_single_wrapped_while_loop_8616(statement)
-        if loop is None or not _is_const_true_8616(getattr(loop, "condition", None)):
+        if loop is None:
             changed = _repair_switch_loop_exit_return_in_statement_list_8616(statement, evidence, stats, codegen) or changed
             continue
         decision = _repair_one_switch_loop_exit_return_8616(loop, statements, index, evidence, stats, codegen)
@@ -1940,10 +1953,11 @@ def _repair_one_switch_loop_exit_return_8616(
     switch = _first_switch_in_node_8616(body)
     if switch is None:
         return SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_SWITCH
+    unconditional_loop = _is_const_true_8616(getattr(loop, "condition", None))
     existing = _switch_case_values_8616(switch)
     missing = [item for item in evidence if item.case_value not in existing]
     if not missing:
-        pruned = _prune_trailing_returns_after_loop_8616(statements, loop_index)
+        pruned = _prune_trailing_returns_after_loop_8616(statements, loop_index) if unconditional_loop else 0
         if pruned > 0:
             stats.trailing_unreachable_pruned_count += pruned
             stats.record(SwitchLoopExitReturnRepairDecision8616.MATERIALIZED)
@@ -1957,7 +1971,8 @@ def _repair_one_switch_loop_exit_return_8616(
         )
         _append_switch_case_8616(switch, item.case_value, return_body)
         stats.record(SwitchLoopExitReturnRepairDecision8616.MATERIALIZED)
-    stats.trailing_unreachable_pruned_count += _prune_trailing_returns_after_loop_8616(statements, loop_index)
+    if unconditional_loop:
+        stats.trailing_unreachable_pruned_count += _prune_trailing_returns_after_loop_8616(statements, loop_index)
     return SwitchLoopExitReturnRepairDecision8616.MATERIALIZED
 
 

@@ -34,6 +34,15 @@ def test_plan_x86_16_exact_slice_rebases_high_linear_addresses() -> None:
     assert plan.slice_end == SAFE_X86_16_SLICE_BASE + (0x10A61 - 0x109E8)
 
 
+def test_plan_x86_16_exact_slice_rebases_semantic_entry_after_padding() -> None:
+    plan = plan_x86_16_exact_slice(0x102CC, 0x10491, original_entry=0x102E0)
+
+    assert plan.original_semantic_entry == 0x102E0
+    assert plan.slice_start == SAFE_X86_16_SLICE_BASE
+    assert plan.slice_semantic_entry == SAFE_X86_16_SLICE_BASE + 0x14
+    assert plan.slice_end == SAFE_X86_16_SLICE_BASE + (0x10491 - 0x102CC)
+
+
 def test_function_original_addr_prefers_marked_original() -> None:
     function = SimpleNamespace(addr=0x1000, info={})
     mark_function_original_addr(function, 0x109E8)

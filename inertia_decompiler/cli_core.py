@@ -128,7 +128,10 @@ from inertia_decompiler.function_worker_policy import (
     requires_isolated_function_decompilation,
     select_function_worker_policy_8616,
 )
-from inertia_decompiler.generated_c_artifacts import write_generated_function_c
+from inertia_decompiler.generated_c_artifacts import (
+    write_generated_function_c,
+    write_generated_translation_unit_c,
+)
 from inertia_decompiler.generated_c_function_extraction import relabel_generated_function_definition
 from inertia_decompiler.library_function_classifier import (
     filter_code_labels_for_library_policy,
@@ -6446,7 +6449,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                             c_header="\n/* == c (sidecar slice fallback) == */",
                         )
                         return 0
-                except Exception:
+                except (_AnalysisTimeout, Exception):
                     direct_sidecar_verdict = "error"
             _early_slice = _try_decompile_sidecar_slice(
                 project,
@@ -7624,6 +7627,12 @@ def _finish_batch_cli_8616(
     )
     if batch_c_output.source:
         print(batch_c_output.source, end="" if batch_c_output.source.endswith("\n") else "\n")
+        if args.output_c_dir is not None:
+            write_generated_translation_unit_c(
+                args.output_c_dir,
+                payload=batch_c_output.source,
+                complete=not batch_c_output.failed,
+            )
     if batch_c_output.failed:
         print(f"generated C translation-unit export failed: {batch_c_output.detail}", file=sys.stderr)
     attach_segment_program_layout_8616(
@@ -8664,48 +8673,69 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         }
         executor = DaemonThreadPoolExecutor(max_workers=workers, thread_name_prefix="func-clean")
         try:
-            future_by_index = {
-                item.index: executor.submit(
+            item_by_future = {
+                executor.submit(
                     _run_serial_clean_process_work_item_8616,
                     batch_context,
                     item,
                     timeout=timeout_by_index[item.index],
-                )
+                ): item
                 for item in prioritize_clean_function_work_8616(
                     function_tasks,
                     function_complexity=_function_complexity,
                 )
             }
-            for item in function_tasks:
-                future = future_by_index.get(item.index)
-                if future is None:
-                    continue
-                function = cast(_AngrFunction, item.function)
-                function_timeout = timeout_by_index[item.index]
-                worker_debug = (
-                    f"[dbg] clean parallel function worker: start "
-                    f"{_function_work_item_recovery_addr_8616(item):#x} {function.name} "
-                    f"requested_timeout={function_timeout}s "
-                    f"hard_timeout={_serial_clean_worker_outer_timeout_8616(function_timeout)}s\n"
-                )
-                try:
-                    result = future.result()
-                except Exception as ex:
-                    result = FunctionWorkResult(
-                        index=item.index,
-                        status="error",
-                        payload=f"Clean parallel worker failed: {_describe_exception(ex)}",
-                        debug_output=worker_debug,
-                        function=item.function,
-                        function_cfg=item.function_cfg,
-                        elapsed=float(function_timeout),
+            pending = set(item_by_future)
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in sorted(done, key=lambda candidate: item_by_future[candidate].index):
+                    item = item_by_future[future]
+                    function = cast(_AngrFunction, item.function)
+                    function_timeout = timeout_by_index[item.index]
+                    worker_debug = (
+                        f"[dbg] clean parallel function worker: start "
+                        f"{_function_work_item_recovery_addr_8616(item):#x} {function.name} "
+                        f"requested_timeout={function_timeout}s "
+                        f"hard_timeout={_serial_clean_worker_outer_timeout_8616(function_timeout)}s\n"
                     )
-                else:
-                    result = replace(
+                    try:
+                        result = future.result()
+                    except Exception as ex:
+                        result = FunctionWorkResult(
+                            index=item.index,
+                            status="error",
+                            payload=f"Clean parallel worker failed: {_describe_exception(ex)}",
+                            debug_output=worker_debug,
+                            function=item.function,
+                            function_cfg=item.function_cfg,
+                            elapsed=float(function_timeout),
+                        )
+                    else:
+                        result = replace(
+                            result,
+                            debug_output=worker_debug + result.debug_output,
+                        )
+                    result_map[item.index] = result
+                    d, f = _emit_function_result(
+                        item,
                         result,
-                        debug_output=worker_debug + result.debug_output,
+                        project=project,
+                        args=args,
+                        lst_metadata=lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        precise_sidecar_regions=precise_sidecar_regions,
+                        allow_heavy_fallbacks=allow_heavy_fallbacks,
+                        interactive_stdout=interactive_stdout,
+                        use_serial_fork_per_function=use_serial_fork_per_function,
+                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                        result_state_by_index=result_map,
+                        timeout_was_explicit=timeout_was_explicit,
                     )
-                result_map[item.index] = result
+                    decompiled += d
+                    failed += f
+                    emitted_indexes.add(item.index)
+                    pending.discard(future)
         finally:
             executor.shutdown(wait=True, cancel_futures=False)
     else:

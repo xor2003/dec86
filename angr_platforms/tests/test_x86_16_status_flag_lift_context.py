@@ -15,6 +15,7 @@ from angr_platforms.X86_16.ir.status_flag_lift_context import (
     StatusFlagLiftSession8616,
     active_status_flag_lift_artifact_8616,
     active_status_flag_lift_context_8616,
+    published_status_flag_lift_artifact_8616,
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -24,6 +25,9 @@ from angr_platforms.X86_16.semantics.status_flag_contracts import (
     SHIFT_COUNT_ONE_STATUS_FLAG_WRITES_8616,
     STATUS_FLAGS_8616,
     StatusFlag8616,
+)
+from angr_platforms.X86_16.validation.status_flag_preservation import (
+    packed_status_flag_preservation_evidence_8616,
 )
 from pyvex.expr import Binop
 from pyvex.stmt import Put, WrTmp
@@ -138,6 +142,15 @@ def test_cfg_context_emits_only_the_status_bit_live_at_successor_condition() -> 
         assert artifact.packed_preservation_addresses == frozenset({0x1000, 0x1005})
 
     assert session.stats.complete
+    published = published_status_flag_lift_artifact_8616(function)
+    assert isinstance(published, StatusFlagLiftArtifact8616)
+    assert published.packed_preservation_addresses == frozenset({0x1000, 0x1005})
+    evidence = packed_status_flag_preservation_evidence_8616(
+        project,
+        SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr)),
+    )
+    assert evidence is not None
+    assert evidence.covers_instruction(0x1000)
 
 
 @pytest.mark.parametrize("opcode", ("d1e0", "d1e8", "d1f8"))

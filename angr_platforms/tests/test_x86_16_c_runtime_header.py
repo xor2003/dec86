@@ -97,6 +97,21 @@ def test_x86_16_c_runtime_header_declares_mouse_position_interrupt_inputs() -> N
     ]
 
 
+def test_x86_16_c_runtime_header_keeps_raw_and_service_interrupt_declarations() -> None:
+    declarations = interrupt_helper_declarations_8616(
+        [
+            InterruptCall(insn_addr=0x1010, vector=0x16),
+            InterruptCall(insn_addr=0x1020, vector=0x21, ah=0x09),
+        ],
+        "modern",
+    )
+
+    assert "unsigned short bios_int16_keyboard(void);" in declarations
+    assert "unsigned short dos_int21(void);" in declarations
+    assert "unsigned _bios_keybrd(unsigned keycmd);" in declarations
+    assert "void print_dos_string(const char *s);" in declarations
+
+
 def test_x86_16_c_runtime_header_exposes_target_width_external_abis() -> None:
     assert runtime_helper_declaration_8616("setbkcolor", "portable-flat") == (
         "int32_t setbkcolor(int32_t color);"

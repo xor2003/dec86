@@ -14,6 +14,9 @@ from typing import Any, cast
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.lowering.segment_register_state import (
+    runtime_segment_name_for_variable_8616,
+)
 from angr_platforms.X86_16.pipeline.structured_assignment_index import (
     StructuredAssignmentIdentityIndex8616,
     StructuredAssignmentIdentityKey8616,
@@ -505,6 +508,8 @@ def _rewrite_ss_stack_byte_offsets(
 
         if isinstance(node, structured_c.CVariable):
             variable = _dynamic_codegen_attr(node, "variable", None)
+            if runtime_segment_name_for_variable_8616(variable) == "ss":
+                return True
             if _is_ss_virtual_register(variable):
                 codegen._inertia_ss_stack_byte_ss_virtual_register_evidence_8616 = (
                     int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_ss_virtual_register_evidence_8616", 0) or 0) + 1

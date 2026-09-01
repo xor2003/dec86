@@ -12,13 +12,30 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16 import validation_branch_conditions
 from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     bind_structured_callsite_identity_8616,
 )
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
-from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
+from angr_platforms.X86_16.ir.core import (
+    AddressStatus,
+    IRAddress,
+    IRBinaryValue,
+    IRInstr,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
+from angr_platforms.X86_16.ir.function_ssa_registry import FunctionSSAArtifactVerdict8616
+from angr_platforms.X86_16.ir.indexed_address_contracts import IndexedAddressDefinitionSite8616
+from angr_platforms.X86_16.ir.logical_memory_contracts import IRMemoryAccessKind8616
+from angr_platforms.X86_16.ir.logical_memory_register_transfer_contracts import (
+    LogicalMemoryRegisterTransfer8616,
+    LogicalMemoryRegisterTransferKind8616,
+)
+from angr_platforms.X86_16.ir.ssa import SSABlock
 from angr_platforms.X86_16.tail_validation import (
     _canonicalize_final_branch_condition_fingerprint_8616,
 )
@@ -157,6 +174,76 @@ def test_materialized_branch_condition_accepts_exact_typed_predicate() -> None:
     assert report.materialized_count == 1
 
 
+def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
+    """Validation consumes a dominating logical reload without string allowlists."""
+    register = IRValue(MemSpace.REG, name="si", size=2, version=1)
+    address = IRAddress(
+        MemSpace.DS,
+        base=("di",),
+        offset=0x1805,
+        size=2,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+        base_values=(IRValue(MemSpace.REG, name="di", size=2),),
+    )
+    site = IndexedAddressDefinitionSite8616(0x100, 0, 0x104, "MOV")
+    access = SimpleNamespace(
+        complete=True,
+        kind=IRMemoryAccessKind8616.READ,
+        address=address,
+    )
+    transfer = LogicalMemoryRegisterTransfer8616(
+        LogicalMemoryRegisterTransferKind8616.RELOAD,
+        access,
+        register,
+        site,
+        (site,),
+    )
+    artifact = SimpleNamespace(
+        function_addr=0x100,
+        blocks=(
+            SSABlock(0x100, (IRInstr("MOV", register, (), 2, 0x104),), (0x108,)),
+            SSABlock(0x108, (IRInstr("CMP", None, (register,), 2, 0x108),), ()),
+        ),
+        predecessor_map={0x100: (), 0x108: (0x100,)},
+        logical_memory=SimpleNamespace(closed=True, accesses=(access,)),
+    )
+    codegen = _Codegen(None)
+    codegen.cfunc = SimpleNamespace(addr=0x100)
+    monkeypatch.setattr(
+        validation_branch_conditions,
+        "registered_function_ssa_artifact_8616",
+        lambda *_args: SimpleNamespace(
+            verdict=FunctionSSAArtifactVerdict8616.PROVEN,
+            artifact=artifact,
+        ),
+    )
+    monkeypatch.setattr(
+        validation_branch_conditions,
+        "trace_logical_word_register_transfer_8616",
+        lambda *_args: transfer,
+    )
+    fact = ConditionIR(
+        "eq",
+        register,
+        IRValue(MemSpace.CONST, const=0xFFFF, size=2),
+        src_insn=0x108,
+        block_addr=0x108,
+    )
+
+    projected = validation_branch_conditions._proven_logical_reload_condition_fingerprints_8616(
+        codegen,
+        fact,
+        "CmpEQ(reg:si,const:65535)",
+        None,
+    )
+
+    assert (
+        "CmpEQ(Dereference(Add(Mul(reg:ds,const:16),reg:di,const:6149)),const:65535)"
+        in projected
+    )
+
+
 def test_materialized_branch_condition_refuses_dropped_additive_operand() -> None:
     codegen = _Codegen(_fact())
 
@@ -210,6 +297,61 @@ def test_bound_loop_condition_refuses_wrong_stack_slot() -> None:
     assert not report.passed
     assert report.issues[0].kind is BranchConditionIssueKind8616.PREDICATE_MISMATCH
     assert report.issues[0].actual == "CmpLE(var:local_6,var:arg)"
+
+
+def test_bound_do_while_condition_accepts_proven_terminal_induction_state() -> None:
+    """A do-while JCC observes the exact affine update at the body tail."""
+    codegen = _Codegen(_fact())
+    local = _variable(codegen, -4, "local_4")
+    condition = CBinaryOp(
+        "CmpLE",
+        CBinaryOp(
+            "Add",
+            _variable(codegen, -4, "local_4"),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        _variable(codegen, 4, "arg"),
+        codegen=codegen,
+        tags={
+            "ins_addr": 0x4015,
+            "vex_block_addr": 0x4010,
+            "inertia_typed_loop_condition_bound_8616": True,
+            "inertia_typed_loop_condition_key_8616": (0x4015, 0x4010),
+        },
+    )
+    iterator = CAssignment(
+        local,
+        CBinaryOp(
+            "Add",
+            _variable(codegen, -4, "local_4"),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements(
+        [
+            CDoWhileLoop(
+                condition,
+                CStatements([iterator], codegen=codegen),
+                codegen=codegen,
+            )
+        ],
+        codegen=codegen,
+    )
+
+    report = validate_materialized_branch_conditions_8616(
+        codegen,
+        root,
+        condition_fingerprint=_fingerprint,
+        condition_ir_fingerprint=lambda _condition: (
+            "CmpLE(Add(Add(var:local_4,const:1),const:1),var:arg)"
+        ),
+    )
+
+    assert report.passed
+    assert report.materialized_count == 1
 
 
 def test_materialized_branch_accepts_exact_bound_call_return_predicate() -> None:

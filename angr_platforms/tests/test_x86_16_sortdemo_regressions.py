@@ -665,9 +665,10 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert final_body.count("sub_113d4(local_52,") == 3
     assert final_body.count("sub_128e4(") == 3
     assert final_body.count("sub_12756(local_52, inertia_ss);") == 3
-    assert re.search(r"local_2 = \w+ \+ 1;", final_body)
-    assert re.search(r"if \(local_2 > \w+\)\s*break;", final_body)
-    assert "local_2 += 1;" in final_body
+    assert re.search(
+        r"for \(local_2 = \w+ \+ 1; local_2 <= \w+; local_2 \+= 1\)", final_body
+    )
+    assert "break;" not in final_body
     assert "SEG_U" not in final_body
     assert "vvar_" not in final_body
     assert re.search(r"\breturn\s*;", final_body)
@@ -712,7 +713,7 @@ def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
     assert re.search(r"(?m)^\s*sub_1137e\(\);\s*$", final_body) is None
     assert "g_0B4C[local_2] = g_08F0[local_2];" in final_body
     assert final_body.count("sub_106c8(local_2);") == 1
-    assert "local_2 += 1;" in final_body
+    assert "for (local_2 = 0; g_0BA2 > local_2; local_2 += 1)" in final_body
     assert "mem_" not in final_body
     assert "vvar_" not in final_body
     assert final_body.count("return;") == 1 or final_body.count("return 0;") == 1
@@ -798,9 +799,7 @@ def test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source(
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
     final_body = _function_body_from_stdout(result.stdout, "void sub_10808")
-    loop_header = (
-        "for (local_4 = local_2; local_4; local_4 = local_4 - 1)"
-    )
+    loop_header = "for (local_4 = local_2; local_4; local_4 -= 1)"
     guard = re.compile(
         r"if \((?:\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) <= local_6|"
         r"!\(\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) > local_6\))\)"
@@ -1451,40 +1450,23 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
     combined = _combined_output(result)
     assert result.returncode == 0, combined
     assert "function: 0x10560 InitBars" in combined
-    assert "void sub_10560(void)" in result.stdout
+    assert "void InitBars(void)" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "Source-backed quality guard rejected" not in combined
-    body = _function_body_from_stdout(result.stdout, "void sub_10560")
-    assert "SEG_U16(inertia_ds, 2886) = 1;" in body
-    raw_pause_store = (
-        "SEG_U16(inertia_ds, 306) = 30;" in body
-        and "SEG_U16(inertia_ds, 308) = 0;" in body
-    )
-    typed_pause_store = (
-        "g_0132 = g_0132 & 0xffff0000 | 30;" in body
-        and any(mask in body for mask in ("g_0132 = g_0132 & 65535;", "g_0132 = g_0132 & 0xffff;"))
-    )
-    assert raw_pause_store or typed_pause_store or "g_0132 = 30;" in body
-    assert "sub_12ac8(&stack_object_70, inertia_ss);" in body
-    assert body.count("sub_10678();") == 1
-    assert "stack_object_70.field_18 == 1 || stack_object_70.field_14 == 2 || !stack_object_70.field_14" in body
+    body = _function_body_from_stdout(result.stdout, "void InitBars")
+    assert "fSound = 1;" in body
+    assert "clPause = 30;" in body
+    assert "getvideoconfig(&vc);" in body
+    assert body.count("ReInitBars();") == 1
+    assert "vc.field_18 == 1 || vc.field_14 == 2 || !vc.field_14" in body
     assert "local_5e" not in body
     assert "local_62" not in body
     assert "local_5e != 1 || local_5e == 1 && local_62" not in body
     assert "typedef struct inertia_stack_object_22_14w2_18w2" in result.stdout
-    struct_forward = "struct inertia_stack_object_22_14w2_18w2;"
-    struct_prototype = re.compile(
-        r"(?:int|void) sub_12ac8\(struct inertia_stack_object_22_14w2_18w2 \*a0, "
-        r"unsigned short a1\);"
-    )
     struct_definition = "typedef struct inertia_stack_object_22_14w2_18w2"
-    assert struct_forward in result.stdout
-    struct_match = struct_prototype.search(result.stdout)
-    assert struct_match is not None
-    assert result.stdout.index(struct_forward) < struct_match.start()
-    assert struct_match.start() < result.stdout.index(struct_definition)
-    assert "int sub_10678(void);" in result.stdout
+    assert result.stdout.index(struct_definition) < result.stdout.index("void InitBars(void)")
+    assert "int getvideoconfig(void *config);" in result.stdout
     assert "int rand(void);" in result.stdout
     assert "void srand(unsigned int seed);" in result.stdout
     assert "time_t time(time_t *out);" in result.stdout
@@ -1496,17 +1478,17 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
     assert "_INSERT(" not in body
     assert "7860();" not in body
     assert "sub_1eb4();" not in body
-    assert body.count("sub_11414()") == 1
-    assert "unsigned short local_5a[43]" in body
-    assert "local_5a[local_2] = local_2 + 1;" in body
-    assert "local_4 = g_0BA2 - 1;" in body
-    assert "local_72 = local_5a[local_76];" in body
-    assert "g_08F0[local_2].field_0 = local_72;" in body
-    assert "g_08F0[local_2].field_1 = (short)local_72 % (short)local_74 + 1;" in body
+    assert body.count("rand()") == 1
+    assert "unsigned short aTemp[43]" in body
+    assert "aTemp[iRow] = iRow + 1;" in body
+    assert "iRowMax = cRow - 1;" in body
+    assert "iLength = aTemp[iRand];" in body
+    assert "abarPerm[iRow].field_0 = iLength;" in body
+    assert "abarPerm[iRow].field_1 = (short)iLength % (short)iColorMax + 1;" in body
     assert "local_73" not in body
-    assert body.count("local_2 += 1;") == 2
-    aggregate_copy = "local_5a[local_76] = local_5a[local_4];"
-    aggregate_update = "local_4 -= 1;"
+    assert body.count("for (iRow = 0; cRow > iRow;") == 2
+    aggregate_copy = "aTemp[iRand] = aTemp[iRowMax];"
+    aggregate_update = "iRowMax -= 1;"
     assert aggregate_copy in body
     assert aggregate_update in body
     assert body.index(aggregate_copy) < body.index(aggregate_update)
@@ -1547,7 +1529,8 @@ def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
     assert 'strcpy(ach, "OFF");' in body
     assert 'strcpy(ach, "            ");' in body
     assert body.count("if (i >= cszMenu)") == 1
-    assert body.count("i += 1;") == 1
+    iterator_lines = tuple(line.strip() for line in body.splitlines() if line.lstrip().startswith("for ("))
+    assert iterator_lines == ("for (i = 0; i < cszMenu; i += 1)",)
     assert "DrawFrame(1, 45, 35, cszMenu + 2);" in body
     assert "settextposition(i + 2, 48);" in body
     assert "outtext(aszMenu[i]);" in body

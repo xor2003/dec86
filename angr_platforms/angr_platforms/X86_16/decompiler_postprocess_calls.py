@@ -98,6 +98,7 @@ from .callsite_summary import (
     logical_argument_widths_from_callsite_8616,
     structured_call_kind_8616,
     structured_callsite_addr_8616,
+    structured_callsite_target_addr_8616,
     summarize_x86_16_callsite,
 )
 from .callsite_summary_program import (
@@ -2526,20 +2527,6 @@ def _known_default_args_for_missing_8616(
         "displaycursor": (0,),
         "setvideomode": (0xFFFF,),
     }
-    if normalized in {"Swaps", "_Swaps"}:
-        project = getattr(codegen, "project", None)
-        arch = getattr(project, "arch", None)
-        reg_info = getattr(arch, "registers", {}).get("ds") if arch is not None else None
-        if isinstance(reg_info, tuple) and len(reg_info) >= 1:
-            ds_reg = structured_c.CVariable(
-                SimRegisterVariable(reg_info[0], 2, name="ds"),
-                variable_type=SimTypeShort(False),
-                codegen=codegen,
-            )
-            off = structured_c.CConstant(2892, SimTypeShort(False), codegen=codegen)
-            ptr1 = structured_c.CFunctionCall("SEG_PTR", None, [copy(ds_reg), off], codegen=codegen)
-            ptr2 = structured_c.CFunctionCall("SEG_PTR", None, [copy(ds_reg), copy(off)], codegen=codegen)
-            return (ptr1, ptr2)
     values = defaults.get(normalized)
     if values is None:
         return None
@@ -3877,6 +3864,26 @@ def _bind_node_target_addr_8616(
             if getattr(node, "callee_target", None) != expected_source_name:
                 node.callee_target = expected_source_name
                 changed = True
+        sidecar_label = _sidecar_label_for_target_8616(project, target_addr)
+        if (
+            _function_matches_target_addr_8616(candidate, target_addr)
+            and not (isinstance(sidecar_label, str) and sidecar_label)
+            and not (
+                isinstance(expected_source_name, str)
+                and expected_source_name
+                and _source_name_matches_target_8616(project, target_addr, expected_source_name)
+            )
+        ):
+            # A decoded direct-call address is stronger identity evidence than
+            # an unproven third-party function name. Keep explicit source and
+            # sidecar names above, otherwise render the stable address target.
+            canonical_target = f"sub_{target_addr:x}"
+            if getattr(node, "callee_func", None) is not None:
+                node.callee_func = None
+                changed = True
+            if getattr(node, "callee_target", None) != canonical_target:
+                node.callee_target = canonical_target
+                changed = True
         return changed
 
     return _impl()
@@ -4008,8 +4015,21 @@ def _accumulate_callsite_materialization_stats_8616(
         if isinstance(target_addr, int):
             stats.call_target_fact_count += 1
             target_candidates = _candidate_linear_target_addrs_8616(project, target_addr)
-            if any(
-                _function_matches_target_addr_8616(getattr(node, "callee_func", None), candidate)
+            persisted_target_addr = structured_callsite_target_addr_8616(node)
+            if (
+                isinstance(persisted_target_addr, int)
+                and any(
+                    _target_addr_matches_near_or_linear_8616(
+                        persisted_target_addr,
+                        expected_addr,
+                    )
+                    for expected_addr in target_candidates
+                )
+            ) or any(
+                _function_matches_target_addr_8616(
+                    getattr(node, "callee_func", None),
+                    candidate,
+                )
                 for candidate in target_candidates
             ):
                 stats.call_target_materialized_count += 1
@@ -4980,13 +5000,19 @@ def _refresh_callsite_summary_node_ids_8616(
                     stale_items.append((node_id, summary))
                     changed = True
                     continue
+                bind_structured_callsite_identity_8616(node, summary)
                 refreshed[node_id] = summary
+                changed = True
                 continue
             if not _call_node_can_take_summary_8616(project, node, summary):
                 stale_items.append((node_id, summary))
                 changed = True
                 continue
+            previous_target_addr = structured_callsite_target_addr_8616(node)
+            bind_structured_callsite_identity_8616(node, summary)
             refreshed[node_id] = summary
+            if previous_target_addr != summary.target_addr:
+                changed = True
 
         unresolved_stale_items: list[tuple[int, CallsiteSummary8616]] = []
         for node_id, summary in stale_items:
@@ -5708,6 +5734,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             "imm",
             "expr",
             "ret_reg",
+            "reg",
             "seg",
             "sp",
             "ss",
@@ -5722,6 +5749,15 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             "si",
         }:
             return False
+        if source[0] == "reg":
+            return isinstance(source[1], str) and source[1].lower() in {
+                "ax",
+                "bx",
+                "cx",
+                "dx",
+                "si",
+                "di",
+            }
         if source[0] == "seg":
             return isinstance(source[1], str) and source[1].lower() in {"cs", "ds", "es", "ss"}
         if source[0] == "bp_index_addr":
@@ -8192,6 +8228,8 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         if source_kind == "seg" and isinstance(source_value, str):
             seg_expr = _segment_register_expr(source_value.lower())
             return seg_expr
+        if source_kind == CallsitePushSourceKind8616.REGISTER_VALUE.value and isinstance(source_value, str):
+            return _register_expr_from_name_8616(source_value.lower())
         if source_kind == "global" and isinstance(source_value, int):
             width = source[2] if len(source) >= 3 else 2
             if isinstance(width, int):
@@ -9952,6 +9990,28 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 merged.append(current_arg)
         return tuple(merged) if replacement_count > 0 else None
 
+    def _argument_matches_register_push_source_8616(
+        argument: StructuredAstValue,
+        source: StructuredAstValue,
+    ) -> bool:
+        """Return whether an argument is the exact register named by PUSH evidence."""
+        if (
+            not isinstance(source, tuple)
+            or len(source) != 2
+            or source[0] != CallsitePushSourceKind8616.REGISTER_VALUE.value
+            or not isinstance(source[1], str)
+        ):
+            return False
+        node = argument
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        return bool(
+            isinstance(node, structured_c.CVariable)
+            and isinstance(node.variable, SimRegisterVariable)
+            and isinstance(node.variable.name, str)
+            and node.variable.name.lower() == source[1].lower()
+        )
+
     def _set_materialized_call_args(
         call: StructuredAstValue, args: StructuredAstValue, *, call_name: str | None, force_replace: bool = False
     ) -> bool:
@@ -10143,10 +10203,24 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             )
             return False
         args_equal = _call_args_match_materialized_args_8616(call, args_after)
+        summary_push_sources = (
+            _boundary_tuple_8616(summary.push_arg_sources or ())
+            if isinstance(summary, CallsiteSummary8616)
+            else ()
+        )
+        ordered_summary_sources = (
+            tuple(reversed(summary_push_sources))
+            if len(summary_push_sources) > 1
+            else summary_push_sources
+        )
+        exact_register_args = bool(args_after) and len(args_after) == len(ordered_summary_sources) and all(
+            _argument_matches_register_push_source_8616(argument, source)
+            for argument, source in zip(args_after, ordered_summary_sources, strict=True)
+        )
         if args_before and (not force_replace):
             before_score = sum(_arg_semantic_quality_8616(call_name, idx, arg) for idx, arg in enumerate(args_before))
             after_score = sum(_arg_semantic_quality_8616(call_name, idx, arg) for idx, arg in enumerate(args_after))
-            if after_score < before_score:
+            if after_score < before_score and not exact_register_args:
                 if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
                     log.warning(
                         "[call-materialized-skip] function=%#x target=%s before_score=%d after_score=%d args_before=%s args_after=%s",
@@ -10165,6 +10239,11 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             protected.discard_call(call)
         for idx, arg in enumerate(args_after):
             score = _arg_semantic_quality_8616(call_name, idx, arg)
+            if idx < len(ordered_summary_sources) and _argument_matches_register_push_source_8616(
+                arg,
+                ordered_summary_sources[idx],
+            ):
+                score += 8
             return_arg_sources = getattr(codegen, "_inertia_return_register_arg_sources_8616", None)
             if (
                 isinstance(arg, CFunctionCall)
@@ -13895,6 +13974,29 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             semantic_call_name = _semantic_call_name_from_summary_8616(project, summary, call_name) or call_name
             current_args = list(node.args or ())
             if not current_args:
+                push_sources = summary.push_arg_sources if summary is not None else ()
+                ordered_sources = (
+                    tuple(reversed(push_sources))
+                    if isinstance(push_sources, tuple) and len(push_sources) > 1
+                    else push_sources
+                )
+                direct_args = tuple(
+                    _direct_expr_from_push_source_8616(
+                        source,
+                        call_name=semantic_call_name,
+                        arg_index=idx,
+                    )
+                    for idx, source in enumerate(ordered_sources)
+                )
+                if direct_args and all(argument is not None for argument in direct_args):
+                    restored = bool(
+                        _set_materialized_call_args(
+                            node,
+                            direct_args,
+                            call_name=semantic_call_name,
+                            force_replace=True,
+                        )
+                    ) or restored
                 continue
             updated = False
             for idx, current_arg in enumerate(tuple(current_args)):

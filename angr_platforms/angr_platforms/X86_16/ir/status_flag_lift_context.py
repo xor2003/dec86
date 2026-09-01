@@ -82,6 +82,18 @@ class StatusFlagLiftArtifact8616:
     function_address: int
     candidates: tuple[StatusFlagLiftCandidate8616, ...]
     packed_preservation_addresses: frozenset[int]
+    original_linear_delta: int = 0
+
+    def covers_packed_preservation_8616(self, instruction_address: int) -> bool:
+        """Match one preservation site in current or original linear space."""
+        return bool(
+            instruction_address in self.packed_preservation_addresses
+            or (
+                self.original_linear_delta
+                and instruction_address + self.original_linear_delta
+                in self.packed_preservation_addresses
+            )
+        )
 
     @property
     def partial_write_addresses(self) -> frozenset[int]:
@@ -129,6 +141,7 @@ class StatusFlagLiftSession8616:
             self.function_address,
             self.candidates,
             self.packed_preservation_addresses,
+            self.original_linear_delta,
         )
 
     def dead_write_mask(
@@ -255,13 +268,33 @@ def _original_linear_delta_8616(project: object) -> int:
 
 
 def _publish_stats_8616(function: object, session: StatusFlagLiftSession8616) -> None:
-    """Attach the typed publication result to angr function diagnostics."""
+    """Attach the finalized typed artifact and counters to its owning function."""
+    from .status_flag_lift_codec import encode_status_flag_lift_artifact_8616
+
     try:
         info = cast(_FunctionBoundary8616, function).info
     except AttributeError:
         return
     if isinstance(info, MutableMapping):
         info["status_flag_lift_stats_8616"] = session.stats.to_dict()
+        info["status_flag_lift_artifact_8616"] = encode_status_flag_lift_artifact_8616(
+            session.artifact
+        )
+
+
+def published_status_flag_lift_artifact_8616(
+    function: object,
+) -> StatusFlagLiftArtifact8616 | None:
+    """Return finalized function-owned lift evidence outside the active context."""
+    from .status_flag_lift_codec import decode_status_flag_lift_artifact_8616
+
+    try:
+        info = cast(_FunctionBoundary8616, function).info
+    except AttributeError:
+        return None
+    return decode_status_flag_lift_artifact_8616(
+        info.get("status_flag_lift_artifact_8616")
+    )
 
 
 @contextmanager
@@ -348,4 +381,5 @@ __all__ = [
     "active_status_flag_lift_artifact_8616",
     "active_status_flag_lift_context_8616",
     "cfg_status_flag_dead_write_mask_8616",
+    "published_status_flag_lift_artifact_8616",
 ]

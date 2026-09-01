@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from inertia_decompiler.cli_arg_parser import parse_cli_arguments
-from inertia_decompiler.generated_c_artifacts import write_generated_function_c
+from inertia_decompiler.generated_c_artifacts import (
+    write_generated_function_c,
+    write_generated_translation_unit_c,
+)
 
 
 def test_generated_function_artifact_preserves_validated_payload(tmp_path: Path) -> None:
@@ -24,3 +27,21 @@ def test_output_c_directory_can_be_selected_from_cli(tmp_path: Path) -> None:
     args = parse_cli_arguments(["sample.exe", "--output-c-dir", str(tmp_path)])
 
     assert args.output_c_dir == tmp_path
+
+
+def test_generated_translation_unit_distinguishes_complete_and_partial_output(tmp_path: Path) -> None:
+    complete = write_generated_translation_unit_c(
+        tmp_path,
+        payload="int first(void) { return 1; }\n",
+        complete=True,
+    )
+    partial = write_generated_translation_unit_c(
+        tmp_path,
+        payload="int second(void) { return 2; }\n",
+        complete=False,
+    )
+
+    assert complete.name == "translation-unit.c"
+    assert partial.name == "partial-translation-unit.c"
+    assert complete.read_text(encoding="utf-8") == "int first(void) { return 1; }\n"
+    assert partial.read_text(encoding="utf-8") == "int second(void) { return 2; }\n"

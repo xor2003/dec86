@@ -156,6 +156,15 @@ from .validation_interrupt_calls import (
     SoftwareInterruptValidationReport8616,
     validate_software_interrupt_inputs_8616,
 )
+from .validation_observable_compaction import (
+    compact_normalized_validation_observable_8616,
+)
+from .validation_pointer_parameter_output_contracts import (
+    PointerParameterOutputValidationReport8616,
+)
+from .validation_pointer_parameter_outputs import (
+    validate_pointer_parameter_outputs_8616,
+)
 from .validation_required_memory_effects import (
     RequiredMemoryEffectValidationReport8616,
     validate_required_memory_effects_8616,
@@ -272,8 +281,6 @@ _TAIL_VALIDATION_SEMANTIC_FAILURE_FIELDS = (
 )
 _MISSING_CALLSITE_FINGERPRINT_PREFIX_8616 = "missing-callsite:"
 _COMPACT_OBSERVABLE_FIELDS_8616 = {"conditions", "control_flow_effects"}
-_COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616 = 512
-_COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_ENV_8616 = "INERTIA_TAIL_VALIDATION_FINGERPRINT_LIMIT"
 _TAIL_VALIDATION_COMPARISON_VERSION_8616 = 15
 _STACK_ARG_ALIAS_TOKEN_RE_8616 = re.compile(
     r"stack_arg:(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::size(?P<size>\d+))?(?::bp[+-]0x[0-9a-fA-F]+)?"
@@ -1317,6 +1324,7 @@ class X86_16FinalSemanticValidationReport8616:
     control_flow: ControlFlowValidationReport8616
     storage_identities: StorageIdentityValidationReport8616
     required_memory_effects: RequiredMemoryEffectValidationReport8616
+    pointer_parameter_outputs: PointerParameterOutputValidationReport8616
     software_interrupt_inputs: SoftwareInterruptValidationReport8616
 
     @property
@@ -1333,6 +1341,7 @@ class X86_16FinalSemanticValidationReport8616:
             and self.control_flow.passed
             and self.storage_identities.passed
             and self.required_memory_effects.passed
+            and self.pointer_parameter_outputs.passed
             and self.software_interrupt_inputs.passed
         )
 
@@ -1359,6 +1368,10 @@ class X86_16FinalSemanticValidationReport8616:
             failures["storage_identities"] = self.storage_identities.issue_tokens()
         if self.required_memory_effects.issues:
             failures["required_memory_effects"] = self.required_memory_effects.issue_tokens()
+        if self.pointer_parameter_outputs.issues:
+            failures["pointer_parameter_outputs"] = (
+                self.pointer_parameter_outputs.issue_tokens()
+            )
         if self.software_interrupt_inputs.issues:
             failures["software_interrupt_inputs"] = self.software_interrupt_inputs.issue_tokens()
         return failures
@@ -1435,6 +1448,13 @@ class X86_16FinalSemanticValidationReport8616:
                 "classified_fact_count": self.required_memory_effects.classified_fact_count,
                 "materialized_count": self.required_memory_effects.materialized_count,
                 "failure_count": self.required_memory_effects.failure_count,
+            },
+            "pointer_parameter_outputs": {
+                "raw_fact_count": self.pointer_parameter_outputs.raw_fact_count,
+                "normalized_fact_count": self.pointer_parameter_outputs.normalized_fact_count,
+                "classified_fact_count": self.pointer_parameter_outputs.classified_fact_count,
+                "materialized_count": self.pointer_parameter_outputs.materialized_count,
+                "failure_count": self.pointer_parameter_outputs.failure_count,
             },
             "software_interrupt_inputs": {
                 "raw_fact_count": self.software_interrupt_inputs.raw_fact_count,
@@ -1546,14 +1566,20 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
         value = normalize_condition_fingerprint_algebraic_8616(value)
         value = _canonicalize_global_word_pair_condition_fingerprint_8616(value)
         value = _canonicalize_linear_ds_deref_condition_fingerprint_8616(value)
-    limit = _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616
-    raw_limit = os.environ.get(_COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_ENV_8616)
-    if isinstance(raw_limit, str) and raw_limit.strip():
-        with contextlib.suppress(ValueError):
-            limit = max(0, int(raw_limit, 0))
-    if len(value) <= limit:
+    compacted = compact_normalized_validation_observable_8616(field_name, value)
+    if compacted == value:
         return value
     if field_name == "control_flow_effects":
+        for prefix in ("if:", "ifbreak:", "while:", "dowhile:", "for:"):
+            if not value.startswith(prefix):
+                continue
+            condition = value[len(prefix) :]
+            compact_condition = compact_normalized_validation_observable_8616(
+                "conditions",
+                condition,
+            )
+            if compact_condition != condition:
+                return f"{prefix}{compact_condition}"
         write_split = _split_control_flow_loop_body_write_effect_8616(value)
         if write_split is not None:
             prefix, locations = write_split
@@ -1562,8 +1588,7 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
                 f"{field_name}:sha256:{prefix_digest}:len:{len(prefix)}:"
                 f"loop-body-writes:{','.join(locations)}"
             )
-    digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
-    return f"{field_name}:sha256:{digest}:len:{len(value)}"
+    return compacted
 
 
 def _compact_tail_validation_observables_8616(field_name: str, values: set[str]) -> set[str]:
@@ -1852,7 +1877,7 @@ def _canonicalize_additive_fingerprint_for_compare_8616(value: str) -> str:
 
 def _canonicalize_linear_ds_deref_condition_fingerprint_8616(value: str) -> str:
     """Compatibility wrapper for the Condition IR storage owner."""
-    return canonicalize_condition_storage_fingerprint_8616(value)
+    return cast(str, canonicalize_condition_storage_fingerprint_8616(value))
 
 
 def _canonicalize_segmented_write_fingerprint_for_compare_8616(value: str) -> str:
@@ -2133,6 +2158,45 @@ def _extract_loop_break_guard_normalization_8616(
         return normalized, suppressed_node_ids
 
     return _impl()
+
+
+def _do_while_post_body_condition_fingerprint_8616(
+    loop: TailValidationValue,
+    project: TailValidationValue,
+) -> str | None:
+    """Fingerprint a proven affine do-while guard in its post-body state."""
+    if not isinstance(loop, CDoWhileLoop) or not isinstance(loop.condition, CBinaryOp):
+        return None
+    statements = _boundary_tuple_8616(getattr(loop.body, "statements", ()) or ())
+    if not statements:
+        return None
+    iterator = statements[-1]
+    if (
+        not isinstance(iterator, CAssignment)
+        or not isinstance(iterator.lhs, CVariable)
+        or not isinstance(iterator.rhs, CBinaryOp)
+        or iterator.rhs.op not in {"Add", "Sub"}
+        or not isinstance(iterator.rhs.lhs, CVariable)
+        or not isinstance(iterator.rhs.rhs, CConstant)
+    ):
+        return None
+    target = _expr_fingerprint(iterator.lhs, project)
+    if _expr_fingerprint(iterator.rhs.lhs, project) != target:
+        return None
+    replacement = _expr_fingerprint(iterator.rhs, project)
+    occurrence_count = 0
+
+    def _fingerprint(node: TailValidationValue) -> str:
+        nonlocal occurrence_count
+        if isinstance(node, CVariable) and _expr_fingerprint(node, project) == target:
+            occurrence_count += 1
+            return replacement
+        if isinstance(node, CBinaryOp):
+            return f"{node.op}({_fingerprint(node.lhs)},{_fingerprint(node.rhs)})"
+        return _expr_fingerprint(node, project)
+
+    fingerprint = _fingerprint(loop.condition)
+    return fingerprint if occurrence_count == 1 else None
 
 
 def _normalized_if_chain_condition_8616(
@@ -4791,7 +4855,10 @@ def _process_control_flow_node_8616(
             return True
         if isinstance(node, CDoWhileLoop):
             cond = node.condition
-            cond_fp = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
+            cond_fp = normalized_loop_conditions.get(
+                id(node),
+                contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project)),
+            )
             control_flow_effects.add(f"dowhile:{cond_fp}")
             # Dynamic angr/codegen compatibility boundary.
             _record_body_calls("dowhile", cond_fp, node.body)
@@ -5310,6 +5377,7 @@ def refresh_x86_16_final_semantic_validation_8616(
         control_flow_report = ControlFlowValidationReport8616()
         storage_identity_report = StorageIdentityValidationReport8616()
         required_memory_effect_report = RequiredMemoryEffectValidationReport8616()
+        pointer_parameter_output_report = PointerParameterOutputValidationReport8616()
         software_interrupt_input_report = SoftwareInterruptValidationReport8616()
         return X86_16FinalSemanticValidationReport8616(
             def_use=def_use_report,
@@ -5322,6 +5390,7 @@ def refresh_x86_16_final_semantic_validation_8616(
             control_flow=control_flow_report,
             storage_identities=storage_identity_report,
             required_memory_effects=required_memory_effect_report,
+            pointer_parameter_outputs=pointer_parameter_output_report,
             software_interrupt_inputs=software_interrupt_input_report,
         )
     query_index = StructuredAstQueryIndex8616.build(root)
@@ -5386,6 +5455,11 @@ def refresh_x86_16_final_semantic_validation_8616(
         query_index=query_index,
     )
     required_memory_effect_report = validate_required_memory_effects_8616(project, codegen, root)
+    pointer_parameter_output_report = validate_pointer_parameter_outputs_8616(
+        project,
+        codegen,
+        root,
+    )
     software_interrupt_input_report = validate_software_interrupt_inputs_8616(
         codegen,
         root,
@@ -5402,6 +5476,7 @@ def refresh_x86_16_final_semantic_validation_8616(
         control_flow=control_flow_report,
         storage_identities=storage_identity_report,
         required_memory_effects=required_memory_effect_report,
+        pointer_parameter_outputs=pointer_parameter_output_report,
         software_interrupt_inputs=software_interrupt_input_report,
     )
     semantic_failures = report.semantic_failures()
@@ -5676,6 +5751,11 @@ def collect_x86_16_tail_validation_summary(
                 canonical_loop_body_suppressed_write_ids: dict[int, frozenset[int]] = {}
                 with span("x86_16.tail_validation.summary.loop_normalization", function=func_addr):
                     for node in _iter_c_nodes_deep_8616(root):
+                        if isinstance(node, CDoWhileLoop):
+                            post_body_condition = _do_while_post_body_condition_fingerprint_8616(node, project)
+                            if post_body_condition is not None:
+                                normalized_loop_conditions[id(node)] = post_body_condition
+                            continue
                         if not isinstance(node, (CWhileLoop, CForLoop)):
                             continue
                         canonical_shape = canonical_loop_validation_shape_8616(node)

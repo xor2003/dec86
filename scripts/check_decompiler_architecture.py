@@ -90,6 +90,9 @@ _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST: dict[str, frozenset[str]] = {
             # but the fixed near-pointer ABI contract remains owned by Lowering.
             ".lowering.near_pointer_type",
             ".lowering.real_mode_linear",
+            # Orchestration-only edge: Lowering owns typed IR load/register
+            # provenance; the final AST stage only replays its proven carrier.
+            ".lowering.ir_segmented_load_carriers",
             # Orchestration-only edge: the legacy pre-validation wrapper replays
             # the shared Types/Lowering consumer after its final AST regeneration.
             ".lowering.segment_global_materialization",
@@ -1746,6 +1749,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py",
     "angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py",
     "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py",
@@ -2212,7 +2216,9 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-alias-model-impl": ("angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py",),
     "x86-16-lowering-fact-transfer": ("angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py",),
     "x86-16-lowering-segmented": ("angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py",),
-    "x86-16-lowering-segmented-runtime": ("angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
+    "x86-16-lowering-segmented-runtime": (
+        "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py",
     ),
     "x86-16-positive-bp-argument-plan": (
         "angr_platforms/angr_platforms/X86_16/lowering/positive_bp_argument_plan.py",

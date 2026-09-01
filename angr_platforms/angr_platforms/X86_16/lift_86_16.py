@@ -650,6 +650,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 return ("cmp_reg_imm8", dst_reg8, src_imm8)
             if dst_indexed_mem8 is not None and src_reg8:
                 return ("cmp_indexed_abs_reg8", dst_indexed_mem8, src_reg8)
+            if dst_indexed_mem16 is not None and src_imm is not None:
+                return ("cmp_mem_imm16", dst_indexed_mem16, src_imm)
             if dst_indexed_mem16 is not None and src_reg:
                 return ("cmp_indexed_abs_reg16", dst_indexed_mem16, src_reg)
             if dst_reg and src_indexed_mem16 is not None:
@@ -1571,10 +1573,14 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         ):
             return None
         index_value, shift = index_state
-        if isinstance(index_value, IRValue) and (
-            index_value.space != MemSpace.SS or index_value.name not in {"bp", "sp"}
-        ):
-            return None
+        if isinstance(index_value, IRValue):
+            stack_index = index_value.space is MemSpace.SS and index_value.name in {"bp", "sp"}
+            register_index = (
+                index_value.space is MemSpace.REG
+                and index_value.name in Instruction_ANY._REG16_NAMES
+            )
+            if not stack_index and not register_index:
+                return None
         access_size = max(1, int(width_bits) // 8)
         return IRValue(
             MemSpace.DS,
@@ -1636,6 +1642,19 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         if kind == "cmp_mem_imm16":
             _, mem_spec, imm = semantics
             lhs = self._condition_stack_value_8616(mem_spec, width_bits=16)
+            if lhs is None and isinstance(mem_spec, tuple) and mem_spec:
+                base_reg = str(mem_spec[0]).lower()
+                index_state = Instruction_ANY._inertia_condition_index_reg_state_8616.get(base_reg)
+                if index_state is None:
+                    register_index = self._condition_reg_value_8616(base_reg, width_bits=16)
+                    if register_index is not None:
+                        index_state = (register_index, 0)
+                lhs = self._condition_indexed_ds_value_8616(
+                    mem_spec,
+                    index_state,
+                    width_bits=16,
+                    memory_access_insn=self.addr,
+                )
             rhs = self._condition_const_value_8616(imm, width_bits=16)
             return (lhs, rhs) if lhs is not None else None
         if kind == "cmp_abs_reg16":

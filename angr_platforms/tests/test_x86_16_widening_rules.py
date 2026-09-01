@@ -62,6 +62,36 @@ def _word_projection(source: CBinaryOp | CVariable, codegen: _DummyCodegen) -> C
     return CBinaryOp("Or", low, high, codegen=codegen)
 
 
+def _repeated_mask_word_projection(
+    source: CBinaryOp | CVariable,
+    codegen: _DummyCodegen,
+) -> CBinaryOp:
+    """Build a complete word projection with redundant exact byte masks."""
+    low = CBinaryOp(
+        "And",
+        CBinaryOp("And", source, _constant(0xFF, codegen), codegen=codegen),
+        _constant(0xFF, codegen),
+        codegen=codegen,
+    )
+    high = CBinaryOp(
+        "Shl",
+        CBinaryOp(
+            "And",
+            CBinaryOp(
+                "And",
+                CBinaryOp("Shr", source, _constant(8, codegen), codegen=codegen),
+                _constant(0xFF, codegen),
+                codegen=codegen,
+            ),
+            _constant(0xFF, codegen),
+            codegen=codegen,
+        ),
+        _constant(8, codegen),
+        codegen=codegen,
+    )
+    return CBinaryOp("Or", low, high, codegen=codegen)
+
+
 def test_word_projection_recomposition_materializes_for_alias_proven_word_destination() -> None:
     codegen = _DummyCodegen()
     source = CBinaryOp("Shl", _stack_var(4, 2, "x", codegen), _constant(1, codegen), codegen=codegen)
@@ -77,6 +107,30 @@ def test_word_projection_recomposition_materializes_for_alias_proven_word_destin
     assert changed is True
     assert isinstance(assignment.rhs, CBinaryOp)
     assert assignment.rhs.op == "Shl"
+    stats = get_codegen_side_metadata(codegen)["word_projection_recomposition_8616"]
+    assert isinstance(stats, WordProjectionRecompositionStats8616)
+    assert stats == WordProjectionRecompositionStats8616(1, 1, 1, 1, 0)
+
+
+def test_word_projection_recomposition_materializes_repeated_exact_masks() -> None:
+    codegen = _DummyCodegen()
+    source = _stack_var(4, 2, "x", codegen)
+    destination = CVariable(
+        SimMemoryVariable(0x44, 2, name="g_word", region=0x4010),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        destination,
+        _repeated_mask_word_projection(source, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=CStatements([assignment], codegen=codegen))
+
+    changed = materialize_word_projection_recompositions_8616(codegen)
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CVariable)
+    assert assignment.rhs.variable is source.variable
     stats = get_codegen_side_metadata(codegen)["word_projection_recomposition_8616"]
     assert isinstance(stats, WordProjectionRecompositionStats8616)
     assert stats == WordProjectionRecompositionStats8616(1, 1, 1, 1, 0)

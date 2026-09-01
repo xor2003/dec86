@@ -70,9 +70,49 @@ def test_identical_return_guard_validation_consumes_exact_delta() -> None:
     assert "delta" not in validation
 
 
+def test_identical_return_guard_validation_consumes_minimal_else_delta() -> None:
+    validation = _validation_delta()
+    validation["delta"]["control_flow_effects"]["removed"] = (
+        "if-condition-fingerprint",
+        "if:else",
+    )
+
+    result = consume_identical_return_guard_validation_delta_8616(
+        _closed_result(),
+        validation,
+    )
+
+    assert result.accepted
+    assert result.consumed_condition_count == 1
+    assert result.consumed_control_effect_count == 2
+    assert validation["changed"] is False
+    assert "delta" not in validation
+
+
 def test_identical_return_guard_validation_refuses_write_delta() -> None:
     validation = _validation_delta()
     validation["delta"]["stack_writes"]["removed"] = ("stack-write",)
+
+    result = consume_identical_return_guard_validation_delta_8616(
+        _closed_result(),
+        validation,
+    )
+
+    assert result.status is (
+        IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
+    )
+    assert validation["changed"] is True
+    assert "delta" in validation
+
+
+def test_identical_return_guard_validation_refuses_unbounded_control_delta() -> None:
+    validation = _validation_delta()
+    validation["delta"]["control_flow_effects"]["removed"] = (
+        "first-control-fingerprint",
+        "second-control-fingerprint",
+        "third-control-fingerprint",
+        "fourth-control-fingerprint",
+    )
 
     result = consume_identical_return_guard_validation_delta_8616(
         _closed_result(),

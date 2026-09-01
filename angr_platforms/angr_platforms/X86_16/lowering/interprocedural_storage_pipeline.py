@@ -333,6 +333,7 @@ def publish_and_reconcile_callsite_interfaces_8616(
     from .stack_prototype_materialization import (
         reconcile_exact_stack_argument_prototype_8616,
     )
+    from .unobserved_call_results import lower_unobserved_call_result_assignments_8616
 
     collect_and_publish_function_storage_contract_8616(project, codegen)
     application = apply_accepted_function_storage_prototype_8616(project, codegen)
@@ -343,5 +344,10 @@ def publish_and_reconcile_callsite_interfaces_8616(
     )
     helper_changed = materialize_known_helper_call_interfaces_8616(project, codegen)
     materialize_callsite_prototype_declarations_8616(project, codegen)
-    # Declaration metadata and transaction publication do not mutate the C AST.
-    return application.changed or prototype_changed or helper_changed
+    result_changed = lower_unobserved_call_result_assignments_8616(codegen)
+    return (
+        application.changed
+        or prototype_changed
+        or helper_changed
+        or result_changed
+    )

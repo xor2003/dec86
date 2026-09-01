@@ -10,12 +10,13 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable, Set
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
-from capstone.x86_const import X86_INS_POP, X86_INS_PUSH, X86_INS_RET, X86_OP_REG
+from capstone.x86_const import X86_INS_CALL, X86_INS_POP, X86_INS_PUSH, X86_INS_RET, X86_OP_REG
 
 
 class _CapstoneOperand8616(Protocol):
@@ -66,6 +67,13 @@ class CalleeSavedFrameCarrierKind8616(Enum):
     FRAME_BOOKKEEPING = "frame_bookkeeping"
 
 
+class CalleeSavedFramePairSemantics8616(Enum):
+    """Semantic role of an exact register PUSH/POP frame pair."""
+
+    PRESERVED = "preserved"
+    RESTORED_BEFORE_UPDATE = "restored_before_update"
+
+
 @dataclass(frozen=True, slots=True)
 class CalleeSavedFramePruneFact8616:
     """Describe one AST assignment pruned through an exact PUSH/POP pair."""
@@ -80,6 +88,9 @@ class CalleeSavedFramePruneFact8616:
     carrier_kind: CalleeSavedFrameCarrierKind8616
     stack_displacement: int | None
     access_width: int | None
+    pair_semantics: CalleeSavedFramePairSemantics8616 = (
+        CalleeSavedFramePairSemantics8616.PRESERVED
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,13 +192,19 @@ def callee_saved_frame_pairs_8616(
     instructions: Iterable[object],
     saved_registers: Set[str],
 ) -> tuple[CalleeSavedFramePair8616, ...]:
-    """Return deterministic first-PUSH/epilogue-POP pairs for proven registers."""
+    """Return sequential register-save pairs not owned by a following call.
+
+    A register PUSH immediately followed by CALL is typed call-argument
+    evidence.  Its eventual POP is caller cleanup and must not be consumed as
+    a callee-saved frame restoration merely because the register is otherwise
+    eligible for preservation.
+    """
     normalized_saved = frozenset(name.lower() for name in saved_registers)
-    first_push: dict[str, int] = {}
-    epilogue_pop: dict[str, int] = {}
-    ordered: list[_CapstoneInstruction8616] = []
+    pending_pushes: dict[str, int] = {}
+    pairs: list[CalleeSavedFramePair8616] = []
     seen_addresses: set[tuple[int, int]] = set()
-    for instruction in instructions:
+    decoded_instructions = tuple(instructions)
+    for instruction_index, instruction in enumerate(decoded_instructions):
         instruction_surface = cast(_CapstoneInstruction8616, instruction)
         try:
             address = instruction_surface.address
@@ -200,33 +217,38 @@ def callee_saved_frame_pairs_8616(
         if key in seen_addresses:
             continue
         seen_addresses.add(key)
-        ordered.append(instruction_surface)
         register_name = _decoded_register_name_8616(instruction_surface, X86_INS_PUSH)
         if register_name is not None and register_name in normalized_saved:
-            first_push.setdefault(register_name, address)
+            next_instruction_id = None
+            if instruction_index + 1 < len(decoded_instructions):
+                with contextlib.suppress(AttributeError):
+                    next_instruction_id = cast(
+                        _CapstoneInstruction8616,
+                        decoded_instructions[instruction_index + 1],
+                    ).id
+            if next_instruction_id != X86_INS_CALL:
+                pending_pushes.setdefault(register_name, address)
+        register_name = _decoded_register_name_8616(instruction_surface, X86_INS_POP)
+        if register_name is not None and register_name in normalized_saved:
+            push_addr = pending_pushes.pop(register_name, None)
+            if push_addr is not None:
+                pairs.append(
+                    CalleeSavedFramePair8616(
+                        register_name=register_name,
+                        push_addr=push_addr,
+                        pop_addr=address,
+                    )
+                )
         if instruction_id == X86_INS_RET:
             break
-
-    for instruction in reversed(ordered):
-        register_name = _decoded_register_name_8616(instruction, X86_INS_POP)
-        if register_name is not None and register_name in normalized_saved:
-            epilogue_pop.setdefault(register_name, instruction.address)
-
-    return tuple(
-        CalleeSavedFramePair8616(
-            register_name=register_name,
-            push_addr=first_push[register_name],
-            pop_addr=epilogue_pop[register_name],
-        )
-        for register_name in sorted(normalized_saved)
-        if register_name in first_push and register_name in epilogue_pop
-    )
+    return tuple(sorted(pairs, key=lambda pair: (pair.push_addr, pair.pop_addr, pair.register_name)))
 
 
 __all__ = [
     "CalleeSavedFrameCarrierKind8616",
     "CalleeSavedFrameInstructionRole8616",
     "CalleeSavedFramePair8616",
+    "CalleeSavedFramePairSemantics8616",
     "CalleeSavedFramePruneFact8616",
     "CalleeSavedFramePruneRecord8616",
     "callee_saved_frame_pairs_8616",

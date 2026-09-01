@@ -36,6 +36,7 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
 )
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
+    record_stack_variable_coordinate_projection_8616,
     stack_variable_coordinate_registry_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -140,6 +141,40 @@ def test_stack_memory_ssa_lowering_materializes_real_stack_cvariable() -> None:
     assert artifact.candidates[0].entry_sp_offset == -4
     assert artifact.result is not None and artifact.result.materialized[0][0] == -2
     assert len(codegen._inertia_semantic_alias_facts) == 1
+
+
+def test_stack_memory_ssa_local_replay_preserves_distinct_argument_coordinates() -> None:
+    codegen = _FakeCodegen(_stack_alias_artifact())
+    left = SimStackVariable(2, 2, base="bp", name="arg_4", region=0x1000)
+    right = SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000)
+    left_cvar = CVariable(left, variable_type=SimTypeShort(False), codegen=codegen)
+    right_cvar = CVariable(right, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.arg_list = (left_cvar, right_cvar)
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=left,
+        cvar=left_cvar,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=right,
+        cvar=right_cvar,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+
+    artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+
+    assert artifact is not None and artifact.complete is True
+    assert machine_bp_offset_for_stack_variable_8616(codegen, left) == 4
+    assert machine_bp_offset_for_stack_variable_8616(codegen, right) == 6
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    assert registry.for_bp_range(4, 2) is not None
+    assert registry.for_bp_range(6, 2) is not None
 
 
 def test_stack_memory_ssa_lowering_refuses_unproven_frame_coordinate() -> None:

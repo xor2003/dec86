@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypePointer, SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 from inertia_decompiler import cli_stack_byte_offsets as rewrites
@@ -41,7 +42,10 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int):
     return None
 
 
-def test_rewrite_ss_stack_byte_offsets_uses_vvar_alias_for_stack_slot_recovery():
+@pytest.mark.parametrize("runtime_segment", [False, True])
+def test_rewrite_ss_stack_byte_offsets_uses_vvar_alias_for_stack_slot_recovery(
+    runtime_segment: bool,
+) -> None:
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(
         addr=0x10010,
@@ -69,7 +73,17 @@ def test_rewrite_ss_stack_byte_offsets_uses_vvar_alias_for_stack_slot_recovery()
                 "Add",
                 structured_c.CBinaryOp(
                     "Mul",
-                    structured_c.CVariable(SimRegisterVariable(20, 2, name="ss"), codegen=codegen),
+                    structured_c.CVariable(
+                        SimMemoryVariable(
+                            0x10006,
+                            2,
+                            name="inertia_ss",
+                            category="inertia_segment_state",
+                        )
+                        if runtime_segment
+                        else SimRegisterVariable(20, 2, name="ss"),
+                        codegen=codegen,
+                    ),
                     structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
                     codegen=codegen,
                 ),

@@ -100,16 +100,31 @@ sidecar HeapSort timeout passed on retry, so it is tracked as performance and
 flakiness debt rather than counted as a reproducible semantic failure. Sleep
 remains closed. Swaps, the independently exposed DrawTime carry-bit failure,
 and all three InitMenu failures are also closed by focused regressions and live
-Tail Validation. The seven remaining focused SORTD failures are grouped by
-symptom before the earliest owning contract is proved:
+Tail Validation. The original seven focused SORTD failures were grouped by
+symptom before the earliest owning contract was proved:
 
-- five call, object, or indexed-storage materialization failures
-- one DrawFrame structuring/postprocess validation failure
+- five call, object, or indexed-storage materialization failures, now closed
+- one DrawFrame structuring/postprocess validation failure, now closed
 - one RunMenu portable-C declaration failure
 
-The next implementation target is the call/object/indexed-storage family. Work
-stops at this checkpoint because the user requested a commit immediately after
-the loop/control-flow family completed.
+RunMenu's function-fix DoD is now closed. Its binary-proven Escape return,
+call-result assignment, switch cases, and signed wide global declaration all
+survive sidecar-free decompilation; the exact emitted stdout passes strict
+portable-C syntax. The final blocker was not declaration recovery or DCE:
+structured validation had demoted register-backed AIL virtuals to generic
+temporaries, so exact packed-FLAGS preservation evidence could not match the
+`vvar_17{r36|2b}` read. Validation now consumes the existing Lowering-owned
+physical-register view and accepts it only at an IR-proven instruction site.
+The wrong-site refusal remains red, both live RunMenu gates pass, and the
+175-test flag/validation/structuring surface plus file and startup architecture
+gates pass. The next implementation target is the complete focused-lane rerun.
+
+A complete focused-lane refresh on 2026-08-31 reported **4,020 passed and 23
+failed in 375.08 seconds** under seven workers. Four failures were new-pass
+registry/inventory integration and three were callsite fixture drift after
+typed target identity became persistent; all seven now pass focused
+regressions. The remaining failures are being reclassified from current
+tracebacks rather than carried forward from the stale seven-failure snapshot.
 
 The first live SORTD repair also closed a general Types/Lowering carrier-loss
 defect for wide call outputs. Sleep `0x10f38` now materializes its proven wide
@@ -160,13 +175,13 @@ output do not advance the percentage.
 | --- | ---: | ---: | --- | --- | ---: | ---: | --- |
 | 1. Whole-binary export | 5% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed by canonical stdout and strict compilation evidence. |
 | 2. Behavior proof | 8% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed for all source-selftested non-library functions. |
-| 3. Interprocedural contracts | 20% | 70% | pre-ledger | - | unknown | 32-50h | General indexed, indirect, stack, and broader multi-output storage remain; classify the external MSC6 failures and current stack/argument gate failures. |
+| 3. Interprocedural contracts | 20% | 75% | pre-ledger | - | unknown | 30-46h | General indirect, stack, and broader multi-output storage remain; classify the external MSC6 failures and current stack/argument gate failures. |
 | 4. Semantic-loss ratchets | 7% | 100% | pre-ledger | pre-ledger | unknown | 0h | Closed by the strict 20/20 executable-only gate and permanent tests. |
 | 5. Proof-backed readability | 8% | 0% | not started | - | 0h | 8-12h | Starts only after the semantic and behavior gates remain closed. |
 | 6. Profiling and performance | 10% | 70% | pre-ledger | - | unknown | 8-12h | Measure aggregate PSS and profile the single-function serial tail. |
 | 7. Reko mechanisms | 8% | 0% | not started | - | 0h | 10-16h | Implement only mechanisms supported by owned typed evidence. |
-| 8. Ghidra mechanisms | 34% | 92% | pre-ledger | - | unknown | 42-63h | Close the three remaining live SORTD owner families, finish open call/type/CFG mechanisms, and rerun all acceptance gates. |
-| **Total** | **100%** | **72%** | - | - | **historical total unavailable** | **90-132h** | Weighted completion is 72% after rounding. The loop/control-flow family now meets its function-fix DoD. |
+| 8. Ghidra mechanisms | 34% | 98% | pre-ledger | - | unknown | 38-56h | Finish open call/type/CFG mechanisms and rerun all acceptance gates. |
+| **Total** | **100%** | **75%** | - | - | **historical total unavailable** | **85-120h** | Weighted completion remains 75% after rounding. RunMenu now meets its function-fix DoD. |
 
 Task-owner estimates above overlap where Tasks 3 and 8 share a mechanism. They
 are not summed. The non-overlapping forecast table below is the authoritative
@@ -182,7 +197,10 @@ source for the total remaining estimate.
 | Packed FLAGS preservation validation and production lift context | `2026-08-29 09:21 +02:00` | `2026-08-29 09:31 +02:00` | 9-10m | 10m | completed | 0h | Seventeen focused context/validation tests have 16 passes; the only remaining failure is the end-to-end smoke shape. The previous whole-postprocess `uninitialized eflags` discard is gone, and the live AST exposes the next independent Structuring defect. |
 | Collapse pure identical-return guards in Structuring | `2026-08-29 09:34 +02:00` | `2026-08-29 10:10 +02:00` | 26-31m engineering; test waits excluded | 36m | completed | 0h | Structuring owns the typed pure-guard proof and closed evidence counters; Tail Validation consumes its exact delta. Widening now propagates block definitions into returns, and regenerated argument names preserve the Lowering-owned BP/entry-SP projection. Ruff, MyPy for all eight production files, the type/doc ratchet, startup architecture/context/ownership checks, 17 focused tests, and the complete 568-test owned surface pass. |
 | Original six focused failures | `2026-08-29 10:10 +02:00` | `2026-08-29 11:06 +02:00` | 40-50m; test waits excluded | 56m | completed | 0h | The final C-declaration smoke now emits `return lhs + rhs;`; Beep and DrawTime remain validation-clean. Twenty-five focused and 188 changed-surface tests pass. Ruff `--fix`, direct MyPy over seven production modules, file type/doc ratchets, and startup architecture/context/ownership checks pass. |
-| Current focused-lane failure closure | `2026-08-29 11:14 +02:00` | - | historical subtotal retained; waits excluded | continued through `2026-08-31` | in progress | 4.5-12.5h | Sleep, Swaps, DrawTime, InitMenu, and the loop/control-flow family pass their function DoDs. Seven focused SORTD failures remain in three owner families. |
+| Current focused-lane failure closure | `2026-08-29 11:14 +02:00` | `2026-08-31 23:54 +02:00` | historical subtotal retained; waits excluded | continued through `2026-08-31` | completed | 0h | Sleep, Swaps, DrawTime, InitMenu, loop/control-flow, call/object/indexed-storage, DrawFrame, and RunMenu families pass their function DoDs. |
+| Call/object/indexed-storage materialization family | `2026-08-31 21:43 +02:00` | `2026-08-31 22:22 +02:00` | 24-30m focused; repeated test waits excluded | 39m | completed | 0h | Five live regressions and 161 supporting cases pass. Types/Lowering preserves stronger object expressions, named calls and declarations share one target identity, and rollback cleanup retains validated braces/affine rendering. Ruff, MyPy, type/doc ratchets, and startup architecture checks pass. |
+| DrawFrame validation and postprocess-baseline closure | `2026-08-31 22:27 +02:00` | `2026-08-31 22:59 +02:00` | 18-24m focused; repeated test waits excluded | 32m | completed | 0h | Tail Validation consumes the closed pure identical-return proof for the exact two-effect `if/else` surface. Postprocess baseline canonicalization now keys on its typed transaction-completion generation, not an initialized change flag. The live sidecar-free function, 167 related tests, Ruff, MyPy, type/doc ratchets, and startup architecture checks pass. |
+| RunMenu packed-FLAGS carrier validation closure | `2026-08-31 23:29 +02:00` | `2026-08-31 23:54 +02:00` | 17-20m focused; repeated live-test waits excluded | 25m | completed | 0h | All postprocess passes were disabled to prove the carrier pre-existed Rewrite. Register-backed AIL virtuals retain their physical storage identity, exact packed-FLAGS evidence is consumed only at matching instruction sites, both live gates pass in 50.04s, 175 related tests pass, and emitted stdout passes `gcc -std=c11 -fsyntax-only`. |
 | Frontend/debug and test-profile contract closure | `2026-08-29 11:27 +02:00` (delegated window) | `2026-08-29 11:49 +02:00` | 10-15m agent time, overlapped | 22m | completed | 0h | A truly unsupported `SLDT EAX` fixture preserves the required clear exit, and the inventory replacement selects the current topology regression. Eight focused tests plus Ruff and MyPy pass. |
 | Stack-coordinate, argument-identity, and stack-object unit closure | `2026-08-29 11:27 +02:00` (parallel local/delegated window) | `2026-08-29 11:49 +02:00` | 15-22m, overlapped | 22m | completed | 0h | Canonical entry-SP coordinates and exact body-owned argument identity now agree. Thirteen focused tests pass; the fixture-only canonicalization changes preserve production refusal behavior. |
 | Wide call-output, loop control-flow, and argument closure for live Sleep | `2026-08-29 11:36 +02:00` | `2026-08-29 12:41 +02:00` | 47-58m engineering; test waits excluded | 1h05m | completed | 0h | Live Tail Validation, the permanent executable-only Sleep test, the combined 151-test Types/Lowering and Structuring surface, direct Ruff/MyPy, and parallel `make linters-files` pass. The function retains two clock calls and one 32-bit argument. |
@@ -231,6 +249,62 @@ recovery; semantic repair in Rewrite or CLI; ambiguous condition/loop ownership
 accepted instead of refused; lost call/store; validation failure; or focused
 test, type, documentation, lint, or compilation failure.
 
+#### Call/object/indexed-storage step 5e closure contract
+
+Reason: exact call arguments, pointer classes, segmented live-ins, object
+widths, and indexed global storage cross Alias and Types/Lowering contracts;
+late name-based or rendered-C repair can silently change value-versus-pointer
+semantics.
+
+Definition of done: all five live materialization regressions pass with
+`validation=passed`; required calls, argument classes, indexed stores, and
+object widths survive; generated C passes portable syntax checks; the closed
+evidence counters have no classified-but-unmaterialized facts; focused tests,
+Ruff, MyPy, type/doc ratchets, and architecture ownership checks pass.
+
+Definition of failure: any function/address/source/COD/rendered-text-specific
+guess; name-based pointer or helper substitution; semantic repair in Rewrite or
+CLI; lost call/store, wrong value-versus-pointer class, ambiguous evidence
+accepted instead of refused, Tail Validation failure, C compile error, or any
+required focused type, documentation, lint, architecture, or test failure.
+
+#### DrawFrame step 5f closure contract
+
+Reason: Structuring had a closed typed proof that both pure guard arms returned
+the same value, while Tail Validation omitted the normal two-effect `if/else`
+surface. Independently, postprocess mistook an initialized compatibility flag
+for proof that its transaction had completed and compared against a stale
+uncanonicalized baseline.
+
+Definition of done: sidecar-free DrawFrame emits all three fill, position, and
+buffer-output calls; retains the source-equivalent inclusive loop; compiles as
+portable C; reports `validation=passed`; and its focused tests, Ruff, MyPy,
+type/doc ratchets, and startup architecture check pass.
+
+Definition of failure: accepting unrelated validation channels or unbounded
+control-flow deltas; repairing the guard in Rewrite; parsing rendered C; using
+a function/address-specific exception; losing a required call, loop bound, or
+argument class; or any required focused gate failure.
+
+#### RunMenu step 5g closure contract
+
+Reason: Tail Validation must distinguish an arbitrary unresolved virtual from
+an AIL virtual with exact physical-register provenance. Otherwise typed IR
+evidence for packed FLAGS preservation is collected but cannot be consumed,
+and valid structured C is rejected at final emission.
+
+Definition of done: sidecar-free RunMenu retains `local_2 = sub_11292();`, all
+ten switch cases, and `case 27: return;`; emits `extern long g_0132;`; reports
+`validation=passed` and clean whole-tail validation; compiles under strict C11;
+and exact-site, wrong-site, focused flag/validation/structuring, lint, type/doc,
+and startup architecture gates pass.
+
+Definition of failure: treating every virtual carrier as initialized; accepting
+a packed-FLAGS read without exact frontend instruction evidence; adding a
+RunMenu/address/rendered-C exception; repairing semantics in Rewrite or CLI;
+losing a call, case, return, or signed declaration; or any required focused
+gate failure.
+
 ### Forecasted Execution Steps
 
 This table is the estimation calibration record for the remaining plan. A row
@@ -243,7 +317,7 @@ The final cell in each row is that row's DoD. Missing any listed condition,
 weakening a gate, or moving semantics to a later layer is its definition of
 failure; the detailed reason and failure clauses remain authoritative in the
 numbered task section below.
-The rows are non-overlapping and currently sum to the same rounded 90-132h total
+The rows are non-overlapping and currently sum to the same rounded 85-120h total
 as the weighted task ledger. Estimates for the remaining live families are deliberately
 separate: a passing test count cannot hide an independent semantic owner or a
 validation blind spot.
@@ -258,9 +332,9 @@ validation blind spot.
 | 5b | Close DrawTime carry-predicate sibling ownership | `2026-08-29 13:30 +02:00` | `2026-08-29 13:43 +02:00` | 10-13m; test waits excluded | complete | A typed missing predicate searches the complete function only through the existing unique exact arithmetic/CFG ownership proof. Ambiguous and mismatched evidence still refuse; the focused and live regressions pass. |
 | 5c | Close the three InitMenu validation/condition failures | `2026-08-29 14:23 +02:00` (approximate) | `2026-08-29 15:16 +02:00` | 35-45m focused; 63.22s final live-test wall separate | complete | Exact binary-backed conditions and the pause guard validate; both calls survive; sidecar-free and sidecar-assisted C compile; Rewrite adds braces only and does not recover semantics. |
 | 5d | Close the five validation-clean loop/control-flow shape failures | `2026-08-29 15:29 +02:00` | `2026-08-29 16:50 +02:00` | exact focused subtotal unavailable after interruption | complete | ReInitBars, BubbleSort, ExchangeSort, and PercolateUp use IR/CFG-owned condition and loop structure, pass live Tail Validation, and retain required calls and stores. |
-| 5e | Close the five call/object/indexed-storage materialization failures | not started | - | 0h | 3-8h | Segmented live-ins, object widths, pointer classes, calls, and indexed global storage are materialized from closed typed evidence. |
-| 5f | Close the DrawFrame validation failure | not started | - | 0h | 1-3h | DrawFrame passes Tail Validation with no semantic repair in Structuring cleanup or Rewrite. |
-| 5g | Close the RunMenu portable-C declaration failure | not started | - | 0h | 0.5-1.5h | The unchanged generated function compiles as portable C and keeps the Escape path; declaration ownership remains Types/Lowering or CLI export. |
+| 5e | Close the five call/object/indexed-storage materialization failures | `2026-08-31 21:43 +02:00` | `2026-08-31 22:22 +02:00` | 24-30m focused; final 54.31s test wall separate | complete | Five live regressions plus supporting unit contracts pass; exact typed target identity removes stale numeric declarations and lower-level IR replay cannot overwrite stronger object lowering. |
+| 5f | Close the DrawFrame validation failure | `2026-08-31 22:27 +02:00` | `2026-08-31 22:59 +02:00` | 18-24m focused; final 10.86s related-suite wall separate | complete | DrawFrame passes Tail Validation with no semantic repair in Structuring cleanup or Rewrite; the source-equivalent loop and every required call survive. |
+| 5g | Close the RunMenu portable-C declaration failure | `2026-08-31 23:29 +02:00` | `2026-08-31 23:54 +02:00` | 17-20m focused; final two-test live wall 50.04s | complete | RunMenu validates, compiles as portable C, retains the Escape path and call result, and consumes packed-FLAGS evidence only through exact physical-register identity. |
 | 6 | Rerun the complete focused pytest lane and classify any newly exposed failures | not started after live-family closure | - | 0h; latest baseline test wall is 6m44s plus 2m45s retry | 0.25-0.75h focused | The complete lane passes; any new failure is assigned to its earliest owned contract and added as a separately timed row. |
 | 7 | Fix and rerun external MSC6 `function_pointers` and `pointer_memory` gates | diagnosis observed `2026-08-29 11:24 +02:00`; implementation not started | - | diagnosis time unknown | 3-8h | Correct the shared machine-BP/entry-SP consumer defect at Types/Lowering, add runtime-shaped regressions, and obtain validation-clean compile/decompile/recompile/runtime results. |
 | 8 | Run `quality-hard`, `test-pipeline`, and required expanded acceptance gates | not started | - | 0h | 3-8h focused plus test wall time | Every mandatory lint, type, architecture, focused, tiny-example, and pipeline gate passes without exclusions or weakened checks. |
@@ -283,14 +357,17 @@ validation blind spot.
 | `2026-08-29 13:43 +02:00` | 93-141h | -1h / -3h after rounding | Swaps passes its complete function-fix DoD. DrawTime's independently exposed carry-predicate failure also has a failing-before generic regression, an earliest-layer fix, live `validation=passed`, strict C syntax, and a 72-test related cluster. |
 | `2026-08-29 15:16 +02:00` | 92-137h | -1h / -4h after rounding | InitMenu's three live failures close in 35-45 focused minutes across their distinct Frontend, Types/Lowering, and cleanup owners. The permanent three-test live gate and 94 focused tests pass. |
 | `2026-08-31 11:10 +02:00` | 90-132h | -2h / -5h | The loop/control-flow family and its retry-artifact reporting contract pass their focused DoD. The fresh full MS C lane exposes five explicit later-task failures instead of being reported as green. |
+| `2026-08-31 22:22 +02:00` | 87-124h | -3h / -8h | Step 5e closed faster than forecast after three shared root causes were isolated: lowering precedence, validated rollback cleanup completeness, and typed call/declaration target coherence. Five live regressions, 161 supporting cases, file gates, and startup architecture checks pass. |
+| `2026-08-31 22:59 +02:00` | 86-121h | -1h / -3h | Step 5f closed through two generic validation contracts: exact identical-return delta cardinality and typed postprocess transaction completion. DrawFrame passes sidecar-free with source-equivalent control flow; 167 related tests and all changed-surface gates pass. |
+| `2026-08-31 23:54 +02:00` | 85-120h | -1h / -1h | Step 5g closed faster than forecast after pass isolation proved the defect pre-existed postprocess. Register-backed AIL virtuals now retain exact physical-register identity in validation; wrong-site packed-FLAGS reads still fail. Both live RunMenu gates, 175 related tests, changed-file gates, startup architecture checks, and strict C syntax pass. |
 
-Current expected finish for the complete plan is **90-132 focused engineering
-hours**, approximately **2.3-4.4 working weeks** at 30-40 focused hours per
-week, or roughly **2026-09-15 through 2026-09-30** if work continues at that
-rate. The midpoint forecast is about **115 focused hours / 2026-09-21**.
+Current expected finish for the complete plan is **85-120 focused engineering
+hours**, approximately **2.2-4.0 working weeks** at 30-40 focused hours per
+week, or roughly **2026-09-15 through 2026-09-28** if work continues at that
+rate. The midpoint forecast is about **103 focused hours / 2026-09-19**.
 This is a range, not a calendar promise: newly exposed semantic failures can
-increase it. The next recalibration occurs when the loop/control-flow owner
-family meets its DoD, then after every subsequent family, using measured focused time per
+increase it. The next recalibration occurs after the complete focused-lane
+rerun, then after every subsequent family, using measured focused time per
 independent root cause rather than the raw count of failing tests.
 
 ## Historical Measured Baseline

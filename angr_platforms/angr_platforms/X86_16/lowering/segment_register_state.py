@@ -38,6 +38,7 @@ __all__ = [
     "lower_architectural_segment_register_state_8616",
     "runtime_segment_name_for_variable_8616",
     "runtime_segment_push_source_cvar_8616",
+    "runtime_segment_state_cvar_8616",
     "runtime_segment_state_symbol_8616",
 ]
 
@@ -126,14 +127,14 @@ def runtime_segment_name_for_variable_8616(variable: object) -> str | None:
     return None
 
 
-def runtime_segment_push_source_cvar_8616(
+def runtime_segment_state_cvar_8616(
     segment_name: str,
     *,
     codegen: object,
     variable_type: SimType | None,
     function_addr: int,
 ) -> structured_c.CVariable | None:
-    """Materialize one instruction-proven segment PUSH as explicit runtime state."""
+    """Materialize one proven architectural segment as explicit runtime state."""
     normalized_name = segment_name.strip().lower()
     symbol = _RUNTIME_SEGMENT_STATE_SYMBOLS_8616.get(normalized_name)
     address = _RUNTIME_SEGMENT_STATE_ADDRESSES_8616.get(normalized_name)
@@ -149,6 +150,22 @@ def runtime_segment_push_source_cvar_8616(
         ),
         variable_type=variable_type,
         codegen=codegen,
+    )
+
+
+def runtime_segment_push_source_cvar_8616(
+    segment_name: str,
+    *,
+    codegen: object,
+    variable_type: SimType | None,
+    function_addr: int,
+) -> structured_c.CVariable | None:
+    """Materialize one instruction-proven segment PUSH as explicit runtime state."""
+    return runtime_segment_state_cvar_8616(
+        segment_name,
+        codegen=codegen,
+        variable_type=variable_type,
+        function_addr=function_addr,
     )
 
 

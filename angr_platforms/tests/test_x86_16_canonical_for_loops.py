@@ -384,6 +384,42 @@ def test_recovers_conditional_loop_with_exact_inverse_leading_break() -> None:
     assert recovered.body.statements == [payload]
 
 
+def test_recovers_direct_conditional_loop_after_pretest_guard_promotion() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(0, codegen), codegen=codegen)
+    continuation = CBinaryOp(
+        "CmpGT",
+        _const(8, codegen),
+        induction,
+        codegen=codegen,
+    )
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp("Add", _local(-4, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    payload = CAssignment(_local(-8, codegen), induction, codegen=codegen)
+    loop = CWhileLoop(
+        continuation,
+        CStatements([payload, iterator], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    validation_shape = canonical_loop_validation_shape_8616(loop)
+    assert validation_shape is not None
+    assert validation_shape.condition is continuation
+    assert validation_shape.suppressed_control_node_ids == frozenset()
+    assert recover_canonical_for_loops_8616(codegen) is True
+    assert len(root.statements) == 1
+    recovered = root.statements[0]
+    assert isinstance(recovered, CForLoop)
+    assert recovered.condition is continuation
+    assert recovered.body.statements == [payload]
+
+
 def test_refuses_conditional_loop_with_noninverse_leading_break() -> None:
     codegen = _Codegen()
     induction = _local(-4, codegen)

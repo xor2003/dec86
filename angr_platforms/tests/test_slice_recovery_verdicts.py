@@ -4,8 +4,37 @@ from inertia_decompiler.slice_recovery import (
     SliceRecoveryAttemptOutcome,
     SliceRecoveryAttemptTrace,
     _build_bounded_slice_verdict,
+    build_default_slice_recovery_attempts,
     run_bounded_slice_recovery,
 )
+
+
+def test_default_slice_recovery_keeps_semantic_entry_separate_from_region() -> None:
+    calls: list[tuple[str, int, list[tuple[int, int]]]] = []
+
+    def pick_lean(_project: object, addr: int, *, regions: list[tuple[int, int]], **_kwargs: object):
+        calls.append(("lean", addr, regions))
+        return object(), object()
+
+    def pick_full(_project: object, addr: int, *, regions: list[tuple[int, int]], **_kwargs: object):
+        calls.append(("full", addr, regions))
+        return object(), object()
+
+    attempts = build_default_slice_recovery_attempts(
+        0x1000,
+        0x11C5,
+        entry=0x1014,
+        pick_function_lean=pick_lean,
+        pick_function=pick_full,
+    )
+    for _name, recover in attempts:
+        recover(object())
+
+    assert calls == [
+        ("lean", 0x1014, [(0x1000, 0x11C5)]),
+        ("full", 0x1014, [(0x1000, 0x11C5)]),
+        ("full", 0x1014, [(0x1000, 0x11C5)]),
+    ]
 
 
 def test_build_bounded_slice_verdict_marks_recover_timeout_as_retryable() -> None:

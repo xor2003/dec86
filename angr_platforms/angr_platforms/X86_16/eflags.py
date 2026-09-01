@@ -194,19 +194,22 @@ class Eflags:
         flags: FlagValue,
         live_writes: StatusFlag8616,
         values: StatusFlagValueFactories,
+        *,
+        written: StatusFlag8616 | None = None,
     ) -> VexExpr:
-        """Lazily pack all live status-bit equations into one FLAGS update."""
+        """Pack live equations and zero dead bits that this instruction defines."""
         selected = tuple((flag, value) for flag, value in values if live_writes & flag)
         if not selected:
             return cast(VexExpr, flags)
         flags16 = self.constant(flags, Type.int_16) if isinstance(flags, int) else flags.cast_to(Type.int_16)
         live_mask = sum(int(flag) for flag, _value in selected)
+        written_mask = int(written if written is not None else live_writes)
         packed = self.constant(0, Type.int_16)
         for flag, value_factory in selected:
             value = value_factory()
             value1 = self.constant(value, Type.int_1) if isinstance(value, int) else value.cast_to(Type.int_1)
             packed |= value1.cast_to(Type.int_16) << (int(flag).bit_length() - 1)
-        return (flags16 & self.constant((~live_mask) & 0xFFFF, Type.int_16)) | (
+        return (flags16 & self.constant((~written_mask) & 0xFFFF, Type.int_16)) | (
             packed & self.constant(live_mask, Type.int_16)
         )
 
@@ -233,6 +236,7 @@ class Eflags:
                 (StatusFlag8616.SIGN, lambda: result[size - 1]),
                 (StatusFlag8616.OVERFLOW, lambda: v1 == self.constant((1 << (size - 1)) - 1, v1.ty)),
             ),
+            written=INCDEC_STATUS_FLAG_WRITES_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -268,6 +272,7 @@ class Eflags:
                     ).cast_to(Type.int_1),
                 ),
             ),
+            written=STATUS_FLAGS_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -308,6 +313,7 @@ class Eflags:
                     ).cast_to(Type.int_1),
                 ),
             ),
+            written=STATUS_FLAGS_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -328,6 +334,7 @@ class Eflags:
                 (StatusFlag8616.SIGN, lambda: result[result.width - 1]),
                 (StatusFlag8616.OVERFLOW, lambda: self.constant(0)),
             ),
+            written=STATUS_FLAGS_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -367,6 +374,7 @@ class Eflags:
                     ).cast_to(Type.int_1),
                 ),
             ),
+            written=STATUS_FLAGS_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -402,6 +410,7 @@ class Eflags:
                     ).cast_to(Type.int_1),
                 ),
             ),
+            written=STATUS_FLAGS_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -445,6 +454,7 @@ class Eflags:
                 (StatusFlag8616.SIGN, lambda: result[size - 1]),
                 (StatusFlag8616.OVERFLOW, lambda: v1 == self.constant(1 << (size - 1), v1.ty)),
             ),
+            written=INCDEC_STATUS_FLAG_WRITES_8616,
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 

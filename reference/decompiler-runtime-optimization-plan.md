@@ -267,6 +267,18 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   function and whole-tail validation pass. Shared decompiler load and different
   profiler modes make the full-run wall values unsuitable for an end-to-end
   speed claim.
+- Cold source-region discovery now decodes its exact caller ranges once into a
+  request-owned Frontend artifact and keeps target-specific return-use
+  classification in the existing semantic owner. On the 20-function
+  sidecar-free SORTD census, target queries fell from 3.431 to 0.184 seconds;
+  the one-time artifact build cost 0.151 seconds, reducing the owned cohort to
+  0.335 seconds (90%). Direct-call index construction fell from 20 builds to
+  one. Legacy and shared-artifact results were exactly equal across all 20
+  targets and 21 caller ranges. A complete `sub_109e8` run remains
+  byte-identical at
+  `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`;
+  function and whole-tail validation pass. Concurrent decompilation load makes
+  whole-process wall time unsuitable for a broader speed claim.
 - Cold indexed-Alias construction has a typed bounded-fork experiment with an
   exact serial fallback and a three-worker, roughly 1.13 GiB aggregate cap.
   Two stable serial SORTD `sub_109e8` runs measured 27.39 and 27.31 seconds;

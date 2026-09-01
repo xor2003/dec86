@@ -1286,6 +1286,28 @@ def test_replaces_stale_declaration_for_same_callee() -> None:
     assert codegen._inertia_callsite_prototype_decls == ("unsigned short combine(unsigned short a0);",)
 
 
+def test_named_target_removes_obsolete_numeric_declaration() -> None:
+    """One typed target identity must not retain its earlier numeric projection."""
+    codegen = _Codegen()
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="row"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call = CFunctionCall("DrawBar", None, [argument], tags={"ins_addr": 0x1010}, codegen=codegen)
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x1010, arg_count=1)}
+    codegen._inertia_callsite_prototype_decls = (
+        "unsigned short sub_2000(unsigned short a0);",
+    )
+
+    assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
+    assert codegen._inertia_callsite_prototype_decls == (
+        "unsigned short DrawBar(unsigned short a0);",
+    )
+
+
 def test_conflicting_ast_argument_types_replace_stale_prototype_with_unprototyped_declaration() -> None:
     """One proven physical ABI must not retain a guessed logical argument type."""
     codegen = _Codegen()

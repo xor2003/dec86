@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CConstant,
+    CIndexedVariable,
+    CStatements,
+    CVariable,
+)
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.alias.terminal_pointer_outputs import (
     classify_terminal_pointer_output_aliases_8616,
 )
@@ -49,6 +58,9 @@ from angr_platforms.X86_16.lowering.pointer_parameter_outputs import (
 from angr_platforms.X86_16.semantics.terminal_pointer_outputs import (
     collect_terminal_pointer_output_evidence_8616,
 )
+from angr_platforms.X86_16.validation_pointer_parameter_outputs import (
+    validate_pointer_parameter_outputs_8616,
+)
 from angr_platforms.X86_16.widening.global_object_layout import (
     GlobalObjectLayout8616,
     GlobalObjectLayoutEvidence8616,
@@ -67,6 +79,64 @@ from scripts.check_sortd_sidecar_free import mz_executable_image
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SORTD_EXE = REPO_ROOT / "SORTD.EXE"
 SWAPS_ADDR = 0x107B8
+
+
+class _ValidationCodegen:
+    def __init__(self, project, statements, arguments) -> None:
+        self.project = project
+        self.cfunc = type(
+            "_CFunction",
+            (),
+            {"addr": SWAPS_ADDR, "arg_list": arguments, "statements": statements},
+        )()
+
+    def next_ident(self, name: str) -> str:
+        return name
+
+    def next_idx(self, _name: str) -> int:
+        return 1
+
+    def next_node_idx(self) -> int:
+        return 1
+
+
+def _pointer_output_validation_root(project, *, collapse_second: bool):
+    codegen = _ValidationCodegen(project, None, ())
+    type_ = SimTypeShort(False).with_arch(project.arch)
+    left = CVariable(
+        SimStackVariable(4, 2, base="bp"),
+        variable_type=type_,
+        codegen=codegen,
+    )
+    right = CVariable(
+        SimStackVariable(6, 2, base="bp"),
+        variable_type=type_,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = (left, right)
+
+    def indexed(argument):
+        return CIndexedVariable(
+            argument,
+            CConstant(0, type_, codegen=codegen),
+            variable_type=type_,
+            codegen=codegen,
+        )
+
+    second_target = left if collapse_second else right
+    root = CStatements(
+        [
+            CAssignment(indexed(left), indexed(right), codegen=codegen),
+            CAssignment(
+                indexed(second_target),
+                CConstant(1, type_, codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = root
+    return codegen, root
 
 
 def test_sortd_swaps_materializes_pointer_outputs_through_storage_pipeline(
@@ -130,6 +200,28 @@ def test_sortd_swaps_materializes_pointer_outputs_through_storage_pipeline(
         for fact in lowered.facts
     } == {(0, 4, 2), (1, 6, 2)}
     assert pointer_parameter_output_evidence_8616(project, SWAPS_ADDR) is lowered
+    correct_codegen, correct_root = _pointer_output_validation_root(
+        project,
+        collapse_second=False,
+    )
+    correct_validation = validate_pointer_parameter_outputs_8616(
+        project,
+        correct_codegen,
+        correct_root,
+    )
+    assert correct_validation.passed is True
+    assert correct_validation.materialized_count == 2
+    collapsed_codegen, collapsed_root = _pointer_output_validation_root(
+        project,
+        collapse_second=True,
+    )
+    collapsed_validation = validate_pointer_parameter_outputs_8616(
+        project,
+        collapsed_codegen,
+        collapsed_root,
+    )
+    assert collapsed_validation.passed is False
+    assert collapsed_validation.issues[0].requirement.logical_index == 1
 
     census = collect_callee_callsite_census_8616(project, SWAPS_ADDR)
     assert census.complete

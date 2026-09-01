@@ -8,6 +8,7 @@ from angr_platforms.X86_16.caller_return_use_contracts import (
     CallsiteReturnUseKind8616,
 )
 from angr_platforms.X86_16.callsite_summary import (
+    caller_return_use_program_scope_8616,
     collect_caller_return_use_evidence_8616,
 )
 
@@ -15,8 +16,10 @@ from angr_platforms.X86_16.callsite_summary import (
 class _Memory:
     def __init__(self, regions: dict[int, bytes]) -> None:
         self._regions = regions
+        self.load_count = 0
 
     def load(self, addr: int, size: int) -> bytes:
+        self.load_count += 1
         for base, data in self._regions.items():
             offset = addr - base
             if offset >= 0 and offset + size <= len(data):
@@ -129,3 +132,44 @@ def test_wrapper_passthrough_retains_local_witness_and_transitive_verdict() -> N
     assert fact.witness_instruction_addr == 0x1003
     assert fact.verdict is CallerReturnUseVerdict8616.USED
     assert fact.classified
+
+
+def test_program_scope_decodes_caller_ranges_once_for_multiple_targets() -> None:
+    # caller A -> 0x1020; caller B -> 0x1030; both overwrite AX.
+    ranges = ((0x1000, 0x1006), (0x1010, 0x1016))
+    project = _project(
+        {
+            0x1000: bytes.fromhex("e81d00b80000"),
+            0x1010: bytes.fromhex("e81d00b80000"),
+        }
+    )
+    memory = project.loader.memory
+
+    with caller_return_use_program_scope_8616(project, ranges):
+        first = collect_caller_return_use_evidence_8616(project, 0x1020, ranges)
+        second = collect_caller_return_use_evidence_8616(project, 0x1030, ranges)
+
+    assert first.verdict is CallerReturnUseVerdict8616.UNUSED
+    assert second.verdict is CallerReturnUseVerdict8616.UNUSED
+    assert memory.load_count == len(ranges)
+
+
+def test_program_scope_is_exact_and_request_local() -> None:
+    ranges = ((0x1000, 0x1006), (0x1010, 0x1016))
+    regions = {
+        0x1000: bytes.fromhex("e81d00b80000"),
+        0x1010: bytes.fromhex("e81d00b80000"),
+    }
+    project = _project(regions)
+    other_project = _project(regions)
+    memory = project.loader.memory
+    other_memory = other_project.loader.memory
+
+    with caller_return_use_program_scope_8616(project, ranges):
+        collect_caller_return_use_evidence_8616(other_project, 0x1020, ranges)
+        collect_caller_return_use_evidence_8616(project, 0x1020, ranges[:1])
+
+    collect_caller_return_use_evidence_8616(project, 0x1020, ranges)
+
+    assert memory.load_count == len(ranges) + 1 + len(ranges)
+    assert other_memory.load_count == len(ranges)

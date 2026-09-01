@@ -153,6 +153,7 @@ def _try_decompile_sidecar_slice(
     binary_path: Path | None,
     failure_family_state: FailureFamilyState | None = None,
 ) -> SliceRecoveryAttemptOutcome | None:
+    """Decompile a metadata-bounded region at its proven callable entry."""
     def _impl() -> SliceRecoveryAttemptOutcome | None:
         region = _lst_code_region(lst_metadata, addr)
         if region is None:
@@ -173,12 +174,16 @@ def _try_decompile_sidecar_slice(
         def _recover_and_decompile() -> SliceRecoveryAttemptOutcome:
             # Dynamic angr boundary: project architecture metadata is supplied by angr.
             arch_name = getattr(getattr(project, "arch", None), "name", None)
-            slice_plan = plan_x86_16_exact_slice(start, end) if arch_name == "86_16" else None
+            slice_plan = (
+                plan_x86_16_exact_slice(start, end, original_entry=addr) if arch_name == "86_16" else None
+            )
             slice_start = slice_plan.slice_start if slice_plan is not None else start
             slice_end = slice_plan.slice_end if slice_plan is not None else end
+            slice_entry = slice_plan.slice_semantic_entry if slice_plan is not None else addr
             recovery_attempts = build_default_slice_recovery_attempts(
                 slice_start,
                 slice_end,
+                entry=slice_entry,
                 pick_function_lean=_pick_function_lean,
                 pick_function=_pick_function,
             )
@@ -192,7 +197,7 @@ def _try_decompile_sidecar_slice(
                 # Dynamic angr boundary: recovered functions expose mutable names through angr.
                 typing.cast(typing.Any, func).name = name
                 if slice_plan is not None:
-                    mark_function_original_addr(func, start)
+                    mark_function_original_addr(func, slice_plan.original_semantic_entry)
                     # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
                     typing.cast(typing.Any, slice_project)._inertia_disable_ail_narrowing = True
                     # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
@@ -236,7 +241,7 @@ def _try_decompile_sidecar_slice(
                 build_slice_project=lambda: _build_project_from_bytes(
                     code,
                     base_addr=slice_start,
-                    entry_point=slice_start,
+                    entry_point=slice_entry,
                 ),
                 inherit_runtime_policy=_inherit_slice_runtime_policy,
                 describe_exception=_describe_exception,

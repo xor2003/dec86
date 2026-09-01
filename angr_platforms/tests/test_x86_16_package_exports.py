@@ -212,7 +212,10 @@ def test_x86_16_decompiler_postprocess_registry_order():
     assert pass_names.index("_dedupe_equivalent_stack_local_declarations_final_8616") < pass_names.index(
         "_normalize_multi_statement_braces_final_8616"
     )
-    assert pass_names[-1] == "_normalize_multi_statement_braces_final_8616"
+    assert pass_names.index("_normalize_multi_statement_braces_final_8616") < pass_names.index(
+        "_apply_affine_compound_assignment_identity_final_8616"
+    )
+    assert pass_names[-1] == "_apply_affine_compound_assignment_identity_final_8616"
 
 
 def test_x86_16_decompiler_postprocess_registry_requires_rebuild_contract():

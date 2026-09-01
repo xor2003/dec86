@@ -81,7 +81,9 @@ def test_sortd_heapsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Pat
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "uninitialized-read:segment-carrier" not in combined
-    assert "g_0BA2 <= local_2" in result.stdout
+    # SORTDEMO.C uses ``i = 1; i < cRow``.  Keep the direct source-oriented
+    # condition instead of pinning this gate to an older inverted-break render.
+    assert "for (local_2 = 1; g_0BA2 > local_2;" in result.stdout
     assert "for (local_2 = g_0BA2 - 1; local_2 > 0;" in result.stdout
     assert "sub_109e8(local_2);" in result.stdout
     assert "sub_107b8(&g_0B4C[0], &g_0B4C[local_2]);" in result.stdout
@@ -109,7 +111,13 @@ def test_sortd_shellsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Pa
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "uninitialized-read:segment-carrier" not in combined
-    assert "for (local_2 = (short)g_0BA2 / 2; local_2; )" in result.stdout
+    # The source initializes iOffset before its loop.  Require that dataflow,
+    # while allowing Structuring to spell the loop itself as ``for`` or ``while``.
+    offset_loop = re.search(
+        r"local_2 = \(short\)g_0BA2 / 2;\s+(?:for \(; local_2; \)|while \(local_2\))",
+        result.stdout,
+    )
+    assert offset_loop is not None, result.stdout
     assert "SEG_U16(inertia_ds, 2978)" not in result.stdout
     assert "sub_107b8(&g_0B4C[local_4], &g_0B4C[local_4 + local_2]);" in result.stdout
     assert "sub_10768(local_4, local_4 + local_2);" in result.stdout
@@ -238,8 +246,11 @@ def test_sortd_percolate_down_uses_canonical_shifted_global_view(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "extern g_08F0_entry g_0B4C[];" in result.stdout
-    assert "if (local_4 + 1 <= arg_4)" in result.stdout
-    assert result.stdout.count("if (local_4 <= arg_4)") == 1
+    signature = re.search(r"void sub_10a88\(short (?P<bound>[A-Za-z_]\w*)\)", result.stdout)
+    assert signature is not None, result.stdout
+    bound = signature.group("bound")
+    assert f"if (local_4 + 1 <= {bound})" in result.stdout
+    assert result.stdout.count(f"if (local_4 <= {bound})") == 1
     assert (
         "g_0B4C[local_4 + 1].field_0 > g_0B4C[local_4].field_0"
         in result.stdout

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBinaryOp,
     CConstant,
     CFunctionCall,
     CIfElse,
@@ -104,6 +105,40 @@ def _seg_store(
         CConstant(0, SimTypeShort(False), codegen=codegen),
         codegen=codegen,
         tags={"ins_addr": 0x10588},
+    )
+
+
+def _indexed_seg_store(
+    codegen: _Codegen,
+    *,
+    segment_name: str = "ds",
+    base: int = 0x356,
+    ins_addr: int | None = 0x11195,
+) -> CAssignment:
+    """Build one byte store through a typed additive segmented offset."""
+    index = CVariable(
+        SimRegisterVariable(codegen.project.arch.registers["si"][0], 2, name="si"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    offset = CBinaryOp(
+        "Add",
+        CConstant(base, SimTypeShort(False), codegen=codegen),
+        index,
+        codegen=codegen,
+    )
+    lvalue = CFunctionCall(
+        "SEG_U8",
+        None,
+        [_segment_variable(codegen, segment_name), offset],
+        codegen=codegen,
+    )
+    tags = {"ins_addr": ins_addr} if ins_addr is not None else None
+    return CAssignment(
+        lvalue,
+        CConstant(0, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+        tags=tags,
     )
 
 
@@ -209,6 +244,65 @@ def test_required_memory_effect_accepts_two_exact_byte_stores() -> None:
 
     assert report.passed is True
     assert report.materialized_count == 1
+
+
+def test_required_memory_effect_accepts_same_instruction_affine_store() -> None:
+    codegen = _Codegen()
+    codegen._inertia_required_direct_segmented_global_stores_8616 = (
+        DirectSegmentedGlobalStoreEvidence8616(
+            offset=0x356,
+            width=1,
+            space=MemSpace.DS,
+            ins_addr=0x11195,
+        ),
+    )
+    codegen.cfunc.statements.statements.append(_indexed_seg_store(codegen))
+
+    report = validate_required_memory_effects_8616(
+        codegen.project,
+        codegen,
+        codegen.cfunc.statements,
+    )
+
+    assert report.passed is True
+    assert report.materialized_count == 1
+
+
+@pytest.mark.parametrize(
+    ("segment_name", "base", "ins_addr"),
+    (("es", 0x356, 0x11195), ("ds", 0x357, 0x11195), ("ds", 0x356, None)),
+)
+def test_required_memory_effect_rejects_unproven_affine_store(
+    segment_name: str,
+    base: int,
+    ins_addr: int | None,
+) -> None:
+    codegen = _Codegen()
+    codegen._inertia_required_direct_segmented_global_stores_8616 = (
+        DirectSegmentedGlobalStoreEvidence8616(
+            offset=0x356,
+            width=1,
+            space=MemSpace.DS,
+            ins_addr=0x11195,
+        ),
+    )
+    codegen.cfunc.statements.statements.append(
+        _indexed_seg_store(
+            codegen,
+            segment_name=segment_name,
+            base=base,
+            ins_addr=ins_addr,
+        )
+    )
+
+    report = validate_required_memory_effects_8616(
+        codegen.project,
+        codegen,
+        codegen.cfunc.statements,
+    )
+
+    assert report.passed is False
+    assert report.materialized_count == 0
 
 
 def test_required_memory_effect_accepts_typed_ds_global_store() -> None:

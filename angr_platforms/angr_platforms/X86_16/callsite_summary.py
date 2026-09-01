@@ -10,7 +10,7 @@ import builtins
 import contextlib
 import logging
 import os
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Iterator
 from dataclasses import asdict, dataclass, field, replace
 from enum import Enum, StrEnum
 from types import SimpleNamespace
@@ -31,7 +31,10 @@ from .alias.partial_register_address_break import (
     PartialRegisterAddressBreakEvidence8616,
     collect_partial_register_address_break_8616,
 )
-from .alias.register_reaching_source import RegisterReachingSourceVerdict8616
+from .alias.register_reaching_source import (
+    RegisterReachingSourceResult8616,
+    RegisterReachingSourceVerdict8616,
+)
 from .analysis_helpers import collect_neighbor_call_targets, resolve_direct_call_target_from_block
 from .callee_name_normalization import normalize_callee_name_8616
 from .caller_return_use_contracts import (
@@ -47,7 +50,12 @@ from .compiler_helpers import (
     is_x86_16_registered_stack_probe_target_8616,
     is_x86_16_stack_probe_name_8616,
 )
-from .frontend_direct_callsite_index import build_decoded_direct_callsite_index_8616
+from .frontend_caller_return_use_program import (
+    CallerReturnUseProgramStatus8616,
+    build_caller_return_use_program_evidence_8616,
+    current_caller_return_use_program_evidence_8616,
+    use_caller_return_use_program_evidence_8616,
+)
 from .frontend_instruction_kinds import is_x86_16_call_mnemonic_8616
 from .helper_abi import (
     known_helper_is_variadic_8616 as _catalog_helper_is_variadic_8616,
@@ -89,6 +97,7 @@ __all__ = [
     "bind_structured_callsite_identity_8616",
     "build_callsite_summary_inventory_8616",
     "caller_return_use_evidence_by_addr_8616",
+    "caller_return_use_program_scope_8616",
     "callsite_machine_frame_kind_8616",
     "callsite_summary_inventory_8616",
     "callsite_target_name_for_project_8616",
@@ -99,6 +108,7 @@ __all__ = [
     "record_caller_return_use_evidence_8616",
     "structured_call_kind_8616",
     "structured_callsite_addr_8616",
+    "structured_callsite_target_addr_8616",
     "summarize_x86_16_callsite",
 ]
 
@@ -262,6 +272,7 @@ class CallsitePushSourceKind8616(Enum):
     IMMEDIATE = "imm"
     EXPR = "expr"
     RETURN_REGISTER = "ret_reg"
+    REGISTER_VALUE = "reg"
     SEGMENT = "seg"
 
 
@@ -404,6 +415,17 @@ def structured_callsite_addr_8616(
     return callsite_addr if isinstance(callsite_addr, int) else None
 
 
+def structured_callsite_target_addr_8616(
+    call: _StructuredCallsiteTagCarrier8616,
+) -> int | None:
+    """Return the typed callee address persisted with one structured call."""
+    tags = _structured_callsite_tags_8616(call)
+    if tags is None:
+        return None
+    target_addr = tags.get("inertia_target_addr_8616")
+    return target_addr if isinstance(target_addr, int) else None
+
+
 def bind_structured_callsite_identity_8616(
     call: _StructuredCallsiteTagCarrier8616,
     summary: CallsiteSummary8616,
@@ -422,7 +444,22 @@ def bind_structured_callsite_identity_8616(
             "structured callsite identity conflicts with typed summary: "
             f"tag={existing_callsite_addr:#x} summary={summary.callsite_addr:#x}"
         )
-    call.tags = {**tags, "ins_addr": summary.callsite_addr}
+    existing_target_addr = tags.get("inertia_target_addr_8616")
+    if (
+        isinstance(existing_target_addr, int)
+        and isinstance(summary.target_addr, int)
+        and existing_target_addr != summary.target_addr
+    ):
+        raise PipelineHardError(
+            "structured callee identity conflicts with typed summary: "
+            f"tag={existing_target_addr:#x} summary={summary.target_addr:#x}"
+        )
+    target_tags = (
+        {"inertia_target_addr_8616": summary.target_addr}
+        if isinstance(summary.target_addr, int)
+        else {}
+    )
+    call.tags = {**tags, "ins_addr": summary.callsite_addr, **target_tags}
 
 
 def rebind_cloned_structured_callsite_identity_8616(
@@ -453,7 +490,16 @@ def rebind_cloned_structured_callsite_identity_8616(
             f"tag={inherited_callsite_addr!r} "
             f"source={inherited_summary.callsite_addr:#x}"
         )
-    call.tags = {**tags, "ins_addr": replacement_summary.callsite_addr}
+    target_tags = (
+        {"inertia_target_addr_8616": replacement_summary.target_addr}
+        if isinstance(replacement_summary.target_addr, int)
+        else {}
+    )
+    call.tags = {
+        **tags,
+        "ins_addr": replacement_summary.callsite_addr,
+        **target_tags,
+    }
 
 
 class _CallsiteSummaryInventoryOwner8616(Protocol):
@@ -2316,16 +2362,17 @@ def _push_arg_source_from_context(
     push_instruction_addr = _instruction_address_8616(insns[idx])
     if pushed_reg is None or not isinstance(push_instruction_addr, int):
         return None
-    reaching = recover_callsite_register_source_8616(
+    reaching: RegisterReachingSourceResult8616 = recover_callsite_register_source_8616(
         function,
         push_instruction_addr=push_instruction_addr,
         register=pushed_reg,
     )
-    return (
-        reaching.source
-        if reaching.verdict is RegisterReachingSourceVerdict8616.PROVEN
-        else None
-    )
+    if reaching.verdict is RegisterReachingSourceVerdict8616.PROVEN:
+        reaching_source: object = reaching.source
+        return reaching_source if isinstance(reaching_source, tuple) else None
+    if pushed_reg in MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616:
+        return (CallsitePushSourceKind8616.REGISTER_VALUE.value, pushed_reg)
+    return None
 
 
 def _collect_push_arg_sources_before_call(
@@ -3122,6 +3169,22 @@ def _linear_return_use_after_call_8616(
     )
 
 
+@contextlib.contextmanager
+def caller_return_use_program_scope_8616(
+    project: object,
+    function_ranges: tuple[tuple[int, int], ...],
+) -> Iterator[None]:
+    """Decode one exact caller corpus for repeated semantic target queries."""
+    evidence = build_caller_return_use_program_evidence_8616(
+        project,
+        function_ranges,
+        direct_target_resolver=_linear_call_target_8616,
+        instruction_address_resolver=_instruction_address_8616,
+    )
+    with use_caller_return_use_program_evidence_8616(evidence):
+        yield
+
+
 def collect_caller_return_use_evidence_8616(
     project: object,
     target_addr: int,
@@ -3134,10 +3197,18 @@ def collect_caller_return_use_evidence_8616(
     Proven target aliases form one call-target census and identify recursive
     terminal pass-throughs whose caller entry differs from the direct target.
     """
-    arch = _dynamic_callsite_getattr_8616(project, "arch", None)
-    disassembler = _dynamic_callsite_getattr_8616(arch, "capstone", None)
-    memory = _dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(project, "loader", None), "memory", None)
-    if disassembler is None or memory is None:
+    program = current_caller_return_use_program_evidence_8616(
+        project,
+        function_ranges,
+    )
+    if program is None:
+        program = build_caller_return_use_program_evidence_8616(
+            project,
+            function_ranges,
+            direct_target_resolver=_linear_call_target_8616,
+            instruction_address_resolver=_instruction_address_8616,
+        )
+    if program.status is CallerReturnUseProgramStatus8616.DECODER_UNAVAILABLE:
         return CallerReturnUseEvidence8616(
             target_addr,
             CallerReturnUseVerdict8616.UNKNOWN,
@@ -3150,25 +3221,7 @@ def collect_caller_return_use_evidence_8616(
             0,
             (),
         )
-    with contextlib.suppress(Exception):
-        disassembler.detail = True
-    decoded_ranges: dict[tuple[int, int], tuple[object, ...]] = {}
-    for start, end in sorted(set(function_ranges)):
-        if not isinstance(start, int) or not isinstance(end, int) or end <= start:
-            continue
-        try:
-            data = bytes(memory.load(start, end - start))
-            insns = tuple(disassembler.disasm(data, start))
-        except Exception as ex:
-            log.debug("caller return-use decode failed range=%#x-%#x: %s", start, end, ex)
-            continue
-        decoded_ranges[(start, end)] = insns
-
-    direct_callsite_index = build_decoded_direct_callsite_index_8616(
-        decoded_ranges,
-        direct_target_resolver=_linear_call_target_8616,
-        instruction_address_resolver=_instruction_address_8616,
-    )
+    direct_callsite_index = program.callsites
     callsite_cache: dict[int, dict[int, CallerReturnUseFact8616]] = {}
 
     def _callsites_for_target(

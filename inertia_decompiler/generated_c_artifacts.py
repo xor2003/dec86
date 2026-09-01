@@ -32,4 +32,20 @@ def write_generated_function_c(
     return destination
 
 
-__all__ = ["write_generated_function_c"]
+def write_generated_translation_unit_c(
+    output_dir: Path,
+    *,
+    payload: str,
+    complete: bool,
+) -> Path:
+    """Atomically persist deterministic complete or honest partial batch C."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = "translation-unit.c" if complete else "partial-translation-unit.c"
+    destination = output_dir / filename
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    os.replace(temporary, destination)
+    return destination
+
+
+__all__ = ["write_generated_function_c", "write_generated_translation_unit_c"]

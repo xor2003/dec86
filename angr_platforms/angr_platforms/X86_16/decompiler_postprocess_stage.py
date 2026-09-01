@@ -129,6 +129,7 @@ from .ir.status_flag_lift_context import active_status_flag_lift_context_8616
 from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
 from .lowering.global_declarations import ctype_for_global_width_8616, record_global_declaration_spec_8616
+from .lowering.ir_segmented_load_carriers import materialize_ir_segmented_load_carriers_8616
 from .lowering.near_pointer_type import SimTypeNearPointer16_8616
 from .lowering.real_mode_linear import (
     DirectStackMoveSourceKind8616,
@@ -191,6 +192,10 @@ from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
 from .pipeline.result_contracts import require_optional_result_type_8616, require_result_type_8616
 from .pipeline.structured_ast_generation import structured_ast_generation_8616
+from .postprocess.affine_compound_assignment import (
+    apply_affine_compound_assignment_identity_8616,
+    restore_affine_compound_assignment_identity_8616,
+)
 from .postprocess.bootstrap_orchestration import (
     PostprocessBootstrapOperations8616,
     run_postprocess_bootstrap_steps_8616,
@@ -8435,6 +8440,11 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
             normalize_multi_statement_braces_8616,
             False,
         ),
+        DecompilerPostprocessPassSpec(
+            "_apply_affine_compound_assignment_identity_final_8616",
+            apply_affine_compound_assignment_identity_8616,
+            False,
+        ),
     )
 
 
@@ -9732,7 +9742,7 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(
                 boundary_fingerprint=boundary_fingerprint,
             )
         function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
-        if hasattr(codegen, "_inertia_postprocess_changed") and not force_baseline_canonicalization:
+        if hasattr(codegen, "_inertia_postprocess_mutation_generation_8616") and not force_baseline_canonicalization:
             codegen._inertia_tail_validation_direct_final_summary_count_8616 = (
                 int(getattr(codegen, "_inertia_tail_validation_direct_final_summary_count_8616", 0) or 0) + 1
             )
@@ -15549,6 +15559,7 @@ class LateAstCleanupResult8616:
     adjacent_temporary_copy_changed: bool
     empty_noop_guard_changed: bool
     dead_condition_carrier_changed: bool
+    affine_compound_assignment_identity_changed: bool
 
     @property
     def requires_dce_after_cleanup(self: StructuredAstValue) -> bool:
@@ -15675,11 +15686,18 @@ def run_late_ast_cleanup_8616(project: StructuredAstValue, codegen: StructuredAs
     empty_noop_guard_stats = _prune_late_semantically_empty_noop_guards_8616(codegen)
     trivial_copy_changed = bool(prune_adjacent_temporary_copy_assignments_8616(codegen))
     dead_condition_carrier_stats = prune_unread_pure_condition_carriers_8616(codegen)
+    affine_identity_stats = restore_affine_compound_assignment_identity_8616(codegen)
     return LateAstCleanupResult8616(
-        changed=empty_noop_guard_stats.changed or trivial_copy_changed or dead_condition_carrier_stats.changed,
+        changed=(
+            empty_noop_guard_stats.changed
+            or trivial_copy_changed
+            or dead_condition_carrier_stats.changed
+            or affine_identity_stats.changed
+        ),
         adjacent_temporary_copy_changed=trivial_copy_changed,
         empty_noop_guard_changed=empty_noop_guard_stats.changed,
         dead_condition_carrier_changed=dead_condition_carrier_stats.changed,
+        affine_compound_assignment_identity_changed=affine_identity_stats.changed,
     )
 
 
@@ -16088,6 +16106,10 @@ def _decompile_8616(self: StructuredAstValue) -> None:
             _debug_prevalidation_pointer_surface_8616("after-typed-conditions")
             _repair_cfunc_statements_wrapper(self.codegen)
             _debug_prevalidation_pointer_surface_8616("after-wrapper-repair")
+            _run_pre_validation_prime_step_8616(
+                "ir_segmented_load_carriers",
+                lambda: materialize_ir_segmented_load_carriers_8616(self.codegen),
+            )
             _run_pre_validation_prime_step_8616(
                 "segment_global_lowering",
                 lambda: _replay_segment_global_lowering_before_validation_baseline_8616(
@@ -17003,6 +17025,8 @@ def _salvage_dce_after_discard_8616(
         )
         changed = _dead_code_elimination_8616(self.codegen)
         changed = _simplify._inline_single_assignment_virtual_expressions_8616(self.codegen) or changed
+        changed = normalize_multi_statement_braces_8616(self.codegen) or changed
+        changed = apply_affine_compound_assignment_identity_8616(self.codegen) or changed
         if not changed:
             return False
         _regenerate_text_safely(self.codegen, context="postprocess:discard-dce-salvage")

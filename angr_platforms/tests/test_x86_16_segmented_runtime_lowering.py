@@ -9746,6 +9746,114 @@ def test_callee_saved_frame_evidence_retries_after_incomplete_decode(monkeypatch
     assert project._inertia_callee_saved_register_names_cache_8616[function.addr] == frozenset({"di"})
 
 
+def test_callee_saved_frame_evidence_deduplicates_and_rejects_post_pop_write(monkeypatch):
+    from capstone.x86_const import X86_INS_INC
+
+    project, _codegen = _project()
+    function = SimpleNamespace(addr=0x4010)
+    push_si = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_PUSH,
+        operands=(_reg_operand(X86_REG_SI),),
+        reg_name=lambda reg: "si" if reg == X86_REG_SI else "",
+        regs_access=lambda: ((), ()),
+    )
+    push_di = SimpleNamespace(
+        address=0x4011,
+        id=X86_INS_PUSH,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+        regs_access=lambda: ((), ()),
+    )
+    pop_di = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_POP,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+        regs_access=lambda: ((), (X86_REG_DI,)),
+    )
+    pop_si = SimpleNamespace(
+        address=0x4021,
+        id=X86_INS_POP,
+        operands=(_reg_operand(X86_REG_SI),),
+        reg_name=lambda reg: "si" if reg == X86_REG_SI else "",
+        regs_access=lambda: ((), (X86_REG_SI,)),
+    )
+    inc_si = SimpleNamespace(
+        address=0x4022,
+        id=X86_INS_INC,
+        operands=(_reg_operand(X86_REG_SI),),
+        reg_name=lambda reg: "si" if reg == X86_REG_SI else "",
+        regs_access=lambda: ((X86_REG_SI,), (X86_REG_SI,)),
+    )
+    ret = SimpleNamespace(address=0x4023, id=X86_INS_RET, operands=())
+    decoded = (push_si, push_si, push_di, push_di, pop_di, pop_di, pop_si, pop_si, inc_si, inc_si, ret)
+    monkeypatch.setattr(real_mode_linear, "_decode_function_insns_8616", lambda *_args, **_kwargs: decoded)
+
+    assert real_mode_linear._callee_saved_register_names_from_frame_evidence_8616(
+        project,
+        function.addr,
+        function=function,
+    ) == frozenset({"di"})
+
+
+def test_prune_frame_round_trip_before_explicit_register_update(monkeypatch):
+    """Prune SI stack transport while retaining the later INC assignment."""
+    from angr_platforms.X86_16.lowering.callee_saved_frame import (
+        CalleeSavedFramePairSemantics8616,
+    )
+    from capstone.x86_const import X86_INS_INC
+
+    project, codegen = _project()
+    local = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    si = CVariable(
+        SimRegisterVariable(project.arch.registers["si"][0], 2, name="si"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    push_assignment = CAssignment(local, si, codegen=codegen, tags={"ins_addr": 0x4010})
+    pop_assignment = CAssignment(si, local, codegen=codegen, tags={"ins_addr": 0x4021})
+    increment_assignment = CAssignment(si, si, codegen=codegen, tags={"ins_addr": 0x4022})
+    codegen.cfunc.statements.statements.extend(
+        (push_assignment, pop_assignment, increment_assignment)
+    )
+
+    def _si_insn(address: int, instruction_id: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            address=address,
+            id=instruction_id,
+            operands=(_reg_operand(X86_REG_SI),),
+            reg_name=lambda reg: "si" if reg == X86_REG_SI else "",
+            regs_access=lambda: (
+                (X86_REG_SI,),
+                (X86_REG_SI,) if instruction_id != X86_INS_PUSH else (),
+            ),
+        )
+
+    decoded = (
+        _si_insn(0x4010, X86_INS_PUSH),
+        _si_insn(0x4021, X86_INS_POP),
+        _si_insn(0x4022, X86_INS_INC),
+        SimpleNamespace(address=0x4023, id=X86_INS_RET, operands=()),
+    )
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_decode_function_insns_8616",
+        lambda *_args, **_kwargs: decoded,
+    )
+
+    assert prune_callee_saved_stack_spills_8616(codegen, project) is True
+    assert codegen.cfunc.statements.statements == [increment_assignment]
+    record = codegen._inertia_callee_saved_frame_prune_record_8616
+    assert {fact.pair_semantics for fact in record.evidence} == {
+        CalleeSavedFramePairSemantics8616.RESTORED_BEFORE_UPDATE
+    }
+
+
 def test_prune_callee_saved_stack_spills_refuses_mismatched_restore(monkeypatch):
     project, codegen = _project()
     local = CVariable(
@@ -10908,6 +11016,11 @@ def test_runtime_segment_lowering_materializes_ir_proven_ds_live_in_as_global_st
         ir_artifact,
         function_ssa=build_x86_16_function_ssa(ir_artifact),
     )
+    project._inertia_rewrite_cache = {
+        "segment_reg_name": {id(ds): None},
+        "segmented_addr_expr": {id(helper): None},
+        "unrelated": {1: "keep"},
+    }
 
     changed = apply_runtime_segment_lowering_8616(codegen, target="portable-flat")
 
@@ -10919,6 +11032,7 @@ def test_runtime_segment_lowering_materializes_ir_proven_ds_live_in_as_global_st
     assert isinstance(lowered_segment.variable, SimMemoryVariable)
     assert lowered_segment.variable.name == "inertia_ds"
     assert codegen.cfunc.unified_local_vars == {}
+    assert project._inertia_rewrite_cache == {"unrelated": {1: "keep"}}
     stats = codegen._inertia_segment_register_state_lowering_stats_8616
     assert (
         stats.raw_fact_count,

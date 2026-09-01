@@ -106,3 +106,18 @@ def test_packed_live_status_flags_refuse_all_dead_factories() -> None:
     )
 
     assert actual is flags
+
+
+def test_full_writer_zeros_dead_defined_status_bits() -> None:
+    """A full writer does not retain incoming flags solely for dead equations."""
+    host = _ConcreteEflags()
+    flags = _ConcreteExpr(0xFFFF, 16)
+
+    actual = host._set_live_status_flags_8616(
+        flags,
+        StatusFlag8616.SIGN,
+        ((StatusFlag8616.SIGN, lambda: 0),),
+        written=STATUS_FLAGS_8616,
+    )
+
+    assert actual.value == 0xFFFF & ~int(STATUS_FLAGS_8616)

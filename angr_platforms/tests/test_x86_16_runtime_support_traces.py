@@ -774,6 +774,23 @@ def test_clinic_peephole_skip_preserves_angr_tuple_contract() -> None:
     assert result == (block, False, False)
 
 
+def test_clinic_peephole_uses_bounded_path_for_x86_16(monkeypatch) -> None:
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    block = ailment.Block(0x1000, statements=[])
+    simplifier = object.__new__(BlockSimplifier)
+    simplifier._stmt_peephole_opts = []
+    simplifier._multistmt_peephole_opts = []
+
+    def refuse_unbounded_peephole(*_args, **_kwargs):
+        raise AssertionError("unbounded angr peephole path must not run")
+
+    monkeypatch.setattr(BlockSimplifier, "_peephole_optimize", refuse_unbounded_peephole)
+    with guard_angr_clinic_stage_markers(project):
+        result = BlockSimplifier._peephole_optimize(simplifier, block)
+
+    assert result == (block, False, False)
+
+
 class _SignedOffsetEngine(_Engine):
     def _expr_pair(self, arg0, arg1):
         lhs = _FakeRichR(_FakeBV(32, 0x00010020), typevar=None)

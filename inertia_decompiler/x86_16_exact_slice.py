@@ -37,6 +37,12 @@ class X86ExactSlicePlan:
     original_start: int
     original_end: int
     slice_base: int
+    original_entry: int | None = None
+
+    @property
+    def original_semantic_entry(self) -> int:
+        """Return the proven function entry within the bounded original region."""
+        return self.original_start if self.original_entry is None else self.original_entry
 
     @property
     def needs_rebased_slice(self) -> bool:
@@ -53,14 +59,27 @@ class X86ExactSlicePlan:
         """End address used inside the bounded recovery project."""
         return self.slice_base + max(0, self.original_end - self.original_start)
 
+    @property
+    def slice_semantic_entry(self) -> int:
+        """Return the function entry rebased into the bounded recovery project."""
+        return self.slice_base + self.original_semantic_entry - self.original_start
 
-def plan_x86_16_exact_slice(original_start: int, original_end: int) -> X86ExactSlicePlan:
+
+def plan_x86_16_exact_slice(
+    original_start: int,
+    original_end: int,
+    *,
+    original_entry: int | None = None,
+) -> X86ExactSlicePlan:
     """Create a bounded exact-slice plan for one original function range."""
+    if original_entry is not None and not original_start <= original_entry < original_end:
+        raise ValueError("explicit function entry must be inside the exact-slice region")
     slice_base = SAFE_X86_16_SLICE_BASE if original_start >= 0x10000 else original_start
     return X86ExactSlicePlan(
         original_start=original_start,
         original_end=original_end,
         slice_base=slice_base,
+        original_entry=original_entry,
     )
 
 

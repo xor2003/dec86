@@ -118,7 +118,10 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         "--output-c-dir",
         type=Path,
         default=Path(output_c_dir) if output_c_dir else None,
-        help="Write each validated generated-C function to this directory without CLI diagnostics.",
+        help=(
+            "Atomically persist each validated function as soon as it completes, then write the "
+            "deterministic assembled translation unit to this directory."
+        ),
     )
     parser.add_argument(
         "--trace-c-stages",

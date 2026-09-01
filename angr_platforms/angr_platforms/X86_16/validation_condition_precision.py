@@ -11,6 +11,8 @@ text. Unknown or partially matched deltas are refused.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections import Counter
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -22,6 +24,9 @@ from .ir.condition_ir import (
     normalize_condition_fingerprint_string_8616,
 )
 from .tail_validation_fingerprint import _expr_fingerprint
+from .validation_observable_compaction import (
+    compact_normalized_validation_observable_8616,
+)
 
 __all__ = [
     "ConditionPrecisionEvidence8616",
@@ -127,10 +132,14 @@ def _delta_tokens_8616(field: object) -> tuple[tuple[str, ...], tuple[str, ...]]
 
 def _condition_token_8616(token: str) -> str:
     """Normalize one condition fingerprint without changing its semantics."""
-    return str(
+    normalized = str(
         normalize_condition_fingerprint_string_8616(
             canonicalize_condition_storage_fingerprint_8616(token)
         )
+    )
+    return compact_normalized_validation_observable_8616(
+        "conditions",
+        normalized,
     )
 
 
@@ -151,7 +160,10 @@ def _evidence_covers_delta_8616(
     """Return whether evidence provides a complete one-to-one delta matching."""
     if not removed or len(removed) != len(added):
         return False
-    pair_counts = Counter((item.before, item.after) for item in evidence)
+    pair_counts = Counter(
+        (_condition_token_8616(item.before), _condition_token_8616(item.after))
+        for item in evidence
+    )
 
     def _match(index: int, remaining_added: Counter[str]) -> bool:
         if index == len(removed):
@@ -231,6 +243,18 @@ def condition_precision_validation_delta_8616(
         and Counter(condition_removed) == Counter(control_removed_exact)
         and _evidence_covers_delta_8616(evidence, condition_removed, condition_added)
     )
+    if os.environ.get("INERTIA_DEBUG_CONDITION_PRECISION") == "1":
+        logging.getLogger(__name__).warning(
+            "[condition-precision-validation] covered=%s evidence=%r "
+            "condition_added=%r condition_removed=%r control_added=%r "
+            "control_removed=%r",
+            covered,
+            evidence,
+            condition_added,
+            condition_removed,
+            control_added,
+            control_removed,
+        )
     classified_count = len(condition_added) if covered else 0
     result = ConditionPrecisionValidationResult8616(
         covered,

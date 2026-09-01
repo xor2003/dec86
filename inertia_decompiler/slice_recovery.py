@@ -146,17 +146,21 @@ def build_default_slice_recovery_attempts(
     start: int,
     end: int,
     *,
+    entry: int | None = None,
     pick_function_lean: Callable[..., tuple[Any, Any]],
     pick_function: Callable[..., tuple[Any, Any]],
 ) -> tuple[tuple[str, SliceRecoverCallable], ...]:
-    """Build the default bounded recovery attempt sequence."""
+    """Build attempts that recover ``entry`` while bounding reads to ``start:end``."""
+    recovery_entry = start if entry is None else entry
+    if not start <= recovery_entry < end:
+        raise ValueError("slice recovery entry must be inside the bounded region")
     region = [(start, end)]
     return (
         (
             "lean",
             lambda slice_project: pick_function_lean(
                 slice_project,
-                start,
+                recovery_entry,
                 regions=region,
                 data_references=False,
                 extend_far_calls=False,
@@ -166,7 +170,7 @@ def build_default_slice_recovery_attempts(
             "full-no-refs",
             lambda slice_project: pick_function(
                 slice_project,
-                start,
+                recovery_entry,
                 regions=region,
                 data_references=False,
                 force_smart_scan=False,
@@ -176,7 +180,7 @@ def build_default_slice_recovery_attempts(
             "full-with-refs",
             lambda slice_project: pick_function(
                 slice_project,
-                start,
+                recovery_entry,
                 regions=region,
                 data_references=True,
                 force_smart_scan=False,

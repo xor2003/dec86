@@ -20,6 +20,12 @@ from typing import Any, TypeGuard, cast
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
 from ..alias.alias_model_impl import AliasStorageFacts
+from ..ir.core import MemSpace
+from ..lowering.runtime_segment_access import (
+    build_runtime_segment_access_context_8616,
+    runtime_segment_access_offset_expr_8616,
+)
+from ..lowering.segment_access_policy import instruction_addrs_from_node_8616
 from ..lowering.segmented_lowering import _SegmentedAccess
 from ..structuring.simple_loop_recovery import _function_instruction_summaries_8616
 from .stack_subview_projection import materialize_contained_stack_subviews_8616
@@ -519,6 +525,51 @@ def _coalesce_segmented_word_store_statements(
         return make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
     nonlocal_changed = [False]
+    runtime_access_context = build_runtime_segment_access_context_8616(codegen)
+
+    def _runtime_word_store_lvalue(low_lhs: object, high_lhs: object) -> structured_c.CFunctionCall | None:
+        """Join two typed adjacent runtime byte accesses into one word access."""
+        for space in (MemSpace.DS, MemSpace.ES):
+            low_offset = runtime_segment_access_offset_expr_8616(
+                project,
+                codegen,
+                low_lhs,
+                expected_space=space,
+                width=1,
+                context=runtime_access_context,
+            )
+            high_offset = runtime_segment_access_offset_expr_8616(
+                project,
+                codegen,
+                high_lhs,
+                expected_space=space,
+                width=1,
+                context=runtime_access_context,
+            )
+            if (
+                low_offset is None
+                or high_offset is None
+                or not addr_exprs_are_byte_pair(low_offset, high_offset, project)
+            ):
+                continue
+            low_access = _unwrap_casts(low_lhs)
+            if not isinstance(low_access, structured_c.CFunctionCall):
+                return None
+            low_args = tuple(low_access.args or ())
+            if len(low_args) != 2:
+                return None
+            source_addrs = instruction_addrs_from_node_8616(low_lhs) | instruction_addrs_from_node_8616(high_lhs)
+            tags: dict[str, object] = {"inertia_x86_16_runtime_segment_helper": "SEG_U16"}
+            if source_addrs:
+                tags["inertia_source_instruction_addrs"] = tuple(sorted(source_addrs))
+            return structured_c.CFunctionCall(
+                "SEG_U16",
+                None,
+                [low_args[0], low_offset],
+                codegen=codegen,
+                tags=tags,
+            )
+        return None
 
     def visit(node: object) -> None:
         nonlocal changed
@@ -658,7 +709,16 @@ def _coalesce_segmented_word_store_statements(
                 if isinstance(stmt, structured_c.CAssignment) and isinstance(next_stmt, structured_c.CAssignment):
                     replacement = None
 
-                    if isinstance(stmt.lhs, structured_c.CVariable):
+                    runtime_word_lhs = _runtime_word_store_lvalue(stmt.lhs, next_stmt.lhs)
+                    runtime_word_rhs = match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
+                    if runtime_word_lhs is not None and runtime_word_rhs is not None:
+                        replacement = structured_c.CAssignment(
+                            runtime_word_lhs,
+                            runtime_word_rhs,
+                            codegen=codegen,
+                        )
+
+                    if replacement is None and isinstance(stmt.lhs, structured_c.CVariable):
                         matched = _pair_result_8616(match_ss_local_plus_const(next_stmt.lhs, project))
                         if matched is not None:
                             target_cvar, extra_offset = matched

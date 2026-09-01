@@ -59,6 +59,7 @@ from .decompiler_postprocess_utils import (
     _stack_bp_displacement_8616,
     _structured_codegen_node_8616,
 )
+from .lowering.gp_register_state import runtime_gp_name_for_variable_8616
 from .lowering.segment_register_state import runtime_segment_name_for_variable_8616
 from .lowering.segmented_global_loads import IndexedSegmentedGlobalStoreEvidence8616
 from .lowering.stack_variable_binding import StackVariableBinding
@@ -2362,6 +2363,24 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
                 return _cached(f"Add({','.join(parts)})")
             if node.op == "Shl" and _c_constant_int_value(node.rhs) == 4:
                 return _cached(f"Mul({_expr_fingerprint(node.lhs, project, _child_seen())},const:16)")
+            if node.op == "And":
+                mask = _c_constant_int_value(node.rhs)
+                parent = _expr_fingerprint(node.lhs, project, _child_seen())
+                view_name = {
+                    ("reg:eax", 0xFFFF): "ax",
+                    ("reg:ebx", 0xFFFF): "bx",
+                    ("reg:ecx", 0xFFFF): "cx",
+                    ("reg:edx", 0xFFFF): "dx",
+                    ("reg:esi", 0xFFFF): "si",
+                    ("reg:edi", 0xFFFF): "di",
+                    ("reg:eax", 0xFF): "al",
+                    ("reg:ebx", 0xFF): "bl",
+                    ("reg:ecx", 0xFF): "cl",
+                    ("reg:edx", 0xFF): "dl",
+                }.get((parent, mask))
+                if view_name is not None:
+                    return _cached(f"reg:{view_name}")
+                return _cached(f"And({parent},{_expr_fingerprint(node.rhs, project, _child_seen())})")
             lhs = _expr_fingerprint(node.lhs, project, _child_seen())
             rhs = _expr_fingerprint(node.rhs, project, _child_seen())
             return _cached(f"{node.op}({lhs},{rhs})")
@@ -2877,6 +2896,9 @@ def _cvariable_location_fingerprint_8616(node: Any, project: Any, *, _seen: set[
         if isinstance(variable, SimRegisterVariable) and _dynamic_tail_validation_getattr_8616(variable, "reg", None) is not None:
             return f"reg:{_register_name(project, variable.reg, variable.size)}"
         if isinstance(variable, SimMemoryVariable):
+            runtime_gp_name = runtime_gp_name_for_variable_8616(variable)
+            if runtime_gp_name is not None:
+                return f"reg:{runtime_gp_name}"
             runtime_segment_name = runtime_segment_name_for_variable_8616(variable)
             if runtime_segment_name is not None:
                 return f"reg:{runtime_segment_name}"

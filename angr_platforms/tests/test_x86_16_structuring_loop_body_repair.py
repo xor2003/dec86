@@ -943,6 +943,81 @@ def test_switch_loop_exit_return_repair_adds_missing_return_case_and_prunes_tail
     assert stats.trailing_unreachable_pruned_count == 1
 
 
+def test_switch_loop_exit_return_repair_adds_case_to_unique_conditional_loop_and_keeps_tail(monkeypatch):
+    import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
+
+    codegen = _DummyCodegen()
+    selector = CVariable("ax", codegen=codegen)
+    condition = CBinaryOp("CmpNE", selector, _const(69, codegen), codegen=codegen)
+    switch = CSwitchCase(
+        selector,
+        [(69, CStatements([], codegen=codegen))],
+        None,
+        codegen=codegen,
+    )
+    loop = CWhileLoop(condition, CStatements([switch], codegen=codegen), codegen=codegen)
+    reachable_tail = CReturn(None, codegen=codegen)
+    root = CStatements([loop, reachable_tail], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, body=root, statements=root)
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda **_kwargs: SimpleNamespace(addr=0x4010, size=0x100))
+        ),
+    )
+    monkeypatch.setattr(
+        loop_body_repair,
+        "recover_switch_loop_exit_return_evidence_8616",
+        lambda _project, _function: (SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),),
+    )
+
+    changed = repair_switch_loop_exit_returns_from_evidence_8616(project, codegen)
+
+    assert changed is True
+    assert root.statements == [loop, reachable_tail]
+    assert switch.cases[-1][0] == 27
+    assert isinstance(switch.cases[-1][1].statements[0], CReturn)
+    stats = codegen._inertia_structuring_switch_loop_exit_return_stats_8616
+    assert stats.materialized_count == 1
+    assert stats.trailing_unreachable_pruned_count == 0
+
+
+def test_switch_loop_exit_return_repair_refuses_ambiguous_conditional_loops(monkeypatch):
+    import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
+
+    codegen = _DummyCodegen()
+    selector = CVariable("ax", codegen=codegen)
+    condition = CBinaryOp("CmpNE", selector, _const(69, codegen), codegen=codegen)
+    switches = [
+        CSwitchCase(selector, [(69, CStatements([], codegen=codegen))], None, codegen=codegen)
+        for _index in range(2)
+    ]
+    loops = [
+        CWhileLoop(condition, CStatements([switch], codegen=codegen), codegen=codegen)
+        for switch in switches
+    ]
+    root = CStatements(loops, addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, body=root, statements=root)
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda **_kwargs: SimpleNamespace(addr=0x4010, size=0x100))
+        ),
+    )
+    monkeypatch.setattr(
+        loop_body_repair,
+        "recover_switch_loop_exit_return_evidence_8616",
+        lambda _project, _function: (SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),),
+    )
+
+    changed = repair_switch_loop_exit_returns_from_evidence_8616(project, codegen)
+
+    assert changed is False
+    assert all(tuple(value for value, _body in switch.cases) == (69,) for switch in switches)
+    stats = codegen._inertia_structuring_switch_loop_exit_return_stats_8616
+    assert stats.refused_ambiguous_loop == 1
+
+
 def test_switch_loop_exit_return_repair_publishes_evidence_without_candidate(monkeypatch):
     import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
 

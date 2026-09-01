@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr.ailment.expression import VirtualVariable, VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -18,6 +19,9 @@ from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation import (
     refresh_x86_16_final_semantic_validation_8616,
+)
+from angr_platforms.X86_16.validation.status_flag_preservation import (
+    PackedStatusFlagPreservationEvidence8616,
 )
 from angr_platforms.X86_16.validation_dataflow import validate_structured_def_use_8616
 
@@ -43,6 +47,18 @@ class _Codegen:
 def _dirty(codegen: _Codegen, varid: int) -> CDirtyExpression:
     """Build one unresolved virtual carrier with structured SSA identity."""
     return CDirtyExpression(SimpleNamespace(varid=varid), codegen=codegen)
+
+
+def _register_dirty(codegen: _Codegen, varid: int, reg_offset: int) -> CDirtyExpression:
+    """Build one register-backed AIL virtual carrier."""
+    virtual = VirtualVariable(
+        0,
+        varid,
+        16,
+        VirtualVariableCategory.REGISTER,
+        oident=reg_offset,
+    )
+    return CDirtyExpression(virtual, codegen=codegen)
 
 
 def _local(codegen: _Codegen) -> CVariable:
@@ -126,6 +142,53 @@ def test_def_use_accepts_virtual_carrier_after_exact_definition() -> None:
     assert report.passed is True
     assert report.classified_fact_count == 1
     assert report.materialized_count == 1
+
+
+def test_def_use_accepts_register_backed_virtual_at_exact_packed_flag_site() -> None:
+    codegen = _Codegen()
+    assignment = CAssignment(
+        _dirty(codegen, 8),
+        _register_dirty(codegen, 7, 36),
+        codegen=codegen,
+    )
+    assignment.tags["ins_addr"] = 0x1010
+    root = CStatements([assignment], codegen=codegen)
+
+    report = validate_structured_def_use_8616(
+        root,
+        include_virtual_carriers=True,
+        packed_status_flag_preservation=PackedStatusFlagPreservationEvidence8616(
+            36,
+            frozenset({0x1010}),
+        ),
+    )
+
+    assert report.passed is True
+    assert report.materialized_count == 1
+
+
+def test_def_use_refuses_register_backed_virtual_outside_packed_flag_site() -> None:
+    codegen = _Codegen()
+    assignment = CAssignment(
+        _dirty(codegen, 8),
+        _register_dirty(codegen, 7, 36),
+        codegen=codegen,
+    )
+    assignment.tags["ins_addr"] = 0x1010
+    root = CStatements([assignment], codegen=codegen)
+
+    report = validate_structured_def_use_8616(
+        root,
+        include_virtual_carriers=True,
+        packed_status_flag_preservation=PackedStatusFlagPreservationEvidence8616(
+            36,
+            frozenset({0x1020}),
+        ),
+    )
+
+    assert report.passed is False
+    assert report.failure_count == 1
+    assert "register-carrier:reg+0x24:size2" in report.issues[0].token()
 
 
 def test_def_use_refuses_unresolved_dereference_store_carriers() -> None:

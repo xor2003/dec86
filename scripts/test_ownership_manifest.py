@@ -1228,12 +1228,14 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         owner="x86-16-lowering-segmented-runtime",
         paths=(
             "angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py",
             "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py",
             "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
             "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
         ),
         tests=(
             "angr_platforms/tests/test_x86_16_gp_register_state.py",
+            "angr_platforms/tests/test_x86_16_ir_segmented_load_carriers.py",
             "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
             "angr_platforms/tests/test_x86_16_stack_pointer_snapshot.py",
         ),

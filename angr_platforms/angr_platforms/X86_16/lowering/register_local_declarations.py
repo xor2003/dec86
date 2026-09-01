@@ -178,8 +178,17 @@ def _materialize_register_virtual_carriers_8616(codegen: object, root: object) -
         offset = virtual.oident
         size = virtual.size
         name = dict(virtual.tags).get("reg_name")
-        if not isinstance(offset, int) or not isinstance(size, int) or not isinstance(name, str):
+        if not isinstance(offset, int) or not isinstance(size, int):
             return node
+        if not isinstance(name, str):
+            matching_names = {
+                register_name
+                for register_offset, register_size, register_name in exact_registers
+                if register_offset == offset and register_size == size
+            }
+            if len(matching_names) != 1:
+                return node
+            name = next(iter(matching_names))
         normalized_name = name.lower()
         key = (offset, size, normalized_name)
         if key not in exact_registers or normalized_name in _NONLOCAL_REGISTER_NAMES_8616:

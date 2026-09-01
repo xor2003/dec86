@@ -111,9 +111,11 @@ class _FinalSegmentedWrite8616:
     """One final structured-C write classified by typed storage location."""
 
     space: MemSpace
-    offset: int
+    offset: int | None
     width: int
     segment_source: IRAddress | int | None = None
+    affine_base: int | None = None
+    ins_addr: int | None = None
 
 
 class _ProjectArchBoundary8616(Protocol):
@@ -166,6 +168,29 @@ def _constant_int_8616(node: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _dynamic_affine_base_8616(node: object) -> int | None:
+    """Return the constant base of one additive expression with a dynamic term."""
+    node = _strip_casts_8616(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
+        return None
+    lhs_constant = _constant_int_8616(node.lhs)
+    rhs_constant = _constant_int_8616(node.rhs)
+    if lhs_constant is not None and rhs_constant is None:
+        return lhs_constant & 0xFFFF
+    if rhs_constant is not None and lhs_constant is None:
+        return rhs_constant & 0xFFFF
+    return None
+
+
+def _instruction_address_8616(node: object) -> int | None:
+    """Return exact instruction provenance from one third-party C node."""
+    tags = getattr(node, "tags", None)
+    if not isinstance(tags, dict):
+        return None
+    value = tags.get("ins_addr")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _helper_width_8616(call: structured_c.CFunctionCall) -> int | None:
     """Return the byte width of one supported segmented runtime helper."""
     target = call.callee_target
@@ -198,25 +223,26 @@ def _segmented_lvalue_location_8616(
     project: object,
     codegen: object,
     lvalue: object,
-) -> tuple[MemSpace, int, int, IRAddress | int | None] | None:
+) -> tuple[MemSpace, int | None, int, IRAddress | int | None, int | None] | None:
     """Classify one final assignment lvalue without parsing rendered text."""
     node = _strip_casts_8616(lvalue)
     aggregate_storage = aggregate_field_storage_8616(node)
     if aggregate_storage is not None:
-        return aggregate_storage.space, aggregate_storage.offset, aggregate_storage.width, None
+        return aggregate_storage.space, aggregate_storage.offset, aggregate_storage.width, None, None
     identity = segmented_load_identity_8616(node)
     if identity is not None:
         args = _boundary_tuple_8616(node.args or ()) if isinstance(node, structured_c.CFunctionCall) else ()
         source = _segment_source_identity_8616(args[0]) if len(args) == 2 else None
-        return identity.space, identity.offset, identity.width, source
+        return identity.space, identity.offset, identity.width, source, None
     if isinstance(node, structured_c.CFunctionCall):
         width = _helper_width_8616(node)
         args = _boundary_tuple_8616(node.args or ())
         offset = _constant_int_8616(args[1]) if len(args) == 2 else None
+        affine_base = _dynamic_affine_base_8616(args[1]) if len(args) == 2 else None
         space = runtime_segment_access_space_8616(project, codegen, node)
-        if width is not None and offset is not None and space is not None:
+        if width is not None and (offset is not None or affine_base is not None) and space is not None:
             source = _segment_source_identity_8616(args[0]) if len(args) == 2 else None
-            return space, offset & 0xFFFF, width, source
+            return space, offset & 0xFFFF if offset is not None else None, width, source, affine_base
         return None
     if isinstance(node, structured_c.CVariable):
         variable = node.variable
@@ -239,7 +265,7 @@ def _segmented_lvalue_location_8616(
                         and size_bits % byte_width == 0
                     ):
                         width = max(width, size_bits // byte_width)
-            return MemSpace.DS, int(variable.addr) & 0xFFFF, width, None
+            return MemSpace.DS, int(variable.addr) & 0xFFFF, width, None, None
         return None
     if not isinstance(node, structured_c.CIndexedVariable):
         return None
@@ -251,7 +277,7 @@ def _segmented_lvalue_location_8616(
     if not isinstance(variable, SimMemoryVariable):
         return None
     width = int(variable.size)
-    return MemSpace.DS, (int(variable.addr) + index * width) & 0xFFFF, width, None
+    return MemSpace.DS, (int(variable.addr) + index * width) & 0xFFFF, width, None, None
 
 
 def _final_segmented_writes_8616(
@@ -267,7 +293,7 @@ def _final_segmented_writes_8616(
         location = _segmented_lvalue_location_8616(project, codegen, node.lhs)
         if location is None:
             continue
-        space, offset, width, segment_source = location
+        space, offset, width, segment_source, affine_base = location
         if width <= 0:
             continue
         writes.append(
@@ -276,6 +302,8 @@ def _final_segmented_writes_8616(
                 offset=offset,
                 width=width,
                 segment_source=segment_source,
+                affine_base=affine_base,
+                ins_addr=_instruction_address_8616(node),
             )
         )
     return tuple(writes)
@@ -325,11 +353,19 @@ def validate_required_memory_effects_8616(
     )
     writes = _final_segmented_writes_8616(project, codegen, root)
     available_bytes: Counter[tuple[MemSpace, int, IRAddress | int | None]] = Counter()
+    available_affine: Counter[
+        tuple[MemSpace, int, int, IRAddress | int | None, int]
+    ] = Counter()
     for write in writes:
-        available_bytes.update(
-            (write.space, (write.offset + index) & 0xFFFF, write.segment_source)
-            for index in range(write.width)
-        )
+        if write.offset is not None:
+            available_bytes.update(
+                (write.space, (write.offset + index) & 0xFFFF, write.segment_source)
+                for index in range(write.width)
+            )
+        elif write.affine_base is not None and write.ins_addr is not None:
+            available_affine[
+                (write.space, write.affine_base, write.width, write.segment_source, write.ins_addr)
+            ] += 1
     missing_items: list[RequiredMemoryEffectIssue8616] = []
     for effect in normalized:
         required_source: IRAddress | int | None = effect.segment_source or effect.segment_value
@@ -352,6 +388,16 @@ def validate_required_memory_effects_8616(
             selected.append(matching)
         if len(selected) == effect.width:
             available_bytes.subtract(selected)
+            continue
+        affine_key = (
+            effect.space,
+            effect.offset,
+            effect.width,
+            required_source,
+            effect.ins_addr,
+        )
+        if available_affine[affine_key] > 0:
+            available_affine[affine_key] -= 1
             continue
         missing_items.append(
             RequiredMemoryEffectIssue8616(
