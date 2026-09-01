@@ -26,6 +26,10 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.indexed_alias_program_context as indexed_context
 import inertia_decompiler.indexed_alias_program_recovery as indexed_recovery
+from inertia_decompiler.function_ir_ssa_cache import (
+    FunctionIRSSACacheStats8616,
+    FunctionIRSSACatalogResult8616,
+)
 from inertia_decompiler.indexed_alias_program_context import (
     IndexedAliasProgramContextStatus8616,
     prepare_direct_indexed_alias_program_context_8616,
@@ -81,6 +85,10 @@ def _required_callsites() -> GlobalObjectProgramRequirementEvidence8616:
     )
 
 
+def _empty_ir_ssa_cache() -> FunctionIRSSACatalogResult8616:
+    return FunctionIRSSACatalogResult8616((), FunctionIRSSACacheStats8616())
+
+
 def test_callsite_cache_miss_reuses_persisted_alias_widening(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -108,6 +116,7 @@ def test_callsite_cache_miss_reuses_persisted_alias_widening(
     recovered_catalog = RecoveredIndexedAliasCatalog8616(
         source_project,
         (source_function,),
+        _empty_ir_ssa_cache(),
     )
     recovery_calls: list[int] = []
     callsite_steps: list[str] = []
@@ -223,6 +232,7 @@ def test_failed_callsite_recovery_does_not_publish_partial_alias_context(
         lambda *_args, **_kwargs: RecoveredIndexedAliasCatalog8616(
             source_project,
             (source_function,),
+            _empty_ir_ssa_cache(),
         ),
     )
     monkeypatch.setattr(

@@ -20,6 +20,7 @@ from inertia_decompiler.cache_lock import cache_path_lock
 from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_8616
 from inertia_decompiler.cache_source_manifest import (
     FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
+    FUNCTION_IR_SSA_CACHE_SOURCE_FILES,
     INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
     PROGRAM_CALLSITE_CACHE_SOURCE_FILES,
     RecoveryCacheSourceScope8616,
@@ -354,14 +355,12 @@ def _recovery_cache_key(
         environment.pop("INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616", None)
         if "ignore_local_sidecar_hints" in normalized_extra:
             normalized_extra["ignore_local_sidecar_hints"] = False
-    if source_scope is RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY:
-        source_files = FUNCTION_DISCOVERY_CACHE_SOURCE_FILES
-    elif source_scope is RecoveryCacheSourceScope8616.INDEXED_ALIAS_PROGRAM:
-        source_files = INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES
-    elif source_scope is RecoveryCacheSourceScope8616.PROGRAM_CALLSITE:
-        source_files = PROGRAM_CALLSITE_CACHE_SOURCE_FILES
-    else:
-        source_files = RECOVERY_CACHE_SOURCE_FILES
+    source_files = {
+        RecoveryCacheSourceScope8616.FUNCTION_IR_SSA: FUNCTION_IR_SSA_CACHE_SOURCE_FILES,
+        RecoveryCacheSourceScope8616.FUNCTION_DISCOVERY: FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
+        RecoveryCacheSourceScope8616.INDEXED_ALIAS_PROGRAM: INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
+        RecoveryCacheSourceScope8616.PROGRAM_CALLSITE: PROGRAM_CALLSITE_CACHE_SOURCE_FILES,
+    }.get(source_scope, RECOVERY_CACHE_SOURCE_FILES)
     payload = {
         "schema": DECOMPILATION_CACHE_SCHEMA,
         "kind": kind,

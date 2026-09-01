@@ -25,6 +25,7 @@ from .cli_function_discovery import (
     _source_region_catalog_evidence_8616,
 )
 from .discovery_evidence_project import isolated_discovery_evidence_project_8616
+from .function_ir_ssa_cache import FunctionIRSSACatalogResult8616, hydrate_function_ir_ssa_catalog_8616
 from .program_callsite_cache import (
     attach_program_callsite_caller_ranges_8616,
     attach_program_callsite_evidence_8616,
@@ -41,6 +42,7 @@ class RecoveredIndexedAliasCatalog8616:
 
     evidence_project: object
     functions: tuple[object, ...]
+    ir_ssa_cache: FunctionIRSSACatalogResult8616
 
 
 def recover_direct_indexed_alias_catalog_8616(
@@ -68,9 +70,17 @@ def recover_direct_indexed_alias_catalog_8616(
             "indexed Alias program context refused: binary function census incomplete"
         )
         return None
+    functions = tuple(function for _cfg, function in recovered)
+    hydration = hydrate_function_ir_ssa_catalog_8616(
+        evidence_project,
+        functions,
+    )
+    if not hydration.stats.closed:
+        raise RuntimeError("function IR/SSA cache hydration accounting is not closed")
     return RecoveredIndexedAliasCatalog8616(
         evidence_project,
-        tuple(function for _cfg, function in recovered),
+        functions,
+        hydration,
     )
 
 

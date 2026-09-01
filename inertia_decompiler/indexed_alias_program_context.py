@@ -42,6 +42,7 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
 
 from . import indexed_alias_program_parallel as _alias_program_parallel
 from .cache import _cache_key_lock
+from .function_ir_ssa_cache import store_function_ir_ssa_catalog_8616
 from .indexed_alias_program_recovery import (
     publish_recovered_program_callsites_8616,
     recover_direct_indexed_alias_catalog_8616,
@@ -158,6 +159,12 @@ def _discover_direct_indexed_alias_program_context_8616(
         catalog.functions,
         target_project=target_project,
     )
+    stored_ir_ssa = store_function_ir_ssa_catalog_8616(
+        catalog.evidence_project, catalog.functions,
+        already_hydrated=catalog.ir_ssa_cache,
+    )
+    if not stored_ir_ssa.stats.closed:
+        raise RuntimeError("function IR/SSA cache store accounting is not closed")
     target_layout = cast(
         _ProjectProgramSurface8616,
         target_project,

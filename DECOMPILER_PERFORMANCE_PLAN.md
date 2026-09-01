@@ -40,6 +40,31 @@ generated-C SHA-256 remained
 `fadb65bd183f41258336fffaf7515d7762491e36c5d98047b7d11f7ff8634727`, and
 function and whole-tail validation passed.
 
+Function-scoped raw IR and IR-stage SSA persistence is now implemented at the
+CLI cache boundary. Exact block bytes, CFG edges, frontend/runtime identity,
+schema, Python ABI, and owning source hashes form each key; restricted,
+size-bounded decoding verifies both payload and typed public-projection hashes
+before publishing artifacts back to the owning IR registries. Focused tests
+prove function-local invalidation, CFG sensitivity, malformed-class refusal,
+fresh-project hydration, no VEX/SSA rebuild on a hit, and no rewrite of an
+unchanged hydrated entry.
+
+The isolated indexed-Alias input stage improved from 6.203 seconds to 0.268
+seconds (23.1x). Three controlled sidecar-free `SORTD.EXE` `sub_109e8` pairs,
+with only function IR/SSA entries and the indexed-global result withheld on the
+cold side, measured 22.89/16.07, 23.70/16.97, and 25.75/17.47 seconds. The
+median improved from 23.70 to 16.97 seconds (28.4%); median peak RSS fell from
+314,556 KiB to 310,936 KiB. All six outputs had SHA-256
+`caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`,
+and function plus whole-tail validation passed.
+
+Cache-focused and indexed-Alias integration tests pass, `architecture-check-fast`
+passes, and the fast pipeline passed with 1,911 tests. Final broad acceptance is
+blocked by unrelated in-flight work: 11 smoketests now fail in GP stack-restore
+materialization after the benchmark, while two external MS C construct
+subprocesses return nonzero even though their reports record successful build,
+execution, decompilation, recompilation, and decompiled execution.
+
 Rejected experiments:
 
 - broad typed IR/SSA mypyc compilation improved the median by only 8.3% and
@@ -54,32 +79,30 @@ design that addresses their recorded failure mode.
 
 ## Remaining Ordered Plan
 
-### 1. Persist Function-Scoped Typed IR And SSA
+### 1. Close Function IR/SSA Cache Acceptance
 
-Reason: a cold indexed-Alias rebuild still spends about 19.65 profiled seconds
-building project-wide evidence, with 29 typed-IR function builds in the
-measured run. Reusing proven per-function IR/SSA can remove this cost before
-more invasive scheduling or native-code work.
+Reason: implementation, focused correctness tests, and the first controlled
+A/B are complete, but the benchmark protocol and broad external gate must be
+rerun after unrelated shared-worktree blockers clear. Removing this gate would
+turn a measured development result into an unsupported production claim.
 
 Definition of Done:
 
-- unchanged functions perform no VEX relift or SSA rebuild on a valid hit;
-- cache keys include binary/function input, frontend configuration, exact
-  upstream hashes, schema version, and owning implementation version;
-- changing one function invalidates only its typed dependency closure;
-- live and restored artifacts produce identical typed facts, generated C,
-  validation verdicts, and deterministic hashes;
-- corrupt, partial, stale-schema, and conflicting entries are rejected;
-- the representative end-to-end benchmark improves by at least 10%;
+- three stable-tree cold/hit pairs improve the representative median by at
+  least 10%, with CPU, RSS, cache state, and exact commands recorded;
+- every pair has byte-identical generated C and `validation=passed` with clean
+  whole-tail validation;
+- `make architecture-check-fast`, `make test-pipeline`, and the required
+  external MS C constructs pass without concurrent resource contention;
 - focused gates and `make quality-dev PYTHON=./.venv/bin/python` pass.
 
 Definition of Failure:
 
-- a key omits semantic inputs or accepts stale evidence;
-- restored and live artifacts differ;
-- a reported hit still performs material relifting or SSA reconstruction;
-- measured gain is below 10% or validation/output quality changes;
-- cache ownership leaks into Rewrite, postprocess, or the CLI.
+- the repeated median gain falls below 10%;
+- output, validation, recompilation, or external execution differs;
+- a cache-focused failure remains after unrelated worktree failures are
+  removed;
+- acceptance requires bypassing the architecture guard, validator, or test.
 
 ### 2. Replace Repeated Global Scans With A Typed Dependency Worklist
 
