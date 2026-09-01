@@ -69,8 +69,20 @@ focused tests pass, and the fast pipeline passes 1,913 tests plus its external
 lane. Concurrent source edits invalidated program-callsite caches during the
 wall-time series, so no end-to-end percentage is claimed from those samples.
 
+The persisted program-callsite artifact now tracks only its four consumed
+Alias owners instead of every file in the Alias package. Its source manifest
+fell from 322 files, including 38 Alias files, to 288 files with four Alias
+files; edits to the other 34 Alias owners no longer discard the independent
+callsite census. The focused cache and cache-surface suites pass 22 tests,
+types and architecture checks pass, the fast pipeline passes 1,914 tests plus
+its external lane, and sidecar-free `sub_109e8` still emits the exact C SHA-256
+`caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`
+with validation clean. An end-to-end percentage is intentionally not claimed:
+concurrent Alias work also invalidates the separately correct indexed-Alias
+artifact, masking the isolated callsite invalidation saving.
+
 Cache-focused and indexed-Alias integration tests pass, `architecture-check-fast`
-passes, and the current fast pipeline passes 1,913 tests plus its required
+passes, and the current fast pipeline passes 1,914 tests plus its required
 external lane. Final broad acceptance remains pending; an earlier broad run was
 blocked by unrelated in-flight GP stack-restore materialization work and two
 inconsistent external MS C construct subprocess results.

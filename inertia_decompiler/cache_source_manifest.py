@@ -92,6 +92,13 @@ _PROGRAM_CALLSITE_LOWERING_NAMES_8616 = (
     "project_callee_callsite_collection.py",
 )
 
+_PROGRAM_CALLSITE_ALIAS_NAMES_8616 = (
+    "callsite_stack_merge.py",
+    "domains.py",
+    "partial_register_address_break.py",
+    "register_reaching_source.py",
+)
+
 _FUNCTION_IR_SSA_INERTIA_NAMES_8616 = (
     "cache.py",
     "cache_io.py",
@@ -211,7 +218,10 @@ def _program_callsite_cache_source_files_8616() -> tuple[Path, ...]:
         for name in _PROGRAM_CALLSITE_INERTIA_NAMES_8616
     }
     discovered.update(FUNCTION_DISCOVERY_CACHE_SOURCE_FILES)
-    discovered.update((x86_root / "alias").rglob("*.py"))
+    discovered.update(
+        x86_root / "alias" / name
+        for name in _PROGRAM_CALLSITE_ALIAS_NAMES_8616
+    )
     discovered.update(
         x86_root / "lowering" / name
         for name in _PROGRAM_CALLSITE_LOWERING_NAMES_8616

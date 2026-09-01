@@ -191,3 +191,13 @@ def test_program_callsite_cache_uses_narrow_source_scope(
         "angr_platforms/angr_platforms/X86_16/lowering/"
         "register_local_declarations.py"
     ) not in relative_paths
+    assert {
+        "angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py",
+        "angr_platforms/angr_platforms/X86_16/alias/domains.py",
+        "angr_platforms/angr_platforms/X86_16/alias/partial_register_address_break.py",
+        "angr_platforms/angr_platforms/X86_16/alias/register_reaching_source.py",
+    } <= relative_paths
+    assert (
+        "angr_platforms/angr_platforms/X86_16/alias/stack_coordinate_projection.py"
+        not in relative_paths
+    )
