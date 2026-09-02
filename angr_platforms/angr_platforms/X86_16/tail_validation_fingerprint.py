@@ -87,7 +87,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION: int = 36
+TAIL_VALIDATION_FINGERPRINT_VERSION: int = 37
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 500000
@@ -439,6 +439,11 @@ def _source_arg_location_fingerprint_8616(node: Any, project: Any) -> str | None
         codegen = active_codegen
         cfunc = _dynamic_tail_validation_getattr_8616(codegen, "cfunc", None)
         func_addr = _dynamic_tail_validation_getattr_8616(cfunc, "addr", None)
+    active_cfunc = _dynamic_tail_validation_getattr_8616(active_codegen, "cfunc", None)
+    active_func_addr = _dynamic_tail_validation_getattr_8616(active_cfunc, "addr", None)
+    if isinstance(active_func_addr, int) and active_func_addr == func_addr:
+        codegen = active_codegen
+        cfunc = active_cfunc
     if not isinstance(func_addr, int):
         return None
     variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)

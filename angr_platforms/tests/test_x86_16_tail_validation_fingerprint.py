@@ -25,6 +25,9 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _deepcopy_cfunc_for_validation_8616,
 )
 from angr_platforms.X86_16.lowering.stack_variable_binding import StackVariableBinding
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    publish_selected_stack_cvar_projection_8616,
+)
 from angr_platforms.X86_16.lowering.structured_intrinsics import lower_structured_insert_call_8616
 from angr_platforms.X86_16.tail_validation_fingerprint import (
     _canonical_or_unresolved_stack_fingerprint_8616,
@@ -376,6 +379,60 @@ def test_location_fingerprint_prefers_source_offset_over_current_cfunc_stack_arg
     )
 
     assert _location_fingerprint(raw_arg, project) == "stack_arg:stale_name:size2:bp+0x4"
+
+
+def test_location_fingerprint_uses_active_codegen_for_exact_region_argument_coordinates() -> None:
+    arch = Arch86_16()
+    word_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction(
+        [word_type, word_type],
+        word_type,
+        arg_names=("first", "second"),
+    ).with_arch(arch)
+    function = SimpleNamespace(addr=0x1000, prototype=prototype)
+
+    class _Functions:
+        def function(self, *, addr, create=False):
+            assert addr == 0x1000
+            return function
+
+    project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_Functions()))
+    active_codegen = _DummyCodegen()
+    active_codegen.project = project
+    arguments = tuple(
+        CVariable(
+            SimStackVariable(offset, 2, base="bp", name=name, region=0x1000),
+            variable_type=word_type,
+            codegen=active_codegen,
+        )
+        for offset, name in ((2, "first"), (4, "second"))
+    )
+    active_codegen.cfunc = SimpleNamespace(addr=0x1000, arg_list=arguments)
+    for argument, machine_bp_offset in zip(arguments, (4, 6), strict=True):
+        publish_selected_stack_cvar_projection_8616(
+            active_codegen,
+            argument,
+            bp_offset=machine_bp_offset,
+            size=2,
+        )
+    project._inertia_tail_validation_active_codegen = active_codegen
+
+    stale_codegen = _DummyCodegen()
+    stale_codegen.project = project
+    stale_codegen.cfunc = SimpleNamespace(addr=0x1000)
+    raw_first = CVariable(
+        SimStackVariable(2, 2, base="bp", name="first", region=0x1000),
+        variable_type=word_type,
+        codegen=stale_codegen,
+    )
+    raw_second = CVariable(
+        SimStackVariable(4, 2, base="bp", name="second", region=0x1000),
+        variable_type=word_type,
+        codegen=stale_codegen,
+    )
+
+    assert _location_fingerprint(raw_first, project) == "stack_arg:first:size2:bp+0x4"
+    assert _location_fingerprint(raw_second, project) == "stack_arg:second:size2:bp+0x6"
 
 
 def test_project_segmented_lowering_evidence_matches_ds_deref_to_global():
