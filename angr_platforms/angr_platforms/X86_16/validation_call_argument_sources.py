@@ -18,7 +18,7 @@ from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .callsite_summary import CallsitePushSourceKind8616, CallsiteSummary8616
-from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .lowering.stack_function_coordinates import final_c_function_machine_bp_offset_8616
 from .validation_stack_projection import validated_stack_projection_fact_8616
 
 
@@ -110,7 +110,7 @@ def _stack_offsets_from_c_argument_8616(
             continue
         variable = node.variable
         if isinstance(variable, SimStackVariable) and variable.base == "bp":
-            bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            bp_offset = final_c_function_machine_bp_offset_8616(codegen, variable)
             if isinstance(bp_offset, int):
                 offsets.add(bp_offset)
     return tuple(sorted(offsets))
@@ -149,7 +149,7 @@ def _stack_byte_projection_offset_8616(
         or byte_index >= variable.size
     ):
         return None
-    bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    bp_offset = final_c_function_machine_bp_offset_8616(codegen, variable)
     return bp_offset + byte_index if isinstance(bp_offset, int) else None
 
 

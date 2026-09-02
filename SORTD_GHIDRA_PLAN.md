@@ -83,15 +83,24 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
   integer promotion unnoticed. Its fresh 2026-09-01 run is green: all ten
   selected functions decompile, the translation unit recompiles, and the
   rebuilt executable exits `255`
-- the current exact repository baseline is 10,132 collected, 9,931 passed,
-  31 failed, and 170 skipped in 1,314.23 seconds with seven pytest workers;
-  this supersedes the earlier 10,091-test audit without claiming the remaining
-  failures are closed
+- the current exact repository baseline is 10,137 collected, 9,944 passed,
+  23 failed, and 170 skipped in 852.88 seconds with seven pytest workers. The
+  exact last-failed rerun then reported 19 failed and 3 passed in 221.20
+  seconds. Subsequent focused closures project 13 failures, but that count is
+  not confirmed until the next complete audit
 - the full-binary to exact-function project boundary now transports validated,
   immutable callee pointer-argument evidence through the existing ABI seeding
   service. HeapSort therefore emits typed `Swaps` pointers, passes Tail
   Validation and strict C11 syntax, and retains the source-required call
   argument classes without semantic recovery in CLI or Rewrite
+- Swaps now remains a single three-assignment object exchange after the final
+  shared-call codegen regeneration. Lowering removes only the tagged raw
+  temporary load already consumed by its unique exact pointer-swap proof;
+  unrelated effects and untagged ambiguity remain preserved. Stack-probe
+  return-frame cleanup also precedes helper removal, and Tail Validation maps
+  exact-region argument slots onto machine-BP ABI coordinates. The live
+  function keeps `iSwaps += 1`, emits one `barTmp = bar1[0]`, reports
+  `validation=passed`, and passes strict generated-C syntax
 - a current-tree stack-object regression inverted the containment predicate and
   selected storage smaller than the requested access. Restoring the owned
   invariant `storage_size >= access_width` preserves byte views of aggregates
@@ -312,8 +321,10 @@ source for the total remaining estimate.
 | Machine-BP prototype identity and indexed byte-pointer closure | `2026-09-02 08:30 +02:00` | `2026-09-02 09:25 +02:00` | 40-50m engineering; focused waits excluded | 55m | completed | 0h | Types/Lowering now recognizes a sole pointer carrier in either x86 effective-address register and refuses two-carrier ambiguity. Stack prototype materialization joins physical C arguments to logical annotations through the owned machine-BP coordinate instead of raw entry-SP offsets. Failing-before tests cover both defects; 77 related tests, Ruff, MyPy, live `fill_bytes`, and the three-function `pointer_memory` compile/decompile/recompile/runtime construct pass in 16.21s with a `char *dst` byte store. |
 | Stored call-return early-exit and DOS wrapper closure | `2026-09-02 09:39 +02:00` | `2026-09-02 10:45 +02:00` | 45-55m engineering; repeated live and gate waits excluded | 1h06m | completed | 0h | Exact PUSH provenance removes the split byte carrier. Lowering joins the projected stack condition to its AX call-result binding; Semantics proves the jump-only epilogue path preserves return registers; Structuring resolves the machine-BP error object and materializes both returns. Failing-before unit tests, both live CLI modes, 83 related checks with only the pre-existing `loadprog` body failure, direct Ruff/MyPy, `quality-dev` with 1,923 tests, and the mandatory external pipeline pass. |
 | DOS `loadprog` wide-stack view and path-specific terminal-return closure | `2026-09-02 10:55 +02:00` | `2026-09-02 11:53 +02:00` | 35-45m engineering; repeated live and gate waits excluded | 58m | completed | 0h | Types/Lowering owns one four-byte `cmdline` argument and exact word projections; Tail Validation consumes the same typed projection facts; Structuring refuses cross-path linear substitution and materializes the exact tagged success return from its own CFG predecessor. Generic failing-before tests, 261 related checks, direct Ruff/MyPy, live `validation=passed`, portable recompilation, and `quality-dev` pass. |
+| Swaps return-frame, validation-coordinate, and final projection closure | before `2026-09-02 14:02 +02:00`; exact start lost at compaction | `2026-09-02 14:13 +02:00` | exact focused subtotal unavailable after compaction; final diagnosis and gates retained | at least 11m retained | completed | 0h | Lowering consumes the typed CALL return frame before removing the fixed stack probe; Tail Validation translates exact-region C slots to machine-BP ABI offsets; Structuring replays the unique pointer-swap projection after final codegen regeneration and removes only tagged consumed carriers. The live Swaps test passes with one temporary load, both stores, the global increment, `validation=passed`, and strict C syntax. Focused pointer, return-frame, coordinate, and owner tests, Ruff, direct MyPy, `quality-dev` with 1,923 tests, mypyc smoke, and all three quality comparisons pass. |
+| Function-wide entry-SP to machine-BP validation-coordinate closure | before `2026-09-02 15:06 +02:00`; exact start lost at compaction | `2026-09-02 15:22 +02:00` | 15-25m focused; complete local gate wall excluded | at least 16m retained | completed | 0h | Types/Lowering now owns one typed C-function coordinate projection. It accepts only the coherent 16-bit near-frame delta from entry-SP `+2` to machine-BP `+4`, applies it consistently to arguments and locals, and refuses already-projected, incomplete, or mixed interfaces. An uncached live DrawBar run and its permanent regression return zero with `validation=passed`; 99 focused tests, Ruff, MyPy, architecture checks, and `quality-dev` with 1,924 tests plus all required external quality comparisons pass. |
 | Required project gates after the fix | `2026-08-29 08:51 +02:00` | `2026-09-02 06:40 +02:00` | historical subtotal retained; test time excluded | continued through `2026-09-02` | completed | 0h | Ruff, MyPy over the production surface, the 39-module mypyc smoke, architecture and ownership checks, and 1,921 curated tests pass. All three quality comparisons pass at 1.356x-1.526x. The expanded pipeline remains 5/5: SORTD decompiles 20/20 functions with zero validation failures or timeouts, its generated translation unit compiles with zero warnings, the 19-function sort-core behavior gate passes, and every selected Ultra QuickC and MS C tiny round trip passes. No exclusion or weakened check was added. |
-| Complete repository pytest closure | `2026-09-02` | - | full audit wall 724.28s; closure work tracked per root family | active | in progress | 20-35h, overlapping task 9 | The exact baseline is 9,865 passed, 56 failed, 170 skipped out of 10,091. The latest exact last-failed rerun is 26 failed and 25 passed in 224.10s. An exact rerun must reach zero failures. |
+| Complete repository pytest closure | `2026-09-02` | - | latest full audit wall 852.88s; closure work tracked per root family | active | in progress | 20-35h, overlapping task 9 | The exact baseline is 9,944 passed, 23 failed, 170 skipped out of 10,137. The latest exact last-failed rerun is 19 failed and 3 passed in 221.20s. Focused closures project 13 remaining failures; only a complete rerun may replace the exact count, and final DoD remains zero failures. |
 
 #### Machine-BP prototype identity and indexed byte-pointer closure contract
 
@@ -908,7 +919,9 @@ or output filtering.
 | 9a | Close terminal local pointer-output carrier versus scalar-return identity | `2026-09-02 03:04 +02:00` | `2026-09-02 04:03 +02:00` | 40-55m focused; quality and pipeline waits separate | complete | Semantics owns a typed all-terminal-path proof; Types consumes it only with complete unused-caller evidence and a guessed prototype. Swaps becomes `void`, direct-global `_SetDLC` remains scalar, uncertain paths refuse demotion, `quality-dev` and the required executable pipeline pass. |
 | 9b | Close `_ConfigCrts` byte-lane projection and cross-structure temporary liveness | `2026-09-02 04:28 +02:00` | `2026-09-02 05:05 +02:00` | 24-30m focused; gate waits excluded | complete | Types/Lowering preserves exact byte subviews, Widening proves exact word recomposition, and Rewrite cleanup refuses deletion across a live enclosing continuation. Real Tail Validation, 29 focused tests, `quality-dev`, and mandatory plus expanded pipelines pass. |
 | 9c | Preserve validated callee pointer evidence across exact-function project views | `2026-09-02 12:43 +02:00` | `2026-09-02 13:01 +02:00` | about 18m focused; test waits included | complete | The existing ABI seeding service rebases immutable pointer evidence, detects conflicts, and makes HeapSort's two `Swaps` arguments typed pointers. Focused source-assisted and sidecar-free validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. |
-| 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus about 18m for 9c; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
+| 9d | Keep Swaps call-frame and pointer-swap projections coherent through final regeneration | before `2026-09-02 14:02 +02:00`; exact start lost at compaction | `2026-09-02 14:13 +02:00` | exact subtotal unavailable after compaction | complete | Typed return-frame ownership, machine-BP validation coordinates, and the unique exact swap projection now survive their downstream consumers. Live Swaps has exactly three object-copy assignments, the counter effect, clean Tail Validation, and strict C syntax; focused Ruff, MyPy, `quality-dev`, and regression gates pass. |
+| 9e | Keep typed C-function stack coordinates coherent across final validation | before `2026-09-02 15:06 +02:00`; exact start lost at compaction | `2026-09-02 16:08 +02:00` | 45-60m focused after the first checkpoint; broad gate wall separate | complete | The Types/Lowering owner accepts only the canonical near-frame entry-SP-to-BP delta and may project unregistered negative locals, while positive slots remain under Alias/type ownership. Live uncached DrawBar passes; 101 focused tests, `quality-dev` with 1,924 tests, and the mandatory pipeline are green. `scalar_types_io`, including `add_long`, recompiles and exits `255`. |
+| 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus completed 9c/9d/9e slices; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
 | 12 | Implement evidence-supported Reko mechanisms | not started | - | 0h | 9-15h | Task 7 per-step DoD passes; unsupported mechanisms remain explicit refusals. |
@@ -941,6 +954,84 @@ Definition of failure:
 - output becomes prettier while a call, argument class, memory effect, CFG
   edge, Tail Validation result, compile gate, type, documentation, or lint gate
   regresses
+
+#### Step 9d acceptance contract
+
+Reason: Swaps exposed three projection-coherence defects. Fixed stack-probe
+removal could leave its CALL return-frame artifacts behind; exact-function C
+arguments used entry-SP-like slots while validation compared machine-BP ABI
+slots; and final shared-call regeneration could restore a raw temporary load
+already consumed by the lowering-owned pointer-swap projection.
+
+Definition of done:
+
+- fixed stack-probe removal consumes its typed CALL return frame first and does
+  not emit the return IP as a local/object write
+- Tail Validation maps the active exact C argument list to deterministic
+  machine-BP ABI offsets and refuses incomplete or ambiguous layouts
+- one unique exact pointer-swap sequence survives final Structuring
+  regeneration; only an extra temporary load tagged inside the already-proven
+  instruction region is removed
+- live Swaps retains the global increment, one temporary load, both pointer
+  stores, `validation=passed`, and strict generated-C compilation
+- focused return-frame, pointer-swap, validation-coordinate, and owner tests,
+  Ruff `--fix`, MyPy, and index coverage pass
+
+Definition of failure:
+
+- generic DCE is taught to discard arbitrary pointer reads, or Rewrite/CLI
+  reconstructs the swap
+- an untagged, ambiguous, unrelated, call-bearing, memory-writing, or
+  control-flow statement is removed
+- argument names, source labels, function addresses, rendered C, or corpus
+  shape become semantic evidence
+- the global increment, either pointer store, call/frame effect, validation
+  verdict, compile gate, type, documentation, lint, or deterministic output
+  regresses
+
+#### Step 9e acceptance contract
+
+Reason: Tail Validation had begun canonicalizing final C arguments onto
+machine-BP ABI offsets, but unregistered locals still used angr entry-SP
+offsets. DrawBar therefore compared the same storage as `BP-0x2c` versus
+`BP-0x2e`, and some final arguments as `BP+0x4` versus `BP+0x2`. Keeping the
+argument-only translation in Tail Validation created two competing coordinate
+truths.
+
+Definition of done:
+
+- Types/Lowering owns a typed function-wide coordinate projection and Tail
+  Validation consumes that owner instead of duplicating ABI arithmetic; final
+  argument storage may prove the coordinate relation while a transient
+  function type is unavailable, but it does not prove parameter types
+- only the coherent 16-bit near-frame relation from entry-SP `+2` to
+  machine-BP `+4` is accepted; mixed, incomplete, already-projected, and
+  noncanonical interfaces refuse
+- the function-wide fallback projects only negative local slots; unregistered
+  positive slots keep their original coordinate so wide-argument
+  materialization remains the authoritative owner
+- argument and local dependencies use the same proven delta, so DrawBar loses
+  all `+2/+4` and `-0x2e/-0x2c` false mismatches
+- an uncached live DrawBar run and its permanent regression report
+  `validation=passed`, retain generated C, and return zero
+- focused coordinate, call-argument, fingerprint, and DrawBar tests, Ruff
+  `--fix`, MyPy, architecture ownership, mypyc smoke, `quality-dev`, and the
+  mandatory external pipeline pass; `scalar_types_io` recompiles and its
+  rebuilt executable exits `255`
+
+Definition of failure:
+
+- Tail Validation, Rewrite, or CLI guesses a universal `+2` correction without
+  a coherent final argument-storage interface
+- a machine-BP, mixed, one-off `+6`, ambiguous, or incomplete interface is
+  shifted; unrelated segmented runtime lowering changes as a side effect
+- an unregistered positive slot is shifted before Alias/type materialization,
+  or a split-word intermediate surface blocks a proven wide argument
+- arguments and locals are canonicalized by separate owners or source/COD,
+  names, addresses, assembly, rendered C, or corpus shape become evidence
+- DrawBar loses a call, argument dependency, memory effect, return, CFG edge,
+  validation verdict, recompilation result, type, documentation, lint, or
+  deterministic output
 
 ### Estimate History
 
@@ -980,6 +1071,7 @@ Definition of failure:
 | `2026-09-02 10:45 +02:00` | 80-115h | unchanged | DOS `_dos_loadProgram` is closed across both CLI shapes. Exact PUSH provenance removes the invalid split carrier; typed AX-to-stack binding, machine-BP object identity, and a bounded return-register-preserving epilogue proof materialize both returns at their owning layers. Focused Ruff/MyPy, 83 related checks with only the already-known larger `loadprog` body failure, `quality-dev` with 1,923 tests, and the mandatory external pipeline pass. The weighted total remains 75% pending the refreshed full-suite lane and remaining COD/SORTD families. |
 | `2026-09-02 11:53 +02:00` | 80-115h | unchanged pending exact audit | The larger DOS `loadprog` body closes in 35-45 focused minutes. A typed four-byte stack owner now supplies exact validation subviews, and Structuring refuses a multi-predecessor linear return scan before recovering each exact-tagged terminal value from its own CFG predecessor. Generic failing-before tests, 261 related checks, direct Ruff/MyPy, live COD validation, portable recompilation, and `quality-dev` pass. The weighted total and forecast remain unchanged until the exact full collection refreshes the remaining independent failure families. |
 | `2026-09-02 13:01 +02:00` | 80-115h | unchanged pending exact audit | The refreshed exact collection establishes a 10,132 collected / 9,931 passed / 31 failed / 170 skipped baseline in 1,314.23s. Three infrastructure defects and four stale semantic-shape assertions are closed. HeapSort's remaining pointer-argument defect is then closed generically by transporting validated callee evidence across project views; focused validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. About 23 failures are projected, not confirmed, until the next exact audit. |
+| `2026-09-02 15:22 +02:00` | 80-115h | unchanged pending exact audit | The exact full audit is 10,137 collected / 9,944 passed / 23 failed / 170 skipped in 852.88s; the exact last-failed rerun is 19 failed / 3 passed in 221.20s. Architecture enrollment, one stale fixture, four cosmetic assertions, and DrawBar's function-wide coordinate drift are closed with focused proof and green `quality-dev`. About 13 failures are projected, not confirmed, until the next exact audit. |
 
 Current expected finish for the complete plan is **80-115 focused engineering
 hours**, approximately **2.0-3.8 working weeks** at 30-40 focused hours per

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeFixedSizeArray, SimTypeShort
+from angr.sim_type import SimTypeFixedSizeArray, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
@@ -20,6 +20,9 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     stack_cvar_for_stable_ss_linear_access_8616,
 )
 from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
+from angr_platforms.X86_16.lowering.stack_function_coordinates import (
+    final_c_function_machine_bp_offset_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
     materialize_stack_cvar_at_offset_from_facts_8616,
 )
@@ -230,6 +233,156 @@ def test_stack_variable_coordinate_registry_preserves_legacy_unprojected_offset(
 
     reset_stack_variable_coordinate_registry_8616(codegen)
     assert stack_variable_coordinate_registry_8616(codegen).projections == ()
+
+
+def test_typed_function_interface_projects_unregistered_entry_sp_variables() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    short_type = SimTypeShort(False)
+    argument_variable = SimStackVariable(2, 2, base="bp", name="arg_4")
+    argument = structured_c.CVariable(
+        argument_variable,
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(argument,),
+        functy=SimTypeFunction((short_type,), short_type),
+    )
+    local_clone = SimStackVariable(-0x2E, 2, base="bp", name="local_2c")
+
+    assert final_c_function_machine_bp_offset_8616(codegen, argument_variable) == 4
+    assert final_c_function_machine_bp_offset_8616(codegen, local_clone) == -0x2C
+    assert machine_bp_offset_for_stack_variable_8616(codegen, local_clone) == -0x2C
+
+
+def test_function_interface_does_not_project_unregistered_positive_slots() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    short_type = SimTypeShort(False)
+    arguments = tuple(
+        structured_c.CVariable(
+            SimStackVariable(offset, 2, base="bp", name=f"arg_{offset:x}"),
+            variable_type=short_type,
+            codegen=codegen,
+        )
+        for offset in (2, 4, 6, 8)
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=arguments,
+        functy=SimTypeFunction((short_type,) * 4, short_type),
+    )
+
+    split_wide_slot = SimStackVariable(6, 2, base="bp", name="arg_8")
+    assert machine_bp_offset_for_stack_variable_8616(codegen, split_wide_slot) == 6
+
+
+def test_final_argument_storage_projects_without_transient_function_type() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    argument = structured_c.CVariable(
+        SimStackVariable(2, 2, base="bp", name="arg_4"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(arg_list=(argument,))
+    local = SimStackVariable(-0x2E, 1, base="bp", name="local_2c")
+
+    assert final_c_function_machine_bp_offset_8616(codegen, local) == -0x2C
+
+
+def test_inconsistent_function_interface_refuses_coordinate_projection() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    short_type = SimTypeShort(False)
+    first = structured_c.CVariable(
+        SimStackVariable(2, 2, base="bp", name="arg_4"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    second = structured_c.CVariable(
+        SimStackVariable(6, 2, base="bp", name="arg_6"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(first, second),
+        functy=SimTypeFunction((short_type, short_type), short_type),
+    )
+
+    unresolved = SimStackVariable(-0x2E, 2, base="bp", name="local_2e")
+    assert machine_bp_offset_for_stack_variable_8616(codegen, unresolved) == -0x2E
+
+
+def test_machine_bp_function_interface_is_not_shifted_twice() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    short_type = SimTypeShort(False)
+    argument = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_4"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(argument,),
+        functy=SimTypeFunction((short_type,), short_type),
+    )
+
+    local = SimStackVariable(-2, 2, base="bp", name="local_2")
+    assert machine_bp_offset_for_stack_variable_8616(codegen, argument.variable) == 4
+    assert machine_bp_offset_for_stack_variable_8616(codegen, local) == -2
+
+
+def test_bound_machine_bp_argument_projects_final_entry_sp_local() -> None:
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    short_type = SimTypeShort(False)
+    entry_sp_argument = SimStackVariable(2, 2, base="bp", name="arg_4")
+    machine_bp_argument = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_4"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=entry_sp_argument,
+        cvar=machine_bp_argument,
+        bp_offset=4,
+        entry_sp_offset=2,
+        size=2,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(machine_bp_argument,),
+        functy=SimTypeFunction((short_type,), short_type),
+    )
+    local = SimStackVariable(-0x2E, 2, base="bp", name="local_2c")
+
+    assert final_c_function_machine_bp_offset_8616(codegen, local) == -0x2C
+    assert machine_bp_offset_for_stack_variable_8616(codegen, local) == -0x2C
 
 
 def test_stack_variable_coordinate_registry_maps_contained_high_byte() -> None:

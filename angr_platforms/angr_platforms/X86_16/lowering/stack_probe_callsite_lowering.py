@@ -3,6 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: coordinate existing typed consumers so a fixed stack-probe call
 cannot disappear before its source-invisible machine return frame is consumed.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 This module does not infer CALL effects, classify helper names, or inspect
 source, COD, assembly text, or rendered C.
 """
@@ -36,4 +38,4 @@ def lower_fixed_stack_probe_callsite_artifacts_8616(
         function=function,
     )
     probe_changed = lower_fixed_stack_probe_frames_8616(codegen).changed
-    return frame_changed or probe_changed
+    return bool(frame_changed or probe_changed)

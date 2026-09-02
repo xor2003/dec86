@@ -304,37 +304,30 @@ def _indexed_stack_slot_offset_8616(expr: object) -> int | None:
     return _stack_slot_offset_8616(expr.variable)
 
 
-def _pointer_swap_already_materialized_8616(
+def _materialized_pointer_swap_sequence_8616(
     leaf_positions: list[tuple[list[CStatement], int, CStatement]],
     *,
     left_offset: int | None,
     right_offset: int | None,
     temporary_offset: int | None,
-) -> bool:
-    """Prove that the current AST already contains exactly one pointer swap."""
+) -> tuple[CAssignment, CAssignment, CAssignment] | None:
+    """Return the unique exact pointer-swap sequence among unrelated effects."""
     assignments = [statement for _, _, statement in leaf_positions if isinstance(statement, CAssignment)]
-    if (
-        len(assignments) != 3
-        or left_offset is None
-        or right_offset is None
-        or temporary_offset is None
-    ):
-        return False
-    temporary_load, left_store, right_store = assignments
-    temporary_load_rhs_offsets = {
-        offset
-        for node in _iter_c_nodes_deep_8616(temporary_load.rhs)
-        if isinstance(node, CVariable)
-        if isinstance((offset := _stack_slot_offset_8616(node)), int)
-    }
-    return (
-        _stack_slot_offset_8616(temporary_load.lhs) == temporary_offset
-        and temporary_load_rhs_offsets == {left_offset}
-        and _indexed_stack_slot_offset_8616(left_store.lhs) == left_offset
-        and _indexed_stack_slot_offset_8616(left_store.rhs) == right_offset
-        and _indexed_stack_slot_offset_8616(right_store.lhs) == right_offset
-        and _stack_slot_offset_8616(right_store.rhs) == temporary_offset
-    )
+    if left_offset is None or right_offset is None or temporary_offset is None:
+        return None
+    matches: list[tuple[CAssignment, CAssignment, CAssignment]] = []
+    for index in range(len(assignments) - 2):
+        temporary_load, left_store, right_store = assignments[index : index + 3]
+        if (
+            _stack_slot_offset_8616(temporary_load.lhs) == temporary_offset
+            and _indexed_stack_slot_offset_8616(temporary_load.rhs) == left_offset
+            and _indexed_stack_slot_offset_8616(left_store.lhs) == left_offset
+            and _indexed_stack_slot_offset_8616(left_store.rhs) == right_offset
+            and _indexed_stack_slot_offset_8616(right_store.lhs) == right_offset
+            and _stack_slot_offset_8616(right_store.rhs) == temporary_offset
+        ):
+            matches.append((temporary_load, left_store, right_store))
+    return matches[0] if len(matches) == 1 else None
 
 
 def _optional_c_node_ins_addr_8616(node: object) -> int | None:
@@ -415,19 +408,33 @@ def splice_proven_pointer_swap_statements_8616(
     temporary_offset = _stack_slot_offset_8616(temporary_expr)
     left_offset = _stack_slot_offset_8616(left_expr)
     right_offset = _stack_slot_offset_8616(right_expr)
-    if _pointer_swap_already_materialized_8616(
+    materialized_sequence = _materialized_pointer_swap_sequence_8616(
         leaf_positions,
         left_offset=left_offset,
         right_offset=right_offset,
         temporary_offset=temporary_offset,
-    ):
+    )
+    if materialized_sequence is not None:
+        materialized_ids = {id(statement) for statement in materialized_sequence}
+        stale_temp_assignments = [
+            (parent, statement)
+            for parent, _index, statement in leaf_positions
+            if isinstance(statement, CAssignment)
+            if id(statement) not in materialized_ids
+            if _stack_slot_offset_8616(statement.lhs) == temporary_offset
+            if _indexed_stack_slot_offset_8616(statement.rhs) == left_offset
+            if _optional_c_node_ins_addr_8616(statement) in proven_ins_addrs
+        ]
+        for stale_parent, stale_statement in stale_temp_assignments:
+            stale_parent[:] = [statement for statement in stale_parent if statement is not stale_statement]
         stats.raw_fact_count = len(proven_ins_addrs)
         stats.normalized_fact_count = 1
         stats.classified_fact_count = 1
         stats.materialized_count = 1
         stats.idempotent_count = 1
+        stats.stale_temp_assignment_count = len(stale_temp_assignments)
         typed_codegen._inertia_pointer_swap_splice_stats_8616 = stats
-        return False
+        return bool(stale_temp_assignments)
     affected_ins_addrs: set[int] = set()
     for parent, index, statement in leaf_positions:
         nonvariable_addrs = {

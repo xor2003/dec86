@@ -106,6 +106,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/instruction_bp_stack_access.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_coordinate_rebinding.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_coordinates.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_function_coordinates.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_display_names.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_candidate.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_materialization.py \
@@ -835,6 +836,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/explicit_char_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fixed_stack_probe_frames.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_probe_callsite_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_overwrite_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py \
@@ -857,6 +859,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/instruction_bp_stack_access.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_coordinate_rebinding.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_coordinates.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_function_coordinates.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_display_names.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_candidate.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_materialization.py \
@@ -1813,6 +1816,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/explicit_char_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fixed_stack_probe_frames.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_probe_callsite_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_overwrite_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py \
@@ -1835,6 +1839,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/instruction_bp_stack_access.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_coordinate_rebinding.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_coordinates.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_function_coordinates.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_display_names.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_candidate.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_materialization.py \

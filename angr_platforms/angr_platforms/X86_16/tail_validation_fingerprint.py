@@ -63,6 +63,9 @@ from .decompiler_postprocess_utils import (
 from .lowering.gp_register_state import runtime_gp_name_for_variable_8616
 from .lowering.segment_register_state import runtime_segment_name_for_variable_8616
 from .lowering.segmented_global_loads import IndexedSegmentedGlobalStoreEvidence8616
+from .lowering.stack_function_coordinates import (
+    c_function_argument_machine_bp_offset_8616,
+)
 from .lowering.stack_variable_binding import StackVariableBinding
 from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from .lowering.structured_intrinsics import lower_structured_insert_call_8616
@@ -457,6 +460,14 @@ def _source_arg_location_fingerprint_8616(node: Any, project: Any) -> str | None
         return None
     function = _lookup_function_for_call_context_8616(project, func_addr)
     variable_size = _dynamic_tail_validation_getattr_8616(variable, "size", None)
+    raw_offset = _dynamic_tail_validation_getattr_8616(variable, "offset", None)
+    cfunc_abi_offset = (
+        c_function_argument_machine_bp_offset_8616(cfunc, raw_offset, variable_size)
+        if isinstance(raw_offset, int)
+        else None
+    )
+    if isinstance(cfunc_abi_offset, int):
+        offset = cfunc_abi_offset
     source_names_by_offset = _source_arg_names_by_offset_8616(function)
     source_name = source_names_by_offset.get(offset)
     if isinstance(source_name, str) and source_name:
@@ -465,6 +476,12 @@ def _source_arg_location_fingerprint_8616(node: Any, project: Any) -> str | None
             source_name,
             offset,
             source_size if isinstance(source_size, int) and source_size > 0 else None,
+        )
+    if isinstance(cfunc_abi_offset, int):
+        return _source_arg_fingerprint_from_slot_8616(
+            f"arg_{offset:x}",
+            offset,
+            variable_size if isinstance(variable_size, int) and variable_size > 0 else None,
         )
     source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset)
     if not isinstance(source_name, str) or not source_name:
@@ -1137,9 +1154,20 @@ def _source_arg_stack_slot_fingerprint_8616(offset: int, codegen: Any, *, size: 
         )
         return None
     function = _lookup_function_for_call_context_8616(project, func_addr)
+    cfunc_abi_offset = c_function_argument_machine_bp_offset_8616(
+        cfunc,
+        offset,
+        size,
+    )
+    if isinstance(cfunc_abi_offset, int):
+        offset = cfunc_abi_offset
     source_match = _source_arg_match_by_offset_8616(function, project, offset, size=size)
     if source_match is not None:
         source_name, source_offset, source_size = source_match
+    elif isinstance(cfunc_abi_offset, int):
+        source_name = f"arg_{offset:x}"
+        source_offset = offset
+        source_size = size
     else:
         source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset) or ""
         source_offset = offset

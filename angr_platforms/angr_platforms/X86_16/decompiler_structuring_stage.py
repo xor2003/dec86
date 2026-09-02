@@ -4418,6 +4418,11 @@ def _decompile_structuring_8616(self: AngrDecompilerSurface) -> None:
                     context="structuring:shared-call-occurrence-normalization",
                 )
                 annotate_current_span(regenerated=bool(regenerated))
+            final_pointer_memory_changed = _apply_structuring_pointer_memory_idioms_8616(
+                self.project, self.codegen
+            )
+            changed = bool(final_pointer_memory_changed) or changed
+            annotate_current_span(pointer_memory_changed=bool(final_pointer_memory_changed))
         with span("x86_16.structuring.return_chain_integrity", function=func_addr):
             return_chain_integrity = require_materialized_return_chain_integrity_8616(
                 self.codegen,

@@ -438,3 +438,25 @@ def test_pointer_swap_splice_is_idempotent_for_exact_materialized_sequence() -> 
     assert stats.materialized_count == 1
     assert stats.idempotent_count == 1
     assert stats.failure_count == 0
+
+    stale_temp_load = CAssignment(
+        temporary,
+        CIndexedVariable(left, zero, variable_type=word_type, codegen=codegen),
+        tags={"ins_addr": 0x1012},
+        codegen=codegen,
+    )
+    cfunc.statements.statements.append(stale_temp_load)
+    assert splice_proven_pointer_swap_statements_8616(
+        codegen,
+        left,
+        right,
+        temporary,
+        frozenset({0x1010, 0x1012, 0x1014, 0x1016}),
+        frozenset({0x1014, 0x1016}),
+    )
+    assert cfunc.statements.statements == statements
+    stats = codegen._inertia_pointer_swap_splice_stats_8616
+    assert stats.stale_temp_assignment_count == 1
+    assert stats.materialized_count == 1
+    assert stats.idempotent_count == 1
+    assert stats.failure_count == 0

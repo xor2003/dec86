@@ -23,6 +23,7 @@ from ..alias.stack_coordinate_projection import (
 )
 from ..alias.stack_memory_ssa_contracts import StackMemorySSAAliasArtifact8616
 from ..analysis.stack_frame_ir import FrameAccessArtifact
+from .stack_function_coordinates import projected_c_function_machine_bp_offset_8616
 from .stack_storage_evidence import (
     alias_excludes_stack_range_8616,
     typed_frame_excludes_stack_range_8616,
@@ -491,10 +492,17 @@ def machine_bp_offset_for_stack_variable_8616(
                 variable.offset,
                 variable.size,
             )
-            if coordinate.materialized:
+            if coordinate.materialized and isinstance(coordinate.bp_offset, int):
                 return coordinate.bp_offset
             if coordinate.status is StackCoordinateProjectionStatus8616.AMBIGUOUS:
                 return None
+        if variable.offset < 0:
+            c_function_offset = projected_c_function_machine_bp_offset_8616(
+                codegen,
+                variable,
+            )
+            if isinstance(c_function_offset, int):
+                return c_function_offset
     return variable.offset if isinstance(variable.offset, int) else None
 
 

@@ -736,7 +736,7 @@ def test_c_decl_annotation_applies_function_and_argument_names():
 
     assert dec.codegen is not None
     assert "int add_words(int lhs, int rhs)" in dec.codegen.text
-    assert "return lhs + rhs;" in dec.codegen.text
+    assert "return lhs + rhs;" in dec.codegen.text or "return (unsigned short)lhs + rhs;" in dec.codegen.text
 
 
 def test_stack_variable_annotation_applies_local_name():

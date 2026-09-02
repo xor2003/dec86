@@ -79,7 +79,7 @@ from .lowering.segmented_global_loads import (
     DwordGlobalZeroTestEvidence8616,
     IndexedGlobalReadCarrierMaterializationRecord8616,
 )
-from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .lowering.stack_function_coordinates import final_c_function_machine_bp_offset_8616
 from .pipeline.errors import PipelineHardError
 from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .structuring.canonical_for_loops import canonical_loop_validation_shape_8616
@@ -5407,7 +5407,7 @@ def refresh_x86_16_final_semantic_validation_8616(
         ),
         packed_status_flag_preservation=packed_status_flag_preservation_evidence_8616(project, codegen),
         include_virtual_carriers=include_virtual_carriers,
-        stack_variable_offset_resolver=lambda variable: machine_bp_offset_for_stack_variable_8616(
+        stack_variable_offset_resolver=lambda variable: final_c_function_machine_bp_offset_8616(
             codegen,
             variable,
         ),
@@ -5604,7 +5604,7 @@ def collect_x86_16_tail_validation_summary(
                 codegen,
             ),
             packed_status_flag_preservation=packed_status_flag_preservation_evidence_8616(project, codegen),
-            stack_variable_offset_resolver=lambda variable: machine_bp_offset_for_stack_variable_8616(
+            stack_variable_offset_resolver=lambda variable: final_c_function_machine_bp_offset_8616(
                 codegen,
                 variable,
             ),

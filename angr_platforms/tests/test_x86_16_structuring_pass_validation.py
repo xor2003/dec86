@@ -186,6 +186,11 @@ def test_structuring_return_chain_owner_runs_cfg_mask_accumulator(monkeypatch):
     codegen = SimpleNamespace()
 
     monkeypatch.setattr(
+        stage,
+        "materialize_tagged_terminal_return_values_8616",
+        lambda *_args, **_kwargs: SimpleNamespace(changed=False),
+    )
+    monkeypatch.setattr(
         post_stage,
         "_materialize_missing_terminal_ax_return_8616",
         lambda *_args: calls.append("terminal_ax") and False,

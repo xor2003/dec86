@@ -8,7 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
-from angr.sim_type import SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering.call_argument_stack_sources import containing_stack_cvariable_8616
@@ -157,6 +157,52 @@ def test_call_argument_source_validation_uses_machine_bp_projection() -> None:
         bp_offset=-2,
         size=2,
         variable=variable,
+    )
+
+    report = validate_call_argument_classes_8616(
+        codegen,
+        CStatements([call], codegen=codegen),
+    )
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_call_argument_source_validation_uses_typed_function_coordinate_delta() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False)
+    formal = CVariable(
+        SimStackVariable(2, 2, base="bp", name="arg_4"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(formal,),
+        functy=SimTypeFunction((short_type,), short_type),
+    )
+    local_argument = CVariable(
+        SimStackVariable(-0x2E, 2, base="bp", name="local_2c"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "consume",
+        None,
+        [local_argument],
+        tags={"ins_addr": 0x1040},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries[id(call)] = CallsiteSummary8616(
+        callsite_addr=0x1040,
+        target_addr=0x2000,
+        return_addr=0x1043,
+        kind="direct_near",
+        arg_count=1,
+        arg_widths=(2,),
+        stack_cleanup=2,
+        return_register=None,
+        return_used=False,
+        push_arg_sources=(("bp", -0x2C, 2),),
     )
 
     report = validate_call_argument_classes_8616(

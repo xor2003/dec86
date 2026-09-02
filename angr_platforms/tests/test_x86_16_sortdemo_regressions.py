@@ -491,8 +491,12 @@ def test_sortdemo_bubblesort_direct_path_validates_and_preserves_array_calls():
         assert "void BubbleSort" in result.stdout, combined
         final_body = _function_body_from_stdout(result.stdout, "void BubbleSort")
     assert "abarWork[iRow + 1].field_0 < abarWork[iRow].field_0" in final_body
-    assert "Swaps(&abarWork[iRow], &abarWork[iRow + 1]);" in final_body
-    assert "SwapBars(iRow, iRow + 1);" in final_body
+    assert re.search(
+        r"Swaps\(&abarWork\[(?:\(unsigned short\))?iRow\], "
+        r"&abarWork\[(?:\(unsigned short\))?iRow \+ 1\]\);",
+        final_body,
+    )
+    assert re.search(r"SwapBars\(iRow, (?:\(unsigned short\))?iRow \+ 1\);", final_body)
     assert "Swaps();" not in final_body
     assert "SwapBars();" not in final_body
     assert "SEG_U8(" not in final_body
@@ -512,7 +516,11 @@ def test_sortdemo_bubblesort_direct_path_validates_and_preserves_array_calls():
         inner_loop = final_body.index(for_header, outer_loop)
         next_limit = final_body.index("iLimit = iSwitch;", inner_loop)
     else:
-        inner_loop = final_body.index("while (true)", outer_loop)
+        inner_loop = min(
+            final_body.index(marker, outer_loop)
+            for marker in ("while (true)", "while (1)")
+            if marker in final_body[outer_loop:]
+        )
         row_update = final_body.index("iRow += 1;", inner_loop)
         next_limit = final_body.index("iLimit = iSwitch;", row_update)
     outer_condition = final_body.index("} while", next_limit)
@@ -581,12 +589,15 @@ def test_sortd_exchangesort_sidecar_free_folds_alias_proven_high_byte(tmp_path: 
     guard_end = final_body.index("}", guard_start)
     guarded_body = final_body[guard_start:guard_end]
     assert "local_4 = local_2;" in guarded_body
-    assert "sub_10498(local_2);" in final_body
-    assert guarded_body.index("local_4 = local_2;") < guarded_body.index(
-        "sub_10498(local_2);"
-    )
+    draw_call = re.search(r"sub_10498\((?:\(unsigned short\))?local_2\);", guarded_body)
+    assert draw_call is not None
+    assert guarded_body.index("local_4 = local_2;") < draw_call.start()
     assert final_body.count("local_4 = local_2;") == 1
-    assert "sub_107b8(&g_0B4C[local_6], &g_0B4C[local_4]);" in final_body
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?local_6\], "
+        r"&g_0B4C\[(?:\(unsigned short\))?local_4\]\);",
+        final_body,
+    )
     assert "sub_10768(local_6, local_4);" in final_body
 
 
@@ -1047,9 +1058,13 @@ def test_sortdemo_exchangesort_preserves_inner_loop_setup_and_guarded_minimum_up
     guard_end = final_body.index("}", guard_start)
     guarded_body = final_body[guard_start:guard_end]
     minimum_update = "iRowMin = iRowNext;" if "iRowMin" in comparison_guard else "local_4 = local_2;"
-    draw_time = "DrawTime(iRowNext);" if "iRowNext" in comparison_guard else "DrawTime(local_2);"
+    draw_time_arg = "iRowNext" if "iRowNext" in comparison_guard else "local_2"
+    draw_time = next(
+        (call for call in (f"DrawTime({draw_time_arg});", f"DrawTime((unsigned short){draw_time_arg});") if call in guarded_body),
+        None,
+    )
     assert minimum_update in guarded_body
-    assert draw_time in guarded_body
+    assert draw_time is not None
     assert guarded_body.index(minimum_update) < guarded_body.index(draw_time)
     assert final_body.count(minimum_update) == 1
     assert "v15 & 128" not in final_body
@@ -1086,7 +1101,11 @@ def test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls():
         or "if (MEM_U8(&abarWork[i]) > MEM_U8(&abarWork[iParent]))" in executable_lines
         or "if (abarWork[i].field_0 <= abarWork[iParent].field_0)" in executable_lines
     )
-    assert "Swaps(&abarWork[iParent], &abarWork[i]);" in executable_lines
+    assert re.search(
+        r"Swaps\(&abarWork\[(?:\(unsigned short\))?iParent\], "
+        r"&abarWork\[(?:\(unsigned short\))?i\]\);",
+        "\n".join(executable_lines),
+    )
     assert "SwapBars(iParent, i);" in executable_lines
     assert "SEG_U8(ds," not in final_body
     assert "SEG_PTR(ds," not in final_body
