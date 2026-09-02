@@ -81,6 +81,12 @@ class _AddressedCallee8616(Protocol):
     addr: int
 
 
+class _AssignmentExpression8616(Protocol):
+    """Third-party structured assignment surface used by loop proofs."""
+
+    rhs: object
+
+
 @dataclass(frozen=True, slots=True)
 class _ScalarStorage8616:
     """Stable scalar identity used by structured range proofs."""
@@ -306,7 +312,8 @@ def _machine_bp_stack_offset_8616(
         return None
     if codegen is None:
         return variable.offset if isinstance(variable.offset, int) else None
-    return machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    machine_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    return machine_offset if isinstance(machine_offset, int) else None
 
 
 def _scalar_memory_address_8616(
@@ -520,7 +527,7 @@ def _canonical_while_8616(
     loop: CWhileLoop,
     state: _RangeProofState8616,
 ) -> tuple[_AscendingLoop8616, int] | None:
-    """Match a zero-based unit-stride while loop with one leading break guard."""
+    """Match an exact zero-based unit-stride while-loop representation."""
     debug = os.environ.get("INERTIA_DEBUG_INDEXED_STACK_RANGES") == "1"
 
     def _debug(reason: str, **values: object) -> None:
@@ -566,10 +573,54 @@ def _canonical_while_8616(
             )
         return type(node).__name__
 
-    if not _unconditional_while_8616(loop):
-        _debug("conditional", condition=type(loop.condition).__name__)
-        return None
     statements = _transparent_body_statements_8616(loop.body)
+    if not _unconditional_while_8616(loop):
+        descriptor = _ascending_condition_8616(loop.condition)
+        if descriptor is None or state.constants.get(descriptor.induction) != 0:
+            _debug("conditional", condition=_shape(loop.condition), descriptor=descriptor)
+            return None
+        scalar_assignments = tuple(
+            (assignment, target_rhs)
+            for assignment in _direct_scalar_assignments_8616(loop.body)
+            for target_rhs in (_assignment_to_scalar_8616(assignment),)
+            if target_rhs is not None
+        )
+        induction_writes = tuple(
+            assignment
+            for assignment, target_rhs in scalar_assignments
+            if target_rhs[0] == descriptor.induction
+        )
+        bound_writes = tuple(
+            assignment
+            for assignment, target_rhs in scalar_assignments
+            if target_rhs[0] == descriptor.bound
+        )
+        induction_write = (
+            cast(_AssignmentExpression8616, induction_writes[0])
+            if len(induction_writes) == 1
+            else None
+        )
+        if (
+            induction_write is None
+            or bool(bound_writes)
+            or not statements
+            or induction_write is not statements[-1]
+            or _binary_storage_constant_8616(
+                induction_write.rhs,
+                "Add",
+                1,
+            )
+            != descriptor.induction
+        ):
+            _debug(
+                "conditional-writes",
+                descriptor=descriptor,
+                induction_writes=induction_writes,
+                bound_writes=bound_writes,
+                tail=type(statements[-1]).__name__ if statements else None,
+            )
+            return None
+        return descriptor, -1
     candidates: list[tuple[_AscendingLoop8616, int]] = []
     for guard_index, statement in enumerate(statements):
         descriptor = _break_guard_descriptor_8616(statement)

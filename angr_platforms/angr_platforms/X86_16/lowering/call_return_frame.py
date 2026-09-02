@@ -107,10 +107,15 @@ def _is_exact_ss_store_projection_lhs_8616(
     codegen: StructuredAstValue,
     lhs: StructuredAstValue,
 ) -> bool:
-    """Recognize a stack variable or explicit segmented SS store projection."""
+    """Recognize a memory lvalue for one exact Semantics-owned SS store."""
     if isinstance(lhs, structured_c.CVariable):
         variable = lhs.variable
         return isinstance(variable, SimStackVariable) and variable.base == "bp"
+    if isinstance(lhs, structured_c.CUnaryOp) and lhs.op == "Dereference":
+        # The complete (callsite, VEX block, VEX statement) key already proves
+        # this is the CALL-frame SS store. angr may retain its pre-lowering
+        # dereference after replacing the address children with stack cvars.
+        return True
     return runtime_segment_access_space_8616(project, codegen, lhs) is MemSpace.SS
 
 

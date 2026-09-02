@@ -772,6 +772,67 @@ def recover_pretest_loop_guard_evidence_8616(
     return tuple(recovered)
 
 
+def _recover_short_circuit_pretest_guard_evidence_8616(
+    project: object,
+    function: object,
+    seed_evidence: tuple[PretestLoopGuardEvidence8616, ...],
+) -> tuple[PretestLoopGuardEvidence8616, ...]:
+    """Recover predecessor predicates that share a proven loop-exit edge.
+
+    A short-circuit ``and`` may branch to the next predicate instead of the
+    loop body. The predecessor is still a body-edge guard when its other edge
+    is the exact exit of a typed downstream predicate in that target block.
+    """
+    graph = getattr(cast(Any, function), "graph", None)
+    if graph is None or not seed_evidence:
+        return ()
+    insns = _linear_capstone_insns_8616(project, function)
+    known = {item.branch_addr: item for item in seed_evidence}
+    recovered: list[PretestLoopGuardEvidence8616] = []
+    progress = True
+    while progress:
+        progress = False
+        for index, insn in enumerate(insns[:-1]):
+            mnemonic = str(getattr(insn, "mnemonic", "")).lower()
+            branch_addr = _dynamic_int_8616(getattr(insn, "address", None))
+            if mnemonic not in _CONDITIONAL_BRANCH_MNEMONICS_8616 or branch_addr is None:
+                continue
+            if branch_addr in known:
+                continue
+            fallthrough_jmp = insns[index + 1]
+            if str(getattr(fallthrough_jmp, "mnemonic", "")).lower() not in _UNCONDITIONAL_JMP_MNEMONICS_8616:
+                continue
+            body_target = _branch_target_imm_from_capstone_8616(insn)
+            exit_target = _branch_target_imm_from_capstone_8616(fallthrough_jmp)
+            if body_target is None or exit_target is None:
+                continue
+            continuation_node = _cfg_node_containing_addr_8616(graph, body_target)
+            if continuation_node is None:
+                continue
+            downstream = tuple(
+                item
+                for item in known.values()
+                if item.exit_target == exit_target
+                and _cfg_node_containing_addr_8616(graph, item.branch_addr) == continuation_node
+            )
+            if len(downstream) != 1:
+                continue
+            body_condition_op = _JCC_TAKEN_COMPARISON_OPS_8616.get(mnemonic)
+            if body_condition_op is None:
+                continue
+            fact = PretestLoopGuardEvidence8616(
+                branch_addr=branch_addr,
+                body_target=body_target,
+                exit_target=exit_target,
+                mnemonic=mnemonic,
+                body_condition_op=body_condition_op,
+            )
+            known[branch_addr] = fact
+            recovered.append(fact)
+            progress = True
+    return tuple(recovered)
+
+
 def recover_switch_loop_exit_return_evidence_8616(
     project: object,
     function: object,
@@ -1034,6 +1095,13 @@ def repair_pretest_loop_break_guards_from_evidence_8616(project: object, codegen
     typed_evidence = _typed_pretest_loop_guard_evidence_8616(codegen)
     evidence_by_branch = {item.branch_addr: item for item in recovered_evidence}
     evidence_by_branch.update({item.branch_addr: item for item in typed_evidence})
+    if function is not None:
+        short_circuit_evidence = _recover_short_circuit_pretest_guard_evidence_8616(
+            project,
+            function,
+            tuple(evidence_by_branch.values()),
+        )
+        evidence_by_branch.update({item.branch_addr: item for item in short_circuit_evidence})
     evidence = tuple(evidence_by_branch.values())
     stats.raw_fact_count = len(evidence)
     stats.normalized_fact_count = len(evidence)
@@ -2318,14 +2386,23 @@ def _pretest_evidence_for_loop_body_8616(
     *,
     guard: object | None = None,
 ) -> PretestLoopGuardEvidence8616 | None:
-    branch_addr = _condition_branch_addr_8616(condition)
-    if branch_addr is None and guard is not None:
-        branch_addr = _condition_branch_addr_8616(guard)
-    if isinstance(branch_addr, int):
-        for item in evidence:
-            if item.branch_addr != branch_addr:
-                continue
-            return item
+    branch_addrs = tuple(
+        dict.fromkeys(
+            branch_addr
+            for candidate in (guard, condition)
+            if candidate is not None
+            if isinstance(
+                branch_addr := _condition_branch_addr_8616(candidate),
+                int,
+            )
+        )
+    )
+    branch_matches = tuple(
+        item for item in evidence if item.branch_addr in branch_addrs
+    )
+    if len(branch_matches) == 1:
+        return branch_matches[0]
+    if branch_addrs:
         return None
     exact_body_matches = tuple(item for item in evidence if _node_has_ins_addr_8616(body, item.body_target))
     if len(exact_body_matches) == 1:

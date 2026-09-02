@@ -129,13 +129,17 @@ def _unknown_call_word_read_alias_artifact():
     )
 
 
-def test_pre_call_logical_word_keeps_alias_identity_when_value_ssa_refuses() -> None:
+def test_pre_call_logical_word_keeps_alias_identity_when_composed_value_ssa_refuses() -> None:
     alias = _unknown_call_word_read_alias_artifact()
 
-    assert alias.facts == ()
+    assert tuple(
+        (fact.kind.value, fact.address.offset, fact.address.size)
+        for fact in alias.facts
+    ) == (("load", 4, 1), ("load", 5, 1))
     assert alias.accesses == ()
-    assert alias.logical_accesses == ()
-    assert alias.logical_stats.failure_count == 1
+    assert len(alias.logical_accesses) == 1
+    assert alias.logical_accesses[0].storage.domain.stack_slot.width == 2
+    assert alias.logical_stats.failure_count == 0
     assert alias.logical_storage_complete is True
     assert alias.logical_storage_stats.materialized_count == 1
     assert tuple(
@@ -145,8 +149,14 @@ def test_pre_call_logical_word_keeps_alias_identity_when_value_ssa_refuses() -> 
 
     index = build_instruction_bp_stack_access_index_8616(alias)
     assert tuple(index.by_instruction_addr) == (0x1000,)
-    assert index.by_instruction_addr[0x1000][0].displacement == 4
-    assert index.by_instruction_addr[0x1000][0].size == 2
+    assert tuple(
+        (access.displacement, access.size, access.evidence.value)
+        for access in index.by_instruction_addr[0x1000]
+    ) == (
+        (4, 1, "execution_slice"),
+        (4, 2, "logical_access"),
+        (5, 1, "execution_slice"),
+    )
 
 
 def test_alias_identity_collapses_adjacent_byte_variables_to_word_owner() -> None:

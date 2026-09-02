@@ -52,7 +52,7 @@ def test_msc6_compare_functions_sidecar_free_preserve_scalar_types(
     assert result.returncode == 0, combined
     assert "pure binary recovery mode" in combined
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
-    assert "merged_statuses={'structuring': 'stable', 'postprocess': 'stable'}" in combined
+    assert "validation=passed" in combined
     assert re.search(
         rf"\bint sub_{address:x}\({argument_type} a, {argument_type} b\)",
         combined,

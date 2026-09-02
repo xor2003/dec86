@@ -132,6 +132,8 @@ def _while_loop(
     guard_after_body: bool = False,
     guard_induction: CVariable | None = None,
     duplicate_guard: bool = False,
+    direct_condition: bool = False,
+    conditional_increment: bool = False,
 ) -> tuple[CAssignment, CWhileLoop]:
     continuation: object = CBinaryOp(
         "CmpGT",
@@ -166,7 +168,29 @@ def _while_loop(
         CBinaryOp("Add", induction, _const(1, codegen), codegen=codegen),
         codegen=codegen,
     )
-    statements = [*body.statements, guard, increment] if guard_after_body else [guard, *body.statements, increment]
+    increment_statement: object = increment
+    if conditional_increment:
+        increment_statement = CIfElse(
+            [
+                (
+                    CBinaryOp("CmpEQ", induction, _const(0, codegen), codegen=codegen),
+                    CStatements([increment], codegen=codegen),
+                )
+            ],
+            else_node=None,
+            cstyle_ifs=True,
+            codegen=codegen,
+        )
+    if direct_condition:
+        statements = [*body.statements, increment_statement]
+        loop_condition = continuation
+    else:
+        statements = (
+            [*body.statements, guard, increment_statement]
+            if guard_after_body
+            else [guard, *body.statements, increment_statement]
+        )
+        loop_condition = _const(1, codegen)
     if duplicate_guard and not guard_after_body:
         statements.insert(
             1,
@@ -175,7 +199,7 @@ def _while_loop(
     return (
         CAssignment(induction, _const(0, codegen), codegen=codegen),
         CWhileLoop(
-            _const(1, codegen),
+            loop_condition,
             CStatements(statements, codegen=codegen),
             codegen=codegen,
         ),
@@ -237,6 +261,8 @@ def _two_loop_fixture(
     duplicate_call_carrier: bool = False,
     insert_intrinsic_carrier: bool = False,
     duplicate_prefix_guard: bool = False,
+    direct_while_shape: bool = False,
+    conditional_while_increment: bool = False,
 ) -> tuple[CStatements, CIndexedVariable, CIndexedVariable]:
     codegen = _Codegen()
     array = _array(codegen)
@@ -295,7 +321,7 @@ def _two_loop_fixture(
             CStatements([], codegen=codegen),
         ]
     prefix_body = CStatements(prefix_statements, codegen=codegen)
-    if while_shape:
+    if while_shape or direct_while_shape:
         prefix_nodes: tuple[object, ...] = _while_loop(
             codegen,
             first_index,
@@ -309,6 +335,8 @@ def _two_loop_fixture(
                 else None
             ),
             duplicate_guard=duplicate_prefix_guard,
+            direct_condition=direct_while_shape,
+            conditional_increment=conditional_while_increment,
         )
     else:
         prefix_nodes = (
@@ -419,7 +447,7 @@ def _two_loop_fixture(
     else:
         second_body = reads
     second_loop_body = CStatements(second_body, codegen=codegen)
-    if while_shape:
+    if while_shape or direct_while_shape:
         second_nodes: tuple[object, ...] = _while_loop(
             codegen,
             second_index,
@@ -431,6 +459,8 @@ def _two_loop_fixture(
                 if mixed_stack_regions
                 else None
             ),
+            direct_condition=direct_while_shape,
+            conditional_increment=conditional_while_increment,
         )
     else:
         second_nodes = (
@@ -511,6 +541,37 @@ def test_structuring_proves_canonical_while_break_guard_prefix_reads() -> None:
         id(random_read),
         id(high_read),
     }
+
+
+def test_structuring_proves_direct_conditional_while_prefix_reads() -> None:
+    root, random_read, high_read = _two_loop_fixture(direct_while_shape=True)
+
+    report = collect_indexed_stack_read_proofs_8616(
+        root,
+        direct_stack_move_facts=(_signed_remainder_fact(),),
+    )
+
+    assert report.failure_count == 0
+    assert {proof.read_node_id for proof in report.proofs} == {
+        id(random_read),
+        id(high_read),
+    }
+
+
+def test_structuring_refuses_conditional_direct_while_increment() -> None:
+    root, _random_read, _high_read = _two_loop_fixture(
+        direct_while_shape=True,
+        conditional_while_increment=True,
+    )
+
+    report = collect_indexed_stack_read_proofs_8616(
+        root,
+        direct_stack_move_facts=(_signed_remainder_fact(),),
+    )
+
+    assert report.raw_fact_count == 2
+    assert report.materialized_count == 0
+    assert report.failure_count == 2
 
 
 def test_structuring_proves_duplicate_equivalent_while_break_guards() -> None:

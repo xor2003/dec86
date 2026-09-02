@@ -2,6 +2,8 @@
 
 Responsibility: classify CFG-to-AST callsite completeness improvements at validation boundaries.
 Forbidden: recover calls, infer call arguments, or mutate structured C.
+Owns canonical equivalence checking and validation diagnostics.
+Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-backed proof.
 """
 
 from __future__ import annotations

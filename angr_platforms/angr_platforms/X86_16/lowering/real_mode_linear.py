@@ -123,6 +123,9 @@ from .call_argument_carrier_liveness import (
     CallArgumentCarrierLivenessVerdict8616,
     classify_call_argument_carrier_liveness_8616,
 )
+from .call_execution_frame_replay import (
+    prune_materialized_call_execution_frames_8616,
+)
 from .call_return_frame import (
     CallReturnFrameCarrierPrune8616,
     prune_exact_call_return_frame_projections_8616,
@@ -156,7 +159,10 @@ from .direct_stack_segmented_projection import (
     projected_segmented_stack_assignment_present_8616,
 )
 from .frame_instruction_evidence import canonical_frame_instruction_addresses_8616
-from .frame_prologue_carriers import is_exact_push_bp_carrier_8616
+from .frame_prologue_carriers import (
+    is_exact_bp_frame_setup_carrier_8616,
+    is_exact_push_bp_carrier_8616,
+)
 from .frame_register_carriers import collect_frame_register_carriers_8616
 from .global_declarations import (
     ctype_for_global_width_8616,
@@ -11494,13 +11500,23 @@ def prune_materialized_call_push_stack_assignments_8616(
             "materialized call PUSH replay classified callsites without "
             "materializing exact consumed PUSH addresses"
         )
-    return prune_consumed_call_push_stack_assignments_8616(
+    push_changed = prune_consumed_call_push_stack_assignments_8616(
         project,
         codegen,
         consumed_push_instruction_addrs,
         materialized_args_by_push_instruction_addr=materialized_args_by_push_instruction_addr,
         function=function,
     )
+    execution_frame_changed = prune_materialized_call_execution_frames_8616(
+        codegen,
+        (
+            (node, inventory[callsite_addr])
+            for node in _iter_structured_c_nodes_8616(root)
+            if isinstance(node, structured_c.CFunctionCall)
+            and (callsite_addr := structured_callsite_addr_8616(node)) in inventory
+        ),
+    )
+    return push_changed or execution_frame_changed
 
 
 def prune_consumed_call_push_stack_assignments_8616(
@@ -11874,10 +11890,11 @@ def prune_frame_prologue_stack_assignments_8616(
 ) -> bool:
     """Consume exact C carriers for a canonical BP frame and its teardown.
 
-    A matching structured ``push bp`` carrier proves that instruction tags and
-    the decoded entry pair agree. Only then are assignments owned by the entry
-    pair and contiguous ``mov sp, bp; pop bp; ret`` sequences consumed. These
-    are ABI frame effects represented by the generated C function itself.
+    A matching structured carrier for ``push bp`` or ``mov bp, sp`` proves that
+    instruction tags and the decoded entry pair agree. Only then are
+    assignments owned by the entry pair and contiguous
+    ``mov sp, bp; pop bp; ret`` sequences consumed. These are ABI frame effects
+    represented by the generated C function itself.
     """
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None)
@@ -11892,6 +11909,7 @@ def prune_frame_prologue_stack_assignments_8616(
         return False
 
     insn_by_addr = _instruction_by_addr_map_8616(project, function)
+    setup_addr: int | None = None
     push_bp = _instruction_at_or_decode_8616(project, function_addr, insn_by_addr)
     if push_bp is not None:
         insn_by_addr[function_addr] = push_bp
@@ -11906,7 +11924,7 @@ def prune_frame_prologue_stack_assignments_8616(
         function_addr,
     )
     register_carriers = collect_frame_register_carriers_8616(root, project, function_addr)
-    push_carrier_proven = any(
+    entry_carrier_proven = any(
         is_exact_push_bp_carrier_8616(
             node,
             root,
@@ -11918,7 +11936,21 @@ def prune_frame_prologue_stack_assignments_8616(
         )
         for node in _iter_c_nodes_deep_8616(root)
     )
-    register_carriers = register_carriers.with_frame_proof(push_carrier_proven)
+    if (
+        not entry_carrier_proven
+        and setup_addr is not None
+        and setup_addr in frame_instruction_addresses
+    ):
+        entry_carrier_proven = any(
+            is_exact_bp_frame_setup_carrier_8616(
+                node,
+                project,
+                setup_addr,
+                register_carriers=register_carriers,
+            )
+            for node in _iter_c_nodes_deep_8616(root)
+        )
+    register_carriers = register_carriers.with_frame_proof(entry_carrier_proven)
     if register_carriers.raw_fact_count:
         _record_semantic_lane_8616(
             codegen,
@@ -11939,7 +11971,7 @@ def prune_frame_prologue_stack_assignments_8616(
     def is_prologue_carrier(statement: StructuredAstValue) -> bool:
         """Classify one assignment owned by the proven canonical BP frame."""
         nonlocal raw_count, normalized_count, classified_count
-        if not push_carrier_proven or not isinstance(statement, structured_c.CAssignment):
+        if not entry_carrier_proven or not isinstance(statement, structured_c.CAssignment):
             return False
         tags = copy_structured_tags_8616(statement.tags)
         ins_addr = tags.get("ins_addr") if tags is not None else None
@@ -16846,24 +16878,12 @@ def _materialize_direct_stack_mov_instructions_impl_8616(
                         fallback_assignment,
                     )
             elif fact.source_kind is DirectStackMoveSourceKind8616.SEGMENTED_MEMORY:
-                materialized = _insert_into_conditional_branch_for_direct_stack_move_8616(
-                    root,
-                    project,
-                    function,
-                    fact.ins_addr,
-                    fallback_assignment,
+                # Structuring owns CFG scope through the placement service above.
+                # Refuse here when no exact owner accepted the Lowering-built value.
+                stats["segmented_memory_scope_refused_count"] = (
+                    int(stats.get("segmented_memory_scope_refused_count", 0) or 0)
+                    + int(not materialized)
                 )
-                if _direct_stack_move_is_before_known_precontrol_8616(root, project, function, fact.ins_addr):
-                    materialized = materialized or _replace_precontrol_stack_assignment_8616(
-                        root, dst_cvar, fallback_assignment, insert_before_control_when_no_match=True
-                    )
-                if allow_unscoped_fallback_insert:
-                    materialized = materialized or _insert_before_nearest_following_tagged_statement_8616(
-                        root,
-                        project,
-                        fact.ins_addr,
-                        fallback_assignment,
-                    )
         if not materialized:
             if bool(getattr(root, "_inertia_stack_mov_assignment_already_present_8616", False)):
                 stats["already_materialized_count"] = int(stats.get("already_materialized_count", 0) or 0) + 1

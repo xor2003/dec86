@@ -126,6 +126,98 @@ def test_pretest_target_classification_refuses_function_without_cfg_graph() -> N
     assert _classify_pretest_targets_from_cfg_8616(function, 0x1006, 0x1010, 0x1020) is None
 
 
+def test_pretest_evidence_recovers_short_circuit_predecessor(monkeypatch) -> None:
+    import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
+
+    predecessor = _CfgNode(0x1000, 0x10)
+    continuation = _CfgNode(0x1010, 0x10)
+    body = _CfgNode(0x1020, 0x10)
+    exit_node = _CfgNode(0x1040, 0x10)
+    graph = _CfgGraph(
+        (predecessor, continuation, body, exit_node),
+        {
+            predecessor: (continuation, exit_node),
+            continuation: (body, exit_node),
+        },
+    )
+    function = SimpleNamespace(graph=graph)
+
+    def branch(address: int, mnemonic: str, target: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            address=address,
+            mnemonic=mnemonic,
+            operands=(SimpleNamespace(type=2, imm=target),),
+        )
+
+    monkeypatch.setattr(
+        loop_body_repair,
+        "_linear_capstone_insns_8616",
+        lambda _project, _function: (
+            branch(0x1006, "jg", 0x1010),
+            branch(0x1008, "jmp", 0x1040),
+        ),
+    )
+    seed = PretestLoopGuardEvidence8616(
+        branch_addr=0x1016,
+        body_target=0x1020,
+        exit_target=0x1040,
+        mnemonic="jle",
+        body_condition_op="CmpLE",
+    )
+
+    recovered = loop_body_repair._recover_short_circuit_pretest_guard_evidence_8616(
+        SimpleNamespace(),
+        function,
+        (seed,),
+    )
+
+    assert recovered == (
+        PretestLoopGuardEvidence8616(
+            branch_addr=0x1006,
+            body_target=0x1010,
+            exit_target=0x1040,
+            mnemonic="jg",
+            body_condition_op="CmpGT",
+        ),
+    )
+
+
+def test_pretest_evidence_refuses_ambiguous_short_circuit_successor(monkeypatch) -> None:
+    import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
+
+    predecessor = _CfgNode(0x1000, 0x10)
+    continuation = _CfgNode(0x1010, 0x10)
+    exit_node = _CfgNode(0x1040, 0x10)
+    function = SimpleNamespace(
+        graph=_CfgGraph(
+            (predecessor, continuation, exit_node),
+            {predecessor: (continuation, exit_node)},
+        )
+    )
+    operand = SimpleNamespace(type=2, imm=0x1010)
+    jump_operand = SimpleNamespace(type=2, imm=0x1040)
+    monkeypatch.setattr(
+        loop_body_repair,
+        "_linear_capstone_insns_8616",
+        lambda _project, _function: (
+            SimpleNamespace(address=0x1006, mnemonic="jg", operands=(operand,)),
+            SimpleNamespace(address=0x1008, mnemonic="jmp", operands=(jump_operand,)),
+        ),
+    )
+    seeds = (
+        PretestLoopGuardEvidence8616(0x1014, 0x1020, 0x1040, "jle", "CmpLE"),
+        PretestLoopGuardEvidence8616(0x1018, 0x1028, 0x1040, "jg", "CmpGT"),
+    )
+
+    recovered = loop_body_repair._recover_short_circuit_pretest_guard_evidence_8616(
+        SimpleNamespace(),
+        function,
+        seeds,
+    )
+
+    assert recovered == ()
+
+
 def _stack(offset: int, codegen, *, name: str = "local"):
     return CVariable(SimStackVariable(offset, 2, base="bp", name=name), codegen=codegen)
 
@@ -719,13 +811,19 @@ def test_pretest_loop_guard_repair_uses_guard_branch_tag_when_body_targets_are_a
     assert restored.operand is condition
 
 
-def test_pretest_loop_guard_repair_uses_raw_guard_branch_tag_before_jcc_materialization(monkeypatch):
+def test_pretest_loop_guard_repair_prefers_guard_jcc_tag_over_condition_cmp_tag(monkeypatch):
     import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
 
     codegen = _DummyCodegen()
     i_var = _stack(-2, codegen, name="i")
     limit = CVariable("limit", codegen=codegen)
-    condition = CBinaryOp("CmpLT", i_var, limit, codegen=codegen)
+    condition = CBinaryOp(
+        "CmpLT",
+        i_var,
+        limit,
+        codegen=codegen,
+        tags={"ins_addr": 0x4098},
+    )
     false_break = CIfElse(
         [(condition, CStatements([CBreak(codegen=codegen)], codegen=codegen))],
         else_node=None,
@@ -820,6 +918,42 @@ def test_pretest_loop_guard_repair_prefers_exact_body_target_without_branch_tag(
     assert isinstance(restored, CUnaryOp)
     assert restored.op == "Not"
     assert restored.operand is condition
+
+
+def test_pretest_loop_guard_evidence_refuses_body_fallback_for_mismatched_jcc_tag() -> None:
+    import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
+
+    codegen = _DummyCodegen()
+    condition = CBinaryOp(
+        "CmpLT",
+        _stack(-2, codegen, name="i"),
+        CVariable("limit", codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4098},
+    )
+    guard = CIfElse(
+        [(condition, CStatements([CBreak(codegen=codegen)], codegen=codegen))],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    guard.tags = {"ins_addr": 0x409D}
+    body = CAssignment(
+        _stack(-2, codegen, name="i"),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x40A2},
+    )
+    unrelated = PretestLoopGuardEvidence8616(0x409E, 0x40A2, 0x40CA)
+
+    matched = loop_body_repair._pretest_evidence_for_loop_body_8616(
+        condition,
+        body,
+        (unrelated,),
+        guard=guard,
+    )
+
+    assert matched is None
 
 
 def test_pretest_loop_guard_repair_advances_past_already_inverted_guard(monkeypatch):

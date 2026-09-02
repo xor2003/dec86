@@ -11,8 +11,6 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import IntFlag
 from typing import Any, Protocol, cast
 
 from angr.errors import SimEngineError, SimTranslationError
@@ -28,6 +26,13 @@ from ..function_evidence_inventory import (
 )
 from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
 from .terminal_register_restore import terminal_register_restore_sites_8616
+from .terminal_value_roles import (
+    TerminalAxReturnEvidence8616,
+    TerminalAxReturnLane8616,
+    TerminalAxUseKind8616,
+    TerminalReturnStorageState8616,
+    terminal_ax_use_8616,
+)
 
 __all__ = [
     "TerminalAxReturnEvidence8616",
@@ -42,76 +47,6 @@ _CONDITIONAL_BRANCHES_8616 = frozenset({
     "jnb", "jnbe", "jnc", "jne", "jng", "jnge", "jnl", "jnle", "jno", "jnp", "jns", "jnz",
     "jo", "jp", "jpe", "jpo", "js", "jz", "loop", "loope", "loopne", "loopnz", "loopz",
 })
-
-
-class TerminalAxReturnLane8616(IntFlag):
-    """AX byte lanes definitely written along one bounded terminal path."""
-
-    NONE = 0
-    LOW = 1
-    HIGH = 2
-    WORD = LOW | HIGH
-
-
-@dataclass(frozen=True, slots=True)
-class TerminalReturnStorageState8616:
-    """Return-carrier state proven along one entry-reachable terminal path."""
-
-    ax_lanes: TerminalAxReturnLane8616
-    dx_ax_pair_proven: bool
-    call_output_lanes: TerminalAxReturnLane8616 = TerminalAxReturnLane8616.NONE
-
-    @property
-    def explicit_ax_lanes(self) -> TerminalAxReturnLane8616:
-        """Return AX lanes explicitly written after the last call output."""
-        return self.ax_lanes & ~self.call_output_lanes
-
-    @property
-    def call_output_only(self) -> bool:
-        """Return whether every defined AX lane still comes only from a call."""
-        return self.ax_lanes is not TerminalAxReturnLane8616.NONE and self.call_output_lanes == self.ax_lanes
-
-
-@dataclass(frozen=True, slots=True)
-class TerminalAxReturnEvidence8616:
-    """Closed accounting for entry-reachable binary terminal AX paths."""
-
-    storage_states: frozenset[TerminalReturnStorageState8616]
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-
-    @property
-    def states(self) -> frozenset[TerminalAxReturnLane8616]:
-        """Derive the compatibility AX-lane projection from storage states."""
-        return frozenset(state.ax_lanes for state in self.storage_states)
-
-    @property
-    def complete(self) -> bool:
-        """Return whether every discovered terminal-path fact was classified."""
-        return (
-            self.raw_fact_count > 0
-            and self.normalized_fact_count == self.raw_fact_count
-            and self.classified_fact_count == self.raw_fact_count
-            and self.materialized_count == self.classified_fact_count
-            and self.failure_count == 0
-        )
-
-    @property
-    def proves_missing_value_path(self) -> bool:
-        """Return whether a complete census includes a path with no AX definition."""
-        return self.complete and TerminalAxReturnLane8616.NONE in self.states
-
-    @property
-    def proves_wide_return(self) -> bool:
-        """Return whether every terminal path proves the same DX:AX carrier pair."""
-        return (
-            self.complete
-            and bool(self.storage_states)
-            and all(state.dx_ax_pair_proven for state in self.storage_states)
-        )
 
 
 class _FunctionSurface8616(Protocol):
@@ -279,6 +214,7 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         lanes: TerminalAxReturnLane8616,
         dx_ax_pair_proven: bool,
         call_output_lanes: TerminalAxReturnLane8616,
+        local_pointer_output_lanes: TerminalAxReturnLane8616,
     ) -> None:
         """Materialize one classified terminal-path state into the evidence set."""
         nonlocal raw_fact_count, normalized_fact_count, classified_fact_count, materialized_count
@@ -287,7 +223,12 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         classified_fact_count += 1
         materialized_count += 1
         terminal_states.add(
-            TerminalReturnStorageState8616(lanes, dx_ax_pair_proven, call_output_lanes)
+            TerminalReturnStorageState8616(
+                lanes,
+                dx_ax_pair_proven,
+                call_output_lanes,
+                local_pointer_output_lanes,
+            )
         )
 
     def _record_failure() -> None:
@@ -301,6 +242,8 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         lanes: TerminalAxReturnLane8616,
         dx_ax_pair_proven: bool,
         call_output_lanes: TerminalAxReturnLane8616,
+        local_definition_lanes: TerminalAxReturnLane8616,
+        local_pointer_output_lanes: TerminalAxReturnLane8616,
         path: frozenset[int],
     ) -> None:
         """Follow one entry-reachable path without crossing cycles."""
@@ -318,11 +261,14 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
             return
         for insn in insns:
             effect = terminal_ax_return_effect_8616(insn)
+            ax_use = terminal_ax_use_8616(insn)
             mnemonic = str(cast(Any, _inner_instruction_8616(insn)).mnemonic or "").lower()
             if effect.kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER:
                 lanes = TerminalAxReturnLane8616.WORD
                 dx_ax_pair_proven = False
                 call_output_lanes = TerminalAxReturnLane8616.WORD
+                local_definition_lanes = TerminalAxReturnLane8616.NONE
+                local_pointer_output_lanes = TerminalAxReturnLane8616.NONE
             else:
                 written_register = _written_register_8616(insn, effect.dst_reg)
                 instruction_addr = _instruction_address_8616(insn)
@@ -330,6 +276,8 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                     if written_register in {"ax", "al", "ah"}:
                         lanes = TerminalAxReturnLane8616.NONE
                         call_output_lanes = TerminalAxReturnLane8616.NONE
+                        local_definition_lanes = TerminalAxReturnLane8616.NONE
+                        local_pointer_output_lanes = TerminalAxReturnLane8616.NONE
                         dx_ax_pair_proven = False
                     elif written_register == "dx":
                         dx_ax_pair_proven = False
@@ -338,6 +286,14 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                     written = _written_lane_8616(insn, effect.dst_reg)
                     lanes = written if written == TerminalAxReturnLane8616.WORD else lanes | written
                     call_output_lanes &= ~written
+                    local_definition_lanes &= ~written
+                    local_pointer_output_lanes &= ~written
+                    if (
+                        effect.kind is TerminalAxReturnEffectKind8616.MOV_REG_STACK
+                        and isinstance(effect.mem_disp, int)
+                        and effect.mem_disp < 0
+                    ):
+                        local_definition_lanes |= written
                     dx_ax_pair_proven = False
                 elif written_register == "dx":
                     explicit_lanes = lanes & ~call_output_lanes
@@ -347,13 +303,35 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                     )
                 elif dx_ax_pair_proven and not _preserves_terminal_return_storage_8616(insn, mnemonic):
                     dx_ax_pair_proven = False
+                if ax_use.kind is TerminalAxUseKind8616.MEMORY_EFFECT:
+                    local_pointer_output_lanes |= (
+                        ax_use.lanes & lanes & local_definition_lanes
+                    )
+                elif ax_use.kind in {
+                    TerminalAxUseKind8616.OTHER,
+                    TerminalAxUseKind8616.UNKNOWN_REFUSE,
+                }:
+                    local_pointer_output_lanes &= ~ax_use.lanes
             if mnemonic in {"ret", "retf", "iret"}:
-                _record_terminal(lanes, dx_ax_pair_proven, call_output_lanes)
+                _record_terminal(
+                    lanes,
+                    dx_ax_pair_proven,
+                    call_output_lanes,
+                    local_pointer_output_lanes,
+                )
                 return
             if mnemonic in {"jmp", "ljmp"}:
                 target = _direct_jump_target_8616(insn)
                 if isinstance(target, int) and target in block_addrs:
-                    _scan(target, lanes, dx_ax_pair_proven, call_output_lanes, path | {block_addr})
+                    _scan(
+                        target,
+                        lanes,
+                        dx_ax_pair_proven,
+                        call_output_lanes,
+                        local_definition_lanes,
+                        local_pointer_output_lanes,
+                        path | {block_addr},
+                    )
                 else:
                     _record_failure()
                 return
@@ -368,6 +346,8 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                             lanes,
                             dx_ax_pair_proven,
                             call_output_lanes,
+                            local_definition_lanes,
+                            local_pointer_output_lanes,
                             path | {block_addr},
                         )
                     else:
@@ -380,6 +360,8 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                 lanes,
                 dx_ax_pair_proven,
                 call_output_lanes,
+                local_definition_lanes,
+                local_pointer_output_lanes,
                 path | {block_addr},
             )
         else:
@@ -389,6 +371,8 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         entry_addr,
         TerminalAxReturnLane8616.NONE,
         False,
+        TerminalAxReturnLane8616.NONE,
+        TerminalAxReturnLane8616.NONE,
         TerminalAxReturnLane8616.NONE,
         frozenset(),
     )

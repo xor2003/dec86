@@ -112,6 +112,14 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 
 ## Improving code
 
+### Token-efficient command output
+
+- Keep Make's quiet recipe mode enabled; use `make Q=` only when the expanded command itself is needed for diagnosis.
+- For broad gates, retain complete stdout/stderr in a temporary log and report only the exit status, pass/fail/skip counts, failure tracebacks, and slowest tests.
+- On success, do not load the full log. On failure, search or tail only the relevant failure section before widening the read.
+- Prefer scoped `git diff --stat`, changed-path filters, and narrow file ranges over dumping the shared worktree or large inventories.
+- Output reduction must never suppress diagnostics, skip checks, weaken gates, or replace exact test evidence.
+
 Regular local gate: `make quality-fast PYTHON=./.venv/bin/python`.
 `make test-pipeline PYTHON=./.venv/bin/python` before claiming semantic decompiler improvements.
 `make test-pipeline-expanded PYTHON=./.venv/bin/python` for broad slow audits.

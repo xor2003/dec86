@@ -57,6 +57,7 @@ log: logging.Logger = logging.getLogger(__name__)
 
 _PRETEST_BODY_SOURCE_KINDS_8616 = frozenset(
     {
+        DirectStackMoveSourceKind8616.SEGMENTED_MEMORY,
         DirectStackMoveSourceKind8616.STACK_SLOT,
         DirectStackMoveSourceKind8616.STACK_SLOT_EXPR,
         DirectStackMoveSourceKind8616.STACK_SLOT_BINARY_EXPR,

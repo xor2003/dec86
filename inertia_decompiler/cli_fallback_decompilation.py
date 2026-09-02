@@ -412,6 +412,7 @@ def _try_decompile_non_optimized_slice(
                 cfg: object,
                 func: object,
             ) -> SliceRecoveryAttemptOutcome:
+                """Run one exact-slice rescue attempt without skipping semantic stages."""
                 # Dynamic angr boundary: recovered functions expose addresses through angr.
                 if not isinstance(getattr(func, "addr", None), int):
                     # Dynamic angr boundary: recovered functions expose mutable addresses through angr.
@@ -437,11 +438,7 @@ def _try_decompile_non_optimized_slice(
                     # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
                     typing.cast(typing.Any, slice_project)._inertia_tiny_core_disable_peephole = True
                     # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
-                    typing.cast(typing.Any, slice_project)._inertia_recover_variables_seed_empty = True
-                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
                     typing.cast(typing.Any, slice_project)._inertia_skip_clinic_simplify_block = True
-                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
-                    typing.cast(typing.Any, slice_project)._inertia_skip_clinic_recover_variables_full = True
                     # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
                     typing.cast(typing.Any, slice_project)._inertia_clinic_peephole_cap = 48
                 if isinstance(original_addr, int):

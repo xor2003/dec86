@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_variable import SimTemporaryVariable
 
 from ..c_ast_utils import (
     _clone_c_ast_tree_8616,
@@ -25,6 +26,7 @@ from ..c_ast_utils import (
 from ..codegen_metadata import get_codegen_side_metadata
 from ..pipeline.errors import PipelineHardError
 from ..semantics.alias_query import describe_alias_storage
+from ..semantics.expression_analysis import describe_virtual_value_identity_8616
 
 
 @dataclass(slots=True)
@@ -123,6 +125,10 @@ def _side_effect_free_source_8616(node: object) -> bool:
     node = _unwrap_casts_8616(node)
     if isinstance(node, (structured_c.CConstant, structured_c.CVariable)):
         return True
+    if isinstance(node, structured_c.CIndexedVariable):
+        return _side_effect_free_source_8616(node.variable) and _side_effect_free_source_8616(
+            node.index
+        )
     if isinstance(node, structured_c.CBinaryOp):
         return _side_effect_free_source_8616(node.lhs) and _side_effect_free_source_8616(
             node.rhs
@@ -131,9 +137,20 @@ def _side_effect_free_source_8616(node: object) -> bool:
 
 
 def _word_destination_proven_8616(node: object) -> bool:
-    """Return whether Alias proves one stable two-byte destination."""
+    """Return whether Alias or typed virtual identity proves one word destination."""
     facts = describe_alias_storage(node)
-    return facts.domain.width == 2 and not facts.needs_synthesis()
+    if facts.domain.width == 2 and not facts.needs_synthesis():
+        return True
+    if (
+        not isinstance(node, structured_c.CVariable)
+        or not isinstance(node.variable, SimTemporaryVariable)
+        or describe_virtual_value_identity_8616(node) is None
+    ):
+        return False
+    try:
+        return bool(node.type.size == 16)
+    except (AttributeError, ValueError):
+        return False
 
 
 def materialize_word_projection_recompositions_8616(codegen: object) -> bool:

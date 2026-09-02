@@ -299,7 +299,7 @@ def push32(emu: StackEmulator, value: object) -> None:
     sp = (
         emu.constant(raw_sp & 0xFFFF, Type.int_16)
         if isinstance(raw_sp, int)
-        else cast(StackExpr, raw_sp).cast_to(Type.int_16)
+        else raw_sp.cast_to(Type.int_16)
     )
     sp = sp - emu.constant(4, Type.int_16)
     next_esp = sp & 0xFFFF if isinstance(sp, int) else sp.cast_to(Type.int_32)
@@ -313,7 +313,7 @@ def pop32(emu: StackEmulator) -> StackExpr:
     sp = (
         emu.constant(raw_sp & 0xFFFF, Type.int_16)
         if isinstance(raw_sp, int)
-        else cast(StackExpr, raw_sp).cast_to(Type.int_16)
+        else raw_sp.cast_to(Type.int_16)
     )
     value = emu.read_mem32_seg(sgreg_t.SS, sp)
     next_sp = sp + emu.constant(4, Type.int_16)
@@ -365,8 +365,8 @@ def pop_segment32(emu: StackEmulator, segment: sgreg_t) -> None:
 
 
 def near_return_ip16(emu: StackEmulator, instruction_size: int) -> StackExpr:
-    """Compute the 16-bit near return IP from the current instruction size."""
-    return emu.get_gpreg(reg16_t.IP) + emu.constant(instruction_size, Type.int_16)
+    """Materialize the exact wrapping return IP from frontend instruction evidence."""
+    return emu.constant((emu.lifter_instruction.addr + instruction_size) & 0xFFFF, Type.int_16)
 
 
 def near_return_eip32(emu: StackEmulator, instruction_size: int = 0) -> StackExpr:
@@ -464,7 +464,7 @@ def return_near32(emu: StackEmulator, stack_adjust: int = 0) -> StackExpr:
         if isinstance(raw_sp, int):
             adjusted_sp = (raw_sp + stack_adjust) & 0xFFFF
         else:
-            sp16 = cast(StackExpr, raw_sp).cast_to(Type.int_16)
+            sp16 = raw_sp.cast_to(Type.int_16)
             adjusted_sp = (sp16 + emu.constant(stack_adjust, Type.int_16)).cast_to(Type.int_32)
         emu.set_gpreg(reg32_t.ESP, adjusted_sp)
     emu.set_eip(eip)
@@ -587,7 +587,7 @@ def return_far32(emu: StackEmulator, stack_adjust: int = 0) -> StackPair:
         if isinstance(raw_sp, int):
             adjusted_sp = (raw_sp + stack_adjust) & 0xFFFF
         else:
-            sp16 = cast(StackExpr, raw_sp).cast_to(Type.int_16)
+            sp16 = raw_sp.cast_to(Type.int_16)
             adjusted_sp = (sp16 + emu.constant(stack_adjust, Type.int_16)).cast_to(Type.int_32)
         emu.set_gpreg(reg32_t.ESP, adjusted_sp)
     selector = seg & 0xFFFF if isinstance(seg, int) else seg.cast_to(Type.int_16)
@@ -707,7 +707,7 @@ def enter32(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
         frame_pointer = (
             raw_frame_pointer & 0xFFFF
             if isinstance(raw_frame_pointer, int)
-            else cast(StackExpr, raw_frame_pointer).cast_to(Type.int_16)
+            else raw_frame_pointer.cast_to(Type.int_16)
         )
         for _ in range(1, nesting_level):
             if isinstance(frame_pointer, int):
@@ -721,7 +721,7 @@ def enter32(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
     if isinstance(raw_sp, int):
         sp = (raw_sp - frame_size) & 0xFFFF
     else:
-        sp16 = cast(StackExpr, raw_sp).cast_to(Type.int_16)
+        sp16 = raw_sp.cast_to(Type.int_16)
         sp = (sp16 - emu.constant(frame_size, Type.int_16)).cast_to(Type.int_32)
     emu.set_gpreg(reg32_t.ESP, sp)
 

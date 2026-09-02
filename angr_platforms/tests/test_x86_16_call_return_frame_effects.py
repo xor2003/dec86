@@ -13,6 +13,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CExpressionStatement,
     CFunctionCall,
     CStatements,
+    CUnaryOp,
     CVariable,
 )
 from angr.rustylib.ailment import Tags as AilmentTags
@@ -21,6 +22,9 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering import call_return_frame_arguments as frame_argument_lowering
+from angr_platforms.X86_16.lowering.call_return_frame import (
+    prune_exact_call_return_frame_projections_8616,
+)
 from angr_platforms.X86_16.lowering.call_return_frame_arguments import (
     CallReturnFrameArgumentPruneStatus8616,
     prune_exact_call_return_frame_arguments_8616,
@@ -258,6 +262,54 @@ def test_refuses_exact_store_fact_with_non_stack_lvalue(
     assert stats.classified_fact_count == 0
     assert stats.materialized_count == 0
     assert stats.failure_count == 0
+
+
+def test_prunes_raw_dereference_with_exact_store_semantic_key(
+    far_call_facts: tuple[Any, Any, CallReturnFrameEffectCollection8616],
+) -> None:
+    project, function, collection = far_call_facts
+    store_effect = next(
+        effect
+        for effect in collection.effects
+        if effect.role is CallReturnFrameEffectRole8616.STACK_STORE
+    )
+    codegen = _Codegen()
+    codegen.project = project
+    raw_lvalue = CUnaryOp(
+        "Dereference",
+        CConstant(0x200, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        raw_lvalue,
+        CConstant(0x105, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": store_effect.key.callsite_addr,
+            "vex_block_addr": store_effect.key.vex_block_addr,
+            "vex_stmt_idx": store_effect.key.vex_stmt_idx,
+        },
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=CStatements([assignment], codegen=codegen),
+    )
+
+    result = prune_exact_call_return_frame_projections_8616(
+        project,
+        codegen,
+        function,
+        {0x100: 0x105},
+    )
+
+    assert codegen.cfunc.statements.statements == []
+    assert (
+        result.raw_fact_count,
+        result.normalized_fact_count,
+        result.classified_fact_count,
+        result.materialized_count,
+        result.failure_count,
+    ) == (1, 1, 1, 1, 0)
 
 
 def _near_call_argument_surface(

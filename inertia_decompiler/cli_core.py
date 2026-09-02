@@ -437,7 +437,6 @@ class DirectClinicPolicy8616(Enum):
 
     STANDARD = "standard"
     FAST_PEEPHOLE = "fast_peephole"
-    AGGRESSIVE_GUARD = "aggressive_guard"
 
 
 def _direct_clinic_policy_8616(
@@ -448,10 +447,11 @@ def _direct_clinic_policy_8616(
     byte_count: int,
     call_site_count: int,
 ) -> DirectClinicPolicy8616:
+    """Select bounded Clinic work without disabling semantic variable recovery."""
     if arch_name != "86_16" or not direct_addr_mode:
         return DirectClinicPolicy8616.STANDARD
     if block_count >= 32 or byte_count >= 280:
-        return DirectClinicPolicy8616.AGGRESSIVE_GUARD
+        return DirectClinicPolicy8616.FAST_PEEPHOLE
     if call_site_count >= 6 and block_count >= 10 and byte_count >= 160:
         return DirectClinicPolicy8616.FAST_PEEPHOLE
     return DirectClinicPolicy8616.STANDARD
@@ -492,32 +492,17 @@ def _temporary_clinic_policy_8616(
     project_obj: angr.Project,
     policy: DirectClinicPolicy8616,
 ) -> Iterator[None]:
+    """Apply reversible Clinic cost bounds while preserving semantic stages."""
     if policy is DirectClinicPolicy8616.STANDARD:
         yield
         return
     prev_disable_narrowing = getattr(project_obj, "_inertia_disable_ail_narrowing", False)
     prev_disable_complex_expr_scan = getattr(project_obj, "_inertia_disable_complex_expr_scan", False)
     prev_fast_block_peephole = getattr(project_obj, "_inertia_fast_block_peephole", False)
-    prev_skip_pre_ssa = getattr(project_obj, "_inertia_skip_clinic_pre_ssa", False)
-    prev_skip_post_ssa = getattr(project_obj, "_inertia_skip_clinic_post_ssa", False)
     prev_skip_simplify = getattr(project_obj, "_inertia_skip_clinic_simplify_block", False)
-    prev_skip_recover_full = getattr(project_obj, "_inertia_skip_clinic_recover_variables_full", False)
-    prev_skip_recover_assert = getattr(project_obj, "_inertia_skip_clinic_recover_variables_assert", False)
-    prev_seed_empty = getattr(project_obj, "_inertia_recover_variables_seed_empty", False)
     prev_peephole_cap = getattr(project_obj, "_inertia_clinic_peephole_cap", None)
     try:
-        if policy is DirectClinicPolicy8616.AGGRESSIVE_GUARD:
-            typing.cast(typing.Any, project_obj)._inertia_disable_ail_narrowing = True
-            typing.cast(typing.Any, project_obj)._inertia_disable_complex_expr_scan = True
-            typing.cast(typing.Any, project_obj)._inertia_fast_block_peephole = True
-            typing.cast(typing.Any, project_obj)._inertia_skip_clinic_pre_ssa = True
-            typing.cast(typing.Any, project_obj)._inertia_skip_clinic_post_ssa = True
-            typing.cast(typing.Any, project_obj)._inertia_skip_clinic_simplify_block = True
-            typing.cast(typing.Any, project_obj)._inertia_skip_clinic_recover_variables_full = True
-            typing.cast(typing.Any, project_obj)._inertia_skip_clinic_recover_variables_assert = True
-            typing.cast(typing.Any, project_obj)._inertia_recover_variables_seed_empty = True
-            typing.cast(typing.Any, project_obj)._inertia_clinic_peephole_cap = 24
-        elif policy is DirectClinicPolicy8616.FAST_PEEPHOLE:
+        if policy is DirectClinicPolicy8616.FAST_PEEPHOLE:
             typing.cast(typing.Any, project_obj)._inertia_disable_complex_expr_scan = True
             typing.cast(typing.Any, project_obj)._inertia_fast_block_peephole = True
             typing.cast(typing.Any, project_obj)._inertia_clinic_peephole_cap = 48
@@ -526,12 +511,7 @@ def _temporary_clinic_policy_8616(
         typing.cast(typing.Any, project_obj)._inertia_disable_ail_narrowing = prev_disable_narrowing
         typing.cast(typing.Any, project_obj)._inertia_disable_complex_expr_scan = prev_disable_complex_expr_scan
         typing.cast(typing.Any, project_obj)._inertia_fast_block_peephole = prev_fast_block_peephole
-        typing.cast(typing.Any, project_obj)._inertia_skip_clinic_pre_ssa = prev_skip_pre_ssa
-        typing.cast(typing.Any, project_obj)._inertia_skip_clinic_post_ssa = prev_skip_post_ssa
         typing.cast(typing.Any, project_obj)._inertia_skip_clinic_simplify_block = prev_skip_simplify
-        typing.cast(typing.Any, project_obj)._inertia_skip_clinic_recover_variables_full = prev_skip_recover_full
-        typing.cast(typing.Any, project_obj)._inertia_skip_clinic_recover_variables_assert = prev_skip_recover_assert
-        typing.cast(typing.Any, project_obj)._inertia_recover_variables_seed_empty = prev_seed_empty
         if prev_peephole_cap is None:
             with contextlib.suppress(Exception):
                 delattr(project_obj, "_inertia_clinic_peephole_cap")
@@ -5611,18 +5591,9 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
     try:
 
         def direct_decompile_job() -> _DirectDecompileJobResult8616:
+            """Run one direct function through the selected bounded Clinic policy."""
             _bcount, _bbytes = _function_complexity(func)
             direct_analysis_timeout = _direct_analysis_timeout_for_shape(args.timeout, _bcount, _bbytes)
-            prev_skip_pre_ssa = getattr(direct_project, "_inertia_skip_clinic_pre_ssa", False)
-            prev_skip_post_ssa = getattr(direct_project, "_inertia_skip_clinic_post_ssa", False)
-            prev_skip_simplify = getattr(direct_project, "_inertia_skip_clinic_simplify_block", False)
-            prev_skip_recover_full = getattr(direct_project, "_inertia_skip_clinic_recover_variables_full", False)
-            prev_skip_recover_assert = getattr(direct_project, "_inertia_skip_clinic_recover_variables_assert", False)
-            prev_seed_empty = getattr(direct_project, "_inertia_recover_variables_seed_empty", False)
-            prev_disable_narrowing = getattr(direct_project, "_inertia_disable_ail_narrowing", False)
-            prev_disable_complex_expr_scan = getattr(direct_project, "_inertia_disable_complex_expr_scan", False)
-            prev_fast_block_peephole = getattr(direct_project, "_inertia_fast_block_peephole", False)
-            prev_peephole_cap = getattr(direct_project, "_inertia_clinic_peephole_cap", None)
             direct_arch_name = getattr(getattr(direct_project, "arch", None), "name", "")
             direct_callsite_count = (
                 _safe_function_callsite_count_8616(func)
@@ -5647,24 +5618,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     f"policy={direct_clinic_policy.value} arch={direct_arch_name!r} "
                     f"blocks={_bcount} bytes={_bbytes} calls={direct_callsite_count}"
                 )
-            direct_clinic_guard = direct_clinic_policy is DirectClinicPolicy8616.AGGRESSIVE_GUARD
-            direct_fast_peephole_guard = direct_clinic_policy is DirectClinicPolicy8616.FAST_PEEPHOLE
-            if direct_clinic_guard:
-                typing.cast(typing.Any, direct_project)._inertia_disable_ail_narrowing = True
-                typing.cast(typing.Any, direct_project)._inertia_disable_complex_expr_scan = True
-                typing.cast(typing.Any, direct_project)._inertia_fast_block_peephole = True
-                typing.cast(typing.Any, direct_project)._inertia_skip_clinic_pre_ssa = True
-                typing.cast(typing.Any, direct_project)._inertia_skip_clinic_post_ssa = True
-                typing.cast(typing.Any, direct_project)._inertia_skip_clinic_simplify_block = True
-                typing.cast(typing.Any, direct_project)._inertia_skip_clinic_recover_variables_full = True
-                typing.cast(typing.Any, direct_project)._inertia_skip_clinic_recover_variables_assert = True
-                typing.cast(typing.Any, direct_project)._inertia_recover_variables_seed_empty = True
-                typing.cast(typing.Any, direct_project)._inertia_clinic_peephole_cap = 24
-            elif direct_fast_peephole_guard:
-                typing.cast(typing.Any, direct_project)._inertia_disable_complex_expr_scan = True
-                typing.cast(typing.Any, direct_project)._inertia_fast_block_peephole = True
-                typing.cast(typing.Any, direct_project)._inertia_clinic_peephole_cap = 48
-            try:
+            with _temporary_clinic_policy_8616(direct_project, direct_clinic_policy):
                 with _capture_thread_output() as (stdout_buf, stderr_buf):
                     result = _decompile_function_with_stats(
                         direct_project,
@@ -5684,22 +5638,6 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         failure_family_state=direct_failure_family_state,
                     )
                 debug_output = stdout_buf.getvalue() + stderr_buf.getvalue()
-            finally:
-                if direct_clinic_guard or direct_fast_peephole_guard:
-                    typing.cast(typing.Any, direct_project)._inertia_disable_ail_narrowing = prev_disable_narrowing
-                    typing.cast(typing.Any, direct_project)._inertia_disable_complex_expr_scan = prev_disable_complex_expr_scan
-                    typing.cast(typing.Any, direct_project)._inertia_fast_block_peephole = prev_fast_block_peephole
-                    typing.cast(typing.Any, direct_project)._inertia_skip_clinic_pre_ssa = prev_skip_pre_ssa
-                    typing.cast(typing.Any, direct_project)._inertia_skip_clinic_post_ssa = prev_skip_post_ssa
-                    typing.cast(typing.Any, direct_project)._inertia_skip_clinic_simplify_block = prev_skip_simplify
-                    typing.cast(typing.Any, direct_project)._inertia_skip_clinic_recover_variables_full = prev_skip_recover_full
-                    typing.cast(typing.Any, direct_project)._inertia_skip_clinic_recover_variables_assert = prev_skip_recover_assert
-                    typing.cast(typing.Any, direct_project)._inertia_recover_variables_seed_empty = prev_seed_empty
-                    if prev_peephole_cap is None:
-                        with contextlib.suppress(Exception):
-                            delattr(direct_project, "_inertia_clinic_peephole_cap")
-                    else:
-                        typing.cast(typing.Any, direct_project)._inertia_clinic_peephole_cap = prev_peephole_cap
             snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
             project_fb = getattr(direct_project, "_inertia_last_tail_validation_snapshot", None)
             if (

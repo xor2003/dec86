@@ -613,7 +613,13 @@ def lower_wide_call_return_condition_chain_8616(
                 call,
                 codegen=codegen,
             )
-            lowered = CBinaryOp("CmpGT", signed_call, wide_stack, codegen=codegen)
+            signed_stack = CSemanticCast8616(
+                None,
+                SimTypeLong(True).with_arch(boundary.project.arch),
+                wide_stack,
+                codegen=codegen,
+            )
+            lowered = CBinaryOp("CmpGT", signed_call, signed_stack, codegen=codegen)
             materialized_count = 1
             consumed_call = call
             consumed_callsite = callsite
@@ -742,22 +748,35 @@ def _call_addressed_bases_8616(
         summary = summary_map.get(id(node))
         if summary is None:
             continue
+        referenced_bases: list[CVariable] = []
         for argument in node.args:
             if not isinstance(argument, CExpression):
                 continue
             base = _referenced_stack_cvar_8616(argument)
             if base is not None:
-                variable = cast(SimStackVariable, base.variable)
-                base_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
-                if base_offset is None:
-                    continue
-                bases.append(
-                    _CallAddressedStackBase8616(
-                        callsite_addr=summary.callsite_addr,
-                        base_offset=base_offset,
-                        base_cvar=base,
-                    )
+                referenced_bases.append(base)
+        summary_offsets = _summary_bp_address_offsets_8616(summary)
+        if len(referenced_bases) == 1 and len(summary_offsets) == 1:
+            bases.append(
+                _CallAddressedStackBase8616(
+                    callsite_addr=summary.callsite_addr,
+                    base_offset=summary_offsets[0],
+                    base_cvar=referenced_bases[0],
                 )
+            )
+            continue
+        for base in referenced_bases:
+            variable = cast(SimStackVariable, base.variable)
+            base_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            if base_offset is None:
+                continue
+            bases.append(
+                _CallAddressedStackBase8616(
+                    callsite_addr=summary.callsite_addr,
+                    base_offset=base_offset,
+                    base_cvar=base,
+                )
+            )
     for callsite_addr, summary in _callsite_inventory_8616(codegen).items():
         for base_offset in _summary_bp_address_offsets_8616(summary):
             base = _stack_cvar_at_base_offset_8616(codegen, base_offset)
@@ -962,10 +981,7 @@ def _replay_call_output_stack_object_facts_8616(
             continue
         current_base = matching_bases[0].base_cvar or fact.base_cvar
         current_variable = current_base.variable
-        if (
-            not isinstance(current_variable, SimStackVariable)
-            or machine_bp_offset_for_stack_variable_8616(codegen, current_variable) != fact.base_offset
-        ):
+        if not isinstance(current_variable, SimStackVariable):
             continue
         replayed.append(
             CallOutputStackObjectFact8616(

@@ -42,6 +42,10 @@ from angr.sim_variable import (
 
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from ...lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .dce_noop_conditionals import (
+    DceNoopConditionalPruneStats8616,
+    prune_explicit_empty_if_else_after_dce_8616,
+)
 from .dce_purity import PURE_LOCAL_BINARY_OPS_8616, PURE_LOCAL_UNARY_OPS_8616
 from .dce_walk import (
     DceValuePurity8616,
@@ -1387,7 +1391,6 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             "_inertia_tail_validation_widened_carriers",
             "_inertia_linear_recurrence_state",
             "_inertia_gp_stack_restore_snapshots_8616",
-            "_inertia_packed_flags_state_live_ins_8616",
         )
         for attr in attrs:
             obj = _dynamic_dce_getattr_8616(codegen, attr, None)
@@ -1651,6 +1654,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
 
     # Iterate to a fixed point: once the tail of a pure flag/setup chain is
     # deleted, earlier assignments in the same chain become provably unused.
+    noop_conditional_stats = DceNoopConditionalPruneStats8616()
     for _ in range(128):
         total_reads, block_reads = _collect_read_counts_by_block(root)
         loop_backedge_reads = _collect_loop_backedge_reads_by_block_8616(root)
@@ -1674,8 +1678,25 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 )
                 or pass_changed
             )
+        noop_iteration = prune_explicit_empty_if_else_after_dce_8616(
+            tuple(_iter_statement_blocks(root)),
+            condition_is_pure=lambda condition: bool(
+                _expr_is_discardable_dead_value_8616(condition)
+                or _expr_is_pure_local_value_8616(condition)
+            ),
+        )
+        noop_conditional_stats = noop_conditional_stats.merge(noop_iteration)
+        if not noop_iteration.closed:
+            raise RuntimeError("DCE no-op conditional evidence did not close")
+        pass_changed = noop_iteration.changed or pass_changed
+        walk_context.changed = noop_iteration.changed or walk_context.changed
         if not pass_changed:
             break
+    _dynamic_dce_setattr_8616(
+        codegen,
+        "_inertia_dce_noop_conditional_prune_stats_8616",
+        noop_conditional_stats,
+    )
     changed = walk_context.changed
     changed = _drop_pruned_codegen_declarations_8616() or changed
     if debug_optimization:

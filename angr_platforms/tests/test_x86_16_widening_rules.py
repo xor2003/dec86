@@ -3,9 +3,16 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CStatements, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CIndexedVariable,
+    CStatements,
+    CVariable,
+)
 from angr.sim_type import SimTypeLong, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimStackVariable, SimTemporaryVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.codegen_metadata import get_codegen_side_metadata
 from angr_platforms.X86_16.widening import widening_rules
@@ -46,7 +53,9 @@ def _stack_var(offset: int, size: int, name: str, codegen: _DummyCodegen, *, reg
     )
 
 
-def _word_projection(source: CBinaryOp | CVariable, codegen: _DummyCodegen) -> CBinaryOp:
+def _word_projection(
+    source: CBinaryOp | CIndexedVariable | CVariable, codegen: _DummyCodegen
+) -> CBinaryOp:
     low = CBinaryOp("And", source, _constant(0xFF, codegen), codegen=codegen)
     high = CBinaryOp(
         "Shl",
@@ -181,6 +190,34 @@ def test_word_projection_recomposition_refuses_unknown_destination_width() -> No
     stats = get_codegen_side_metadata(codegen)["word_projection_recomposition_8616"]
     assert isinstance(stats, WordProjectionRecompositionStats8616)
     assert stats == WordProjectionRecompositionStats8616(1, 1, 0, 0, 1)
+
+
+def test_word_projection_recomposition_accepts_typed_virtual_word_destination() -> None:
+    codegen = _DummyCodegen()
+    index = _stack_var(4, 2, "i", codegen)
+    source = CIndexedVariable(
+        CVariable(
+            SimMemoryVariable(0x44, 2, name="words", region=0x4010),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        index,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    destination = CVariable(
+        SimTemporaryVariable(4112, 2),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(destination, _word_projection(source, codegen), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=CStatements([assignment], codegen=codegen))
+
+    assert materialize_word_projection_recompositions_8616(codegen) is True
+
+    assert isinstance(assignment.rhs, CIndexedVariable)
+    assert assignment.rhs.variable.variable is source.variable.variable
+    assert assignment.rhs.index.variable is index.variable
 
 
 def test_collect_bp_stack_access_widths_uses_linear_summaries_without_block_metadata():

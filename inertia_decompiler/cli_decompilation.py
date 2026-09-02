@@ -3555,6 +3555,8 @@ def _decompile_function(
     deadline: float | None = None,
     failure_family_state: FailureFamilyState | None = None,
 ) -> tuple[str, str]:
+    """Decompile one recovered function under bounded typed pipeline guards."""
+
     def _impl() -> tuple[str, str]:
         attach_lst_metadata_to_project(project, lst_metadata)
         typing.cast(typing.Any, project)._inertia_partial_codegen_text = None
@@ -3678,39 +3680,16 @@ def _decompile_function(
         prev_disable_ail_narrowing = getattr(project, "_inertia_disable_ail_narrowing", False)
         prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
         prev_fast_block_peephole = getattr(project, "_inertia_fast_block_peephole", False)
-        prev_tiny_core_aggressive_simplify = getattr(project, "_inertia_tiny_core_aggressive_simplify", False)
-        prev_tiny_core_disable_peephole = getattr(project, "_inertia_tiny_core_disable_peephole", False)
-        prev_skip_clinic_pre_ssa = getattr(project, "_inertia_skip_clinic_pre_ssa", False)
-        prev_skip_clinic_post_ssa = getattr(project, "_inertia_skip_clinic_post_ssa", False)
-        prev_skip_clinic_recover_variables_assert = getattr(
-            project, "_inertia_skip_clinic_recover_variables_assert", False
-        )
-        prev_recover_variables_seed_empty = getattr(project, "_inertia_recover_variables_seed_empty", False)
-        prev_skip_clinic_recover_variables_full = getattr(project, "_inertia_skip_clinic_recover_variables_full", False)
-        prev_skip_clinic_simplify_block = getattr(project, "_inertia_skip_clinic_simplify_block", False)
-        prev_disable_peephole_expr_guard = getattr(project, "_inertia_disable_peephole_expr_guard", False)
         if tiny_core_guard:
             typing.cast(typing.Any, project)._inertia_disable_ail_narrowing = True
             typing.cast(typing.Any, project)._inertia_disable_complex_expr_scan = True
             typing.cast(typing.Any, project)._inertia_fast_block_peephole = True
-            typing.cast(typing.Any, project)._inertia_tiny_core_aggressive_simplify = True
-            typing.cast(typing.Any, project)._inertia_tiny_core_disable_peephole = True
-            typing.cast(typing.Any, project)._inertia_skip_clinic_post_ssa = True
-            typing.cast(typing.Any, project)._inertia_recover_variables_seed_empty = True
-            typing.cast(typing.Any, project)._inertia_skip_clinic_simplify_block = True
-            typing.cast(typing.Any, project)._inertia_skip_clinic_recover_variables_full = True
-            typing.cast(typing.Any, project)._inertia_clinic_peephole_cap = 48
         elif no_call_helper_guard:
             # Arithmetic/memory helpers with no calls often blow up peephole
-            # expression scanning cost. Keep narrowing enabled, but skip deep
-            # expression peephole work.
+            # expression scanning cost. Keep semantic simplification enabled
+            # while using the bounded x86-16 peephole path.
             typing.cast(typing.Any, project)._inertia_disable_complex_expr_scan = True
             typing.cast(typing.Any, project)._inertia_fast_block_peephole = True
-            typing.cast(typing.Any, project)._inertia_tiny_core_disable_peephole = True
-            typing.cast(typing.Any, project)._inertia_recover_variables_seed_empty = True
-            typing.cast(typing.Any, project)._inertia_skip_clinic_simplify_block = True
-            typing.cast(typing.Any, project)._inertia_skip_clinic_recover_variables_full = True
-            typing.cast(typing.Any, project)._inertia_clinic_peephole_cap = 48
 
         def _analysis_log_messages(dec_obj: object) -> list[str]:
             messages: list[str] = []
@@ -4113,15 +4092,6 @@ def _decompile_function(
                 typing.cast(typing.Any, project)._inertia_disable_ail_narrowing = prev_disable_ail_narrowing
                 typing.cast(typing.Any, project)._inertia_disable_complex_expr_scan = prev_disable_complex_expr_scan
                 typing.cast(typing.Any, project)._inertia_fast_block_peephole = prev_fast_block_peephole
-                typing.cast(typing.Any, project)._inertia_tiny_core_aggressive_simplify = prev_tiny_core_aggressive_simplify
-                typing.cast(typing.Any, project)._inertia_tiny_core_disable_peephole = prev_tiny_core_disable_peephole
-                typing.cast(typing.Any, project)._inertia_skip_clinic_pre_ssa = prev_skip_clinic_pre_ssa
-                typing.cast(typing.Any, project)._inertia_skip_clinic_post_ssa = prev_skip_clinic_post_ssa
-                typing.cast(typing.Any, project)._inertia_skip_clinic_recover_variables_assert = prev_skip_clinic_recover_variables_assert
-                typing.cast(typing.Any, project)._inertia_recover_variables_seed_empty = prev_recover_variables_seed_empty
-                typing.cast(typing.Any, project)._inertia_skip_clinic_recover_variables_full = prev_skip_clinic_recover_variables_full
-                typing.cast(typing.Any, project)._inertia_skip_clinic_simplify_block = prev_skip_clinic_simplify_block
-                typing.cast(typing.Any, project)._inertia_disable_peephole_expr_guard = prev_disable_peephole_expr_guard
 
         if dec is None:
             return "error", "Decompiler analysis completed without a result."
@@ -5482,6 +5452,7 @@ def _decompile_function(
                 changed = True
                 typing.cast(typing.Any, dec.codegen)._inertia_codegen_decl_refresh_required_8616 = True
                 typing.cast(typing.Any, dec.codegen)._inertia_force_codegen_regeneration_8616 = True
+                _run_dead_local_prune_with_call_guard("bounded direct-stack materialization prune removed call expressions")
         if rollback_final_semantic_drift_8616(
             project,
             dec.codegen,

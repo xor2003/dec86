@@ -7810,7 +7810,7 @@ def test_materialize_direct_stack_mov_adjusted_arg_copy_prefers_precontrol_over_
     assert outer_loop.body.statements == [inner_loop]
 
 
-def test_materialize_direct_stack_mov_segmented_source_inserts_before_precontrol_loop():
+def test_materialize_direct_stack_mov_segmented_source_refuses_without_structuring_cfg_proof():
     project, codegen = _project()
     high_var = SimStackVariable(6, 2, base="bp", name="high", region=0x4010)
     pivot_var = SimStackVariable(-2, 2, base="bp", name="pivot", region=0x4010)
@@ -7859,16 +7859,12 @@ def test_materialize_direct_stack_mov_segmented_source_inserts_before_precontrol
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
-    assert changed is True
-    assert len(codegen.cfunc.statements.statements) == 2
-    inserted = codegen.cfunc.statements.statements[0]
-    assert isinstance(inserted, CAssignment)
-    assert inserted.lhs is pivot_cvar
-    assert isinstance(inserted.rhs, CFunctionCall)
-    assert inserted.rhs.callee_target == "SEG_U16"
-    assert inserted.rhs.args[0].variable.name == "ds"
-    assert isinstance(inserted.rhs.args[1], CBinaryOp)
-    assert codegen.cfunc.statements.statements[1] is loop
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [loop]
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["segmented_memory_scope_refused_count"] == 1
+    assert stats["materialized_count"] == 0
+    assert stats["failure_count"] == 1
 
 
 def test_materialize_direct_stack_mov_removes_duplicate_tagged_carrier_overwrite():

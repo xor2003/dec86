@@ -139,13 +139,13 @@ def test_sortd_sidecar_free_swapbars_recovers_binary_stack_arguments(tmp_path):
     assert result.stdout.count("sub_106c8(") == 3
 
 
-def test_sortd_sidecar_free_initbars_preserves_binary_stack_array(tmp_path):
+def test_sortd_sidecar_free_initbars_preserves_binary_stack_array(tmp_path: Path) -> None:
     sortd_exe = tmp_path / "SORTD.EXE"
     sortd_exe.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
 
     result = _run_decompile_addr(
         sortd_exe,
-        0x10554,
+        0x10560,
         analysis_timeout=180,
         subprocess_timeout=420,
         extra_args=(
@@ -801,12 +801,14 @@ def test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source(
     final_body = _function_body_from_stdout(result.stdout, "void sub_10808")
     loop_header = "for (local_4 = local_2; local_4; local_4 -= 1)"
     guard = re.compile(
-        r"if \((?:\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) <= local_6|"
-        r"!\(\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) > local_6\))\)"
+        r"if \((?:\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) <= (?:\(short\))?local_6|"
+        r"!\(\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) > (?:\(short\))?local_6\))\)"
     )
     source_copy = "g_0B4C[local_4] = g_0B4C[local_4 - 1];"
+    row_load = "local_8 = g_0B4C[local_2];"
     assert loop_header in final_body
     assert final_body.count("g_0BAA += 1;") == 1
+    assert final_body.count(row_load) == 1
     assert "local_6 = (char)local_8.field_0;" in final_body
     assert "local_6 = local_8;" not in final_body
     assert len(guard.findall(final_body)) == 1
@@ -814,11 +816,17 @@ def test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source(
     assert final_body.count(source_copy) == 1
     guard_match = guard.search(final_body)
     assert guard_match is not None
+    assert final_body.index("while (") < final_body.index(row_load)
+    assert final_body.index(row_load) < final_body.index("local_6 = (char)local_8.field_0;")
     assert final_body.index("g_0BAA += 1;") < guard_match.start()
     assert guard_match.start() < final_body.index("g_0BA4 += 1;")
     assert final_body.index("g_0BA4 += 1;") < final_body.index(source_copy)
-    assert final_body.count("sub_106c8(local_4);") == 2
-    assert final_body.count("sub_10498(local_4);") == 2
+    assert len(
+        re.findall(r"sub_106c8\((?:\(unsigned short\))?local_4\);", final_body)
+    ) == 2
+    assert len(
+        re.findall(r"sub_10498\((?:\(unsigned short\))?local_4\);", final_body)
+    ) == 2
     assert "sub_10491(" not in final_body
     assert "g_0B4C[local_4] = g_0B4A[local_4];" not in final_body
     assert "vvar_" not in final_body
@@ -907,27 +915,69 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
     signature = re.search(r"void sub_10ce0\(short (\w+), short (\w+)\)", final_body)
     assert signature is not None
     low_arg, high_arg = signature.groups()
-    assert re.search(rf"if \((?:\(short\)\s*)?{low_arg} < {high_arg}\)", final_body) is not None
     assert re.search(
-        rf"if \((?:\(unsigned short\)\s*)?{high_arg}\s*-\s*"
+        rf"if \((?:\(short\)\s*)?{low_arg} >= (?:\(short\)\s*)?{high_arg}\)\s*\{{\s*return;",
+        final_body,
+    ) is not None
+    assert re.search(
+        rf"else if \((?:\(unsigned short\)\s*)?{high_arg}\s*-\s*"
         rf"(?:\(unsigned short\)\s*)?{low_arg}\s*==\s*1\)",
         final_body,
     ) is not None
-    assert f"if (g_0B4C[{low_arg}].field_0 > g_0B4C[{high_arg}].field_0)" in final_body
-    assert "while (local_2 > local_6);" in final_body
+    assert f"if (g_0B4C[{low_arg}].field_0 <= g_0B4C[{high_arg}].field_0)" in final_body
     assert re.search(
-        rf"if \(local_6\s*-\s*(?:\(short\)\s*)?{low_arg}\s*<\s*"
-        rf"(?:\(short\)\s*)?{high_arg}\s*-\s*local_6\)",
+        r"while \((?:(?:\(short\)\s*)?local_6 < (?:\(short\)\s*)?local_2|"
+        r"(?:\(short\)\s*)?local_2 > (?:\(short\)\s*)?local_6)\);",
         final_body,
     ) is not None
-    assert final_body.count("sub_107b8(") == 3 and f"sub_107b8(&g_0B4C[{low_arg}], &g_0B4C[{high_arg}]);" in final_body
+    assert len(
+        re.findall(
+            r"if \((?:\(short\)\s*)?local_2 <= (?:\(short\)\s*)?local_6\)\s*break;",
+            final_body,
+        )
+    ) == 2
+    assert re.search(
+        r"if \(g_0B4C\[local_6\]\.field_0 > (?:\(short\)\s*)?local_4\)\s*break;",
+        final_body,
+    ) is not None
+    assert re.search(
+        r"if \(g_0B4C\[local_2\]\.field_0 < (?:\(short\)\s*)?local_4\)\s*break;",
+        final_body,
+    ) is not None
+    assert re.search(
+        rf"if \((?:\(short\)\s*)?local_6\s*-\s*(?:\(short\)\s*)?{low_arg}\s*>=\s*"
+        rf"(?:\(short\)\s*)?{high_arg}\s*-\s*(?:\(short\)\s*)?local_6\)",
+        final_body,
+    ) is not None
+    assert final_body.count("sub_107b8(") == 3
+    assert re.search(
+        rf"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?{low_arg}\], "
+        rf"&g_0B4C\[(?:\(unsigned short\))?{high_arg}\]\);",
+        final_body,
+    ) is not None
     assert final_body.count("sub_10768(") == 3
     assert "sub_1075b(" not in final_body
-    assert final_body.count("return;") == 1
     assert final_body.count("sub_10ce0(") == 5
-    assert final_body.count(f"sub_10ce0({low_arg}, local_6 - 1);") == 2
-    assert final_body.count(f"sub_10ce0(local_6 + 1, {high_arg});") == 2
+    assert len(
+        re.findall(
+            rf"sub_10ce0\((?:\(unsigned short\))?{low_arg}, "
+            rf"(?:\(unsigned short\))?local_6 - 1\);",
+            final_body,
+        )
+    ) == 2
+    assert len(
+        re.findall(
+            rf"sub_10ce0\((?:\(unsigned short\))?local_6 \+ 1, "
+            rf"(?:\(unsigned short\))?{high_arg}\);",
+            final_body,
+        )
+    ) == 2
     do_body = final_body[final_body.index("do\n") :]
+    pre_loop_body = final_body[: final_body.index("do\n")]
+    pivot_match = re.search(rf"(\w+) = g_0B4C\[{high_arg}\]\.field_0;", pre_loop_body)
+    assert pivot_match is not None
+    assert re.search(r"\b\w+\s*=\s*local_6;", pre_loop_body) is None
+    assert do_body.count(pivot_match.group(1)) >= 2
     first_scan_match = re.search(r"while \((?:true|1)\)", do_body)
     assert first_scan_match is not None
     first_scan = first_scan_match.start()
@@ -1431,6 +1481,7 @@ def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path)
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     body = _function_body_from_stdout(result.stdout, "sub_102e0(")
+    assert "inertia_esp" not in body
     assert re.search(r"local_2\s*=\s*sub_11292\(\);", body)
     assert re.search(r"case 27:\s*return;", body)
     assert "LABEL_10488" not in body

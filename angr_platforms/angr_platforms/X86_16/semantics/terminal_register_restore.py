@@ -11,7 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Protocol, cast
 
 __all__ = ["terminal_register_restore_sites_8616"]
@@ -28,6 +28,7 @@ class _InstructionBoundary8616(Protocol):
     """Capstone instruction fields consumed by restore classification."""
 
     address: int
+    bytes: Sequence[int]
     mnemonic: str
     operands: tuple[_OperandBoundary8616, ...]
 
@@ -75,6 +76,46 @@ def _instruction_address_8616(instruction: object) -> int | None:
     return address if isinstance(address, int) else None
 
 
+def _instruction_bytes_8616(instruction: object) -> bytes | None:
+    """Return exact decoded bytes for duplicate-site arbitration."""
+    try:
+        raw_bytes = cast(_InstructionBoundary8616, _inner_instruction_8616(instruction)).bytes
+        decoded = bytes(raw_bytes)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return decoded or None
+
+
+def _address_ordered_unique_instructions_8616(
+    instructions_by_block: Mapping[int, tuple[object, ...]],
+) -> tuple[object, ...] | None:
+    """Normalize overlapping blocks by exact address and byte identity.
+
+    Frontend block extents may overlap at loop headers. Equal instruction bytes
+    prove that those views describe one site; conflicting or byte-less duplicate
+    evidence is refused instead of choosing one block by iteration order.
+    """
+    by_address: dict[int, tuple[bytes | None, object]] = {}
+    for instructions in instructions_by_block.values():
+        for instruction in instructions:
+            instruction_addr = _instruction_address_8616(instruction)
+            if instruction_addr is None:
+                continue
+            instruction_bytes = _instruction_bytes_8616(instruction)
+            existing = by_address.get(instruction_addr)
+            if existing is None:
+                by_address[instruction_addr] = (instruction_bytes, instruction)
+                continue
+            existing_bytes, _existing_instruction = existing
+            if (
+                existing_bytes is None
+                or instruction_bytes is None
+                or existing_bytes != instruction_bytes
+            ):
+                return None
+    return tuple(by_address[address][1] for address in sorted(by_address))
+
+
 def terminal_register_restore_sites_8616(
     instructions_by_block: Mapping[int, tuple[object, ...]],
     entry_addr: int,
@@ -98,13 +139,9 @@ def terminal_register_restore_sites_8616(
     if not entry_saves:
         return frozenset()
 
-    addressed: list[tuple[int, object]] = []
-    for instructions in instructions_by_block.values():
-        for instruction in instructions:
-            instruction_addr = _instruction_address_8616(instruction)
-            if instruction_addr is not None:
-                addressed.append((instruction_addr, instruction))
-    ordered = tuple(instruction for _address, instruction in sorted(addressed))
+    ordered = _address_ordered_unique_instructions_8616(instructions_by_block)
+    if ordered is None:
+        return frozenset()
     terminal_index = next(
         (
             index

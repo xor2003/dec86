@@ -1,8 +1,8 @@
 """Classify exact canonical x86-16 frame-prologue C AST carriers.
 
 Layer: Types/Lowering.
-Responsibility: prove the paired ``SP -= 2`` and ``SS:SP = BP`` carriers of a
-decoded ``push bp`` before Lowering consumes compiler frame scaffolding.
+Responsibility: prove structured entry carriers for decoded ``push bp`` and
+``mov bp, sp`` before Lowering consumes compiler frame scaffolding.
 Consumes alias, widening, and typed facts plus exact physical register views.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 """
@@ -27,6 +27,7 @@ from angr.sim_variable import SimStackVariable
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..ir.core import MemSpace
 from .frame_register_carriers import FrameRegisterCarrierResolution8616
+from .gp_register_state import runtime_gp_expression_view_8616
 from .physical_registers import physical_register_view_8616
 from .runtime_segment_access import RuntimeSegmentAccessContext8616, runtime_segment_access_space_8616
 
@@ -250,7 +251,29 @@ def is_exact_push_bp_carrier_8616(
     )
 
 
+def is_exact_bp_frame_setup_carrier_8616(
+    statement: object,
+    project: _ProjectRegisters8616,
+    setup_addr: int,
+    *,
+    register_carriers: FrameRegisterCarrierResolution8616 | None = None,
+) -> bool:
+    """Match one owned BP write at a decoded ``mov bp, sp`` instruction.
+
+    GP-state lowering represents a 16-bit BP write as a coherent 32-bit EBP
+    lane assignment. That typed owner remains valid evidence after an earlier
+    pass has consumed every structured carrier for the preceding ``push bp``.
+    """
+    if not isinstance(statement, CAssignment) or _statement_addr_8616(statement) != setup_addr:
+        return False
+    if _matches_register_8616(statement.lhs, project, "bp", register_carriers):
+        return True
+    runtime_view = runtime_gp_expression_view_8616(statement.lhs)
+    return runtime_view is not None and runtime_view.parent_name == "ebp"
+
+
 __all__ = [
+    "is_exact_bp_frame_setup_carrier_8616",
     "is_exact_push_bp_carrier_8616",
     "is_exact_push_bp_store_carrier_8616",
 ]

@@ -4,6 +4,12 @@ Layer: Types/Lowering.
 Responsibility: initialize exact packed-FLAGS SSA roots and inputs consumed by
 updates whose frontend evidence proves preservation of architectural bits.
 
+The live-in owner inventory is lowering evidence, not an unconditional DCE
+root. Backward liveness retains an initializer while a proven consumer remains;
+fixed-point cleanup may remove the initializer after its complete packed-FLAGS
+chain becomes dead. Final projection replay rematerializes only still-consumed
+live-ins.
+
 Consumes alias, widening, and typed facts. Do not recover semantics from COD,
 source, assembly, or rendered C text.
 """

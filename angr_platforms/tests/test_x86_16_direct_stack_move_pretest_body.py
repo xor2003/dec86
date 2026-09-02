@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import networkx as nx
@@ -273,6 +274,37 @@ def test_moves_hoisted_definition_after_initializer_and_into_loop_body() -> None
     assert root.statements[0].tags["ins_addr"] == 0x109F6
     assert body.statements[1] is assignment
     stats = codegen._inertia_direct_stack_move_pretest_body_placement_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_moves_segmented_memory_definition_into_pretest_body() -> None:
+    """Typed segmented-memory loads use the same exact CFG placement proof."""
+    project, codegen, root, body, assignment, loop = _surface()
+    codegen._inertia_direct_stack_move_facts_8616 = (
+        replace(
+            _fact(),
+            source_kind=DirectStackMoveSourceKind8616.SEGMENTED_MEMORY,
+            source_offset=None,
+            source_segment_name="ds",
+            source_global_displacement=0xB4C,
+            source_index_offset=-4,
+            source_index_shift=1,
+            source_access_width=2,
+        ),
+    )
+
+    assert materialize_direct_stack_move_pretest_body_ownership_8616(
+        project,
+        codegen,
+        _function(),
+    )
+
+    assert root.statements == [root.statements[0], loop]
+    assert body.statements[1] is assignment
+    stats = codegen._inertia_direct_stack_move_pretest_body_placement_8616
+    assert stats.raw_fact_count == 1
     assert stats.classified_fact_count == 1
     assert stats.materialized_count == 1
     assert stats.failure_count == 0

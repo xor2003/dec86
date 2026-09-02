@@ -2615,7 +2615,7 @@ def test_materialize_callsite_stack_arguments_walks_same_register_chain_across_s
     )
 
 
-def test_materialize_callsite_stack_arguments_rewrites_nested_indexed_pointer_offsets_to_named_stack_vars():
+def test_materialize_callsite_stack_arguments_keeps_nested_indexed_offsets_without_push_sources():
     project = _project()
     _bind_callee_pointer_argument_classifier_8616(project, lambda _project, _name, index: index in {0, 1})
     codegen = _empty_codegen(project)
@@ -2731,9 +2731,8 @@ def test_materialize_callsite_stack_arguments_rewrites_nested_indexed_pointer_of
         for node in nodes
         if isinstance(getattr(node, "variable", None), SimStackVariable)
     }
-    assert -3 in stack_offsets
-    assert -2 in stack_offsets
-    assert not any(
+    assert stack_offsets == {-6}
+    assert any(
         (getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)) == "s_6"
         for nodes in arg_nodes
         for node in nodes
@@ -3661,7 +3660,18 @@ def test_materialize_callsite_stack_arguments_respects_push_sources_without_posi
     codegen.cfunc.variables_in_use = {
         wrong_arg0.variable: wrong_arg0,
         wrong_arg1.variable: wrong_arg1,
+        expected_arg0.variable: expected_arg0,
+        expected_arg1.variable: expected_arg1,
     }
+    for cvar, bp_offset in ((expected_arg0, -2), (expected_arg1, -4)):
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=cvar.variable,
+            cvar=cvar,
+            bp_offset=bp_offset,
+            entry_sp_offset=cvar.variable.offset,
+            size=2,
+        )
     codegen.cfunc.statements = CStatements(
         [CExpressionStatement(call, codegen=codegen)],
         addr=0x4010,
@@ -5813,9 +5823,24 @@ def test_materialize_callsite_stack_arguments_keeps_unproved_local_immediate_set
     assert codegen.cfunc.statements.statements[0] is setup
 
 
-def test_materialize_callsite_stack_arguments_unknown_positive_bp_source_uses_local_name():
+def test_materialize_callsite_stack_arguments_projected_positive_bp_source_uses_local_name():
     project = _project()
     codegen = _empty_codegen(project)
+
+    local = CVariable(
+        SimStackVariable(4, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {local.variable: local}
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=local.variable,
+        cvar=local,
+        bp_offset=4,
+        entry_sp_offset=4,
+        size=2,
+    )
 
     call = CFunctionCall("sortproc", SimpleNamespace(name="sortproc"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
@@ -10193,6 +10218,24 @@ def test_materialize_callsite_stack_arguments_respects_terminal_caller_liveness(
         )
     codegen = _empty_codegen(project)
     _bind_function_result_observation_provider_8616(codegen, proven_function_result_observation_8616)
+    projected_args = tuple(
+        CVariable(
+            SimStackVariable(offset, 2, base="bp", name=name, region=0x4010),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        )
+        for offset, name in ((-2, "local_2"), (4, "arg_4"))
+    )
+    codegen.cfunc.variables_in_use = {cvar.variable: cvar for cvar in projected_args}
+    for cvar in projected_args:
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=cvar.variable,
+            cvar=cvar,
+            bp_offset=cvar.variable.offset,
+            entry_sp_offset=cvar.variable.offset,
+            size=2,
+        )
     setup_lhs = _scg.c.CVariable(
         SimRegisterVariable(project.arch.registers["bx"][0], 2, name="setup"),
         variable_type=SimTypeShort(False),

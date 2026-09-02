@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeLong, SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
@@ -25,6 +25,7 @@ from angr_platforms.X86_16.structuring.stored_call_result_assignments import (
 class _AstCodegen:
     def __init__(self) -> None:
         self.project = SimpleNamespace(arch=archinfo.ArchX86())
+        self.cstyle_null_cmp = True
         self._next_idx = 0
 
     def next_idx(self, _name: str) -> int:
@@ -64,6 +65,14 @@ def _stack_value(codegen: _AstCodegen) -> structured_c.CVariable:
     )
 
 
+def _eax_value(codegen: _AstCodegen) -> structured_c.CVariable:
+    return structured_c.CVariable(
+        SimRegisterVariable(codegen.project.arch.get_register_offset("eax"), 4, name="eax"),
+        variable_type=SimTypeLong(False),
+        codegen=codegen,
+    )
+
+
 def _indirect_call(
     codegen: _AstCodegen,
     value: structured_c.CVariable,
@@ -71,7 +80,14 @@ def _indirect_call(
 ) -> structured_c.CFunctionCall:
     return structured_c.CFunctionCall(
         "fn",
-        SimpleNamespace(addr=None, name="fn"),
+        SimpleNamespace(
+            addr=None,
+            name="fn",
+            prototype=SimpleNamespace(
+                returnty=SimTypeShort(False).with_arch(codegen.project.arch)
+            ),
+            prototype_libname=None,
+        ),
         [value],
         tags={"ins_addr": callsite_addr},
         codegen=codegen,
@@ -83,11 +99,7 @@ def test_materializes_indirect_call_results_into_exact_stack_argument() -> None:
     value = _stack_value(codegen)
     first_call = _indirect_call(codegen, value, 0x100E)
     second_call = _indirect_call(codegen, value, 0x101A)
-    eax = structured_c.CVariable(
-        SimRegisterVariable(codegen.project.arch.get_register_offset("eax"), 4, name="eax"),
-        variable_type=SimTypeLong(False),
-        codegen=codegen,
-    )
+    eax = _eax_value(codegen)
     first_assignment = structured_c.CAssignment(eax, first_call, codegen=codegen)
     wrong_destination = structured_c.CVariable(
         SimStackVariable(4, 2, base="bp", name="fn"),
@@ -135,6 +147,112 @@ def test_materializes_indirect_call_results_into_exact_stack_argument() -> None:
         result.stats.materialized_count,
         result.stats.failure_count,
     ) == (2, 2, 2, 2, 0)
+
+
+def test_materializes_call_nested_in_return_register_lane_merge() -> None:
+    codegen = _AstCodegen()
+    value = _stack_value(codegen)
+    call = _indirect_call(codegen, value, 0x100E)
+    eax = _eax_value(codegen)
+    lane_merge = structured_c.CBinaryOp(
+        "Or",
+        structured_c.CBinaryOp(
+            "And",
+            eax,
+            structured_c.CConstant(0xFFFF0000, SimTypeLong(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CBinaryOp(
+            "And",
+            call,
+            structured_c.CConstant(0xFFFF, SimTypeLong(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    owner = structured_c.CAssignment(
+        structured_c.CVariable(
+            SimMemoryVariable(
+                0x1_0000,
+                4,
+                name="inertia_eax",
+                category="inertia_gp_register_state",
+            ),
+            variable_type=SimTypeLong(False),
+            codegen=codegen,
+        ),
+        lane_merge,
+        tags={"ins_addr": 0x100E},
+        codegen=codegen,
+    )
+    store = structured_c.CAssignment(
+        value,
+        eax,
+        tags={"ins_addr": 0x1014},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([owner, store], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x100E, 0x1014)}
+
+    result = materialize_stored_call_result_assignments_8616(codegen)
+
+    assert result.verdict is StoredCallResultAssignmentVerdict8616.MATERIALIZED
+    assert result.stats.materialized_count == 1
+    assert root.statements == [owner]
+    assert isinstance(owner.lhs, structured_c.CVariable)
+    assert isinstance(owner.lhs.variable, SimStackVariable)
+    assert owner.lhs.variable.offset == 6
+    assert owner.rhs is lane_merge
+    assert isinstance(lane_merge.rhs, structured_c.CBinaryOp)
+    assert lane_merge.rhs.lhs is call
+
+
+def test_does_not_own_assignment_with_multiple_nested_calls() -> None:
+    codegen = _AstCodegen()
+    value = _stack_value(codegen)
+    first_call = _indirect_call(codegen, value, 0x100E)
+    second_call = _indirect_call(codegen, value, 0x1011)
+    eax = _eax_value(codegen)
+    ambiguous_rhs = structured_c.CBinaryOp("Add", first_call, second_call, codegen=codegen)
+    owner = structured_c.CAssignment(eax, ambiguous_rhs, codegen=codegen)
+    store = structured_c.CAssignment(
+        value,
+        eax,
+        tags={"ins_addr": 0x1014},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([owner, store], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_callsite_summaries = {
+        id(first_call): _summary(0x100E, 0x1014),
+        id(second_call): _summary(0x1011, 0x1014),
+    }
+
+    result = materialize_stored_call_result_assignments_8616(codegen)
+
+    assert result.verdict is StoredCallResultAssignmentVerdict8616.NO_CANDIDATE
+    assert not result.changed
+    assert root.statements == [owner, store]
+    assert owner.lhs is eax
+
+
+def test_rebinds_regenerated_call_by_exact_callsite_tag() -> None:
+    codegen = _AstCodegen()
+    value = _stack_value(codegen)
+    previous_call = _indirect_call(codegen, value, 0x100E)
+    regenerated_call = _indirect_call(codegen, value, 0x100E)
+    statement = structured_c.CExpressionStatement(regenerated_call, codegen=codegen)
+    root = structured_c.CStatements([statement], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_callsite_summaries = {id(previous_call): _summary(0x100E, 0x1014)}
+
+    result = materialize_stored_call_result_assignments_8616(codegen)
+
+    assert result.verdict is StoredCallResultAssignmentVerdict8616.MATERIALIZED
+    assignment = root.statements[0]
+    assert isinstance(assignment, structured_c.CAssignment)
+    assert assignment.rhs is regenerated_call
 
 
 def test_refuses_when_exact_stack_destination_has_no_owned_variable() -> None:

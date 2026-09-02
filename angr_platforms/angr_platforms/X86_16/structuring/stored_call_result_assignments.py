@@ -20,16 +20,20 @@ from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
-    CExpressionStatement,
     CFunctionCall,
     CStatements,
     CVariable,
 )
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
 from ..callsite_summary import CallsiteReturnUseKind8616, CallsiteSummary8616
 from ..lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .stored_call_result_assignment_ast import (
+    stored_call_result_assignment_occurrences_8616,
+    stored_call_result_summary_for_occurrence_8616,
+)
+from .stored_call_result_registers import is_stored_call_return_register_destination_8616
 
 __all__ = ("materialize_stored_call_result_assignments_8616",)
 
@@ -82,19 +86,6 @@ class StoredCallResultAssignmentResult8616:
         return self.stats.materialized_count > 0
 
 
-class _ArchSurface8616(Protocol):
-    """Third-party architecture register lookup used at the AST boundary."""
-
-    def get_register_offset(self, name: str) -> int:
-        """Return the byte offset of one architectural register."""
-
-
-class _ProjectSurface8616(Protocol):
-    """Third-party project fields required by return-register matching."""
-
-    arch: _ArchSurface8616
-
-
 class _CFunctionSurface8616(Protocol):
     """Third-party structured function root consumed by this owner."""
 
@@ -104,20 +95,9 @@ class _CFunctionSurface8616(Protocol):
 class _CodegenSurface8616(Protocol):
     """Codegen fields consumed and published by this Structuring owner."""
 
-    project: _ProjectSurface8616
     cfunc: _CFunctionSurface8616
     _inertia_callsite_summaries: dict[int, CallsiteSummary8616]
     _inertia_stored_call_result_assignments_8616: StoredCallResultAssignmentResult8616
-
-
-@dataclass(frozen=True, slots=True)
-class _DirectCallOccurrence8616:
-    """One direct structured call statement at an exact list position."""
-
-    call: CFunctionCall
-    statement: CAssignment | CExpressionStatement
-    parent: CStatements
-    index: int
 
 
 def _canonical_stack_offset_8616(offset: int) -> int:
@@ -135,24 +115,6 @@ def _statement_containers_8616(root: object) -> tuple[CStatements, ...]:
             if isinstance(node, CStatements)
         }.values()
     )
-
-
-def _direct_call_occurrences_8616(root: object) -> tuple[_DirectCallOccurrence8616, ...]:
-    """Collect direct assigned and standalone calls without parsing C text."""
-    occurrences: list[_DirectCallOccurrence8616] = []
-    for parent in _statement_containers_8616(root):
-        for index, statement in enumerate(tuple(parent.statements or ())):
-            call = (
-                statement.rhs
-                if isinstance(statement, CAssignment) and isinstance(statement.rhs, CFunctionCall)
-                else statement.expr
-                if isinstance(statement, CExpressionStatement)
-                and isinstance(statement.expr, CFunctionCall)
-                else None
-            )
-            if isinstance(call, CFunctionCall):
-                occurrences.append(_DirectCallOccurrence8616(call, statement, parent, index))
-    return tuple(occurrences)
 
 
 def _store_artifacts_8616(
@@ -229,26 +191,6 @@ def _is_exact_stack_destination_8616(
     )
 
 
-def _is_return_register_destination_8616(
-    codegen: _CodegenSurface8616,
-    expression: object,
-    summary: CallsiteSummary8616,
-    width: int,
-) -> bool:
-    """Prove that one temporary lvalue covers the summary's return register."""
-    if not isinstance(expression, CVariable) or not isinstance(expression.variable, SimRegisterVariable):
-        return False
-    register_name = summary.return_register
-    if not isinstance(register_name, str) or ":" in register_name:
-        return False
-    try:
-        register_offset = int(codegen.project.arch.get_register_offset(register_name))
-    except (KeyError, TypeError, ValueError):
-        return False
-    variable = expression.variable
-    return int(variable.reg) <= register_offset and int(variable.reg) + int(variable.size) >= register_offset + width
-
-
 def _refuse_8616(
     stats: StoredCallResultAssignmentStats8616,
     refusals: list[StoredCallResultAssignmentRefusal8616],
@@ -284,11 +226,11 @@ def materialize_stored_call_result_assignments_8616(
 
     artifacts_to_remove: dict[int, tuple[CStatements, CAssignment]] = {}
     owned_call_ids: set[int] = set()
-    for occurrence in _direct_call_occurrences_8616(root):
+    for occurrence in stored_call_result_assignment_occurrences_8616(root):
         call_id = id(occurrence.call)
         if call_id in owned_call_ids:
             continue
-        summary = summary_map.get(call_id)
+        summary = stored_call_result_summary_for_occurrence_8616(occurrence.call, summary_map)
         if summary is None:
             continue
         destination = _stored_stack_destination_8616(summary)
@@ -318,8 +260,8 @@ def materialize_stored_call_result_assignments_8616(
         if (
             isinstance(occurrence.statement, CAssignment)
             and not exact_store_statement
-            and not _is_return_register_destination_8616(
-                boundary,
+            and not is_stored_call_return_register_destination_8616(
+                codegen,
                 occurrence.statement.lhs,
                 summary,
                 destination[1],
@@ -351,6 +293,7 @@ def materialize_stored_call_result_assignments_8616(
                 if artifact is not occurrence.statement:
                     artifacts_to_remove[id(artifact)] = (parent, artifact)
         owned_call_ids.add(call_id)
+        summary_map[call_id] = summary
         stats.materialized_count += 1
 
     for parent, artifact in artifacts_to_remove.values():

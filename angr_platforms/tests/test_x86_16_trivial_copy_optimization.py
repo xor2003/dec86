@@ -326,3 +326,22 @@ def test_prune_adjacent_temporary_copy_refuses_when_temp_used_later():
     assert codegen.trivial_copy_candidates_8616 == 1
     assert codegen.trivial_copy_pruned_8616 == 0
     assert codegen.trivial_copy_refused_live_temp_8616 == 1
+
+
+def test_prune_adjacent_temporary_copy_refuses_when_temp_is_live_after_do_while():
+    codegen = _mk_codegen_with_statements([])
+    temp = _cvar(codegen, "tmp_4112", 0)
+    destination = _cvar(codegen, "destination", 2)
+    producer = structured_c.CAssignment(temp, _const(codegen, 75), codegen=codegen)
+    consumer = structured_c.CAssignment(destination, temp, codegen=codegen)
+    body = structured_c.CStatements([producer, consumer], codegen=codegen)
+    loop = structured_c.CDoWhileLoop(_const(codegen, 1), body, codegen=codegen)
+    returned = structured_c.CReturn(temp, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([loop, returned], codegen=codegen)
+
+    assert prune_adjacent_temporary_copy_assignments_8616(codegen) is False
+
+    assert list(body.statements) == [producer, consumer]
+    assert codegen.trivial_copy_candidates_8616 == 1
+    assert codegen.trivial_copy_pruned_8616 == 0
+    assert codegen.trivial_copy_refused_live_temp_8616 == 1

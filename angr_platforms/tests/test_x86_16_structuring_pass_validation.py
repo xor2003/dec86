@@ -23,7 +23,10 @@ from angr_platforms.X86_16.structuring.guard_decisions import (
 from angr_platforms.X86_16.structuring.loop_break_jcc import (
     LoopHeaderDuplicateGuardRemovalFact8616,
 )
-from angr_platforms.X86_16.tail_validation import loop_exit_return_guard_repair_delta_8616
+from angr_platforms.X86_16.tail_validation import (
+    X86_16TailValidationSummary,
+    loop_exit_return_guard_repair_delta_8616,
+)
 
 
 def test_structuring_return_shape_materializes_void_return_ast_after_classification(monkeypatch):
@@ -2410,7 +2413,21 @@ def test_structuring_stage_records_non_stable_per_pass_validation_without_aborti
         return True
 
     monkeypatch.setattr(stage, "fingerprint_x86_16_tail_validation_boundary", lambda *_args, **_kwargs: ("fp",))
-    monkeypatch.setattr(stage, "collect_x86_16_tail_validation_summary", lambda *_args, **_kwargs: {"conditions": ()})
+    empty_summary = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
+    monkeypatch.setattr(
+        stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda *_args, **_kwargs: empty_summary,
+    )
     monkeypatch.setattr(
         stage,
         "build_x86_16_tail_validation_cached_result",

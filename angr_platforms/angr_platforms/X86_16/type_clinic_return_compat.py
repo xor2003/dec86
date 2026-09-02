@@ -164,7 +164,11 @@ def finalize_clinic_return_type_8616(
     record_terminal_return_value_evidence_8616(project, function_surface.addr, evidence)
     observation = proven_function_result_observation_8616(project, function_surface.addr)
     terminal_ax_evidence = collect_terminal_ax_return_evidence_8616(project, function)
-    terminal_value_proven = not evidence.proves_no_terminal_value and not terminal_ax_evidence.proves_missing_value_path
+    terminal_value_proven = (
+        not evidence.proves_no_terminal_value
+        and not terminal_ax_evidence.proves_missing_value_path
+        and not terminal_ax_evidence.proves_local_pointer_output_carrier
+    )
     result = materialize_unused_caller_void_return_type_8616(
         project,
         function,

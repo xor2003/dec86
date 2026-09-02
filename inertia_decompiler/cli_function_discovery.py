@@ -77,6 +77,7 @@ from inertia_decompiler.discovery_cache_contract import (
     source_region_catalog_evidence_comment_8616,
 )
 from inertia_decompiler.discovery_evidence_project import isolated_discovery_evidence_project_8616
+from inertia_decompiler.function_graph_extent_repair import enforce_covered_transition_sources_8616
 from inertia_decompiler.project_loading import (
     _build_project_cached,
     _build_project_from_bytes,
@@ -1670,6 +1671,11 @@ def _repair_x86_16_function_graph_8616(
     entry_addr = _dynamic_attr(function, "addr", None)
     if not isinstance(entry_addr, int):
         return
+    # Dynamic angr boundary: synthetic recovery candidates may not own a graph.
+    if _dynamic_attr(function, "transition_graph", None) is None:
+        return
+
+    enforce_covered_transition_sources_8616(project, function, exact_region=exact_region)
 
     if bool(_dynamic_attr(function, "returning", None)):
         if debug_indirect:
@@ -1861,6 +1867,8 @@ def _repair_x86_16_function_graph_8616(
             function.transition_graph.add_edge(source_node, target_node, type="transition", ins_addr=ins_addr)
         except Exception:
             continue
+
+    enforce_covered_transition_sources_8616(project, function, exact_region=exact_region)
 
     discovered_returns = 0
     for block_addr in sorted(discovered):
@@ -4426,7 +4434,7 @@ def _fallback_entry_function(
             if stitched:
                 _mark_x86_16_stitched_recovery_8616(stitched_func)
                 function = stitched_func
-            _repair_x86_16_function_graph_8616(project, function)
+            _repair_x86_16_function_graph_8616(project, function, exact_region=region)
             return cfg, function
 
         with _analysis_timeout(recovery_timeout):
@@ -5548,7 +5556,11 @@ def _recover_direct_addr_function(
             else:
                 regions = [(addr, addr + window)]
             recovered = _pick_function(project, addr, regions=regions)
-            _repair_x86_16_function_graph_8616(project, recovered[1])
+            _repair_x86_16_function_graph_8616(
+                project,
+                recovered[1],
+                exact_region=regions[0],
+            )
             return recovered
 
     return _impl()

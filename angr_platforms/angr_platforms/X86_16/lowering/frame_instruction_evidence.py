@@ -86,7 +86,8 @@ def canonical_frame_instruction_addresses_8616(
 
     The entry pair is mandatory. Teardown addresses are admitted only as a
     contiguous ``mov sp, bp; pop bp; ret`` sequence. Callers must separately
-    prove that structured C contains a matching entry carrier before pruning.
+    prove that structured C contains a matching push or setup carrier before
+    pruning.
     """
     push = _instruction_8616(instructions_by_addr.get(function_addr))
     try:

@@ -145,6 +145,7 @@ from .indexed_global_evidence import (
     IndexedSegmentedGlobalEvidence8616,
     merge_global_object_source_evidence_8616,
 )
+from .indexed_load_subviews import project_indexed_load_subview_8616
 from .named_type_definitions import record_named_type_definitions_8616
 from .near_pointer_argument import (
     NearPointerArgumentFact8616,
@@ -165,6 +166,7 @@ from .real_mode_linear import (
     _direct_stack_move_segment_name_8616,
     _direct_zero_arg_call_before_8616,
     _stack_mem_operand_offset_width_8616,
+    match_stable_ds_es_linear_global_access_8616,
 )
 from .register_constant_segmented_store import (
     recover_register_constant_segmented_stores_8616,
@@ -7370,9 +7372,18 @@ def _indexed_global_load_from_site_evidence_8616(
         index_expr,
         site.width,
     )
-    if materialized is not None and consumed_load_sites is not None:
+    access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
+    projection = project_indexed_load_subview_8616(
+        codegen,
+        node,
+        materialized,
+        access,
+        site_base_offset=site.base_offset,
+        site_width=site.width,
+    )
+    if projection is not None and consumed_load_sites is not None:
         consumed_load_sites.append(site)
-    return materialized
+    return projection.expression if projection is not None else None
 
 
 def _indexed_word_load_from_byte_pair_8616(

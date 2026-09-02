@@ -28,7 +28,8 @@ from concurrent.futures import TimeoutError as _FuturesTimeoutError
 from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
 
-from .analysis_timeout import AnalysisTimeout, analysis_timeout
+from .analysis_timeout import AnalysisTimeout as AnalysisTimeout
+from .analysis_timeout import analysis_timeout as analysis_timeout
 from .angr_codegen_tags import normalize_codegen_node_tags_8616
 from .fork_timeout import run_with_timeout_in_fork as run_with_timeout_in_fork
 from .prefork_job_pool import PreforkJobPool as PreforkJobPool
@@ -2380,10 +2381,6 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
     ) -> object:
         _emit_stage_time("clinic:pre_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:pre_ssa_level1_simplifications"
-        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
-            return self._ail_graph
-        if getattr(project, "_inertia_skip_clinic_pre_ssa", False):
-            return self._ail_graph
         return orig_stage_pre_ssa(self, *args, **kwargs)
 
     def _stage_transform_to_ssa_level1(
@@ -2393,8 +2390,6 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
     ) -> object:
         _emit_stage_time("clinic:ssa_level1")
         project._inertia_decompiler_stage = "core:clinic:ssa_level1_transformation"
-        if getattr(project, "_inertia_tiny_core_disable_peephole", False):
-            return None
         return orig_stage_ssa_level1(self, *args, **kwargs)
 
     def _stage_post_ssa_level1_simplifications(
@@ -2404,10 +2399,6 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
     ) -> object:
         _emit_stage_time("clinic:post_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:post_ssa_level1_simplifications"
-        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
-            return self._ail_graph
-        if getattr(project, "_inertia_skip_clinic_post_ssa", False):
-            return self._ail_graph
         return orig_stage_post_ssa(self, *args, **kwargs)
 
     def _stage_recover_variables(
@@ -2415,43 +2406,13 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
         *args: typing.Any,
         **kwargs: typing.Any,
     ) -> object:
+        """Record the Clinic stage and always run third-party variable recovery."""
         _emit_stage_time("clinic:recover_vars")
         project._inertia_decompiler_stage = "core:clinic:recover_variables"
-        if getattr(project, "_inertia_skip_clinic_recover_variables_full", False):
-            if getattr(self, "arg_list", None) is None:
-                self.arg_list = []
-            if getattr(self, "arg_vvars", None) is None:
-                self.arg_vvars = {}
-            if getattr(self, "vvar_to_vvar", None) is None:
-                self.vvar_to_vvar = {}
-            if getattr(self, "variable_kb", None) is None:
-                self.variable_kb = getattr(self, "kb", None)
-            if _emit_stage_logs:
-                print(
-                    f"[dbg] clinic:skip-recover-variables-full{_project_current_function_context_suffix(project)}",
-                    file=sys.stderr,
-                )
-                sys.stderr.flush()
-            return None
-        try:
-            return orig_stage_recover_vars(self, *args, **kwargs)
-        except AssertionError:
-            if getattr(project, "_inertia_recover_variables_seed_empty", False):
-                if getattr(self, "arg_list", None) is None:
-                    self.arg_list = []
-                if getattr(self, "arg_vvars", None) is None:
-                    self.arg_vvars = {}
-                if getattr(self, "vvar_to_vvar", None) is None:
-                    self.vvar_to_vvar = {}
-                if _emit_stage_logs:
-                    print(
-                        "[dbg] clinic:recover-variables-seeded-empty"
-                        f"{_project_current_function_context_suffix(project)}",
-                        file=sys.stderr,
-                    )
-                    sys.stderr.flush()
-                return orig_stage_recover_vars(self, *args, **kwargs)
-            raise
+        # Variable recovery is semantic materialization, not an optional
+        # optimization. Resource policies may bound simplification around it,
+        # but must never bypass it or invent empty recovery inputs.
+        return orig_stage_recover_vars(self, *args, **kwargs)
 
     _simplify_count: list[int] = [0]
     _peephole_count: list[int] = [0]

@@ -52,6 +52,9 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _materialize_callsite_stack_arguments_after_ss_lowering_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 
 
@@ -513,18 +516,35 @@ def test_callsite_materialization_counts_direct_bp_arg_materialization():
     assert codegen._inertia_callsite_materialization_stats.call_arg_materialized_count == 1
 
 
-def test_callsite_materialization_rebinds_target_without_guessing_pointer_args(monkeypatch):
+def test_callsite_materialization_rebinds_target_with_projected_pointer_args(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen(project)
+    projected_args = tuple(
+        CVariable(
+            SimStackVariable(offset, 2, base="bp", name=name, region=0x4010),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        )
+        for offset, name in ((-2, "local_2"), (-4, "local_4"))
+    )
     call = CFunctionCall("SwapBars", None, [], codegen=codegen)
     root = CStatements([call], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(
         addr=0x4010,
         statements=root,
         body=root,
-        variables_in_use={},
+        variables_in_use={cvar.variable: cvar for cvar in projected_args},
         unified_local_vars={},
     )
+    for cvar in projected_args:
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=cvar.variable,
+            cvar=cvar,
+            bp_offset=cvar.variable.offset,
+            entry_sp_offset=cvar.variable.offset,
+            size=2,
+        )
     codegen._inertia_callsite_summaries = {
         id(call): CallsiteSummary8616(
             callsite_addr=0x1052,

@@ -171,12 +171,17 @@ def test_sortd_swaps_sidecar_free_materializes_aggregate_interface(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "typedef struct g_08F0_entry" in result.stdout
-    assert "void sub_107b8(g_08F0_entry *left, g_08F0_entry *right)" in result.stdout
+    # Sidecar-free parameter names remain storage-derived. Source-like
+    # ``left``/``right`` names were a legacy postprocess guess, not evidence.
+    assert (
+        "void sub_107b8(g_08F0_entry *arg_4, g_08F0_entry *arg_6)"
+        in result.stdout
+    )
     assert "g_08F0_entry local_2;" in result.stdout
     assert "g_0BA4 += 1;" in result.stdout
-    assert "local_2 = left[0];" in result.stdout
-    assert "left[0] = right[0];" in result.stdout
-    assert "right[0] = local_2;" in result.stdout
+    assert "local_2 = arg_4[0];" in result.stdout
+    assert "arg_4[0] = arg_6[0];" in result.stdout
+    assert "arg_6[0] = local_2;" in result.stdout
     assert "return;" in result.stdout
     assert "short sub_107b8" not in result.stdout
     assert "return 0;" not in result.stdout
@@ -217,7 +222,11 @@ def test_sortd_swaps_caller_uses_one_proven_aggregate_family(
     )
     assert "int sub_107b8" not in result.stdout
     assert "extern g_08F0_entry g_0B4C[];" in result.stdout
-    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_2 + 1]);" in result.stdout
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?local_2\], "
+        r"&g_0B4C\[(?:\(unsigned short\))?local_2 \+ 1\]\);",
+        result.stdout,
+    )
     assert "g_0B4E" not in result.stdout
 
 

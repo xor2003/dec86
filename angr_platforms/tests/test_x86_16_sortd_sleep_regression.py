@@ -64,7 +64,7 @@ def test_sortd_sleep_preserves_both_wide_clock_calls_sidecar_free(
     body = result.stdout[function_start:]
     assert body.count("sub_1137e()") == 2
     assert "local_4 = sub_1137e() +" in body
-    assert re.search(r"if \((?:\(long\))?sub_1137e\(\) > local_4\)", body)
+    assert re.search(r"if \((?:\(long\))?sub_1137e\(\) > \(long\)local_4\)", body)
     assert "sub_137e" not in combined
     assert "local_6" not in body
     assert "vvar_" not in body

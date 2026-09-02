@@ -57,6 +57,7 @@ def test_signed_condition_reuses_stack_storage_with_cast_view() -> None:
         size=2,
         name="local_4",
         signed=True,
+        prefer_signed_local_storage=True,
     )
 
     assert isinstance(expr, CSemanticCast8616)

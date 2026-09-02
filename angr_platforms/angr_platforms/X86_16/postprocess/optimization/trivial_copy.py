@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Set
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CAssignment, CConstant, CFunctionCall, CStatements, CVariable
@@ -229,7 +229,10 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
         return None
 
     def _dead_temp_to_local_assignment(
-        stmt: CAssignment, idx: int, suffix_keys: list[set[TrivialCopyKey8616]]
+        stmt: CAssignment,
+        idx: int,
+        suffix_keys: list[set[TrivialCopyKey8616]],
+        live_out_keys: Set[TrivialCopyKey8616],
     ) -> bool:
         """Classify dead temp-to-local assignments from a dynamic boundary: angr codegen C AST."""
         lhs = getattr(stmt, "lhs", None)
@@ -239,11 +242,14 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
             lhs_key is not None
             and _is_local_non_temp_lvalue(lhs)
             and lhs_key not in suffix_keys[idx + 1]
+            and lhs_key not in live_out_keys
             and _temporary_key(rhs) is not None
             and _rhs_is_movable(rhs)
         )
 
-    def _walk_statement_list(statements: list[object]) -> None:
+    def _walk_statement_list(
+        statements: list[object], live_out_keys: Set[TrivialCopyKey8616] = frozenset()
+    ) -> None:
         """Rewrite one statement list from a dynamic boundary: angr codegen C AST."""
         nonlocal changed
         list_id = id(statements)
@@ -256,7 +262,10 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
         idx = 0
         while idx < len(statements):
             stmt = statements[idx]
-            if isinstance(stmt, CAssignment) and _dead_temp_to_local_assignment(stmt, idx, suffix_keys):
+            statement_live_out = live_out_keys | suffix_keys[idx + 1]
+            if isinstance(stmt, CAssignment) and _dead_temp_to_local_assignment(
+                stmt, idx, suffix_keys, live_out_keys
+            ):
                 if debug:
                     log.warning(
                         "[trivial-copy] dead-temp-to-local candidate lhs=%r rhs=%r "
@@ -288,7 +297,7 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
                         and not _is_temporary_name(_variable_name(next_lhs))
                         and _same_variable(lhs, next_rhs)
                     ):
-                        _walk_structural_children(stmt)
+                        _walk_structural_children(stmt, statement_live_out)
                         pruned.append(stmt)
                         idx += 1
                         continue
@@ -313,16 +322,20 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
                             _debug_expr(next_lhs),
                             _debug_expr(next_rhs),
                         )
-                    if lhs_key in suffix_keys[consumer_idx + 1]:
+                    if lhs_key in live_out_keys or lhs_key in suffix_keys[consumer_idx + 1]:
                         typed_codegen.trivial_copy_refused_live_temp_8616 += 1
                         if debug:
                             log.warning("[trivial-copy] refused-live producer_key=%r", lhs_key)
-                        _walk_structural_children(stmt)
+                        _walk_structural_children(stmt, statement_live_out)
                         pruned.append(stmt)
                         idx += 1
                         continue
-                    for skipped in statements[idx + 1 : consumer_idx]:
-                        _walk_structural_children(skipped)
+                    for skipped_idx, skipped in enumerate(
+                        statements[idx + 1 : consumer_idx], start=idx + 1
+                    ):
+                        _walk_structural_children(
+                            skipped, live_out_keys | suffix_keys[skipped_idx + 1]
+                        )
                         pruned.append(skipped)
                     next_stmt.rhs = rhs
                     pruned.append(next_stmt)
@@ -332,39 +345,44 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
                     changed = True
                     idx = consumer_idx + 1
                     continue
-            _walk_structural_children(stmt)
+            _walk_structural_children(stmt, statement_live_out)
             pruned.append(stmt)
             idx += 1
         if len(pruned) != len(statements):
             statements[:] = pruned
 
-    def _walk_structural_children(node: object) -> None:
+    def _walk_structural_children(
+        node: object, live_out_keys: Set[TrivialCopyKey8616] = frozenset()
+    ) -> None:
         """Walk structural children from a dynamic boundary: angr codegen C AST nodes."""
         if node is None:
             return
         node_type = type(node).__name__
         if isinstance(node, CStatements):
-            _walk_statement_list(cast(list[object], node.statements))
+            _walk_statement_list(cast(list[object], node.statements), live_out_keys)
             return
         if node_type == "CSwitchCase":
             cases = cast(Iterable[tuple[object, object]], getattr(node, "cases", ()) or ())
             for _case_value, case_body in tuple(cases):
-                _walk_structural_children(case_body)
-            _walk_structural_children(getattr(node, "default", None))
+                _walk_structural_children(case_body, live_out_keys)
+            _walk_structural_children(getattr(node, "default", None), live_out_keys)
             return
         if node_type == "CIncompleteSwitchCase":
             cases = cast(Iterable[tuple[object, object]], getattr(node, "cases", ()) or ())
             for _case_value, case_body in tuple(cases):
-                _walk_structural_children(case_body)
+                _walk_structural_children(case_body, live_out_keys)
             return
         if node_type == "CIfElse":
             condition_nodes = cast(Iterable[tuple[object, object]], getattr(node, "condition_and_nodes", ()) or ())
             for _condition, child in tuple(condition_nodes):
-                _walk_structural_children(child)
-            _walk_structural_children(getattr(node, "else_node", None))
+                _walk_structural_children(child, live_out_keys)
+            _walk_structural_children(getattr(node, "else_node", None), live_out_keys)
             return
         if node_type in {"CWhileLoop", "CDoWhileLoop", "CForLoop"}:
-            _walk_structural_children(getattr(node, "body", None))
+            loop_live_out = set(live_out_keys)
+            loop_live_out.update(_temporary_keys_in_node(getattr(node, "condition", None)))
+            loop_live_out.update(_temporary_keys_in_node(getattr(node, "iteration", None)))
+            _walk_structural_children(getattr(node, "body", None), loop_live_out)
 
     _walk_structural_children(getattr(cfunc, "statements", None))
     return changed

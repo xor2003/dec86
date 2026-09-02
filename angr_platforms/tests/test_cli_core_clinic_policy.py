@@ -40,7 +40,7 @@ def test_direct_clinic_policy_keeps_whole_binary_standard():
     )
 
 
-def test_direct_clinic_policy_uses_aggressive_guard_for_large_x86_function():
+def test_direct_clinic_policy_uses_fast_peephole_for_large_x86_function():
     assert (
         _direct_clinic_policy_8616(
             arch_name="86_16",
@@ -49,7 +49,7 @@ def test_direct_clinic_policy_uses_aggressive_guard_for_large_x86_function():
             byte_count=188,
             call_site_count=8,
         )
-        is DirectClinicPolicy8616.AGGRESSIVE_GUARD
+        is DirectClinicPolicy8616.FAST_PEEPHOLE
     )
 
 

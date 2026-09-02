@@ -1,8 +1,9 @@
-"""Prune virtual SP pairs consumed by a materialized machine call.
+"""Prune SP execution carriers consumed by a materialized machine call.
 
 Layer: Types/Lowering.
 Responsibility: remove only the synthetic CALL stack-pointer decrement and
-dephi restore after a typed call expression has consumed that machine call.
+dephi restore, including their owned runtime-GP projection, after a typed call
+expression has consumed that machine call.
 Consumes alias, widening, and typed facts; it does not create those facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 This module uses exact callsite tags, physical SP identity, SSA identity, and
@@ -31,6 +32,8 @@ from ..semantics.expression_analysis import (
     VirtualValueIdentity8616,
     describe_virtual_value_identity_8616,
 )
+from .call_execution_frame_runtime import is_runtime_sp_call_decrement_8616
+from .gp_register_state import runtime_gp_expression_view_8616
 from .physical_registers import PhysicalRegisterView8616, physical_register_view_8616
 
 
@@ -157,6 +160,26 @@ def _identity_count_8616(
     return count
 
 
+def _direct_successor_contains_call_8616(
+    location: _AssignmentLocation8616,
+    call: CFunctionCall,
+) -> bool:
+    """Prove that one consumed call immediately follows its SP carrier."""
+    statements = location.container.statements
+    try:
+        index = next(
+            idx for idx, statement in enumerate(statements) if statement is location.statement
+        )
+    except StopIteration:
+        return False
+    if index + 1 >= len(statements):
+        return False
+    successor = statements[index + 1]
+    return successor is call or any(
+        node is call for node in _iter_c_nodes_deep_8616(successor)
+    )
+
+
 def _result_8616(
     status: CallExecutionFrameCarrierStatus8616,
     *,
@@ -189,7 +212,7 @@ def prune_consumed_call_execution_frame_carriers_8616(
     callsite_addr: int,
     return_frame_width: int,
 ) -> CallExecutionFrameCarrierResult8616:
-    """Delete one exact virtual SP decrement/restore pair for ``call``."""
+    """Delete one exact virtual or runtime-GP SP carrier for ``call``."""
     boundary = cast(_CodegenSurface8616, codegen)
     try:
         root = boundary.cfunc.statements
@@ -198,16 +221,57 @@ def prune_consumed_call_execution_frame_carriers_8616(
         return _result_8616(CallExecutionFrameCarrierStatus8616.NOT_APPLICABLE)
     sp_view = PhysicalRegisterView8616(sp_offset, sp_size)
     locations = _locations_8616(root)
-    raw_locations = tuple(
+    virtual_raw_locations = tuple(
         location
         for location in locations
         if location.assignment.tags.get("ins_addr") == callsite_addr
         and isinstance(location.assignment.rhs, CBinaryOp)
         and location.assignment.rhs.op == "Sub"
     )
-    raw_count = len(raw_locations)
+    runtime_raw_locations = tuple(
+        location
+        for location in locations
+        if location.assignment.tags.get("ins_addr") == callsite_addr
+        and (view := runtime_gp_expression_view_8616(location.assignment.lhs))
+        is not None
+        and view.parent_name == "esp"
+        and view.width == 4
+    )
+    raw_count = len(virtual_raw_locations) + len(runtime_raw_locations)
     if raw_count == 0:
         return _result_8616(CallExecutionFrameCarrierStatus8616.NOT_APPLICABLE)
+
+    if runtime_raw_locations:
+        normalized_runtime = tuple(
+            location
+            for location in runtime_raw_locations
+            if is_runtime_sp_call_decrement_8616(
+                location.assignment,
+                return_frame_width,
+            )
+        )
+        if not (
+            len(runtime_raw_locations) == 1
+            and not virtual_raw_locations
+            and len(normalized_runtime) == 1
+            and sum(1 for node in _iter_c_nodes_deep_8616(root) if node is call) == 1
+            and _direct_successor_contains_call_8616(normalized_runtime[0], call)
+        ):
+            return _result_8616(
+                CallExecutionFrameCarrierStatus8616.REFUSED,
+                raw=raw_count,
+                normalized=len(normalized_runtime),
+            )
+        location = normalized_runtime[0]
+        location.container.statements.remove(location.statement)
+        return _result_8616(
+            CallExecutionFrameCarrierStatus8616.MATERIALIZED,
+            raw=1,
+            normalized=1,
+            classified=1,
+            materialized=1,
+            removed=1,
+        )
 
     normalized: list[
         tuple[
@@ -216,7 +280,7 @@ def prune_consumed_call_execution_frame_carriers_8616(
             VirtualValueIdentity8616,
         ]
     ] = []
-    for location in raw_locations:
+    for location in virtual_raw_locations:
         assignment = location.assignment
         rhs = cast(CBinaryOp, assignment.rhs)
         decrement = rhs.rhs

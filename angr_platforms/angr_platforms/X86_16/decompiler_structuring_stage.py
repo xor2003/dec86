@@ -195,6 +195,9 @@ from .structuring.direct_stack_move_branches import (
     materialize_direct_stack_move_branch_ownership_8616,
     place_direct_stack_move_assignment_8616,
 )
+from .structuring.direct_stack_move_linear_prefixes import (
+    place_direct_stack_move_linear_prefix_assignment_8616,
+)
 from .structuring.direct_stack_move_loop_entries import (
     materialize_direct_stack_move_loop_entry_ownership_8616,
     place_direct_stack_move_loop_entry_assignment_8616,
@@ -2148,7 +2151,14 @@ def _bind_direct_stack_move_branch_ownership_8616(
     ) -> bool:
         """Place one Lowering-built stack move at its structured CFG owner."""
         return bool(
-            place_direct_stack_move_assignment_8616(
+            place_direct_stack_move_linear_prefix_assignment_8616(
+                project,
+                codegen,
+                function,
+                move_fact,
+                assignment,
+            )
+            or place_direct_stack_move_assignment_8616(
                 project,
                 codegen,
                 function,

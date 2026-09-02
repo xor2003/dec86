@@ -141,9 +141,11 @@ from .lowering.call_argument_shape import (
     reconcile_materialized_call_argument_shape_8616,
 )
 from .lowering.call_argument_stack_sources import (
+    call_argument_source_requires_exact_address_identity_8616,
     call_argument_stack_variable_offset_8616,
     containing_stack_cvariable_8616,
     iter_stack_cvariable_candidates_8616,
+    materialize_call_argument_stack_cvariable_8616,
     outgoing_call_stack_carrier_offset_8616,
 )
 from .lowering.function_pointer_parameters import materialize_function_pointer_parameters_8616
@@ -161,9 +163,6 @@ from .lowering.segmented_global_loads import (
     _collect_synthetic_direct_global_symbol_refs_8616,
     _make_direct_global_symbol_expr_8616,
     _merge_direct_global_symbol_refs_8616,
-)
-from .lowering.stack_lowering_from_facts import (
-    materialize_stack_cvar_at_offset_from_facts_8616 as _materialize_stack_cvar_at_offset_from_facts_8616,
 )
 from .lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
@@ -6302,28 +6301,25 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         if existing_synthetic is not None:
             return _clone_c_ast_tree(existing_synthetic)
 
-        def _register_synthetic_stack_cvar(name: str, variable_type: StructuredAstValue) -> StructuredAstValue:
-            cvar = _materialize_stack_cvar_at_offset_from_facts_8616(codegen, offset, max(size_hint, 1))
-            variable = getattr(cvar, "variable", None)
+        def _register_synthetic_stack_cvar(
+            name: str,
+            variable_type: StructuredAstValue,
+        ) -> StructuredAstValue | None:
+            cvar = materialize_call_argument_stack_cvariable_8616(
+                codegen,
+                synthetic_stack_cvars,
+                machine_bp_offset=offset,
+                size_hint=max(size_hint, 1),
+                preferred_name=name,
+            )
+            if not isinstance(cvar, structured_c.CVariable):
+                return None
+            variable = cvar.variable
             bound_variable_type = variable_type or _word_type_8616(project)
-            if not isinstance(cvar, structured_c.CVariable) or not isinstance(variable, SimStackVariable):
-                variable = SimStackVariable(
-                    offset,
-                    max(size_hint, 1),
-                    base="bp",
-                    name=name,
-                    region=getattr(getattr(codegen, "cfunc", None), "addr", None),
-                )
-                cvar = structured_c.CVariable(
-                    variable,
-                    variable_type=bound_variable_type,
-                    codegen=codegen,
-                )
-            else:
-                if getattr(variable, "name", None) != name:
-                    variable.name = name
-                if getattr(cvar, "variable_type", None) is None:
-                    cvar.variable_type = bound_variable_type
+            if variable.name != name:
+                variable.name = name
+            if cvar.variable_type is None:
+                cvar.variable_type = bound_variable_type
             synthetic_stack_cvars[offset] = cvar
             variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
             if isinstance(variables_in_use, dict):
@@ -6397,8 +6393,11 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         variable = getattr(expr, "variable", None)
         if not isinstance(variable, SimStackVariable):
             return expr
-        if variable.base != "bp" or variable.offset != offset:
-            return expr
+            if (
+                variable.base != "bp"
+                or call_argument_stack_variable_offset_8616(codegen, expr) != offset
+            ):
+                return expr
         unified = getattr(expr, "unified_variable", None)
         if unified is None:
             return expr
@@ -8006,9 +8005,11 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             )
             return pointer_expr
         if source_kind == "bp_addr" and isinstance(source_value, int):
-            expr = _stack_cvar_for_offset(source_value, allow_best_match=False)
-            if expr is None:
-                expr = _stack_cvar_for_offset(source_value, allow_best_match=True)
+            expr = _stack_cvar_for_offset(
+                source_value,
+                size_hint=1,
+                allow_best_match=False,
+            )
             if expr is None:
                 return None
             expr = _sanitize_exact_negative_bp_call_arg_cvar_8616(expr, source_value)
@@ -8019,9 +8020,11 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             scale = source[3]
             if not isinstance(index_reg, str) or not isinstance(scale, int):
                 return None
-            expr = _stack_cvar_for_offset(source_value, allow_best_match=False)
-            if expr is None:
-                expr = _stack_cvar_for_offset(source_value, allow_best_match=True)
+            expr = _stack_cvar_for_offset(
+                source_value,
+                size_hint=1,
+                allow_best_match=False,
+            )
             index_source = source[4] if len(source) >= 5 and isinstance(source[4], tuple) else None
             index_expr = (
                 _direct_expr_from_push_source_8616(
@@ -8722,7 +8725,9 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         if isinstance(node, structured_c.CVariable):
             variable = node.variable
             if isinstance(variable, SimStackVariable):
-                offset = variable.offset
+                offset = call_argument_stack_variable_offset_8616(codegen, node)
+                if offset is None:
+                    offset = variable.offset
                 return (0, 1, ("stack", int(offset))) if isinstance(offset, int) else None
             return None
         if isinstance(node, CBinaryOp):
@@ -8808,6 +8813,8 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 if isinstance(variable, SimMemoryVariable):
                     addr = variable.addr
                     return (int(addr) & 0xFFFF, 0, None) if isinstance(addr, int) else None
+                if isinstance(variable, SimStackVariable):
+                    return _linear_offset_key_8616(operand)
         return _linear_offset_key_8616(node)
 
     def _pointer_offset_keys_match_8616(
@@ -8820,6 +8827,39 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         actual_keys = tuple(_pointer_offset_key_8616(arg) for arg in actual_args)
         expected_keys = tuple(_pointer_offset_key_8616(arg) for arg in expected_args)
         return all(key is not None for key in actual_keys) and actual_keys == expected_keys
+
+    def _stack_address_base_offset_8616(node: StructuredAstValue) -> int | None:
+        """Return one pointer expression's proven machine-BP base coordinate."""
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if isinstance(node, structured_c.CVariable):
+            offset: object = call_argument_stack_variable_offset_8616(codegen, node)
+            return offset if isinstance(offset, int) and not isinstance(offset, bool) else None
+        if isinstance(node, CIndexedVariable):
+            return _stack_address_base_offset_8616(node.variable)
+        if isinstance(node, CUnaryOp) and node.op in {"Reference", "AddressOf"}:
+            return _stack_address_base_offset_8616(node.operand)
+        if isinstance(node, CBinaryOp) and node.op in {"Add", "Sub"}:
+            lhs_offset = _stack_address_base_offset_8616(node.lhs)
+            if lhs_offset is not None:
+                return lhs_offset
+            if node.op == "Add":
+                return _stack_address_base_offset_8616(node.rhs)
+        return None
+
+    def _exact_stack_address_source_mismatch_8616(
+        actual_args: tuple[StructuredAstValue, ...],
+        ordered_sources: tuple[StructuredAstValue, ...] | list[StructuredAstValue],
+    ) -> bool:
+        """Return whether typed stack-address evidence rejects an existing argument."""
+        for actual_arg, source in zip(actual_args, ordered_sources, strict=False):
+            if not call_argument_source_requires_exact_address_identity_8616(source):
+                continue
+            if not isinstance(source, tuple) or len(source) < 2 or not isinstance(source[1], int):
+                continue
+            if _stack_address_base_offset_8616(actual_arg) != int(source[1]):
+                return True
+        return False
 
     def _arg_contains_runtime_segment_access_8616(node: StructuredAstValue) -> bool:
         for raw in (node, *_iter_c_nodes_deep_8616(node)):
@@ -9637,7 +9677,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         if transaction.arguments_accepted:
                             deleted = _delete_consumed_return_call_refs_8616(consumed_return_call_indices)
                             return transaction.changed or deleted
-                        return transaction.changed
+                        return bool(transaction.changed)
         preserve_return_register_indices: set[int] = set()
         ordered_push_sources_for_args: tuple[StructuredAstValue, ...] = ()
         if isinstance(push_arg_sources, tuple) and len(push_arg_sources) == len(args):
@@ -9694,12 +9734,14 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 return False
         if tuple(normalized_args) == args:
             return False
-        return _set_materialized_call_args(
-            call,
-            normalized_args,
-            call_name=call_name,
-            force_replace=force_replace_args,
-        ).changed
+        return bool(
+            _set_materialized_call_args(
+                call,
+                normalized_args,
+                call_name=call_name,
+                force_replace=force_replace_args,
+            ).changed
+        )
 
     def _normalize_near_function_pointer_call_arg_8616(arg: StructuredAstValue) -> StructuredAstValue:
         node = arg
@@ -10057,10 +10099,18 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             _argument_matches_register_push_source_8616(argument, source)
             for argument, source in zip(args_after, ordered_summary_sources, strict=True)
         )
+        exact_stack_address_mismatch = _exact_stack_address_source_mismatch_8616(
+            args_before,
+            ordered_summary_sources,
+        )
         if args_before and (not force_replace):
             before_score = sum(_arg_semantic_quality_8616(call_name, idx, arg) for idx, arg in enumerate(args_before))
             after_score = sum(_arg_semantic_quality_8616(call_name, idx, arg) for idx, arg in enumerate(args_after))
-            if after_score < before_score and not exact_register_args:
+            if (
+                after_score < before_score
+                and not exact_register_args
+                and not exact_stack_address_mismatch
+            ):
                 if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
                     log.warning(
                         "[call-materialized-skip] function=%#x target=%s before_score=%d after_score=%d args_before=%s args_after=%s",
@@ -10175,23 +10225,22 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             node = expr
             while isinstance(node, CTypeCast):
                 node = node.expr
-            if not isinstance(node, CUnaryOp) or getattr(node, "op", None) not in {"Reference", "AddressOf"}:
+            if not isinstance(node, CUnaryOp) or node.op not in {"Reference", "AddressOf"}:
                 return None
-            operand = getattr(node, "operand", None)
+            operand = node.operand
             while isinstance(operand, CTypeCast):
                 operand = operand.expr
-            variable = getattr(operand, "variable", None)
-            offset = getattr(variable, "offset", None)
-            return int(offset) if isinstance(variable, SimStackVariable) and isinstance(offset, int) else None
+            offset: object = call_argument_stack_variable_offset_8616(codegen, operand)
+            return offset if isinstance(offset, int) and not isinstance(offset, bool) else None
 
         def _guard_stack_address_offset_arg_base_8616(expr: StructuredAstValue) -> int | None:
             node = expr
             while isinstance(node, CTypeCast):
                 node = node.expr
-            if not isinstance(node, CBinaryOp) or getattr(node, "op", None) not in {"Add", "Sub"}:
+            if not isinstance(node, CBinaryOp) or node.op not in {"Add", "Sub"}:
                 return None
-            lhs = getattr(node, "lhs", None)
-            rhs = getattr(node, "rhs", None)
+            lhs = node.lhs
+            rhs = node.rhs
             lhs_offset = _guard_stack_address_arg_offset_8616(lhs)
             if lhs_offset is not None:
                 return lhs_offset
@@ -10404,6 +10453,18 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 )
                 if normalized_expected_args is not None:
                     expected_args = normalized_expected_args
+                exact_stack_address_mismatch = _exact_stack_address_source_mismatch_8616(
+                    args,
+                    ordered_sources,
+                )
+                if exact_stack_address_mismatch:
+                    if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+                        log.warning(
+                            "[call-remat] function=%#x target=%s reason=exact-stack-address-source-mismatch",
+                            getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                            getattr(call, "callee_target", None),
+                        )
+                    return True
                 if _pointer_offset_keys_match_8616(args, tuple(expected_args)):
                     if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
                         log.warning(
@@ -10425,6 +10486,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         )
                         if (
                             actual_score > expected_score
+                            and not exact_stack_address_mismatch
                             and not any(_node_contains_placeholder_stack_8616(arg) for arg in args)
                             and not any(_expr_contains_plain_register_uses(arg) for arg in args)
                         ):

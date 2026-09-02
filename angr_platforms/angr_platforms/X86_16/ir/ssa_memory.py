@@ -13,6 +13,7 @@ from __future__ import annotations
 from .core import IRAddress, IRAtom, IRCallStackEffect8616, IRCondition, IRInstr, IRRefusal
 from .logical_memory_contracts import IRLogicalMemoryArtifact8616
 from .ssa import SSABlock
+from .ssa_memory_call_liveness import call_clobbered_load_ranges_8616
 from .ssa_memory_contracts import (
     MemoryRangeKey8616,
     SSACallStackEffectSite8616,
@@ -99,11 +100,12 @@ def build_x86_16_function_memory_ssa(
         for instr_index, instruction in enumerate(block.instrs)
         if instruction.op == "CALL"
     )
-    call_refused_ranges = {
-        key
-        for key, address in range_addresses.items()
-        if any(not site.effect.preserves(address) for site in call_effects)
-    }
+    call_refused_ranges = call_clobbered_load_ranges_8616(
+        blocks,
+        predecessor_map,
+        range_addresses,
+        cells_by_range,
+    )
     refused_ranges = close_refused_stack_ranges_8616(
         set(range_addresses) if not layout.complete else set(call_refused_ranges),
         cells_by_range,

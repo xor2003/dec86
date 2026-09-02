@@ -25,6 +25,9 @@ from angr_platforms.X86_16.callsite_summary import (
 )
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.lowering.call_output_stack_object_replay import (
+    reapply_call_output_stack_object_types_8616,
+)
 from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     lower_call_output_stack_fields_in_condition_8616,
     lower_wide_call_return_condition_chain_8616,
@@ -296,7 +299,10 @@ def test_call_output_stack_fields_use_typed_inventory_before_ast_arguments_exist
 
 
 def test_call_output_stack_fields_replay_proven_boundary_after_ast_regeneration():
-    codegen, condition, carrier_variables = _fixture(include_array_boundary=True)
+    codegen, condition, carrier_variables = _fixture(
+        include_array_boundary=True,
+        entry_sp_bias=-2,
+    )
     conditions = (_condition(-94, 0x103F), _condition(-98, 0x1048))
 
     initial = lower_call_output_stack_fields_in_condition_8616(
@@ -329,18 +335,18 @@ def test_call_output_stack_fields_replay_proven_boundary_after_ast_regeneration(
         regenerated,
         conditions,
     )
-    idempotent = lower_call_output_stack_fields_in_condition_8616(
-        codegen,
-        replayed.expression,
-        conditions,
-    )
+    base = replayed.facts[0].base_cvar
+    base.variable_type = SimTypeShort(False)
+    del codegen._inertia_stack_variable_coordinate_registry_8616
+    type_replayed = reapply_call_output_stack_object_types_8616(codegen)
 
     assert initial.stats.materialized_count == 2
     assert replayed.stats.classified_fact_count == 2
     assert replayed.stats.materialized_count == 2
     assert isinstance(replayed.expression.lhs.lhs, CVariableField)
     assert isinstance(replayed.expression.rhs.lhs, CVariableField)
-    assert idempotent.stats.materialized_count == 2
+    assert type_replayed is True
+    assert isinstance(base.variable_type, SimStruct)
 
 
 def test_call_output_stack_fields_refuse_persisted_fact_without_exact_callsite():
@@ -496,7 +502,10 @@ def test_wide_call_return_condition_joins_typed_dx_ax_and_stack_pair(cast_high_v
     assert result.consumed_callsite is codegen._inertia_callsite_summaries[id(call)]
     assert isinstance(result.expression.lhs.type, SimTypeLong)
     assert result.expression.lhs.type.signed is True
-    assert result.expression.rhs is wide
+    assert isinstance(result.expression.rhs, CTypeCast)
+    assert result.expression.rhs.expr is wide
+    assert isinstance(result.expression.rhs.type, SimTypeLong)
+    assert result.expression.rhs.type.signed is True
     assert isinstance(wide.variable_type, SimTypeLong)
     assert wide.variable_type.signed is True
     assert result.stats.raw_fact_count == 1
@@ -540,7 +549,8 @@ def test_wide_call_return_condition_consumes_typed_low_word_projection():
 
     assert result.stats.materialized_count == 1
     assert result.stats.failure_count == 0
-    assert result.expression.rhs is wide
+    assert isinstance(result.expression.rhs, CTypeCast)
+    assert result.expression.rhs.expr is wide
     assert result.consumed_call is call
 
 
@@ -612,7 +622,8 @@ def test_wide_call_return_condition_joins_negated_non_break_form_with_wide_low_v
     assert result.expression.op == "CmpGT"
     assert isinstance(result.expression.lhs, CTypeCast)
     assert result.expression.lhs.expr is call
-    assert result.expression.rhs is wide
+    assert isinstance(result.expression.rhs, CTypeCast)
+    assert result.expression.rhs.expr is wide
     assert result.stats.materialized_count == 1
     assert result.stats.failure_count == 0
 

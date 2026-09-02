@@ -55,6 +55,9 @@ from ..compiler_helpers import (
     identify_x86_16_compiler_helper_at_8616,
     is_x86_16_registered_stack_probe_target_8616,
 )
+from .call_output_stack_object_replay import (
+    reapply_call_output_stack_object_types_8616,
+)
 from .stack_frame_projection import entry_sp_offset_for_machine_bp_range_8616
 from .stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
@@ -1212,7 +1215,7 @@ def reapply_stack_aggregate_object_facts_8616(codegen: object) -> bool:
             "classified stack aggregate object facts were not replayed",
             layer="types_lowering:stack_aggregate_objects",
         )
-    return changed
+    return reapply_call_output_stack_object_types_8616(codegen) or changed
 
 
 def _integer_type_for_width(

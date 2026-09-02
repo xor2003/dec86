@@ -481,23 +481,13 @@ def materialize_typed_condition_stack_operand_8616(
 
     current_type = declaration.variable_type
     target_type = _condition_integer_type(codegen, size, signed=signed)
-    condition_local_view = (
-        prefer_signed_local_storage
-        and signed
-        and base == "bp"
-        and offset < 0
-        and isinstance(current_type, (SimTypeChar, SimTypeShort, SimTypeLong))
-        and not bool(current_type.signed)
-    )
     view = structured_c.CVariable(
         declaration.variable,
         unified_variable=declaration.unified_variable,
-        variable_type=target_type if condition_local_view else current_type or target_type,
+        variable_type=current_type or target_type,
         codegen=codegen,
         tags=dict(tags or declaration.tags),
     )
-    if condition_local_view:
-        return view
     current_signed = current_type.signed if isinstance(current_type, (SimTypeChar, SimTypeShort, SimTypeLong)) else None
     if current_signed is None or bool(current_signed) == signed:
         return view

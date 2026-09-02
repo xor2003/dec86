@@ -13,13 +13,16 @@ from rendered C, assembly text, symbol names, or compiler-specific shapes.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..callsite_summary import CallsitePushSourceKind8616
+from .stack_frame_projection import entry_sp_offset_for_machine_bp_range_8616
+from .stack_lowering_from_facts import materialize_stack_cvar_at_offset_from_facts_8616
 from .stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
     stack_cvar_for_machine_bp_range_8616,
@@ -137,6 +140,67 @@ def containing_stack_cvariable_8616(
             best_score = score
 
     return best
+
+
+def call_argument_source_requires_exact_address_identity_8616(source: object) -> bool:
+    """Return whether one typed push source requires exact stack-address identity."""
+    if not isinstance(source, tuple) or not source or not isinstance(source[0], str):
+        return False
+    try:
+        kind = CallsitePushSourceKind8616(source[0])
+    except ValueError:
+        return False
+    return kind in {
+        CallsitePushSourceKind8616.BP_ADDRESS,
+        CallsitePushSourceKind8616.BP_INDEX_ADDRESS,
+    }
+
+
+def materialize_call_argument_stack_cvariable_8616(
+    codegen: object,
+    synthetic_stack_cvars: MutableMapping[int, CVariable],
+    *,
+    machine_bp_offset: int,
+    size_hint: int = 1,
+    preferred_name: str | None = None,
+) -> CVariable | None:
+    """Resolve or materialize one call source through a proven stack coordinate.
+
+    Callsite summaries use machine ``SS:BP`` displacements while angr stores
+    ``SimStackVariable.offset`` in entry-SP coordinates. A missing projection
+    therefore refuses materialization instead of treating equal integers from
+    those two domains as the same storage slot.
+    """
+    minimum_size = max(size_hint, 1)
+    existing = containing_stack_cvariable_8616(
+        codegen,
+        synthetic_stack_cvars,
+        offset=machine_bp_offset,
+        size_hint=minimum_size,
+    )
+    if existing is not None:
+        synthetic_stack_cvars[machine_bp_offset] = existing
+        return existing
+    entry_sp_offset = entry_sp_offset_for_machine_bp_range_8616(
+        codegen,
+        machine_bp_offset,
+        minimum_size,
+    )
+    if entry_sp_offset is None:
+        return None
+    materialized = materialize_stack_cvar_at_offset_from_facts_8616(
+        codegen,
+        entry_sp_offset,
+        minimum_size,
+        machine_bp_offset=machine_bp_offset,
+        preferred_name=preferred_name,
+    )
+    if not isinstance(materialized, CVariable) or not isinstance(
+        materialized.variable, SimStackVariable
+    ):
+        return None
+    synthetic_stack_cvars[machine_bp_offset] = materialized
+    return materialized
 
 
 def outgoing_call_stack_carrier_offset_8616(

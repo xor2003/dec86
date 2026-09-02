@@ -74,6 +74,7 @@ from ..semantics.terminal_call_paths import (
 )
 from .expression_substitution import unique_tagged_conditions_8616
 from .multi_arm_return_chains import multi_arm_wide_return_obligation_count_8616
+from .return_chain_condition_selection import select_cfg_return_condition_8616
 from .selector_return_projection import (
     assess_selector_return_projection_8616,
     require_selector_return_projection_8616,
@@ -2831,6 +2832,7 @@ def ordered_conditional_return_pairs_from_cfg_8616(
     jcc_count = 0
     return_target_count = 0
     decoded_count = 0
+    selection_verdicts: list[str] = []
     structured_conditions = unique_tagged_conditions_8616(
         codegen.cfunc.statements,
         callbacks.iter_c_nodes_deep,
@@ -2852,13 +2854,27 @@ def ordered_conditional_return_pairs_from_cfg_8616(
         decoded_count += 1
         tags = {"ins_addr": insn_addr, "vex_block_addr": int(block_addr)}
         condition_call_addr = callbacks.last_call_addr_before_jcc(project, codegen, insn_addr)
+        decoded_expr = callbacks.decoded_condition_expr(project, codegen, decoded, tags)
         expr = structured_conditions.get((insn_addr, int(block_addr)))
         if expr is not None and condition_call_addr is not None:
             call_addrs = selector_condition_call_addrs_8616(((expr,),), callbacks.iter_c_nodes_deep)
             if condition_call_addr not in call_addrs:
                 expr = None
         if expr is None:
-            expr = callbacks.decoded_condition_expr(project, codegen, decoded, tags)
+            expr = decoded_expr
+        elif decoded_expr is not None:
+            branch_key = (insn_addr, int(block_addr))
+            selection = select_cfg_return_condition_8616(
+                codegen,
+                expr,
+                decoded_expr,
+                same_branch_proven=(
+                    callbacks.condition_tags(expr) == branch_key
+                    and callbacks.condition_tags(decoded_expr) == branch_key
+                ),
+            )
+            selection_verdicts.append(selection.verdict.value)
+            expr = selection.condition
         if expr is None:
             continue
         if condition_call_addr is not None:
@@ -2866,12 +2882,13 @@ def ordered_conditional_return_pairs_from_cfg_8616(
         pairs.append((expr, int(value)))
     if debug:
         log.warning(
-            "[cfg-return-chain] addr=%r jcc=%d return_targets=%d decoded=%d pairs=%d",
+            "[cfg-return-chain] addr=%r jcc=%d return_targets=%d decoded=%d pairs=%d selections=%r",
             getattr(codegen.cfunc, "addr", None),
             jcc_count,
             return_target_count,
             decoded_count,
             len(pairs),
+            tuple(selection_verdicts),
         )
     return pairs
 

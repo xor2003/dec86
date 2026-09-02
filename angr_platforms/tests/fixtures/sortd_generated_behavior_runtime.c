@@ -6,6 +6,7 @@ uint16_t inertia_cs;
 uint16_t inertia_ds;
 uint16_t inertia_es;
 uint16_t inertia_ss;
+unsigned long inertia_esi;
 
 unsigned long fake_clock;
 int clock_calls;
@@ -186,6 +187,7 @@ void reset_runtime_observation(void)
     display_cursor_calls = 0;
     config_calls = 0;
     key_index = 0;
+    inertia_esi = 0;
     memset(colors, 0, sizeof(colors));
     memset(output_ports, 0, sizeof(output_ports));
     memset(output_values, 0, sizeof(output_values));

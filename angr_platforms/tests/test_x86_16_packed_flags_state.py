@@ -39,8 +39,8 @@ def test_packed_preservation_matches_rebased_instruction_address() -> None:
     assert artifact.covers_packed_preservation_8616(0x1056)
 
 
-def test_initializes_incoming_identity_of_proven_flags_update(monkeypatch) -> None:
-    """A preservation-covered packed update receives one explicit FLAGS live-in."""
+def test_packed_flags_live_in_expires_only_after_its_consumer(monkeypatch) -> None:
+    """DCE retains a consumed FLAGS live-in and removes its dead chain atomically."""
     codegen = _Codegen(project=SimpleNamespace(arch=Arch86_16()))
     incoming_flags = structured_c.CVariable(
         SimRegisterVariable(36, 2, ident="ir_9", region=0x100),
@@ -87,9 +87,28 @@ def test_initializes_incoming_identity_of_proven_flags_update(monkeypatch) -> No
     assert codegen._inertia_packed_flags_state_live_ins_8616 == (initializer.lhs, "ir_9")
     assert codegen.cfunc.statements.statements[1] is update
 
+    condition = structured_c.CIfElse(
+        [
+            (
+                structured_c.CBinaryOp(
+                    "And",
+                    outgoing_flags,
+                    structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                structured_c.CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(condition)
+    assert _dead_code_elimination_8616(codegen) is False
+    assert codegen.cfunc.statements.statements == [initializer, update, condition]
+
+    codegen.cfunc.statements.statements.remove(condition)
     codegen.cfunc.statements.statements.remove(update)
-    _dead_code_elimination_8616(codegen)
-    assert codegen.cfunc.statements.statements == [initializer]
+    assert _dead_code_elimination_8616(codegen) is True
+    assert codegen.cfunc.statements.statements == []
 
 
 def test_initializes_dirty_ssa_flags_identity_from_physical_view(monkeypatch) -> None:
