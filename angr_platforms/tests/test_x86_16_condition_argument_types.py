@@ -14,6 +14,7 @@ from angr_platforms.X86_16.lowering.authoritative_function_prototypes import (
     capture_authoritative_function_prototype_8616,
 )
 from angr_platforms.X86_16.lowering.condition_argument_type_facts import (
+    proven_recorded_wide_condition_stack_pair_8616,
     record_wide_condition_argument_type_evidence_8616,
 )
 from angr_platforms.X86_16.lowering.condition_argument_types import (
@@ -134,6 +135,23 @@ def test_signed_wide_condition_overrides_unsigned_low_word_fragments() -> None:
     )
     assert authoritative is not None
     assert [argument.signed for argument in authoritative.args] == [True, True]
+
+
+def test_recorded_wide_condition_preserves_exact_stack_pair_proof() -> None:
+    """A recovered wide condition remains proof after C declarations rebuild."""
+    _project, codegen = _fixture(signed=True)
+    record_wide_condition_argument_type_evidence_8616(codegen, _wide_condition("slt"))
+
+    assert proven_recorded_wide_condition_stack_pair_8616(
+        codegen,
+        IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+        IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+    )
+    assert not proven_recorded_wide_condition_stack_pair_8616(
+        codegen,
+        IRValue(MemSpace.SS, name="bp", offset=8, size=2),
+        IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+    )
 
 
 def test_conflicting_raw_word_facts_refuse_argument_type_change() -> None:

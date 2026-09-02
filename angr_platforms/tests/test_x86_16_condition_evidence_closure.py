@@ -13,6 +13,9 @@ from angr.sim_type import SimTypeShort
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.structuring.condition_chain_provenance import (
+    bind_condition_chain_provenance_8616,
+)
 from angr_platforms.X86_16.structuring.condition_evidence_closure import (
     classify_condition_evidence_closure_8616,
 )
@@ -80,6 +83,29 @@ def test_condition_evidence_closure_accepts_materialized_typed_branch() -> None:
     )
 
     assert result.complete is True
+
+
+def test_condition_evidence_closure_accepts_complete_composite_provenance() -> None:
+    """One compound AST guard closes every exact JCC it consumed."""
+    first = _condition(0x101B0, 0x101A9)
+    second = _condition(0x101C0, 0x101B2)
+    owner = _if_node(
+        instruction_addr=first.src_insn,
+        block_addr=first.block_addr,
+        materialized=True,
+    )
+    expression = owner.condition_and_nodes[0][0]
+    assert bind_condition_chain_provenance_8616(expression, (first, second)) is not None
+    root = CStatements([owner], codegen=_codegen())
+
+    result = classify_condition_evidence_closure_8616(
+        root,
+        (first, second),
+        {0x101A9: (0x101B2, 0x101B5), 0x101B2: (0x101C2, 0x101C5)},
+    )
+
+    assert result.complete is True
+    assert result.materialized_keys == result.required_keys
 
 
 def test_condition_evidence_closure_refuses_untyped_binary_cfg_owner() -> None:

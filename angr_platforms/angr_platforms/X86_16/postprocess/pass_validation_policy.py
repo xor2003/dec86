@@ -296,6 +296,7 @@ PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616: frozenset[str] = frozenset(
         "_materialize_unconsumed_loop_break_jcc_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
+        "_prune_unused_unnamed_memory_declarations_8616",
         "_dead_code_elimination_after_callsite_stack_arguments_8616",
         "_dead_code_elimination_after_flag_prune_8616",
         "_dead_code_elimination_after_stable_stack_final_8616",

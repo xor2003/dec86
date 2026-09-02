@@ -58,10 +58,10 @@ def _const(codegen, value: int):
     return structured_c.CConstant(value, SimTypeShort(False), codegen=codegen)
 
 
-def test_prune_adjacent_temporary_copy_collapses_pure_rhs():
+def test_prune_adjacent_dead_register_copy_collapses_pure_rhs():
     codegen = _mk_codegen_with_statements([])
-    temp = _cvar(codegen, "vvar_195", 0)
-    dst = _cvar(codegen, "ch", 2)
+    temp = _cvar(codegen, "cx", 0)
+    dst = _stack_cvar(codegen, "local_0", 0)
     first = structured_c.CAssignment(temp, _const(codegen, 75), codegen=codegen)
     second = structured_c.CAssignment(dst, temp, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([first, second], codegen=codegen)
@@ -73,11 +73,11 @@ def test_prune_adjacent_temporary_copy_collapses_pure_rhs():
     assert statements[0].rhs.value == 75
 
 
-def test_prune_adjacent_temporary_copy_matches_same_emitted_temp_name():
+def test_prune_adjacent_dead_register_copy_matches_physical_identity():
     codegen = _mk_codegen_with_statements([])
-    temp_def = _cvar(codegen, "vvar_195", 0)
-    temp_use = _cvar(codegen, "vvar_195", 4)
-    dst = _cvar(codegen, "ch", 2)
+    temp_def = _cvar(codegen, "cx", 0)
+    temp_use = _cvar(codegen, "cx", 0)
+    dst = _stack_cvar(codegen, "local_0", 0)
     first = structured_c.CAssignment(temp_def, _const(codegen, 75), codegen=codegen)
     second = structured_c.CAssignment(dst, temp_use, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([first, second], codegen=codegen)
@@ -308,13 +308,13 @@ def test_finalize_late_ast_cleanup_preserves_nonempty_guard():
     )
 
 
-def test_prune_adjacent_temporary_copy_refuses_when_temp_used_later():
+def test_prune_adjacent_dead_register_copy_refuses_when_register_used_later():
     codegen = _mk_codegen_with_statements([])
-    temp_def = _cvar(codegen, "vvar_195", 0)
-    temp_use = _cvar(codegen, "vvar_195", 4)
-    temp_later = _cvar(codegen, "vvar_195", 6)
-    dst = _cvar(codegen, "ch", 2)
-    later_dst = _cvar(codegen, "other", 8)
+    temp_def = _cvar(codegen, "cx", 0)
+    temp_use = _cvar(codegen, "cx", 0)
+    temp_later = _cvar(codegen, "cx", 0)
+    dst = _cvar(codegen, "bx", 2)
+    later_dst = _cvar(codegen, "dx", 4)
     first = structured_c.CAssignment(temp_def, _const(codegen, 75), codegen=codegen)
     second = structured_c.CAssignment(dst, temp_use, codegen=codegen)
     later = structured_c.CAssignment(later_dst, temp_later, codegen=codegen)

@@ -83,14 +83,26 @@ def test_sortd_heapsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Pat
     assert "uninitialized-read:segment-carrier" not in combined
     # SORTDEMO.C uses ``i = 1; i < cRow``.  Keep the direct source-oriented
     # condition instead of pinning this gate to an older inverted-break render.
-    assert "for (local_2 = 1; g_0BA2 > local_2;" in result.stdout
-    assert "for (local_2 = g_0BA2 - 1; local_2 > 0;" in result.stdout
-    assert "sub_109e8(local_2);" in result.stdout
-    assert "sub_107b8(&g_0B4C[0], &g_0B4C[local_2]);" in result.stdout
+    first_loop = re.search(
+        r"(?:for \(local_2 = 1; g_0BA2 > (?:\(short\))?local_2;|"
+        r"local_2 = 1;\s+while \(g_0BA2 > (?:\(short\))?local_2\))",
+        result.stdout,
+    )
+    assert first_loop is not None, result.stdout
+    second_loop = re.search(
+        r"local_2 = g_0BA2 - 1;\s+for \(; (?:\(short\))?local_2 > 0;",
+        result.stdout,
+    )
+    assert second_loop is not None, result.stdout
+    assert re.search(r"sub_109e8\((?:\(unsigned short\))?local_2\);", result.stdout)
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[0\], &g_0B4C\[(?:\(unsigned short\))?local_2\]\);",
+        result.stdout,
+    )
     assert "SEG_PTR(inertia_ds, 2892)" not in result.stdout
     assert "sub_10768(0, local_2);" in result.stdout
     assert re.search(r"^\s+sub_1075b\(", result.stdout, re.MULTILINE) is None
-    assert "sub_10a88(local_2 - 1);" in result.stdout
+    assert re.search(r"sub_10a88\((?:\(unsigned short\))?local_2 - 1\);", result.stdout)
 
 
 def test_sortd_shellsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Path) -> None:
@@ -119,8 +131,17 @@ def test_sortd_shellsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Pa
     )
     assert offset_loop is not None, result.stdout
     assert "SEG_U16(inertia_ds, 2978)" not in result.stdout
-    assert "sub_107b8(&g_0B4C[local_4], &g_0B4C[local_4 + local_2]);" in result.stdout
-    assert "sub_10768(local_4, local_4 + local_2);" in result.stdout
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?local_4\], "
+        r"&g_0B4C\[(?:\(unsigned short\))?local_4 \+ "
+        r"(?:\(unsigned short\))?local_2\]\);",
+        result.stdout,
+    )
+    assert re.search(
+        r"sub_10768\(local_4, (?:\(unsigned short\))?local_4 \+ "
+        r"(?:\(unsigned short\))?local_2\);",
+        result.stdout,
+    )
     assert "while (local_8);" in result.stdout
     assert "while (local_6);" not in result.stdout
     generated_c_marker = "/* == c == */"
@@ -258,13 +279,25 @@ def test_sortd_percolate_down_uses_canonical_shifted_global_view(
     signature = re.search(r"void sub_10a88\(short (?P<bound>[A-Za-z_]\w*)\)", result.stdout)
     assert signature is not None, result.stdout
     bound = signature.group("bound")
-    assert f"if (local_4 + 1 <= {bound})" in result.stdout
-    assert result.stdout.count(f"if (local_4 <= {bound})") == 1
+    assert re.search(
+        rf"if \((?:\(short\))?local_4 \+ 1 <= {re.escape(bound)}\)",
+        result.stdout,
+    )
+    assert len(
+        re.findall(
+            rf"if \((?:\(short\))?local_4 <= {re.escape(bound)}\)",
+            result.stdout,
+        )
+    ) == 1
     assert (
         "g_0B4C[local_4 + 1].field_0 > g_0B4C[local_4].field_0"
         in result.stdout
     )
-    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_4]);" in result.stdout
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?local_2\], "
+        r"&g_0B4C\[(?:\(unsigned short\))?local_4\]\);",
+        result.stdout,
+    )
     assert "g_0B4E" not in result.stdout
 
 
@@ -294,7 +327,11 @@ def test_sortd_percolate_up_sidecar_free_preserves_heap_updates_and_compiles(
     assert "whole-tail validation clean across 1 functions" in combined
     assert "g_0BAA += 1;" in result.stdout
     assert "g_0B4C[local_4].field_0 <= g_0B4C[local_2].field_0" in result.stdout
-    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_4]);" in result.stdout
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?local_2\], "
+        r"&g_0B4C\[(?:\(unsigned short\))?local_4\]\);",
+        result.stdout,
+    )
     assert "sub_10768(local_2, local_4);" in result.stdout
     assert "vvar_" not in result.stdout
     assert "stack_base" not in result.stdout

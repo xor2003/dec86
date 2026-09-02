@@ -10260,6 +10260,43 @@ def test_lower_runtime_segment_access_rewrites_scaled_pointer_arg_to_indexed_loa
     assert lowered.index is index_cvar
 
 
+def test_lower_runtime_segment_access_refines_provisional_pointer_pointee_from_exact_fact():
+    project, codegen = _project()
+    arg_var = SimStackVariable(6, 2, base="bp", name="dst", region=0x4010)
+    provisional_type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    arg_cvar = CVariable(arg_var, variable_type=provisional_type, codegen=codegen)
+    index_cvar = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.functy = SimTypeFunction(
+        [provisional_type], SimTypeShort(False), arg_names=["dst"]
+    ).with_arch(project.arch)
+    codegen._inertia_near_pointer_argument_facts_8616 = (
+        NearPointerArgumentFact8616(6, 0x4014, 0x4018, 1),
+    )
+    codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
+    codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
+    offset = CBinaryOp("Add", arg_cvar, index_cvar, codegen=codegen)
+    operand = _seg_linear(project, "ds", offset, codegen)
+    operand._type = SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
+
+    lowered = lower_runtime_segment_access_8616(
+        CUnaryOp("Dereference", operand, codegen=codegen),
+        target="portable-flat",
+    )
+
+    assert isinstance(lowered, CIndexedVariable), (
+        arg_cvar.variable_type,
+        codegen._inertia_near_pointer_argument_classified_offsets_8616,
+        codegen._inertia_near_pointer_argument_materialized_offsets_8616,
+    )
+    assert isinstance(arg_cvar.variable_type.pts_to, SimTypeChar)
+    assert isinstance(codegen.cfunc.functy.args[0].pts_to, SimTypeChar)
+
+
 def test_lower_runtime_segment_access_refuses_pointer_arg_with_wrong_index_scale():
     project, codegen = _project()
     arg_var = SimStackVariable(6, 2, base="bp", name="argv", region=0x4010)

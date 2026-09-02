@@ -60,5 +60,11 @@ def test_sortd_indexed_aggregate_load_and_store_recompile_sidecar_free(
     assert "local_6 = (char)local_8.field_0;" in result.stdout
     assert "g_0B4C[local_4] = g_0B4C[local_4 - 1];" in result.stdout
     assert "g_0B4C[local_4] = local_8;" in result.stdout
-    assert result.stdout.count("sub_106c8(local_4);") == 2
-    assert result.stdout.count("sub_10498(local_4);") == 2
+    assert sum(
+        result.stdout.count(f"sub_106c8({cast}local_4);")
+        for cast in ("", "(unsigned short)")
+    ) == 2
+    assert sum(
+        result.stdout.count(f"sub_10498({cast}local_4);")
+        for cast in ("", "(unsigned short)")
+    ) == 2

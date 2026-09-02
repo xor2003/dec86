@@ -83,6 +83,7 @@ from .lowering.callsite_prototype_declarations import (
 from .lowering.callsite_segment_provenance import attach_callsite_segment_address_provenance_8616
 from .lowering.carry_borrow_bit_values import lower_carry_borrow_bit_values_8616
 from .lowering.condition_argument_type_facts import (
+    proven_recorded_wide_condition_stack_pair_8616,
     record_wide_condition_argument_type_evidence_8616,
 )
 from .lowering.condition_scalar_types import apply_condition_scalar_types_8616
@@ -97,7 +98,6 @@ from .lowering.direct_stack_replay import (
 )
 from .lowering.explicit_char_types import materialize_explicit_scalar_char_types_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
-from .lowering.fixed_stack_probe_frames import lower_fixed_stack_probe_frames_8616
 from .lowering.indexed_address_collector_parity import (
     collect_indexed_address_collector_parity_8616,
 )
@@ -151,6 +151,7 @@ from .lowering.software_interrupt_status_outputs import (
 )
 from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 from .lowering.stack_memory_ssa import lower_x86_16_stack_memory_ssa_alias_artifact
+from .lowering.stack_probe_callsite_lowering import lower_fixed_stack_probe_callsite_artifacts_8616
 from .lowering.stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
     reconcile_callsite_interface_declarations_8616,
@@ -254,6 +255,9 @@ from .structuring.stored_call_return_early_exit import materialize_stored_call_r
 from .structuring.switch_loop_tail_breaks import (
     SwitchLoopTailBreakResult8616,
     materialize_switch_loop_tail_breaks_8616,
+)
+from .structuring.tagged_terminal_return_values import (
+    materialize_tagged_terminal_return_values_8616,
 )
 from .structuring.wide_stack_return_predicates import (
     materialize_wide_stack_return_predicate_8616,
@@ -1491,6 +1495,11 @@ def _materialize_structuring_wide_stack_return_predicate_8616(
                 high_expression,
                 low_expression,
             )
+            or proven_recorded_wide_condition_stack_pair_8616(
+                codegen,
+                high_value,
+                low_value,
+            )
         )
         return proven
 
@@ -1563,6 +1572,13 @@ def _materialize_structuring_return_chains_8616(
     changed = terminal_value_result.changed or changed
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None)
+    tagged_return_result = materialize_tagged_terminal_return_values_8616(
+        project,
+        codegen,
+        _current_structuring_function_8616(project, codegen),
+        expressions_equivalent=_same_c_expression_8616,
+    )
+    changed = tagged_return_result.changed or changed
     changed = bool(_postprocess_stage._materialize_missing_terminal_ax_return_8616(project, codegen)) or changed
     codegen._inertia_missing_terminal_ax_return_structuring_pass_ran_8616 = True
     changed = bool(_postprocess_stage._materialize_empty_if_return_branches_8616(project, codegen)) or changed
@@ -1699,7 +1715,7 @@ def _bind_structuring_callsite_consumers_8616(codegen: AngrCodegenSurface) -> No
     )
     _calls._bind_fixed_stack_probe_frame_lowerer_8616(
         codegen,
-        lambda codegen: lower_fixed_stack_probe_frames_8616(codegen).changed,
+        lambda codegen: lower_fixed_stack_probe_callsite_artifacts_8616(codegen.project, codegen),
     )
     _calls._bind_function_result_observation_provider_8616(
         codegen,
@@ -2491,6 +2507,7 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
             codegen._inertia_typed_conditions_transferred = True
         func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
         if isinstance(func_addr, int):
+            changed = bool(_materialize_structuring_wide_stack_return_predicate_8616(project, codegen)) or changed
             changed = bool(run_structuring_condition_cleanup_8616(project, codegen, func_addr)) or changed
         else:
             _structuring_conditions.apply_structuring_condition_materialization_8616(project, codegen)
@@ -3465,7 +3482,14 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
         condition_closure = None
     closure_result = validate_condition_closure_delta_8616(condition_closure, validation)
     codegen._inertia_structuring_condition_closure_validation_result_8616 = closure_result
-    if precision_result.accepted or (spec_name == "final" and closure_result.accepted):
+    precision_closure_complete = (
+        condition_closure is not None
+        and bool(condition_closure.required_keys)
+        and condition_closure.complete
+    )
+    if (precision_result.accepted and precision_closure_complete) or (
+        spec_name == "final" and closure_result.accepted
+    ):
         if precision_result.accepted:
             codegen._inertia_structuring_condition_precision_validation_accepts_8616 = 1
         if closure_result.accepted:

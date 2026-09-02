@@ -13,6 +13,7 @@ from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseVerdict8616,
     record_caller_return_use_evidence_8616,
 )
+from angr_platforms.X86_16.lowering.near_pointer_type import SimTypeNearPointer16_8616
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import attach_cod_stack_alias_annotations_8616
 from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
     FunctionParameterWidthFact8616,
@@ -497,19 +498,20 @@ def test_lowering_materializes_normalized_stack_annotation_prototype_before_post
     assert postprocess._apply_annotations_8616(project, codegen) is False
 
 
-def test_lowering_replaces_generated_argument_name_with_proven_stack_label() -> None:
-    """Prefer optional labels only after the exact BP argument already exists."""
+def test_lowering_joins_current_argument_surface_by_machine_bp_coordinate() -> None:
+    """Preserve types when entry-SP variables project to shifted BP slots."""
     arch = Arch86_16()
     short_type = SimTypeShort(False).with_arch(arch)
+    pointer_type = SimTypeNearPointer16_8616(short_type).with_arch(arch)
     generated_prototype = SimTypeFunction(
-        (short_type,), short_type, arg_names=("arg_4",)
+        (pointer_type, short_type), short_type, arg_names=("arg_4", "arg_6")
     ).with_arch(arch)
     func = SimpleNamespace(
         addr=0x1000,
         name="set_value",
         prototype=generated_prototype,
         is_prototype_guessed=True,
-        info={ANNOTATION_KEY: {"stack_vars": {2: {"name": "value"}}}},
+        info={ANNOTATION_KEY: {"stack_vars": {2: {"name": "dst"}, 4: {"name": "value"}}}},
     )
     project = SimpleNamespace(
         arch=arch,
@@ -526,32 +528,41 @@ def test_lowering_replaces_generated_argument_name_with_proven_stack_label() -> 
         next_ident=lambda name: f"{name}_0",
         next_node_idx=lambda: 1,
     )
-    arg_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
-    arg_cvar = structured_c.CVariable(arg_var, variable_type=short_type, codegen=codegen)
+    dst_var = SimStackVariable(2, 2, base="bp", name="arg_4", region=0x1000)
+    dst_cvar = structured_c.CVariable(dst_var, variable_type=pointer_type, codegen=codegen)
+    value_var = SimStackVariable(4, 2, base="bp", name="arg_6", region=0x1000)
+    value_cvar = structured_c.CVariable(value_var, variable_type=short_type, codegen=codegen)
     codegen.cfunc = SimpleNamespace(
         addr=0x1000,
-        variables_in_use={arg_var: arg_cvar},
+        variables_in_use={dst_var: dst_cvar, value_var: value_cvar},
         unified_local_vars={},
-        arg_list=[arg_cvar],
+        arg_list=[dst_cvar, value_cvar],
         functy=generated_prototype,
         prototype=generated_prototype,
         statements=structured_c.CStatements([], codegen=codegen),
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen, variable=dst_var, cvar=dst_cvar, bp_offset=4, entry_sp_offset=2, size=2
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen, variable=value_var, cvar=value_cvar, bp_offset=6, entry_sp_offset=4, size=2
     )
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
     assert changed is True
-    assert arg_var.name == "value"
-    assert codegen.cfunc.arg_list == [arg_cvar]
-    assert tuple(func.prototype.arg_names) == ("value",)
+    assert [argument.variable.name for argument in codegen.cfunc.arg_list] == ["dst", "value"]
+    assert isinstance(codegen.cfunc.functy.args[0], SimTypeNearPointer16_8616)
+    assert tuple(func.prototype.arg_names) == ("dst", "value")
 
 
 def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -> None:
     """Collapse physical word slots when structured BP starts prove one wide object."""
     arch = Arch86_16()
     short_type = SimTypeShort(False).with_arch(arch)
+    pointer_type = SimTypeNearPointer16_8616(SimTypeShort(False)).with_arch(arch)
     physical_prototype = SimTypeFunction(
-        [short_type] * 5,
+        [short_type, short_type, short_type, pointer_type, pointer_type],
         short_type,
         arg_names=("file", "cmdline", "cmdline_hi", "cs", "ss"),
     ).with_arch(arch)
@@ -580,9 +591,11 @@ def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     physical_args = []
     variables_in_use = {}
-    for offset, name in zip((4, 6, 8, 10, 12), physical_prototype.arg_names, strict=False):
+    for offset, name, variable_type in zip(
+        (4, 6, 8, 10, 12), physical_prototype.arg_names, physical_prototype.args, strict=False
+    ):
         variable = SimStackVariable(offset, 2, base="bp", name=name, region=0x1000)
-        cvar = structured_c.CVariable(variable, variable_type=short_type, codegen=c_codegen)
+        cvar = structured_c.CVariable(variable, variable_type=variable_type, codegen=c_codegen)
         variables_in_use[variable] = cvar
         physical_args.append(cvar)
     cfunc = SimpleNamespace(
@@ -601,6 +614,7 @@ def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -
     assert [arg.variable.offset for arg in cfunc.arg_list] == [4, 6, 10, 12]
     assert [arg.variable.size for arg in cfunc.arg_list] == [2, 4, 2, 2]
     assert isinstance(cfunc.functy.args[1], SimTypeLong)
+    assert all(isinstance(cfunc.functy.args[index], SimTypeNearPointer16_8616) for index in (2, 3))
     assert codegen._inertia_function_parameter_width_facts_8616 == (
         FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
         FunctionParameterWidthFact8616(stack_offset=6, width_bytes=4),
@@ -746,7 +760,7 @@ def test_lowering_explicit_zero_args_without_positive_stack_facts_blocks_legacy_
     assert postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen) is False
 
 
-def test_lowering_materializes_wide_stack_annotation_prototype_and_prunes_high_words():
+def test_lowering_materializes_wide_stack_argument_reads_and_retains_high_word_writes():
     arch = Arch86_16()
     wide_type = SimTypeLong(False).with_arch(arch)
     func = SimpleNamespace(
@@ -771,6 +785,12 @@ def test_lowering_materializes_wide_stack_annotation_prototype_and_prunes_high_w
     high_b = SimStackVariable(10, 2, base="bp", name="local_a", region=0x1000)
     high_a_cvar = structured_c.CVariable(high_a, variable_type=SimTypeShort(False), codegen=c_codegen)
     high_b_cvar = structured_c.CVariable(high_b, variable_type=SimTypeShort(False), codegen=c_codegen)
+    high_a_return = structured_c.CReturn(high_a_cvar, codegen=c_codegen)
+    high_b_store = structured_c.CAssignment(
+        high_b_cvar,
+        structured_c.CConstant(7, SimTypeShort(False), codegen=c_codegen),
+        codegen=c_codegen,
+    )
     cfunc = SimpleNamespace(
         addr=0x1000,
         name="sub_ulong",
@@ -779,7 +799,7 @@ def test_lowering_materializes_wide_stack_annotation_prototype_and_prunes_high_w
         arg_list=[],
         functy=func.prototype,
         prototype=func.prototype,
-        statements=structured_c.CStatements([], codegen=c_codegen),
+        statements=structured_c.CStatements([high_a_return, high_b_store], codegen=c_codegen),
     )
     codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
@@ -792,9 +812,24 @@ def test_lowering_materializes_wide_stack_annotation_prototype_and_prunes_high_w
     assert tuple(func.prototype.arg_names) == ("a", "b")
     assert tuple(func.prototype.args) == (wide_type, wide_type)
     assert high_a not in cfunc.variables_in_use
-    assert high_b not in cfunc.variables_in_use
+    assert high_b in cfunc.variables_in_use
     assert high_a not in cfunc.unified_local_vars
-    assert high_b not in cfunc.unified_local_vars
+    assert high_b in cfunc.unified_local_vars
+    assert isinstance(high_a_return.retval, structured_c.CBinaryOp)
+    assert high_a_return.retval.op == "And"
+    high_shift = high_a_return.retval.lhs
+    assert isinstance(high_shift, structured_c.CBinaryOp)
+    assert high_shift.op == "Shr"
+    assert isinstance(high_shift.lhs, structured_c.CVariable)
+    assert high_shift.lhs.variable is cfunc.arg_list[0].variable
+    subview_result = codegen._inertia_wide_stack_argument_subview_result_8616
+    assert (
+        subview_result.raw_fact_count,
+        subview_result.normalized_fact_count,
+        subview_result.classified_fact_count,
+        subview_result.materialized_count,
+        subview_result.failure_count,
+    ) == (2, 1, 1, 1, 1)
 
 
 def test_lowering_constrains_guessed_wide_args_to_exact_independent_word_slots():

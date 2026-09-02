@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr_platforms.X86_16 import decompiler_structuring_stage as structuring_stage
 from angr_platforms.X86_16 import tail_validation as tail_validation_module
 from angr_platforms.X86_16.structuring.condition_evidence_closure import (
     ConditionEvidenceClosure8616,
@@ -77,6 +78,33 @@ def test_condition_precision_validation_refuses_extra_semantic_field() -> None:
 
     assert result.accepted is False
     assert result.stats.failure_count == 1
+
+
+def test_structuring_precision_refuses_incomplete_condition_closure() -> None:
+    """Exact changed-pair evidence cannot excuse an omitted typed branch."""
+    required = frozenset({(0x101B0, 0x101A9), (0x101C0, 0x101B2)})
+    codegen = _codegen()
+    codegen.cfunc = SimpleNamespace(addr=0x4010)
+    codegen._inertia_structuring_condition_evidence_closure_8616 = (
+        ConditionEvidenceClosure8616(
+            required_keys=required,
+            materialized_keys=frozenset({(0x101B0, 0x101A9)}),
+            unresolved_branch_owners=frozenset(),
+        )
+    )
+    validation = _validation()
+    validation["semantic_failures"] = None
+
+    accepted = structuring_stage._try_accept_structuring_validation_delta_from_evidence_8616(
+        SimpleNamespace(kb=SimpleNamespace(functions=None)),
+        codegen,
+        validation,
+        spec_name="final",
+    )
+
+    assert accepted is False
+    assert validation["changed"] is True
+    assert "delta" in validation
 
 
 def test_condition_precision_validation_accepts_compacted_exact_pair() -> None:

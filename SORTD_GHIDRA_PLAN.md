@@ -83,6 +83,15 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
   integer promotion unnoticed. Its fresh 2026-09-01 run is green: all ten
   selected functions decompile, the translation unit recompiles, and the
   rebuilt executable exits `255`
+- the current exact repository baseline is 10,132 collected, 9,931 passed,
+  31 failed, and 170 skipped in 1,314.23 seconds with seven pytest workers;
+  this supersedes the earlier 10,091-test audit without claiming the remaining
+  failures are closed
+- the full-binary to exact-function project boundary now transports validated,
+  immutable callee pointer-argument evidence through the existing ABI seeding
+  service. HeapSort therefore emits typed `Swaps` pointers, passes Tail
+  Validation and strict C11 syntax, and retains the source-required call
+  argument classes without semantic recovery in CLI or Rewrite
 - a current-tree stack-object regression inverted the containment predicate and
   selected storage smaller than the requested access. Restoring the owned
   invariant `storage_size >= access_width` preserves byte views of aggregates
@@ -168,6 +177,42 @@ structural fixture contract recognizes equivalent segmented indexed loads from
 the parsed C AST instead of demanding one rendered spelling. Tail Validation,
 portable compilation, MS C compilation, and rebuilt execution all pass.
 
+The DOS `_dos_loadProgram` wrapper is closed without Rewrite-owned semantic
+repair. Types/Lowering recognizes a call result after its typed condition has
+been projected from AX into the exact `SS:BP-2` store, and requires the explicit
+AX-to-stack binding. Semantics classifies only epilogue instructions that
+preserve AX/DX; Structuring follows a bounded jump-only path to the return,
+resolves the active error object through the machine-BP coordinate registry,
+and materializes `return err;` plus the proven zero continuation return. The
+consumed argument PUSH byte carrier is pruned only with exact PUSH provenance.
+Both CLI invocation shapes validate and recompile with direct `cs[0]`/`ss[0]`
+stores. Focused Ruff/MyPy, `quality-dev` with 1,923 tests, and the mandatory
+external pipeline pass.
+
+The larger DOS `loadprog` body is now also closed at its owning layers.
+Types/Lowering preserves one binary-proven four-byte `cmdline` stack owner and
+projects its exact low/high word views without inventing a fifth logical
+argument. Tail Validation consumes the same typed projection facts for call
+sources and def-use. Structuring refuses a legacy linear-terminal scan when the
+CFG has multiple value predecessors, then recovers only an exact-tagged return
+from its own terminal predecessor. The success path is therefore the
+binary-proven `return 0`, while the invalid-type and DOS-error paths retain
+their distinct `return 1` and `return err`. The generic failing-before
+regressions, 261 related tests, direct Ruff/MyPy, live COD validation, portable
+recompilation, and `quality-dev` pass. No Rewrite or CLI semantic repair was
+added.
+
+The F14 CARR bounds predicates are closed at the Widening/Types and Structuring
+boundaries. Required 32-to-16 semantic casts now remain exact low-word
+projections, a complete CFG-proven wide predicate persists its stack-pair facts
+across later C-AST rebuilds, and the existing atomic wide-return graph owner is
+the only total-return materializer. `_InBoxLng` emits four long comparisons,
+six logical long arguments, two return leaves, and `validation=passed` in about
+8-10 seconds. `_InBox` and the ordinary single-JCC return diamond retain their
+correct polarity. The 142-test condition/validation surface, both live CARR
+functions, `quality-dev`, and the mandatory 1,922-test plus external executable
+pipeline pass.
+
 No test, validation check, or unsupported-input refusal was weakened. The goal
 remains incomplete because Tasks 3, 5, 6, 7, and 8 remain open; the required
 default, expanded, and changed-surface gates are currently green.
@@ -206,7 +251,7 @@ output do not advance the percentage.
 | 6. Profiling and performance | 10% | 70% | pre-ledger | - | unknown | 8-12h | Measure aggregate PSS and profile the single-function serial tail. |
 | 7. Reko mechanisms | 8% | 0% | not started | - | 0h | 10-16h | Implement only mechanisms supported by owned typed evidence. |
 | 8. Ghidra mechanisms | 34% | 85% | pre-ledger | - | unknown | 45-65h | Curated acceptance is green, but the complete 10,091-test audit exposed remaining call/type/CFG and COD recovery families that must close before this task can claim completion. |
-| **Total** | **100%** | **75%** | - | - | **historical total unavailable** | **80-115h** | Weighted completion is 75% after correcting the earlier curated-only estimate. Quality and executable pipelines are green; the complete-suite baseline is 9,865 passed, 56 failed, and 170 skipped. The latest exact last-failed rerun had 48 failures and 26 passes; `_ConfigCrts` closes one of those failures, so 47 remain projected until the next exact rerun. |
+| **Total** | **100%** | **75%** | - | - | **historical total unavailable** | **80-115h** | Weighted completion is 75% after correcting the earlier curated-only estimate. Quality and executable pipelines are green; the complete-suite baseline is 9,865 passed, 56 failed, and 170 skipped. The latest exact last-failed rerun is 26 failed and 25 passed in 224.10s after closing the stale indexed-inventory baseline. |
 
 Task-owner estimates above overlap where Tasks 3 and 8 share a mechanism. They
 are not summed. The non-overlapping forecast table below is the authoritative
@@ -257,8 +302,199 @@ source for the total remaining estimate.
 | QuickSort short-circuit guard and generated-runtime closure | `2026-09-02 02:10 +02:00` | `2026-09-02 02:49 +02:00` | 25-35m engineering; repeated gate waits excluded | 39m | completed | 0h | Structuring binds each pretest guard to its exact JCC evidence and derives a predecessor only from a uniquely proven short-circuit CFG chain. Both QuickSort scan guards and recursive calls survive, the generated sort core compiles and terminates correctly, and ambiguous/mismatched evidence refuses. Types/Lowering also preserves the signed Sleep comparison through an explicit semantic cast on both operands. Nineteen focused pretest tests, 21 wide-call/Sleep tests, `quality-dev`, and the expanded acceptance pipeline pass. |
 | Terminal local pointer-output versus scalar-return closure | `2026-09-02 03:04 +02:00` | `2026-09-02 04:03 +02:00` | 40-55m engineering; gate waits excluded | 59m | completed | 0h | Semantics records a typed all-terminal-path carrier role from decoded operand facts; Types consumes it only with complete unused-caller evidence and a guessed prototype. Sidecar-free Swaps becomes `void`, `_SetDLC` keeps its scalar return, uncertain/direct-global cases refuse demotion, and `quality-dev` plus the required external executable pipeline pass. |
 | `_ConfigCrts` indexed-load and live-carrier closure | `2026-09-02 04:28 +02:00` | `2026-09-02 05:05 +02:00` | 24-30m engineering; gate waits excluded | 37m | completed | 0h | Types/Lowering projects exact byte lanes from wider binary load-site evidence, Widening recomposes only a typed virtual word destination, and Rewrite cleanup keeps nested temporaries live at enclosing continuations. The failing-before regressions, real sidecar-free function, 29 focused tests, Ruff, MyPy, mypyc smoke, `quality-dev`, and mandatory plus expanded executable pipelines pass. |
-| Required project gates after the fix | `2026-08-29 08:51 +02:00` | `2026-09-02 05:05 +02:00` | historical subtotal retained; test time excluded | continued through `2026-09-02` | completed | 0h | Ruff, MyPy over 266 production files, the 39-module mypyc smoke, architecture and ownership checks, and 1,921 curated tests pass. The expanded pipeline is 5/5: SORTD decompiles 20/20 functions with zero validation failures or timeouts, its generated translation unit compiles with zero warnings, the 19-function sort-core behavior gate passes, and every selected Ultra QuickC and MS C tiny round trip passes. No exclusion or weakened check was added. |
-| Complete repository pytest closure | `2026-09-02` | - | full audit wall 724.28s; closure work tracked per root family | active | in progress | 20-35h, overlapping task 9 | The exact baseline is 9,865 passed, 56 failed, 170 skipped out of 10,091. The latest exact last-failed rerun is 48 failed and 26 passed in 254.05s; 47 failures remain projected after the verified `_ConfigCrts` closure. An exact rerun must reach zero failures, with every skip retained only for an explicit supported reason. |
+| Quiet native-tool output contract | `2026-09-02 05:05 +02:00` | `2026-09-02 05:18 +02:00` | 10-13m | 13m | completed | 0h | Make recipes suppress duplicate command echo and pass concise native Ruff, MyPy, pytest, and lizard flags. The startup checker has a compact-success mode but preserves full failures. Fifty-seven contract tests, direct Ruff/MyPy, and the focused Make targets pass. |
+| COD frontend-fixture and timeout-reporting realignment | `2026-09-02 05:18 +02:00` | `2026-09-02 05:27 +02:00` | 8-9m | 9m | completed | 0h | Five stale block-lift fixture expectations now preserve byte-safe split loads, explicit `NEXT` fallthrough, and dead FLAGS-write elimination. The direct timeout path again reports its recovery phase and larger-timeout hint inside valid C comments. Six block-lift cases plus the process-helper and timeout regressions pass. |
+| `_dos_getfree` cleanup-transaction closure | `2026-09-02 05:28 +02:00` | `2026-09-02 05:34 +02:00` | 6m; test waits overlap | 6m | completed | 0h | Rewrite policy now restores and refuses only the optional unused-global declaration cleanup when its validation delta differs. COD/source semantics, the exact `intdos` call, the zero-carry error branch, both return paths, live `validation=passed`, Ruff, MyPy, and nine focused tests pass. |
+| F14 regenerated global-read identity closure | `2026-09-02 05:53 +02:00` | `2026-09-02 06:20 +02:00` | 11-14m engineering; broad gate waits excluded | 27m | completed | 0h | Types/Lowering now revisits runtime helper surfaces after regeneration, traverses non-`CStatements` roots, and reconciles the existing explicit COD storage/display alias. Live `_ChangeWeather` emits `if (BadWeather)` with validation clean; three failing suite nodes plus four generic ordering/traversal tests, Ruff, direct MyPy, `quality-dev`, and mandatory plus expanded pipelines pass. |
+| Native tool flag and token-output ratchet extension | `2026-09-02 06:20 +02:00` | `2026-09-02 06:23 +02:00` | 3m | 3m | completed | 0h | Ruff quiet/concise, MyPy plain/no-color, Pyright warning-level, pytest short-traceback/no-header, and Lizard warnings-only preserve actionable findings while suppressing success noise. Contract tests, direct invocations, and `quality-dev` pass. |
+| `_MousePOS` regenerated physical-register carrier closure | `2026-09-02 06:23 +02:00` | `2026-09-02 06:44 +02:00` | 10-14m engineering; broad gate waits excluded | 21m | completed | 0h | Lowering replays the two exact global stores, then Rewrite folds only an adjacent dead `SimRegisterVariable` carrier with physical-register identity and suffix/live-out proof. A later use refuses. Live `_MousePOS` emits `MouseX = x << 1;`, preserves `MouseY`, `interrupt_int33`, and `return 4`, recompiles, and reports `validation=passed` plus whole-tail clean. Forty-nine focused tests, Ruff, direct MyPy, and `quality-dev` with 1,921 tests pass. |
+| F14 `_InBox`/`_InBoxLng` predicate and durable wide-pair closure | `2026-09-02 06:45 +02:00` | `2026-09-02 08:00 +02:00` | 40-50m engineering; repeated corpus and gate waits excluded | 1h15m | completed | 0h | Types/Lowering recognizes only exact 16-bit semantic projections and persists stack pairs only after complete CFG proof. Structuring invokes its existing atomic wide-return owner before competing replay and reuses the recorded proof after AST rebuilds. `_InBoxLng` emits six long arguments and four comparisons with `validation=passed`; `_InBox` and the scalar JLE regression retain correct polarity. The 142-test related surface, two live CLI cases, Ruff, MyPy, `quality-dev`, and the mandatory 1,922-test external pipeline pass. |
+| Machine-BP prototype identity and indexed byte-pointer closure | `2026-09-02 08:30 +02:00` | `2026-09-02 09:25 +02:00` | 40-50m engineering; focused waits excluded | 55m | completed | 0h | Types/Lowering now recognizes a sole pointer carrier in either x86 effective-address register and refuses two-carrier ambiguity. Stack prototype materialization joins physical C arguments to logical annotations through the owned machine-BP coordinate instead of raw entry-SP offsets. Failing-before tests cover both defects; 77 related tests, Ruff, MyPy, live `fill_bytes`, and the three-function `pointer_memory` compile/decompile/recompile/runtime construct pass in 16.21s with a `char *dst` byte store. |
+| Stored call-return early-exit and DOS wrapper closure | `2026-09-02 09:39 +02:00` | `2026-09-02 10:45 +02:00` | 45-55m engineering; repeated live and gate waits excluded | 1h06m | completed | 0h | Exact PUSH provenance removes the split byte carrier. Lowering joins the projected stack condition to its AX call-result binding; Semantics proves the jump-only epilogue path preserves return registers; Structuring resolves the machine-BP error object and materializes both returns. Failing-before unit tests, both live CLI modes, 83 related checks with only the pre-existing `loadprog` body failure, direct Ruff/MyPy, `quality-dev` with 1,923 tests, and the mandatory external pipeline pass. |
+| DOS `loadprog` wide-stack view and path-specific terminal-return closure | `2026-09-02 10:55 +02:00` | `2026-09-02 11:53 +02:00` | 35-45m engineering; repeated live and gate waits excluded | 58m | completed | 0h | Types/Lowering owns one four-byte `cmdline` argument and exact word projections; Tail Validation consumes the same typed projection facts; Structuring refuses cross-path linear substitution and materializes the exact tagged success return from its own CFG predecessor. Generic failing-before tests, 261 related checks, direct Ruff/MyPy, live `validation=passed`, portable recompilation, and `quality-dev` pass. |
+| Required project gates after the fix | `2026-08-29 08:51 +02:00` | `2026-09-02 06:40 +02:00` | historical subtotal retained; test time excluded | continued through `2026-09-02` | completed | 0h | Ruff, MyPy over the production surface, the 39-module mypyc smoke, architecture and ownership checks, and 1,921 curated tests pass. All three quality comparisons pass at 1.356x-1.526x. The expanded pipeline remains 5/5: SORTD decompiles 20/20 functions with zero validation failures or timeouts, its generated translation unit compiles with zero warnings, the 19-function sort-core behavior gate passes, and every selected Ultra QuickC and MS C tiny round trip passes. No exclusion or weakened check was added. |
+| Complete repository pytest closure | `2026-09-02` | - | full audit wall 724.28s; closure work tracked per root family | active | in progress | 20-35h, overlapping task 9 | The exact baseline is 9,865 passed, 56 failed, 170 skipped out of 10,091. The latest exact last-failed rerun is 26 failed and 25 passed in 224.10s. An exact rerun must reach zero failures. |
+
+#### Machine-BP prototype identity and indexed byte-pointer closure contract
+
+Reason: 16-bit effective addresses may carry a near pointer in either Capstone
+`base` or `index`. The generated C variables may simultaneously use entry-SP
+coordinates while annotations use machine-BP coordinates. Missing either fact
+widens byte stores or shifts argument types onto the next physical word.
+
+DoD: one decoded argument carrier in either effective-address register yields
+an exact pointee-width fact; two argument carriers refuse; prototype replay
+joins only by owned machine-BP identity; `fill_bytes` retains a byte pointer;
+Tail Validation, Ruff, MyPy, focused tests, and the complete `pointer_memory`
+runtime construct pass.
+
+Definition of failure: rendered-assembly or function-name matching; accepting
+an address with two argument carriers; joining annotations by list position or
+raw `SimStackVariable.offset`; `short *` byte-store widening; validation,
+recompile, or generated runtime failure.
+
+#### Stored call-return early-exit and DOS wrapper closure contract
+
+Reason: the call result was stored at `SS:BP-2`, but the typed condition and C
+AST could expose different projections of that same storage. The error edge
+then carried AX unchanged through a jump-only epilogue while angr retained only
+placeholder returns. A byte-executed PUSH carrier also survived as an invalid
+casted lvalue.
+
+DoD: Lowering joins only an exact call-return store, typed condition, and
+register binding; Semantics proves every instruction on the bounded error path
+preserves AX/DX until return; Structuring resolves the active C object by owned
+machine-BP identity and fills both placeholder returns; consumed PUSH cleanup
+requires exact instruction provenance and argument identity. Both COD CLI
+shapes emit `if (err) return err;`, direct output-pointer stores, and `return 0;`
+with `validation=passed`; Ruff, MyPy, focused tests, `quality-dev`, and the
+mandatory external pipeline pass.
+
+Definition of Failure: rendered-text, procedure-name, or address-specific
+recovery; accepting a projected stack condition without its return-register
+binding; treating an unknown instruction as return-register preserving;
+resolving stack identity by raw offset when a machine-BP projection exists;
+deleting a non-PUSH store or a PUSH without exact consumed-argument proof;
+missing either return or pointer store; any validation, compile, focused-test,
+lint, type, or mandatory-pipeline failure.
+
+#### F14 `_InBox`/`_InBoxLng` predicate closure contract
+
+Reason: the complete 32-bit comparison graph was present in typed ConditionIR,
+but mutable C declarations temporarily split each long argument into two words.
+The canonical wide-return owner therefore lost its Widening proof after later
+AST rebuilds. An experimental total-return helper duplicated Structuring
+ownership, and placing chain materialization before legacy JCC replay inverted
+an ordinary scalar return diamond.
+
+DoD: Types/Lowering accepts a semantic cast as a low-word projection only when
+its destination is exactly 16 bits and its four-byte stack owner covers the
+adjacent high slice. Structuring atomically consumes every raw JCC fact, proves
+all four 32-bit comparisons and both return leaves, records the synthesized
+wide conditions as durable typed evidence, and remains the sole total-return
+owner across AST rebuilds. `_InBoxLng` has six logical long parameters, the
+four source-equivalent range comparisons, both return values, and
+`validation=passed`; `_InBox` and a generic scalar JLE return diamond keep
+correct polarity. Focused refusal tests, Ruff, MyPy, `quality-dev`, and the
+mandatory external pipeline pass.
+
+Definition of Failure: accepting an 8-bit or untyped cast as a word projection;
+widening adjacent stack words without either an external pair proof or a
+complete CFG proof anchored by one proven operand; recovering from rendered C,
+assembly text, procedure names, or corpus addresses; retaining a second
+total-return materializer; allowing legacy replay to overwrite a canonically
+owned wide root; losing or inverting any comparison or return leaf; splitting
+the final logical long arguments; any Tail Validation failure; or any focused
+lint, type, compile, behavior, or mandatory-pipeline failure.
+
+#### `_MousePOS` regenerated physical-register carrier closure contract
+
+Reason: regeneration ran Rewrite cleanup before the final Types/Lowering global
+identity replay. That replay correctly materialized `MouseX = cx`, but the
+resulting adjacent `cx = x << 1` carrier was too late for cleanup and physical
+register names were excluded from the generic dead-copy classifier.
+
+DoD: Types/Lowering remains the only owner of the global-store and interrupt
+semantics. Final orchestration reruns AST-only cleanup after all Lowering and
+Structuring replays. Rewrite identifies physical registers by typed
+`SimRegisterVariable` coordinates, folds only an adjacent movable producer with
+one matching consumer and no suffix/live-out use, and refuses a later use. Live
+`_MousePOS` preserves both global stores, the interrupt call and its value
+arguments, and the explicit AX-derived `return 4`; generated C recompiles,
+reports `validation=passed`, and has whole-tail validation clean. Generic
+positive/identity/refusal, focused CLI, Ruff, MyPy, and `quality-dev` pass.
+
+Definition of Failure: deriving the fold from rendered C, a function name, COD
+text, or an address; moving global or interrupt semantics into Rewrite; folding
+a register with any later structured-AST use; keying physical identity on a
+Python object id; deleting or changing the interrupt call or either global
+store; treating the interrupt helper return as the proven AX result; leaving an
+undeclared register in generated C; or any focused compile, validation, lint,
+type, or broad development-gate failure.
+
+#### F14 regenerated global-read identity closure contract
+
+Reason: runtime segmented-memory lowering could create a typed `SEG_U16` read
+after named-global materialization had already run, while the final regeneration
+hook replayed naming only when runtime lowering reported a fresh mutation. The
+named-load walker also descended only from `CStatements`, so valid alternative
+structured roots stranded a proven read even though exact COD `EQU` storage and
+display identities had already been recorded.
+
+DoD: Types/Lowering traverses every supported structured-C root, reruns named
+global materialization after runtime helper creation, and reapplies the existing
+unambiguous storage/display identity facts after regeneration even when the
+helper already exists. Live `_ChangeWeather` preserves both branches and all six
+global stores, emits `if (BadWeather)`, reports whole-tail validation clean, and
+focused positive/order/refusal, Ruff, and MyPy checks pass. Raw no-label output
+may retain a numeric global but must use the current portable runtime segment
+identifier.
+
+Definition of Failure: deriving names or control flow from rendered C; merging
+ambiguous aliases; replacing generated storage identity instead of projecting
+the explicit display alias; limiting traversal to one root class; running
+semantic recovery in Rewrite or CLI text processing; losing a branch/store;
+retaining the synthetic analysis-image address in labeled CLI C; or any focused
+validation, type, lint, or source-call/store survival failure.
+
+#### `_dos_getfree` cleanup-transaction closure contract
+
+Reason: unused generated-global declaration pruning is cleanup-only, but a
+non-destructive validation mismatch made its rejection fail the whole function
+after the validated baseline had already been restored. The emitted function
+was semantically correct and matched the COD source, yet the CLI returned a
+validation failure solely because this optional cleanup lacked reject-and-
+continue policy.
+
+DoD: Rewrite transaction policy classifies only the declaration-prune pass as
+locally rejectable and budgeted, while keeping it outside mandatory semantic
+validation. A rejected pass restores the prior validated snapshot. The real COD
+function preserves `intdos(&rin, &rout)`, the `cflag == 0` error path, zero and
+`rout.x.bx` returns, and reports whole-tail `validation=passed`; focused policy,
+COD, Ruff, and MyPy checks pass.
+
+Definition of Failure: accepting a mismatched cleanup result instead of
+restoring it; making semantic, call, CFG, alias, type, or structuring passes
+optional; changing the source-proven branch polarity; hiding validation state;
+matching the function name/address/rendered text as recovery evidence; or any
+focused validation, lint, type, call-survival, or return-path failure.
+
+#### COD frontend-fixture and timeout-reporting realignment contract
+
+Reason: five block-lift fixtures encoded obsolete physical VEX shapes from
+before independently resolved byte-safe accesses, explicit fallthrough targets,
+and dead FLAGS-write suppression. Separately, the terminal direct timeout path
+lost the phase and retry guidance required by the CLI contract.
+
+DoD: fixtures assert the current semantic frontend contract without changing
+the preserved byte-safe access implementation; fallthrough remains explicit and
+dead overwritten flag writes remain absent. Timeout stdout remains valid C
+comments and includes both the recovery phase and larger-timeout hint. Focused
+block-lift, timeout, and process-helper tests pass.
+
+Definition of Failure: restoring wide unwrapped guest-memory accesses; removing
+an explicit control-flow target; requiring a dead FLAGS write; weakening a
+semantic assertion merely to fit output; emitting non-C metadata on stdout;
+dropping timeout classification or guidance; or changing production semantics
+to satisfy a stale fixture.
+
+#### Quiet native-tool output contract
+
+Reason: repeated Make echo plus verbose native tool formatting consumed agent
+context without improving diagnostics, especially for broad parallel gates.
+
+DoD: Make exposes overridable concise native flags for Ruff, MyPy, Pyright,
+pytest, and Lizard, suppresses duplicate recipe echo, and uses compact startup
+output only on success. Ruff uses quiet rather than silent mode, so remaining
+diagnostics survive. Full command output is retained in temporary logs for
+failures; native exit codes, warnings, test collection, lint/type scope, and
+required gates are unchanged. Focused Makefile and startup-check regressions
+pass.
+
+Definition of Failure: suppressing a checker, warning family, failure detail,
+collection item, or exit status; replacing a native machine-readable/concise
+mode with lossy text filtering; hiding required commands; or making local and
+Make-invoked tool policy diverge.
 
 #### `_ConfigCrts` indexed-load and live-carrier closure contract
 
@@ -606,6 +842,45 @@ as the weighted task ledger. Estimates for the remaining live families are delib
 separate: a passing test count cannot hide an independent semantic owner or a
 validation blind spot.
 
+#### Remaining priority by impact
+
+Priority is determined by semantic blast radius and dependency leverage, not
+by the easiest percentage gain:
+
+1. **P0 - Step 9, full-suite semantic and interprocedural-contract closure.**
+   This is the only remaining step that advances both Task 3 and Task 8, makes
+   the complete pytest collection trustworthy again, and removes correctness
+   and recompilability defects on which every later quality task depends. The
+   first vertical slice, the larger DOS `loadprog` body, is closed: one
+   binary-proven four-byte stack owner and its exact Tail Validation subviews
+   survive, and each terminal return is recovered only from its own CFG
+   predecessor. The active boundary is now the exact full collection and its
+   refreshed failure inventory. Process remaining failures by shared owner:
+   multi-output/indexed/indirect storage first, type and object identity second,
+   CFG/condition recovery third, and isolated corpus regressions only after
+   those shared mechanisms close.
+2. **P1 - Step 10, profile and optimize the serial tail.** Start implementation
+   after the first P0 family closes and an exact full-suite baseline is stable;
+   collect profiles during P0 test waits. Keep only optimizations whose measured
+   savings repay their engineering cost across the remaining gates and remain
+   under the 2 GiB aggregate-worker budget.
+3. **P2 - Step 11, proof-backed readability.** Begin only after the semantic
+   suite is green, because readable output must consume stable typed evidence
+   rather than hide unresolved ownership defects.
+4. **P3 - Step 12, evidence-supported Reko mechanisms.** Implement last, and
+   only where the existing IR/Alias/Types contracts can prove the mechanism;
+   this has less immediate corpus and gate leverage than P0-P2.
+
+P0 definition of done: every currently failing in-scope repository test is
+either corrected by a generic earliest-layer implementation or retired with
+documented supersession evidence; the exact complete collection has zero
+failures; `quality-hard`, default, and expanded pipelines pass; and all closed
+evidence counters remain balanced. P0 definition of failure: accepting a
+curated lane as full-suite success, changing tests to bless semantic loss,
+repairing calls/types/storage in Rewrite or CLI, introducing corpus-specific
+logic, or leaving any unexplained failure hidden by selection, timeout, skip,
+or output filtering.
+
 | Order | Step | Start | Finish | Spent | Current estimate | Dependency / completion boundary |
 | ---: | --- | --- | --- | ---: | ---: | --- |
 | 1 | Reproduce and symptom-cluster the current focused failures | `2026-08-29 12:49:42 +02:00` | `2026-08-29 12:54:19 +02:00` | 4m37s focused; 2m45s test wall separate | complete | Complete lane: 3,968 passed / 17 failed. Exact retry: 16 failed / 1 passed. Six independent symptom families are recorded. |
@@ -632,10 +907,40 @@ validation blind spot.
 | 8a | Audit the complete pytest collection and classify every failure family | `2026-09-02` | `2026-09-02 03:04 +02:00` | test wall recorded separately | complete | Exact `pytest -n 7 --dist loadgroup --durations=10` audit: 10,091 collected, 9,865 passed, 56 failed, 170 skipped in 724.28s. Failures are grouped into COD/F14/DOSFUNC recovery, SORTD/source-sidecar behavior, three fast unit-contract families, and the slow TIDShowRange/debug corpus. |
 | 9a | Close terminal local pointer-output carrier versus scalar-return identity | `2026-09-02 03:04 +02:00` | `2026-09-02 04:03 +02:00` | 40-55m focused; quality and pipeline waits separate | complete | Semantics owns a typed all-terminal-path proof; Types consumes it only with complete unused-caller evidence and a guessed prototype. Swaps becomes `void`, direct-global `_SetDLC` remains scalar, uncertain paths refuse demotion, `quality-dev` and the required executable pipeline pass. |
 | 9b | Close `_ConfigCrts` byte-lane projection and cross-structure temporary liveness | `2026-09-02 04:28 +02:00` | `2026-09-02 05:05 +02:00` | 24-30m focused; gate waits excluded | complete | Types/Lowering preserves exact byte subviews, Widening proves exact word recomposition, and Rewrite cleanup refuses deletion across a live enclosing continuation. Real Tail Validation, 29 focused tests, `quality-dev`, and mandatory plus expanded pipelines pass. |
-| 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | 65-90m QuickSort and terminal-return closures; waits excluded | 55-76h | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
+| 9c | Preserve validated callee pointer evidence across exact-function project views | `2026-09-02 12:43 +02:00` | `2026-09-02 13:01 +02:00` | about 18m focused; test waits included | complete | The existing ABI seeding service rebases immutable pointer evidence, detects conflicts, and makes HeapSort's two `Swaps` arguments typed pointers. Focused source-assisted and sidecar-free validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. |
+| 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus about 18m for 9c; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
 | 12 | Implement evidence-supported Reko mechanisms | not started | - | 0h | 9-15h | Task 7 per-step DoD passes; unsupported mechanisms remain explicit refusals. |
+
+#### Step 9c acceptance contract
+
+Reason: pointer-argument classification was already correct in the full-binary
+project, but its per-project registry disappeared when CLI created an exact
+function project. The downstream call lowering therefore received no pointer
+identity and rendered numeric values even though the callee evidence existed.
+
+Definition of done:
+
+- the existing Types/Lowering ABI service transfers only already-validated,
+  immutable pointer evidence and rebases only the source and target addresses
+- conflicting target evidence refuses replacement, incomplete prototypes do
+  not discard independent pointer evidence, and no new pointer classification
+  occurs at the project boundary
+- source-assisted and sidecar-free HeapSort preserve both `Swaps` pointer
+  argument classes, report `validation=passed`, and compile as strict C11
+- focused tests, Ruff `--fix`, MyPy, architecture import checks, and
+  `quality-dev` pass
+
+Definition of failure:
+
+- CLI, Structuring, or Rewrite infers pointer semantics from names, addresses,
+  rendered C, or call shape
+- evidence is silently overwritten, transported without validation, or lost
+  merely because a complete prototype cannot yet be formed
+- output becomes prettier while a call, argument class, memory effect, CFG
+  edge, Tail Validation result, compile gate, type, documentation, or lint gate
+  regresses
 
 ### Estimate History
 
@@ -666,7 +971,15 @@ validation blind spot.
 | `2026-09-01 23:03 +02:00` | 70-99h | unchanged | DrawFrame's regenerated canonical setup carrier now validates and the mandatory pipeline remains green. This closes the sibling regression but not a weighted top-level DoD; Step 8 still requires expanded and broad gates, and Step 9 remains the next semantic family. |
 | `2026-09-02 02:49 +02:00` | 68-96h | -2h / -3h | Exact JCC ownership and conservative short-circuit predecessor recovery close QuickSort's two scan guards and generated-runtime timeout. A signed semantic-view correction closes the final Sleep warning. `quality-dev` and the complete expanded 5/5 pipeline pass with 1,919 curated tests, SORTD 20/20, zero validation failures/timeouts/compiler warnings, and a passing generated sort-core behavior gate. The weighted total remains 79% after rounding because the broader call/type/CFG task is still open. |
 | `2026-09-02 04:03 +02:00` | 80-115h | +12h / +19h | The first exact 10,091-test repository audit proves that curated green did not mean full-suite green: 9,865 passed, 56 failed, and 170 skipped. Four failures have since been corrected or independently verified, leaving about 52 projected pending an exact rerun. The Swaps terminal pointer-output carrier now closes at Semantics and Types with `quality-dev` and the executable pipeline green, but the newly explicit full-suite root families increase the honest forecast and reduce weighted completion to 75%. |
-| `2026-09-02 05:05 +02:00` | 80-115h | unchanged | The exact last-failed rerun reduced the live set to 48 failures and 26 passes before `_ConfigCrts`. Its three independent owners now close with failing-before regressions, live `validation=passed`, and green quality, mandatory, and expanded pipelines, leaving 47 projected until the next exact rerun. The weighted total remains 75% after rounding. |
+| `2026-09-02 05:18 +02:00` | 80-115h | unchanged | The exact last-failed rerun is now 47 failures and 25 passes in 287.46s. `_ConfigCrts` closes with failing-before regressions, live `validation=passed`, and green quality, mandatory, and expanded pipelines; its separate COD block-lift fixture remains independently red and is the next investigation. The weighted total remains 75% after rounding. |
+| `2026-09-02 06:44 +02:00` | 80-115h | unchanged | The exact last-failed rerun is 34 failures and 25 passes in 237.00s. F14 regenerated global reads and `_MousePOS`'s dead physical-register carrier close with live validation, compile, liveness-refusal, and `quality-dev` evidence. These improve the still-open shared Ghidra/full-suite task but do not complete a weighted milestone, so total progress remains 75%. |
+| `2026-09-02 08:04 +02:00` | 80-115h | unchanged | The CARR scalar/wide predicate family closes at the existing Types/Lowering and Structuring owners with validation, focused tests, `quality-dev`, and the mandatory external pipeline green. The exact last-failed rerun improves from 34 to 32 failures while retaining 25 passes and finishes in 237.88s. The remaining failures still span independent call/type, segmented-memory width, CFG, and SORTD regeneration families, so the weighted total and forecast remain 75% and 80-115h. |
+| `2026-09-02 08:30 +02:00` | 80-115h | unchanged | Four stale assertions are corrected only where current output is source-equivalent, recompilable, and reports `validation=passed`: Ready5's word store, F14 LookUp's hexadecimal literal, ReInitBars' explicit cast/control shape, and portable `main`'s hexadecimal mode constant. BubbleSort's direct calls likewise accept explicit ABI casts. The exact last-failed lane is now 27 failures and 26 passes in 167.42s; DOS pointer typing, overlay uninitialized storage, SetGear flag provenance, and the remaining semantic families stay red. |
+| `2026-09-02 09:25 +02:00` | 80-115h | unchanged | The `pointer_memory` timeout is closed at Types/Lowering: indexed x86 addresses recognize one unambiguous argument carrier, and prototype replay joins entry-SP C variables to annotations by machine-BP identity. Failing-before tests, 77 related tests, direct Ruff/MyPy, live `fill_bytes`, and the complete three-function construct pass; generated runtime finishes instead of timing out. The weighted total remains 75% because the complete-suite and remaining SORTD semantic families are still open. |
+| `2026-09-02 09:39 +02:00` | 80-115h | unchanged | The mandatory pipeline is green with 1,923 tests and every required MS C runtime construct. The exact last-failed lane is 26 failures and 25 passes in 224.10s. DOS `loadProgram` now retains its two pointer outputs, but its invalid casted low-byte lvalue and missing return flow remain the next independent root. |
+| `2026-09-02 10:45 +02:00` | 80-115h | unchanged | DOS `_dos_loadProgram` is closed across both CLI shapes. Exact PUSH provenance removes the invalid split carrier; typed AX-to-stack binding, machine-BP object identity, and a bounded return-register-preserving epilogue proof materialize both returns at their owning layers. Focused Ruff/MyPy, 83 related checks with only the already-known larger `loadprog` body failure, `quality-dev` with 1,923 tests, and the mandatory external pipeline pass. The weighted total remains 75% pending the refreshed full-suite lane and remaining COD/SORTD families. |
+| `2026-09-02 11:53 +02:00` | 80-115h | unchanged pending exact audit | The larger DOS `loadprog` body closes in 35-45 focused minutes. A typed four-byte stack owner now supplies exact validation subviews, and Structuring refuses a multi-predecessor linear return scan before recovering each exact-tagged terminal value from its own CFG predecessor. Generic failing-before tests, 261 related checks, direct Ruff/MyPy, live COD validation, portable recompilation, and `quality-dev` pass. The weighted total and forecast remain unchanged until the exact full collection refreshes the remaining independent failure families. |
+| `2026-09-02 13:01 +02:00` | 80-115h | unchanged pending exact audit | The refreshed exact collection establishes a 10,132 collected / 9,931 passed / 31 failed / 170 skipped baseline in 1,314.23s. Three infrastructure defects and four stale semantic-shape assertions are closed. HeapSort's remaining pointer-argument defect is then closed generically by transporting validated callee evidence across project views; focused validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. About 23 failures are projected, not confirmed, until the next exact audit. |
 
 Current expected finish for the complete plan is **80-115 focused engineering
 hours**, approximately **2.0-3.8 working weeks** at 30-40 focused hours per

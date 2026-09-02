@@ -27,6 +27,13 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeLong, SimTypeShort
 
 from ..ir.core import IRValue, MemSpace
+from ..semantics.branch_target_return import (
+    BranchTargetReturnEffectKind8616,
+    branch_target_return_effect_8616,
+)
+from ..semantics.return_register_preservation import (
+    instruction_preserves_return_registers_8616,
+)
 from .condition_lowering import lower_ir_value_to_c_expr_8616
 from .return_chains import (
     BranchTargetReturnBlockResult8616,
@@ -63,7 +70,7 @@ def _signed_i16_8616(value: int) -> int:
     return normalized - 0x10000 if normalized & 0x8000 else normalized
 
 
-def _branch_target_imm_8616(insn: object) -> int | None:
+def branch_target_imm_8616(insn: object) -> int | None:
     """Read one direct target at the dynamic third-party Capstone boundary."""
     # Dynamic third-party Capstone boundary: operands and immediates are decoded fields.
     operands = tuple(getattr(insn, "operands", ()) or ())
@@ -71,6 +78,53 @@ def _branch_target_imm_8616(insn: object) -> int | None:
         return None
     value = getattr(operands[0], "imm", None)
     return int(value) if isinstance(value, int) else None
+
+
+def branch_target_preserves_return_registers_8616(
+    project: object,
+    target_addr: int,
+    *,
+    max_depth: int = 4,
+) -> bool:
+    """Prove a bounded jump path reaches return without changing AX or DX."""
+    typed_project = cast(_Project8616, project)
+    target = int(target_addr)
+    seen: set[int] = set()
+    for _ in range(max_depth + 1):
+        if target in seen:
+            return False
+        seen.add(target)
+        try:
+            block = typed_project.factory.block(target, opt_level=0)
+        except Exception:
+            return False
+        # Dynamic third-party angr block boundary: decoded Capstone is optional.
+        capstone = getattr(block, "capstone", None)
+        # Dynamic third-party Capstone boundary: instruction wrappers are external.
+        insns = tuple(getattr(capstone, "insns", ()) or ())
+        classified = tuple(
+            (insn, branch_target_return_effect_8616(insn, branch_target_imm_8616))
+            for insn in insns
+        )
+        if not classified:
+            return False
+        for index, (insn, effect) in enumerate(classified):
+            if instruction_preserves_return_registers_8616(insn):
+                continue
+            terminal = index == len(classified) - 1
+            if effect.kind is BranchTargetReturnEffectKind8616.RETURN:
+                return terminal
+            if (
+                effect.kind is BranchTargetReturnEffectKind8616.JUMP
+                and terminal
+                and isinstance(effect.jump_target, int)
+            ):
+                target = effect.jump_target
+                break
+            return False
+        else:
+            return False
+    return False
 
 
 def _stack_ir_value_8616(value: _StackReturnSlice8616, *, size: int | None = None) -> IRValue:
@@ -140,7 +194,7 @@ def recover_branch_target_return_expression_8616(
         return CBinaryOp(op, expression, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen)
 
     callbacks = BranchTargetReturnScanCallbacks8616(
-        branch_target_imm=_branch_target_imm_8616,
+        branch_target_imm=branch_target_imm_8616,
         combine_return_expr=_combine,
         materialize_reg_imm=_reg_imm,
         materialize_stack_load=_stack_load,

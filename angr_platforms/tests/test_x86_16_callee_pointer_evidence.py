@@ -3,7 +3,16 @@
 from types import SimpleNamespace
 
 from angr.sim_type import SimTypeFunction, SimTypePointer, SimTypeShort
+from angr_platforms.X86_16.analysis_helpers import (
+    seed_wide_stack_prototype_from_binary_address_8616,
+)
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering.callee_pointer_contracts import (
+    CalleePointerArgumentEvidence8616,
+    callee_pointer_argument_evidence_by_addr_8616,
+    record_callee_pointer_argument_evidence_8616,
+    transfer_callee_pointer_argument_evidence_8616,
+)
 from angr_platforms.X86_16.lowering.callee_pointer_evidence import (
     apply_callee_pointer_argument_evidence_at_address_8616,
     callee_pointer_argument_indices_at_address_8616,
@@ -189,6 +198,108 @@ def test_records_contiguous_pointer_prefix_before_prototype_exists() -> None:
         "sub_107b8",
         0,
     )
+
+
+def test_transfers_validated_pointer_evidence_between_project_views() -> None:
+    source_project = SimpleNamespace()
+    target_project = SimpleNamespace()
+    source = CalleePointerArgumentEvidence8616(
+        target_addr=0x107B8,
+        raw_fact_count=2,
+        normalized_fact_count=2,
+        classified_fact_count=2,
+        materialized_count=2,
+        failure_count=0,
+        pointer_stack_offsets=(4, 6),
+        pointer_argument_indices=(0, 1),
+        ambiguous_displaced_stack_offsets=(),
+    )
+    record_callee_pointer_argument_evidence_8616(source_project, source)
+
+    assert transfer_callee_pointer_argument_evidence_8616(
+        source_project,
+        target_project,
+        source_addr=0x107B8,
+        target_addr=0x17B8,
+    )
+    transferred = callee_pointer_argument_evidence_by_addr_8616(target_project)
+    assert transferred[0x17B8] == CalleePointerArgumentEvidence8616(
+        target_addr=0x17B8,
+        raw_fact_count=2,
+        normalized_fact_count=2,
+        classified_fact_count=2,
+        materialized_count=2,
+        failure_count=0,
+        pointer_stack_offsets=(4, 6),
+        pointer_argument_indices=(0, 1),
+        ambiguous_displaced_stack_offsets=(),
+    )
+    assert not transfer_callee_pointer_argument_evidence_8616(
+        source_project,
+        target_project,
+        source_addr=0x107B8,
+        target_addr=0x17B8,
+    )
+
+
+def test_cross_project_seed_transfers_pointer_evidence_without_prototype(
+    monkeypatch,
+) -> None:
+    source_project = SimpleNamespace()
+    target_project = SimpleNamespace()
+    source_function = SimpleNamespace(
+        prototype=None,
+        calling_convention=None,
+        is_prototype_guessed=True,
+    )
+    target_function = SimpleNamespace(
+        prototype=None,
+        calling_convention=None,
+        is_prototype_guessed=True,
+    )
+
+    def classify_pointer(
+        project: object,
+        _function: object,
+        address: int,
+    ) -> bool:
+        record_callee_pointer_argument_evidence_8616(
+            project,
+            CalleePointerArgumentEvidence8616(
+                target_addr=address,
+                raw_fact_count=1,
+                normalized_fact_count=1,
+                classified_fact_count=1,
+                materialized_count=1,
+                failure_count=0,
+                pointer_stack_offsets=(4,),
+                pointer_argument_indices=(0,),
+                ambiguous_displaced_stack_offsets=(),
+            ),
+        )
+        return True
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.calling_convention_compat."
+        "apply_x86_16_wide_stack_prototype_evidence_at_address",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.lowering.callee_pointer_evidence."
+        "apply_callee_pointer_argument_evidence_at_address_8616",
+        classify_pointer,
+    )
+
+    assert not seed_wide_stack_prototype_from_binary_address_8616(
+        source_project,
+        source_function,
+        target_function,
+        0x107B8,
+        target_project=target_project,
+        target_address=0x17B8,
+    )
+    transferred = callee_pointer_argument_evidence_by_addr_8616(target_project)
+    assert transferred[0x17B8].pointer_argument_indices == (0,)
 
 
 def test_records_contiguous_pointer_prefix_with_incomplete_prototype() -> None:

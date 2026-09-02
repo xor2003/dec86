@@ -1419,9 +1419,7 @@ def materialize_named_segmented_global_loads_8616(
             changed = True
         if transform_assignment_lvalue_reads(root):
             changed = True
-        if isinstance(root, CStatements) and _replace_c_children_8616(
-            root, transform, should_process_child=should_process_child
-        ):
+        if _replace_c_children_8616(root, transform, should_process_child=should_process_child):
             changed = True
     if zero_test_materialized_count > 0:
         try:
@@ -6519,11 +6517,14 @@ def recover_far_pointer_segmented_load_evidence_8616(
     function: object,
 ) -> tuple[FarPointerSegmentedLoadEvidence8616, ...]:
     """Recover or reuse exact LES/LDS-backed segmented-load evidence."""
-    return collect_function_binary_evidence_8616(
-        project,
-        function,
-        kind=FunctionEvidenceKind8616.FAR_POINTER_SEGMENTED_LOADS,
-        builder=_recover_far_pointer_segmented_load_evidence_uncached_8616,
+    return cast(
+        tuple[FarPointerSegmentedLoadEvidence8616, ...],
+        collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.FAR_POINTER_SEGMENTED_LOADS,
+            builder=_recover_far_pointer_segmented_load_evidence_uncached_8616,
+        ),
     )
 
 
@@ -11078,11 +11079,14 @@ def _direct_global_instruction_views_8616(
     function: object,
 ) -> tuple[CapstoneInstructionView8616, ...]:
     """Return request-cached immutable instruction views for one function."""
-    return collect_function_binary_evidence_8616(
-        project,
-        function,
-        kind=FunctionEvidenceKind8616.DIRECT_GLOBAL_INSTRUCTION_VIEWS,
-        builder=_build_direct_global_instruction_views_8616,
+    return cast(
+        tuple[CapstoneInstructionView8616, ...],
+        collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.DIRECT_GLOBAL_INSTRUCTION_VIEWS,
+            builder=_build_direct_global_instruction_views_8616,
+        ),
     )
 
 

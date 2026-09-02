@@ -10115,7 +10115,7 @@ def test_prepare_ranked_binary_preview_items_uses_fork_lane_on_main_thread(monke
     project = SimpleNamespace()
     fork_calls = []
 
-    monkeypatch.setattr(decompile.threading, "active_count", lambda: 1)
+    monkeypatch.setattr(decompile, "_analysis_timeout_use_fork_8616", lambda: True)
     monkeypatch.setattr(
         decompile,
         "_recover_ranked_binary_function",
@@ -15841,10 +15841,8 @@ def test_decompile_cli_recovers_dos_load_program_pointer_stores():
     assert "unsigned short file, unsigned long cmdline, unsigned short *cs, unsigned short *ss" in result.stdout
     assert "if (err)" in result.stdout
     assert "return err;" in result.stdout
-    assert "ax = exeLoadParams[10];" in result.stdout
-    assert "cs[0] = ax;" in result.stdout
-    assert "ax_2 = exeLoadParams[8];" in result.stdout
-    assert "ss[0] = ax_2;" in result.stdout
+    assert "cs[0] = exeLoadParams[10];" in result.stdout
+    assert "ss[0] = exeLoadParams[8];" in result.stdout
     assert "return 0;" in result.stdout
     assert "cs[1]" not in result.stdout
     assert "ss[1]" not in result.stdout
@@ -15854,6 +15852,7 @@ def test_decompile_cli_recovers_dos_load_program_pointer_stores():
     assert "*file =" not in result.stdout
     assert "ds * 16 +" not in result.stdout
     assert "if (&err)" not in result.stdout
+    assert "ax = exeLoadParams" not in result.stdout
 
 
 def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
@@ -15886,7 +15885,7 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "&v1" not in result.stdout
     assert "MouseX = x << 1;" in result.stdout
     assert "MouseY = y;" in result.stdout
-    assert "return interrupt_int33(4, x << 1, y);" in result.stdout
+    assert "interrupt_int33(4, x << 1, y);\n    return 4;" in result.stdout
     assert "vvar_" not in result.stdout
 
 
@@ -16187,7 +16186,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
                 "MouseX = x << 1;",
                 "MouseY = y;",
                 "unsigned short interrupt_int33(unsigned short ax, unsigned short cx, unsigned short dx);",
-                "return interrupt_int33(4, x << 1, y);",
+                "interrupt_int33(4, x << 1, y);\n    return 4;",
             ),
             ("if (...)", "28675", "28677", "vvar_"),
         ),
@@ -16203,9 +16202,8 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
                 "planecnt",
                 "droll",
                 "pdest",
-                "* 46",
-                "SEG_U8(inertia_ds, 18 + planecnt * 46) = 0;",
-                "SEG_U8(inertia_ds, 18 + planecnt * 46 + 1) = 0;",
+                "bx = planecnt * 46;",
+                "SEG_U16(inertia_ds, 18 + bx) = 0;",
                 "return 0;",
             ),
             (),

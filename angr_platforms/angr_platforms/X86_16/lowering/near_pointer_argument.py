@@ -179,6 +179,18 @@ def _direct_stack_write_delta_8616(
     return offset, None
 
 
+def _unique_memory_carrier_8616(
+    operand: _OperandBoundary8616,
+    carriers: dict[int, _NearPointerCarrier8616],
+) -> _NearPointerCarrier8616 | None:
+    """Return the sole argument carrier contributing to an effective address."""
+    address_registers = (int(operand.mem.base), int(operand.mem.index))
+    carrier_registers = tuple(register for register in address_registers if register in carriers)
+    if len(carrier_registers) != 1:
+        return None
+    return carriers[carrier_registers[0]]
+
+
 def _collect_near_pointer_argument_facts_uncached_8616(
     project: object | None,
     function: object,
@@ -212,7 +224,7 @@ def _collect_near_pointer_argument_facts_uncached_8616(
             for operand in operands:
                 if operand.type != X86_OP_MEM:
                     continue
-                carrier = carriers.get(int(operand.mem.base))
+                carrier = _unique_memory_carrier_8616(operand, carriers)
                 if carrier is None or int(operand.size) <= 0:
                     continue
                 key = (carrier.stack_offset, insn_addr, int(operand.size))
@@ -273,9 +285,12 @@ def collect_near_pointer_argument_facts_8616(
     project: object | None = None,
 ) -> tuple[NearPointerArgumentFact8616, ...]:
     """Collect or reuse BP-argument facts for one decoded binary surface."""
-    return collect_function_binary_evidence_8616(
-        project,
-        function,
-        kind=FunctionEvidenceKind8616.NEAR_POINTER_ARGUMENTS,
-        builder=_collect_near_pointer_argument_facts_uncached_8616,
+    return cast(
+        tuple[NearPointerArgumentFact8616, ...],
+        collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.NEAR_POINTER_ARGUMENTS,
+            builder=_collect_near_pointer_argument_facts_uncached_8616,
+        ),
     )

@@ -15,10 +15,12 @@ from __future__ import annotations
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.analyses.decompiler.structured_codegen.c import CVariable
+from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from ..ir.core import IRValue, MemSpace
 from .real_mode_linear import proven_wide_stack_pair_low_offset_8616
+from .semantic_cast import CSemanticCast8616
 
 
 def materialize_proven_wide_stack_pair_variable_8616(
@@ -99,6 +101,35 @@ def _proven_projected_wide_pair_8616(
     )
 
 
+def _proven_low_owner_with_high_slice_8616(
+    high_expression: object,
+    low_expression: object,
+) -> bool:
+    """Accept a low-word projection whose four-byte owner covers the high slice."""
+    low_source = _word_projection_source_8616(low_expression, 0)
+    if (
+        low_source is None
+        and isinstance(low_expression, CSemanticCast8616)
+        and isinstance(low_expression.dst_type, SimTypeShort)
+        and isinstance(low_expression.expr, CVariable)
+    ):
+        low_source = low_expression.expr
+    if low_source is None or not isinstance(high_expression, CVariable):
+        return False
+    high_variable = high_expression.variable
+    low_variable = low_source.variable
+    return (
+        isinstance(high_variable, SimStackVariable)
+        and isinstance(low_variable, SimStackVariable)
+        and high_variable.size == 2
+        and low_variable.size == 4
+        and high_variable.offset == low_variable.offset + 2
+        and high_variable.base == low_variable.base
+        and high_variable.base_addr == low_variable.base_addr
+        and high_variable.region == low_variable.region
+    )
+
+
 def proven_wide_stack_ir_pair_8616(
     high_value: IRValue,
     low_value: IRValue,
@@ -123,6 +154,8 @@ def proven_wide_stack_ir_pair_8616(
         low_expression,
         low_value.offset,
     ):
+        return True
+    if _proven_low_owner_with_high_slice_8616(high_expression, low_expression):
         return True
     if not isinstance(high_expression, CVariable) or not isinstance(low_expression, CVariable):
         return False

@@ -6041,8 +6041,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             binary_path=args.binary,
         )
         print(f"[dbg] direct decompilation timeout detail: {direct_result.payload}", file=sys.stderr)
-        print(f"\n/* Decompilation timeout: Timed out while recovering a function after {args.timeout}s. */")
-        print("/* Direct decompilation timeout is terminal for this function; skipping fallback lanes. */")
+        print(f"\n/* Decompilation timeout: Timed out while recovering a function after {args.timeout}s during x86-16 function recovery. */")
+        print("/* Direct decompilation timeout is terminal for this function; skipping fallback lanes. */\n/* Tip: try a larger --timeout for larger binaries. */")
         return 3
     if direct_result.status != "ok":
 

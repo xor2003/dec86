@@ -104,6 +104,9 @@ from .condition_replay import (
     record_condition_replay_fact_8616,
     select_condition_replay_fact_8616,
 )
+from .local_wide_stack_condition_chains import (
+    recover_local_wide_stack_condition_chain_8616,
+)
 from .loop_condition_materialization import (
     LoopConditionMaterializationStats8616,
     materialize_typed_loop_continuation_conditions_8616,
@@ -138,6 +141,9 @@ from .wide_call_return_guard_chains import (
     collapse_wide_call_return_guard_chain_8616,
 )
 from .wide_stack_condition_chains import recover_wide_stack_condition_chain_8616
+from .wide_stack_return_predicates import (
+    wide_stack_return_predicate_materialized_8616,
+)
 from .wide_stack_single_branches import recover_wide_stack_single_body_condition_8616
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -757,6 +763,46 @@ def _materialize_cfg_condition_chain_expr_8616(
                 fallthrough_target=condition.fallthrough_target,
             )
             return None
+        local_wide = recover_local_wide_stack_condition_chain_8616(
+            condition,
+            conditions_by_block,
+            successors,
+            prove_wide_pair,
+        )
+        if (
+            local_wide.condition is not None
+            and isinstance(local_wide.true_target, int)
+            and isinstance(local_wide.false_target, int)
+        ):
+            for consumed in local_wide.consumed_conditions:
+                if consumed not in consumed_conditions:
+                    consumed_conditions.append(consumed)
+            materialized_wide = materialize_condition_ir_expression_8616(
+                project,
+                codegen,
+                local_wide.condition,
+            )
+            if materialized_wide is None:
+                return None
+            record_wide_condition_argument_type_evidence_8616(
+                codegen,
+                local_wide.condition,
+            )
+            wide_visited = visited.union(
+                consumed.block_addr
+                for consumed in local_wide.consumed_conditions
+                if isinstance(consumed.block_addr, int)
+            )
+            taken = build_from_address(local_wide.true_target, wide_visited)
+            fallthrough = build_from_address(local_wide.false_target, wide_visited)
+            if taken is None or fallthrough is None:
+                return None
+            return _combine_condition_outcomes_8616(
+                materialized_wide,
+                taken,
+                fallthrough,
+                codegen,
+            )
         if condition not in consumed_conditions:
             consumed_conditions.append(condition)
         materialized = materialize_condition_ir_expression_8616(project, codegen, condition)
@@ -1218,21 +1264,70 @@ def _materialize_cfg_single_branch_expr_8616(
                 "single-return-orientation",
                 evidence=orientation_evidence,
             )
-    orientation = proven_return_orientation
-    if orientation is None:
-        orientation = _single_branch_body_orientation_8616(condition, body, successors)
+    body_orientation = _single_branch_body_orientation_8616(
+        condition,
+        body,
+        successors,
+    )
+    orientation = (
+        proven_return_orientation
+        if proven_return_orientation is not None
+        else body_orientation
+    )
     if orientation is None:
         return None
-    materialized = materialize_condition_ir_expression_8616(project, codegen, condition)
-    if materialized is None:
-        return None
-    oriented = materialized if orientation else invert_structured_condition_8616(materialized, codegen)
-    lowering = lower_call_output_stack_fields_in_condition_8616(codegen, oriented, (condition,))
     true_target = condition.taken_target if orientation else condition.fallthrough_target
     false_target = condition.fallthrough_target if orientation else condition.taken_target
+    replacement = None
+    if body_orientation == orientation and isinstance(false_target, int):
+        for body_target in (
+            _first_tagged_ins_addr_8616(body),
+            _first_tagged_block_addr_8616(body),
+        ):
+            if (
+                body_target is None
+                or body_target == condition.block_addr
+                or _single_branch_orientation_8616(
+                    condition,
+                    body_target,
+                    successors,
+                )
+                != orientation
+            ):
+                continue
+            replacement = _materialize_cfg_condition_chain_expr_8616(
+                project,
+                codegen,
+                condition,
+                conditions_by_block,
+                successors,
+                body_target,
+                false_target,
+            )
+            if replacement is not None:
+                true_target = body_target
+                break
+    if replacement is None:
+        materialized = materialize_condition_ir_expression_8616(
+            project,
+            codegen,
+            condition,
+        )
+        if materialized is None:
+            return None
+        oriented = (
+            materialized
+            if orientation
+            else invert_structured_condition_8616(materialized, codegen)
+        )
+        replacement = lower_call_output_stack_fields_in_condition_8616(
+            codegen,
+            oriented,
+            (condition,),
+        ).expression
     if isinstance(true_target, int) and isinstance(false_target, int):
         record_condition_replay_fact_8616(codegen, condition, true_target, false_target)
-    return lowering.expression
+    return replacement
 
 
 def _single_branch_orientation_8616(
@@ -2212,9 +2307,21 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             project, cfunc.addr, scalar_returns.expressions
         )
         changed = scalar_returns.changed or changed
-    suffix_prune = prune_unreachable_total_return_suffixes_8616(root)
-    metadata_codegen._inertia_total_return_suffix_prune_stats_8616 = suffix_prune.stats
-    changed = bool(suffix_prune.removed_statement_count) or changed
+    pruning_closure = classify_condition_evidence_closure_8616(
+        root,
+        targeted,
+        successors,
+    )
+    if failure_count or not pruning_closure.complete:
+        metadata_codegen._inertia_total_return_suffix_prune_stats_8616 = (
+            TotalReturnSuffixPruneStats8616(failure_count=1)
+        )
+    else:
+        suffix_prune = prune_unreachable_total_return_suffixes_8616(root)
+        metadata_codegen._inertia_total_return_suffix_prune_stats_8616 = (
+            suffix_prune.stats
+        )
+        changed = bool(suffix_prune.removed_statement_count) or changed
     wide_changed, wide_stats = _materialize_existing_wide_call_return_conditions_8616(
         codegen,
         targeted,
@@ -2249,12 +2356,30 @@ def materialize_structuring_conditions_8616(
     legacy_codegen = cast(SimpleNamespace, codegen)
     metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
     stage_project = cast(_ConditionMaterializationProject8616, project)
-    stage_project._inertia_decompiler_stage = "structuring:condition_materialization:typed"
-    typed_changed = bool(_legacy_typed_conditions._apply_typed_conditions_to_codegen_8616(legacy_project, legacy_codegen))
-    stage_project._inertia_decompiler_stage = "structuring:condition_materialization:jcc"
-    jcc_changed = bool(_legacy_jcc._rewrite_decoded_jcc_conditions_8616(legacy_project, legacy_codegen))
+    if wide_stack_return_predicate_materialized_8616(codegen):
+        chains_changed = typed_changed = jcc_changed = False
+    else:
+        stage_project._inertia_decompiler_stage = "structuring:condition_materialization:typed"
+        typed_changed = bool(
+            _legacy_typed_conditions._apply_typed_conditions_to_codegen_8616(
+                legacy_project,
+                legacy_codegen,
+            )
+        )
+        stage_project._inertia_decompiler_stage = "structuring:condition_materialization:jcc"
+        jcc_changed = bool(
+            _legacy_jcc._rewrite_decoded_jcc_conditions_8616(
+                legacy_project,
+                legacy_codegen,
+            )
+        )
+        stage_project._inertia_decompiler_stage = "structuring:condition_materialization:chains"
+        chains_changed = materialize_structuring_condition_chains_8616(project, codegen)
     try:
-        root = cast(_ConditionMaterializationCFunction8616, metadata_codegen.cfunc).statements
+        root = cast(
+            _ConditionMaterializationCFunction8616,
+            metadata_codegen.cfunc,
+        ).statements
     except AttributeError:
         root = None
     try:
@@ -2266,8 +2391,6 @@ def materialize_structuring_conditions_8616(
         if isinstance(raw_typed_conditions, (list, tuple))
         else ()
     )
-    stage_project._inertia_decompiler_stage = "structuring:condition_materialization:chains"
-    chains_changed = materialize_structuring_condition_chains_8616(project, codegen)
     stage_project._inertia_decompiler_stage = "structuring:condition_materialization:loops"
     loop_stats = materialize_typed_loop_continuation_conditions_8616(
         root,

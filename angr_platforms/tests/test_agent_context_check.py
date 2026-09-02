@@ -78,3 +78,15 @@ def test_agent_context_main_requires_graph(monkeypatch, tmp_path, capsys):
 
     assert rc == 1
     assert "codebase-memory MCP graph: unknown" in output
+
+
+def test_agent_context_main_compacts_only_success(monkeypatch, tmp_path, capsys):
+    _write_context_files(tmp_path)
+    monkeypatch.setattr(agent_context_check, "REPO_ROOT", tmp_path)
+
+    rc = agent_context_check.main(["--compact"])
+    output = capsys.readouterr().out
+
+    assert rc == 0
+    assert output.startswith("agent context check passed:")
+    assert "approved fallback discovery flow:" not in output

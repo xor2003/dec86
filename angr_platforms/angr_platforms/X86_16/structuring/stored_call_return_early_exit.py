@@ -18,27 +18,24 @@ from enum import StrEnum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
-    CBinaryOp,
-    CConstant,
     CExpression,
     CIfElse,
     CReturn,
     CStatements,
-    CVariable,
 )
-from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from ..lowering.call_return_stack_conditions import (
     StoredCallReturnConditionEvidence8616,
-    StoredCallReturnConditionKind8616,
     classify_stored_call_return_condition_8616,
 )
 from .branch_return_expressions import (
+    branch_target_preserves_return_registers_8616,
     recover_branch_target_return_expression_8616,
     sole_return_statement_8616,
 )
 from .call_return_conditions import structured_condition_key_8616
+from .stored_call_return_operands import stored_return_operand_8616
 
 __all__ = [
     "StoredCallReturnEarlyExitEvidence8616",
@@ -88,49 +85,6 @@ class _StoredReturnCodegen8616(Protocol):
 
     cfunc: _StoredReturnCFunction8616
     _inertia_stored_call_return_early_exit_result_8616: StoredCallReturnEarlyExitResult8616
-
-
-def _canonical_stack_offset_8616(offset: int) -> int:
-    """Normalize one 16-bit BP displacement to its signed identity."""
-    normalized = offset & 0xFFFF
-    return normalized - 0x10000 if normalized >= 0x8000 else normalized
-
-
-def _stored_return_operand_8616(
-    condition: object,
-    evidence: StoredCallReturnConditionEvidence8616,
-) -> CVariable | None:
-    """Return the exact stack operand from the inverted continuation guard."""
-    expected_op = (
-        "CmpNE"
-        if evidence.kind is StoredCallReturnConditionKind8616.ZERO
-        else "CmpEQ"
-    )
-    if not isinstance(condition, CBinaryOp) or condition.op != expected_op:
-        return None
-    variables = tuple(
-        operand
-        for operand in (condition.lhs, condition.rhs)
-        if isinstance(operand, CVariable)
-        and isinstance(operand.variable, SimStackVariable)
-    )
-    constants = tuple(
-        operand
-        for operand in (condition.lhs, condition.rhs)
-        if isinstance(operand, CConstant) and operand.value == 0
-    )
-    if len(variables) != 1 or len(constants) != 1:
-        return None
-    variable = variables[0].variable
-    store = evidence.stack_store
-    if (
-        variable.base != "bp"
-        or not isinstance(variable.offset, int)
-        or _canonical_stack_offset_8616(variable.offset) != _canonical_stack_offset_8616(store.dst_offset)
-        or int(variable.size) != store.width
-    ):
-        return None
-    return variables[0]
 
 
 def _terminal_return_8616(body: object) -> CReturn | None:
@@ -229,6 +183,17 @@ def _result_8616(
     return result
 
 
+def _refused_result_8616(
+    codegen: _StoredReturnCodegen8616,
+) -> StoredCallReturnEarlyExitResult8616:
+    """Publish one closed refusal for incomplete or conflicting evidence."""
+    return _result_8616(
+        codegen,
+        StoredCallReturnEarlyExitStatus8616.REFUSED,
+        StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
+    )
+
+
 def materialize_stored_call_return_early_exit_8616(
     project: object,
     codegen: object,
@@ -257,81 +222,101 @@ def materialize_stored_call_return_early_exit_8616(
             StoredCallReturnEarlyExitEvidence8616(),
         )
     branch, condition, stored_evidence = candidate
-    return_operand = _stored_return_operand_8616(condition, stored_evidence)
+    return_operand = stored_return_operand_8616(
+        condition,
+        stored_evidence,
+        project,
+        codegen,
+    )
     true_body = branch.condition_and_nodes[0][1]
     true_return = sole_return_statement_8616(true_body)
     taken_target = stored_evidence.condition.taken_target
+    fallthrough_target = stored_evidence.condition.fallthrough_target
     container = _statement_container_8616(root, branch)
     if (
         return_operand is None
-        or true_return is None
         or not isinstance(taken_target, int)
+        or not isinstance(fallthrough_target, int)
         or container is None
     ):
-        return _result_8616(
-            typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
-        )
+        return _refused_result_8616(typed_codegen)
     statement_container, branch_index = container
+    error_expression = recover_branch_target_return_expression_8616(
+        project,
+        codegen,
+        fallthrough_target,
+    )
     final_expression = recover_branch_target_return_expression_8616(
         project,
         codegen,
         taken_target,
     )
-    if not isinstance(final_expression, CExpression):
-        return _result_8616(
-            typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
-        )
-    true_ready = true_return.retval is return_operand or _same_c_expression_8616(
-        true_return.retval,
+    error_ready = isinstance(error_expression, CExpression) and _same_c_expression_8616(
+        error_expression,
         return_operand,
+    )
+    if not error_ready:
+        error_ready = branch_target_preserves_return_registers_8616(
+            project,
+            fallthrough_target,
+        )
+    if (
+        not error_ready
+        or not isinstance(final_expression, CExpression)
+    ):
+        return _refused_result_8616(typed_codegen)
+    true_ready = true_return is not None and (
+        true_return.retval is return_operand
+        or _same_c_expression_8616(true_return.retval, return_operand)
     )
     if branch.else_node is None:
         final_return = _terminal_return_after_8616(statement_container, branch_index)
-        final_ready = final_return is not None and _same_c_expression_8616(
+        suffix = tuple(statement_container.statements or ())[branch_index + 1 :]
+        has_suffix_return = any(
+            isinstance(node, CReturn)
+            for statement in suffix
+            for node in (statement, *_iter_c_nodes_deep_8616(statement))
+        )
+        if true_return is None:
+            if not isinstance(true_body, CStatements) or tuple(true_body.statements or ()):
+                return _refused_result_8616(typed_codegen)
+        elif not true_ready:
+            return _refused_result_8616(typed_codegen)
+        if final_return is None and has_suffix_return:
+            return _refused_result_8616(typed_codegen)
+        if final_return is not None and not _same_c_expression_8616(
             final_return.retval,
             final_expression,
-        )
-        if true_ready and final_ready:
+        ):
+            return _refused_result_8616(typed_codegen)
+        if true_return is not None and final_return is not None:
             return _result_8616(
                 typed_codegen,
                 StoredCallReturnEarlyExitStatus8616.ALREADY_MATERIALIZED,
                 StoredCallReturnEarlyExitEvidence8616(1, 1, 1, 1, 0),
             )
+        if true_return is None:
+            true_body.statements = [CReturn(return_operand, codegen=codegen)]
+        if final_return is None:
+            statements = list(statement_container.statements or ())
+            statements.append(CReturn(final_expression, codegen=codegen))
+            statement_container.statements = statements
         return _result_8616(
             typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
+            StoredCallReturnEarlyExitStatus8616.MATERIALIZED,
+            StoredCallReturnEarlyExitEvidence8616(1, 1, 1, 1, 0),
+            changed=True,
         )
-    if not isinstance(branch.else_node, CStatements):
-        return _result_8616(
-            typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
-        )
+    if not isinstance(branch.else_node, CStatements) or true_return is None:
+        return _refused_result_8616(typed_codegen)
     false_return = _terminal_return_8616(branch.else_node)
     if false_return is None:
-        return _result_8616(
-            typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
-        )
+        return _refused_result_8616(typed_codegen)
     false_ready = _same_c_expression_8616(false_return.retval, final_expression)
     if true_return.retval is not None and not true_ready:
-        return _result_8616(
-            typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
-        )
+        return _refused_result_8616(typed_codegen)
     if false_return.retval is not None and not false_ready:
-        return _result_8616(
-            typed_codegen,
-            StoredCallReturnEarlyExitStatus8616.REFUSED,
-            StoredCallReturnEarlyExitEvidence8616(1, 1, 0, 0, 1),
-        )
+        return _refused_result_8616(typed_codegen)
     true_return.retval = return_operand
     false_return.retval = final_expression
     continuation = tuple(branch.else_node.statements or ())

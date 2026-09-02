@@ -276,6 +276,8 @@ def _scaled_index_for_access_width_8616(
 ) -> structured_c.CExpression | None:
     """Return an index only when its byte scale exactly matches the access width."""
     expr = _strip_casts_8616(expr)
+    if access_width_bytes == 1 and isinstance(expr, structured_c.CExpression):
+        return expr
     if access_width_bytes <= 0 or not isinstance(expr, structured_c.CBinaryOp):
         return None
     if expr.op == "Shl":
@@ -840,7 +842,7 @@ def _near_pointer_arg_access_8616(
         if indexed is not None:
             pointer_arg, index = indexed
             pointer_type = _near_pointer_arg_type_8616(pointer_arg, codegen)
-            if pointer_type is None:
+            if pointer_type is None or _pointer_element_width_bits_8616(pointer_type) != matched.width_bits:
                 materialized_pointer = _materialize_binary_proven_near_pointer_argument_8616(
                     matched,
                     codegen,
@@ -1961,7 +1963,7 @@ def replay_final_codegen_projections_8616(codegen: object) -> bool:
     boundary. Re-materialize only live-ins whose typed lowering evidence still
     exists; do not infer new semantics at this orchestration boundary.
     """
-    return lower_packed_flags_live_in_8616(codegen)
+    return bool(lower_packed_flags_live_in_8616(codegen))
 
 
 def apply_runtime_segment_lowering_8616(

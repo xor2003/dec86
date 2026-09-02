@@ -1325,6 +1325,7 @@ def test_materialize_synthetic_globals_ignores_typedef_alias_and_prototype_param
     c_text = """\
 struct recovered_object;
 unsigned short fill_object(struct recovered_object *a0);
+int intdos(union REGS *in, union REGS *out);
 typedef struct recovered_object {
     unsigned short field_0;
 } recovered_object;
@@ -1336,9 +1337,10 @@ void run(void)
 }
 """
 
-    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text)
+    rewritten = _materialize_missing_synthetic_global_declarations_text(c_text, synthetic_globals={0: ("REGS", 2)})
 
     assert "extern unsigned short a0;" not in rewritten
+    assert "extern unsigned short REGS;" not in rewritten
     assert "extern unsigned short recovered_object;" not in rewritten
 
 

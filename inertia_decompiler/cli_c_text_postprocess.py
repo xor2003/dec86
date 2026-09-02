@@ -1866,6 +1866,7 @@ def _collect_declared_identifiers_8616(text_lines: list[str]) -> set[str]:
         typedef_alias_re = re.compile(
             r"^\s*(?:typedef\b.*\s|}\s*)(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*;\s*$"
         )
+        type_tag_re = re.compile(r"\b(?:struct|union|enum)\s+(?P<name>[A-Za-z_]\w*)")
         decl_stmt_re = re.compile(
             r"^\s*(?:extern\s+|static\s+)?[A-Za-z_][\w\s\*\[\]<>]*\b(?P<name>[A-Za-z_][\w$?@]*)(?:\s*[\[,;=]|\s*\()"
         )
@@ -1876,6 +1877,7 @@ def _collect_declared_identifiers_8616(text_lines: list[str]) -> set[str]:
             first_token = line.split(None, 1)[0] if line.split(None, 1) else ""
             if first_token in {"return", "if", "for", "while", "switch", "case", "else", "do", "goto"}:
                 continue
+            declared.update(match.group("name") for match in type_tag_re.finditer(line))
             typedef_match = typedef_alias_re.match(line)
             if typedef_match is not None:
                 declared.add(typedef_match.group("name"))

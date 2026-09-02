@@ -21,6 +21,7 @@ from ..pipeline.structured_ast_query_index import (
     StructuredAstQuerySessionStats8616,
 )
 from ..widening.segmented_load_widening import apply_segmented_load_widening_8616
+from .cod_global_identity import reconcile_recorded_cod_global_storage_identities_8616
 from .direct_global_register_updates import materialize_direct_global_register_updates_8616
 from .dos_interrupt_aggregate_globals import materialize_dos_interrupt_aggregate_globals_8616
 from .logical_word_memory_copy_materialization import (
@@ -206,6 +207,23 @@ def run_segment_global_materialization_8616(
     runtime_segment_changed = (
         bool(apply_runtime_segment_lowering_8616(codegen, target=target)) if include_runtime_segment else False
     )
+    runtime_segment_seconds = time.perf_counter() - component_started
+    if runtime_segment_changed:
+        component_started = time.perf_counter()
+        named_global_changed = bool(
+            materialize_named_segmented_global_loads_8616(
+                project,
+                codegen,
+                synthetic_globals,
+                cod_metadata=cod_metadata,
+            )
+            or named_global_changed
+        )
+        named_global_changed = bool(
+            reconcile_recorded_cod_global_storage_identities_8616(codegen)
+            or named_global_changed
+        )
+        named_global_seconds += time.perf_counter() - component_started
     timing = SegmentGlobalMaterializationTiming8616(
         named_global_seconds=named_global_seconds,
         compare_register_seconds=compare_register_seconds,
@@ -213,7 +231,7 @@ def run_segment_global_materialization_8616(
         direct_global_store_seconds=direct_global_store_seconds,
         dos_interrupt_aggregate_seconds=dos_interrupt_aggregate_seconds,
         segmented_load_widening_seconds=segmented_load_widening_seconds,
-        runtime_segment_seconds=time.perf_counter() - component_started,
+        runtime_segment_seconds=runtime_segment_seconds,
     )
     codegen._inertia_segment_global_materialization_timing_8616 = timing
     timing_enabled = os.environ.get("INERTIA_DEBUG_TIMING", "").strip().lower()

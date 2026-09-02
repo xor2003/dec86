@@ -191,7 +191,7 @@ from .register_variable_identity import (
 from .register_variable_identity import (
     register_cvar_names_8616,
 )
-from .runtime_memory_helpers import memory_pointer_helper_8616
+from .runtime_memory_helpers import memory_pointer_helper_8616, segmented_memory_read_helper_8616
 from .runtime_segment_access import runtime_segment_access_space_8616
 from .segment_access_policy import (
     instruction_addrs_from_node_8616,
@@ -11271,7 +11271,7 @@ def _pure_consumed_push_carrier_expression_8616(node: StructuredAstValue) -> boo
     if isinstance(node, structured_c.CUnaryOp):
         return _pure_consumed_push_carrier_expression_8616(node.operand)
     if isinstance(node, structured_c.CFunctionCall):
-        helper = memory_pointer_helper_8616(node)
+        helper = memory_pointer_helper_8616(node) or segmented_memory_read_helper_8616(node)
         return helper is not None and all(
             _pure_consumed_push_carrier_expression_8616(argument)
             for argument in _boundary_tuple_8616(node.args or ())
@@ -11333,6 +11333,11 @@ def _is_consumed_push_stack_carrier_lhs_8616(
     lhs: StructuredAstValue,
 ) -> bool:
     """Recognize a side-effect-free stack carrier produced by a PUSH lift."""
+    lhs = _strip_casts_8616(lhs)
+    if isinstance(lhs, structured_c.CBinaryOp) and lhs.op == "Shr":
+        shift = _strip_casts_8616(lhs.rhs)
+        if isinstance(shift, structured_c.CConstant) and shift.value == 8:
+            lhs = _strip_casts_8616(lhs.lhs)
     if isinstance(lhs, structured_c.CDirtyExpression):
         return True
     if not isinstance(lhs, structured_c.CVariable):

@@ -89,10 +89,10 @@ DECOMP_CASES = (
         cod_dir=_F14_COD_DIR,
         original_c=("if (BadWeather) { CLOUDHEIGHT=8150; CLOUDTHICK=500; } else { CLOUDHEIGHT=125; CLOUDTHICK=1000; }"),
         expected_tokens=(
-            "SEG_U16(ds, 6) = 8150",
-            "SEG_U16(ds, 8) = 500",
-            "SEG_U16(ds, 6) = 125",
-            "SEG_U16(ds, 8) = 1000",
+            "SEG_U16(inertia_ds, 6) = 8150",
+            "SEG_U16(inertia_ds, 8) = 500",
+            "SEG_U16(inertia_ds, 6) = 125",
+            "SEG_U16(inertia_ds, 8) = 1000",
             "return",
         ),
     ),
@@ -121,7 +121,7 @@ DECOMP_CASES = (
         original_c=(
             "Rp3D->Length1 = 150; RpCRT1->YBgn = 138; RpCRT2->YBgn = 136; RpCRT4->YBgn = 150; else Rp3D->Length1 = 139;"
         ),
-        expected_tokens=("150", "138", "136", "139"),
+        expected_tokens=("150", "138", "0x88", "139"),
     ),
     DecompCase(
         name="f14_mousepos",
@@ -153,7 +153,15 @@ BLOCK_LIFT_CASES = (
         cod_dir=_COD_DIR / "default",
         block_addr=0x1000,
         original_c="if (x > y) return x; return y;",
-        expected_tokens=("CmpLE16S", "PUT(ip) = 0x1008", "PUT(ip) = 0x100e", "LDle:I16"),
+        expected_tokens=(
+            "CmpLE16S",
+            "PUT(ip) = 0x1008",
+            "NEXT: PUT(eip) = 0x100e",
+            "LDle:I8",
+            "8Uto16",
+            "Or16",
+        ),
+        expected_token_counts=(("LDle:I8", 2),),
         start_offset=0x4E,
     ),
     BlockLiftCase(
@@ -163,7 +171,8 @@ BLOCK_LIFT_CASES = (
         cod_dir=_F14_COD_DIR,
         block_addr=0x1000,
         original_c="return carrier.catpult[cat].heading + carrier.heading;",
-        expected_tokens=("Shl16", "LDle:I16", "Add16", "PUT(ax)"),
+        expected_tokens=("Shl16", "LDle:I8", "8Uto16", "Or16", "Add16", "PUT(ax)"),
+        expected_token_counts=(("LDle:I8", 2),),
     ),
     BlockLiftCase(
         name="f14_overlay_loader_block",
@@ -172,7 +181,7 @@ BLOCK_LIFT_CASES = (
         cod_dir=_F14_COD_DIR,
         block_addr=0x1030,
         original_c="ax = 0; adc ax, 0; err = ax; if (err == 0) goto success;",
-        expected_tokens=("PUT(ax) = 0x0000", "PUT(flags)", "PUT(ip) = 0x1043"),
+        expected_tokens=("PUT(ax) = 0x0000", "GET:I16(flags)", "Add16", "CmpEQ16", "PUT(ip) = 0x1043"),
     ),
     BlockLiftCase(
         name="f14_config_crts_loop",
@@ -181,7 +190,8 @@ BLOCK_LIFT_CASES = (
         cod_dir=_F14_COD_DIR,
         block_addr=0x100B,
         original_c="for (i = 0; i < 8; i++) { CrtDisplays[i] = CrtConfig[i]; }",
-        expected_tokens=("Shl16", "0x0222", "LDle:I16", "STle", "0x0008"),
+        expected_tokens=("Shl16", "0x0222", "LDle:I8", "8Uto16", "Or16", "STle", "0x0008"),
+        expected_token_counts=(("LDle:I8", 2), ("STle", 2)),
     ),
     BlockLiftCase(
         name="f14_inbox_bounds_check",
@@ -190,7 +200,7 @@ BLOCK_LIFT_CASES = (
         cod_dir=_F14_COD_DIR,
         block_addr=0x1000,
         original_c="if ((x < xl) || (x > xh) || (z < zl) || (z > zh)) return 0; else return 1;",
-        expected_tokens=("CmpGT16S", "PUT(ip) = 0x100b", "PUT(ip) = 0x101d", "Ijk_Boring"),
+        expected_tokens=("CmpGT16S", "PUT(ip) = 0x100b", "NEXT: PUT(eip) = 0x101d", "Ijk_Boring"),
     ),
     BlockLiftCase(
         name="f14_inboxlng_long_bounds_check",
@@ -199,7 +209,15 @@ BLOCK_LIFT_CASES = (
         cod_dir=_F14_COD_DIR,
         block_addr=0x1000,
         original_c="if ((x < xl) || (x > xh) || (z < zl) || (z > zh)) return 0; else return 1;",
-        expected_tokens=("CmpGT16S", "PUT(ip) = 0x100e", "PUT(ip) = 0x1045", "LDle:I16"),
+        expected_tokens=(
+            "CmpGT16S",
+            "PUT(ip) = 0x100e",
+            "NEXT: PUT(eip) = 0x1045",
+            "LDle:I8",
+            "8Uto16",
+            "Or16",
+        ),
+        expected_token_counts=(("LDle:I8", 2),),
     ),
 )
 
@@ -1226,7 +1244,8 @@ def test_dosfunc_cod_sample_process_helpers_stay_empty(proc_name: str, header_an
     assert header_anchor in text
     assert "return;" not in text
     if proc_name == "_dos_setProcessId":
-        assert "[bp+0x4] = pid" in text
+        assert "[bp+0x4]" not in text
+        assert f"{header_anchor}\n{{\n}}" in text
 
 
 def test_bios_cod_sample_decompilation():

@@ -57,6 +57,7 @@ def test_runtime_segment_projection_runs_after_typed_materializers(
     monkeypatch.setattr(materialization, "materialize_dos_interrupt_aggregate_globals_8616", record("dos"))
     monkeypatch.setattr(materialization, "apply_segmented_load_widening_8616", widening)
     monkeypatch.setattr(materialization, "apply_runtime_segment_lowering_8616", runtime)
+    monkeypatch.setattr(materialization, "reconcile_recorded_cod_global_storage_identities_8616", record("reconcile"))
 
     result = materialization.run_segment_global_materialization_8616(
         SimpleNamespace(_inertia_c_target="portable-flat"),
@@ -65,7 +66,7 @@ def test_runtime_segment_projection_runs_after_typed_materializers(
         include_runtime_segment=True,
     )
 
-    assert calls == ["named", "compare", "indexed", "direct", "dos", "widening", "runtime"]
+    assert calls == ["named", "compare", "indexed", "direct", "dos", "widening", "runtime", "named", "reconcile"]
     assert result.indexed_global_changed is True
     assert result.segmented_load_widening_changed is True
     assert result.runtime_segment_changed is True

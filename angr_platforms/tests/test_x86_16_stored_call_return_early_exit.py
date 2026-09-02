@@ -14,13 +14,19 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
 )
-from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionRegisterBindingIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.structuring import (
+    stored_call_return_early_exit as stored_early_exit,
+)
+from angr_platforms.X86_16.structuring import (
+    stored_call_return_operands as stored_operands,
+)
 from angr_platforms.X86_16.structuring.stored_call_return_early_exit import (
     StoredCallReturnEarlyExitStatus8616,
     materialize_stored_call_return_early_exit_8616,
@@ -30,6 +36,7 @@ from archinfo import ArchX86
 JCC_ADDR = 0x1021
 BLOCK_ADDR = 0x1019
 SUCCESS_TARGET = 0x1025
+ERROR_TARGET = 0x1023
 
 
 def _summary() -> CallsiteSummary8616:
@@ -51,15 +58,19 @@ def _summary() -> CallsiteSummary8616:
 
 
 def _typed_condition() -> ConditionIR:
-    """Build the taken-on-zero continuation condition."""
-    ax_offset, ax_size = ArchX86().registers["ax"]
+    """Build the taken-on-zero condition after exact stack-store projection."""
+    stored_return = IRValue(MemSpace.SS, name="bp", offset=-2, size=2)
     return ConditionIR(
         op="zero",
-        lhs=IRValue(MemSpace.REG, name="ax", offset=ax_offset, size=ax_size),
+        lhs=stored_return,
         width_bits=16,
         src_insn=JCC_ADDR,
         block_addr=BLOCK_ADDR,
         taken_target=SUCCESS_TARGET,
+        fallthrough_target=ERROR_TARGET,
+        register_bindings=(
+            ConditionRegisterBindingIR(register_name="ax", value=stored_return),
+        ),
     )
 
 
@@ -104,14 +115,21 @@ def test_materializes_both_returns_and_preserves_success_effects(monkeypatch: py
     project, codegen, branch, side_effect = _surface()
     targets: list[int] = []
 
-    def recover(_project: object, actual_codegen: object, target: int) -> CConstant:
+    def recover(_project: object, actual_codegen: object, target: int) -> CVariable | CConstant | None:
         targets.append(target)
         assert actual_codegen is codegen
+        if target == ERROR_TARGET:
+            return None
+        assert target == SUCCESS_TARGET
         return CConstant(0, SimTypeShort(False), codegen=codegen)
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.structuring.stored_call_return_early_exit.recover_branch_target_return_expression_8616",
         recover,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.structuring.stored_call_return_early_exit.branch_target_preserves_return_registers_8616",
+        lambda *_args: True,
     )
 
     result = materialize_stored_call_return_early_exit_8616(project, codegen)
@@ -120,7 +138,7 @@ def test_materializes_both_returns_and_preserves_success_effects(monkeypatch: py
     assert result.changed is True
     assert result.evidence.raw_fact_count == result.evidence.materialized_count == 1
     assert result.evidence.failure_count == 0
-    assert targets == [SUCCESS_TARGET]
+    assert targets == [ERROR_TARGET, SUCCESS_TARGET]
     assert branch.else_node is None
     statements = tuple(codegen.cfunc.statements.statements)
     assert statements[0] is branch
@@ -138,6 +156,80 @@ def test_materializes_both_returns_and_preserves_success_effects(monkeypatch: py
     assert tuple(codegen.cfunc.statements.statements) == statements
 
 
+def test_stored_operand_uses_machine_bp_projection_over_stale_register_ast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, codegen, _branch, _side_effect = _surface()
+    candidate = stored_early_exit._matching_candidate_8616(
+        project,
+        codegen,
+        codegen.cfunc.statements,
+    )
+    assert candidate is not None
+    _candidate_branch, condition, evidence = candidate
+    expected = condition.lhs
+    condition.lhs = CVariable(SimRegisterVariable(8, 2), codegen=codegen)
+
+    monkeypatch.setattr(
+        stored_operands,
+        "stack_cvar_for_machine_bp_range_8616",
+        lambda actual_codegen, offset, size: (
+            expected
+            if actual_codegen is codegen and (offset, size) == (-2, 2)
+            else None
+        ),
+    )
+
+    assert stored_operands.stored_return_operand_8616(
+        condition,
+        evidence,
+        project,
+        codegen,
+    ) is expected
+
+
+def test_materializes_cfg_proven_returns_missing_from_flattened_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, codegen, branch, side_effect = _surface()
+    err = branch.condition_and_nodes[0][0].lhs
+    branch.condition_and_nodes[0][1].statements = []
+    branch.else_node = None
+    codegen.cfunc.statements.statements = [
+        branch,
+        CStatements([side_effect], codegen=codegen),
+    ]
+
+    def recover(_project: object, actual_codegen: object, target: int) -> CVariable | CConstant | None:
+        assert actual_codegen is codegen
+        if target == ERROR_TARGET:
+            return None
+        assert target == SUCCESS_TARGET
+        return CConstant(0, SimTypeShort(False), codegen=codegen)
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.structuring.stored_call_return_early_exit.recover_branch_target_return_expression_8616",
+        recover,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.structuring.stored_call_return_early_exit.branch_target_preserves_return_registers_8616",
+        lambda *_args: True,
+    )
+
+    result = materialize_stored_call_return_early_exit_8616(project, codegen)
+
+    assert result.status is StoredCallReturnEarlyExitStatus8616.MATERIALIZED
+    assert result.evidence.failure_count == 0
+    true_return = branch.condition_and_nodes[0][1].statements[0]
+    assert isinstance(true_return, CReturn)
+    assert true_return.retval is err
+    statements = tuple(codegen.cfunc.statements.statements)
+    assert side_effect in tuple(statements[1].statements)
+    assert isinstance(statements[2], CReturn)
+    assert isinstance(statements[2].retval, CConstant)
+    assert statements[2].retval.value == 0
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -145,6 +237,16 @@ def test_materializes_both_returns_and_preserves_success_effects(monkeypatch: py
             codegen,
             "_inertia_typed_conditions",
             (replace(_typed_condition(), taken_target=None),),
+        ),
+        lambda _project, codegen, _branch: setattr(
+            codegen,
+            "_inertia_typed_conditions",
+            (replace(_typed_condition(), fallthrough_target=None),),
+        ),
+        lambda _project, codegen, _branch: setattr(
+            codegen,
+            "_inertia_typed_conditions",
+            (replace(_typed_condition(), register_bindings=()),),
         ),
         lambda _project, codegen, _branch: setattr(
             codegen,
@@ -165,9 +267,20 @@ def test_refuses_incomplete_or_conflicting_evidence(
 ) -> None:
     project, codegen, branch, _side_effect = _surface()
     mutate(project, codegen, branch)
+    err = branch.condition_and_nodes[0][0].lhs
+
+    def recover(_project: object, _codegen: object, target: int) -> CVariable | CConstant:
+        if target == ERROR_TARGET:
+            return err
+        return CConstant(0, SimTypeShort(False), codegen=codegen)
+
     monkeypatch.setattr(
         "angr_platforms.X86_16.structuring.stored_call_return_early_exit.recover_branch_target_return_expression_8616",
-        lambda *_args: CConstant(0, SimTypeShort(False), codegen=codegen),
+        recover,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.structuring.stored_call_return_early_exit.branch_target_preserves_return_registers_8616",
+        lambda *_args: True,
     )
 
     result = materialize_stored_call_return_early_exit_8616(project, codegen)

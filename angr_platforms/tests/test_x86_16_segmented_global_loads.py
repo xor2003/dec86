@@ -314,7 +314,7 @@ def test_segmented_global_load_materializes_named_ds_word_global():
         tags={"inertia_source_instruction_addrs": (0x4010,)},
     )
     assignment = CAssignment(_stack(-2, codegen), rhs, codegen=codegen)
-    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    root = assignment
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
 
     changed = materialize_named_segmented_global_loads_8616(project, codegen, {0x42: ("g_rows", 2)})

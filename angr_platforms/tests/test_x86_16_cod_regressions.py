@@ -228,12 +228,14 @@ def test_cod_dos_getfree_call_and_return_recovered():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_getfree")
 
     assert result.returncode == 0, result.stderr + result.stdout
+    assert "whole-tail validation clean" in result.stderr
     _assert_has_all(
         result.stdout,
         (
             "function: 0x1000 _dos_getfree",
-            "rout",
-            "return",
+            "intdos(&rin, &rout);",
+            "if (!rout.x.cflag)",
+            "ERROR(", "return 0;", "return rout.x.bx;",
         ),
     )
     _assert_has_none(
@@ -474,20 +476,29 @@ def test_cod_loadprog_preserves_binary_arguments_and_recompiles():
     _assert_has_all(
         result.stdout,
         (
-            "unsigned short loadprog(unsigned short file, unsigned short segment, unsigned short type, unsigned short cmdline, unsigned short arg_c)",
-            "exeLoadParams[2] = arg_c;",
+            "unsigned short loadprog(unsigned short file, unsigned short segment, unsigned short type, unsigned long cmdline)",
+            "exeLoadParams[1] = inertia_eax & 0xffff;",
+            "cmdline >> 16 & 0xffff",
+            "return err;",
+            "return 0;",
         ),
     )
+    assert result.stdout.count("return 1;") == 1
+    assert result.stdout.count("return err;") == 1
+    assert result.stdout.count("return 0;") == 1
     _assert_has_none(
         result.stdout,
         (
             "<missing-type>",
+            "arg_c",
             "file_2",
             "type_2",
             "unsigned short loadprog(unsigned short file, unsigned short file_2, unsigned short type, unsigned short type_2)",
             "return err_2;",
         ),
     )
+    compile_result = check_c_recompiles_8616(result.stdout, target="portable-flat")
+    assert compile_result.passed, compile_result.stderr
 
 
 def test_cod_openfilewrapper_direct_forwarding():
@@ -640,8 +651,8 @@ def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
         result.stdout,
         (
             "if (err)\n        return err;",
-            "cs[0] = ax;",
-            "ss[0] = ax_2;",
+            "cs[0] = exeLoadParams[10];",
+            "ss[0] = exeLoadParams[8];",
             "return 0;",
         ),
     )
@@ -652,6 +663,7 @@ def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
             "SEG_U8(inertia_ss,",
             "cs[1]",
             "ss[1]",
+            "ax = exeLoadParams",
         ),
     )
 

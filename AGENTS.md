@@ -115,6 +115,8 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 ### Token-efficient command output
 
 - Keep Make's quiet recipe mode enabled; use `make Q=` only when the expanded command itself is needed for diagnosis.
+- Keep `RUFF_OUTPUT_FLAGS`, `MYPY_OUTPUT_FLAGS`, `PYRIGHT_OUTPUT_FLAGS`, `PYTEST_OUTPUT_FLAGS`, and `LIZARD_OUTPUT_FLAGS` compact by default; override one explicitly only when deeper diagnostics are needed.
+- Prefer tool-native compact modes that preserve findings: Ruff quiet/concise, MyPy plain/no-color/no-summary, Pyright warning-level, pytest short-traceback/no-header, and Lizard warnings-only. Never use Ruff silent, pytest no-summary/warning suppression, Vulture confidence filtering, or similar flags that hide actionable diagnostics.
 - For broad gates, retain complete stdout/stderr in a temporary log and report only the exit status, pass/fail/skip counts, failure tracebacks, and slowest tests.
 - On success, do not load the full log. On failure, search or tail only the relevant failure section before widening the read.
 - Prefer scoped `git diff --stat`, changed-path filters, and narrow file ranges over dumping the shared worktree or large inventories.

@@ -127,12 +127,25 @@ def format_report(report: AgentContextReport) -> str:
     return "\n".join(lines)
 
 
+def format_compact_report(report: AgentContextReport) -> str:
+    """Format one successful context-check summary line."""
+    return (
+        f"agent context check passed: graph={report.graph_status.value}, "
+        f"Understand-Anything autoUpdate={report.understand_auto_update}"
+    )
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check agent discovery context.")
     parser.add_argument(
         "--require-graph",
         action="store_true",
         help="fail if codebase-memory MCP graph availability is not confirmed",
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="print one summary line on success while retaining full failure details",
     )
     return parser.parse_args(argv)
 
@@ -142,11 +155,13 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv)
     report = build_report()
-    print(format_report(report))
     if report.errors:
+        print(format_report(report))
         return 2
     if args.require_graph and report.graph_status is not GraphStatus.AVAILABLE:
+        print(format_report(report))
         return 1
+    print(format_compact_report(report) if args.compact else format_report(report))
     return 0
 
 

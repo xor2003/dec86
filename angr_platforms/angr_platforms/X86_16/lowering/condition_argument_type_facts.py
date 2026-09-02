@@ -29,6 +29,7 @@ __all__ = [
     "StackArgumentSignedness8616",
     "StackArgumentTypeFact8616",
     "collect_condition_argument_type_facts_8616",
+    "proven_recorded_wide_condition_stack_pair_8616",
     "record_wide_condition_argument_type_evidence_8616",
 ]
 
@@ -84,6 +85,38 @@ def record_wide_condition_argument_type_evidence_8616(
         return False
     surface._inertia_wide_condition_argument_type_evidence_8616 = (*existing, condition)
     return True
+
+
+def proven_recorded_wide_condition_stack_pair_8616(
+    codegen: object,
+    high_value: IRValue,
+    low_value: IRValue,
+) -> bool:
+    """Return whether prior CFG proof owns this exact adjacent stack pair."""
+    if not (
+        high_value.space is MemSpace.SS
+        and low_value.space is MemSpace.SS
+        and high_value.name == low_value.name == "bp"
+        and high_value.size == low_value.size == 2
+        and high_value.offset == low_value.offset + 2
+    ):
+        return False
+    try:
+        conditions = cast(
+            _CodegenFactSurface8616,
+            codegen,
+        )._inertia_wide_condition_argument_type_evidence_8616
+    except AttributeError:
+        return False
+    return any(
+        isinstance(operand, IRValue)
+        and operand.space is MemSpace.SS
+        and operand.name == "bp"
+        and operand.size == 4
+        and operand.offset == low_value.offset
+        for condition in conditions
+        for operand in (condition.lhs, condition.rhs)
+    )
 
 
 def _stack_slice_8616(operand: object) -> tuple[int, int] | None:

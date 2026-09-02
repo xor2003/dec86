@@ -1,6 +1,6 @@
 """Layer: Rewrite/Postprocess cleanup.
 
-Responsibility: prune adjacent temporary copy carriers after their value has moved.
+Responsibility: prune adjacent temporary or dead register copy carriers after their value has moved.
 Consumes already-proven IR, alias, widening, typed, and structuring facts.
 Do not recover new semantics, storage identity, types, call signatures, control flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
 """
@@ -13,7 +13,7 @@ from collections.abc import Iterable, Set
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CAssignment, CConstant, CFunctionCall, CStatements, CVariable
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 
@@ -33,7 +33,7 @@ class TrivialCopyCodegen8616(Protocol):
 
 
 def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
-    """Fold temporary copy carriers across a dynamic boundary: angr codegen C AST."""
+    """Fold dead copy carriers across a dynamic boundary: angr codegen C AST."""
     typed_codegen = cast(TrivialCopyCodegen8616, codegen)
     cfunc = typed_codegen.cfunc
     if cfunc is None:
@@ -117,6 +117,8 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
             if _is_temporary_name(name):
                 return ("temp_name", name)
             variable = expr.variable
+            if isinstance(variable, SimRegisterVariable):
+                return ("register", variable.reg, variable.size, getattr(expr, "offset", None))
             if variable is not None:
                 return ("var", id(variable), getattr(expr, "offset", None))
             return ("name", name) if _is_temporary_name(name) else None
@@ -128,7 +130,7 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
     def _is_generated_temporary_lvalue(expr: object) -> bool:
         if expr.__class__.__name__ == "CDirtyExpression":
             return _is_temporary_name(_variable_name(expr))
-        return isinstance(expr, CVariable) and _is_temporary_name(_variable_name(expr))
+        return isinstance(expr, CVariable) and (_is_temporary_name(_variable_name(expr)) or isinstance(expr.variable, SimRegisterVariable))
 
     def _is_generic_local_name(name: str | None) -> bool:
         return isinstance(name, str) and name.startswith(("local_", "arg_"))

@@ -54,6 +54,7 @@ from .semantics.expression_analysis import (
 from .structuring.indexed_stack_ranges import IndexedStackReadProof8616
 from .validation.status_flag_preservation import PackedStatusFlagPreservationEvidence8616
 from .validation_predicates import PredicateToken8616, invert_predicate_token_8616
+from .validation_stack_projection import validated_stack_projection_fact_8616
 
 __all__ = [
     "DefUseCallOutputDefinition8616",
@@ -520,6 +521,13 @@ def _storage_key_8616(
     stack_variable_offset_resolver: StackVariableOffsetResolver8616 | None = None,
 ) -> DefUseStorageKey8616 | None:
     """Return one exact architectural or opt-in virtual storage identity."""
+    projection = validated_stack_projection_fact_8616(node)
+    if projection is not None and (projection.view_offset < 0 or include_stack_arguments):
+        return DefUseStorageKey8616(
+            kind=DefUseStorageKind8616.STACK_LOCAL,
+            offset=projection.view_offset,
+            width=projection.view_size,
+        )
     indexed_key = _indexed_stack_storage_key_8616(
         node,
         dynamic_array_as_object=dynamic_array_as_object,
@@ -630,6 +638,8 @@ def _iter_value_nodes_8616(root: object) -> tuple[object, ...]:
         if node_id in active:
             return
         nodes.append(node)
+        if validated_stack_projection_fact_8616(node) is not None:
+            return
         if isinstance(node, CUnaryOp) and node.op == "Reference" and isinstance(node.operand, CVariable):
             return
         if isinstance(node, CFunctionCall) and node.callee_func is not None:

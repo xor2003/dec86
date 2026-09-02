@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -70,6 +71,11 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
         "_rewrite_decoded_jcc_conditions_8616",
         _jcc,
     )
+    monkeypatch.setattr(
+        condition_materialization,
+        "materialize_structuring_condition_chains_8616",
+        lambda project, codegen: calls.append(("chains", project, codegen)) or False,
+    )
     project = _Project()
     codegen = _Codegen()
 
@@ -79,7 +85,11 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
     assert result.typed_conditions_changed is True
     assert result.condition_chains_changed is False
     assert result.decoded_jcc_changed is False
-    assert calls == [("typed", project, codegen), ("jcc", project, codegen)]
+    assert calls == [
+        ("typed", project, codegen),
+        ("jcc", project, codegen),
+        ("chains", project, codegen),
+    ]
     assert codegen._inertia_structuring_condition_materialization_8616 == {
         "typed_conditions_changed": True,
         "condition_chains_changed": False,
@@ -92,6 +102,40 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
     }
     assert codegen._inertia_condition_materialization_structuring_pass_ran_8616 is True
     assert project._inertia_decompiler_stage == "structuring:condition_materialization:provenance"
+
+
+def test_canonical_wide_return_owner_blocks_competing_condition_consumers(monkeypatch):
+    codegen = _Codegen()
+    project = _Project()
+    monkeypatch.setattr(
+        condition_materialization,
+        "wide_stack_return_predicate_materialized_8616",
+        lambda _codegen: True,
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "materialize_structuring_condition_chains_8616",
+        lambda _project, _codegen: pytest.fail("canonical wide root was replayed"),
+    )
+    monkeypatch.setattr(
+        condition_materialization._legacy_typed_conditions,
+        "_apply_typed_conditions_to_codegen_8616",
+        lambda _project, _codegen: pytest.fail("canonical wide root was rewritten"),
+    )
+    monkeypatch.setattr(
+        condition_materialization._legacy_jcc,
+        "_rewrite_decoded_jcc_conditions_8616",
+        lambda _project, _codegen: pytest.fail("canonical wide root was rewritten"),
+    )
+
+    result = condition_materialization.materialize_structuring_conditions_8616(
+        project,
+        codegen,
+    )
+
+    assert result.condition_chains_changed is False
+    assert result.typed_conditions_changed is False
+    assert result.decoded_jcc_changed is False
 
 
 def test_condition_chains_materialize_before_loop_conditions(monkeypatch):
@@ -1196,7 +1240,7 @@ def test_structuring_condition_chain_refuses_unproven_leaf(monkeypatch):
     assert codegen._inertia_structuring_condition_chain_stats_8616.failure_count == 1
 
 
-def test_structuring_single_branch_uses_taken_condition_for_taken_owned_body(monkeypatch):
+def test_structuring_single_branch_materializes_hidden_taken_path_condition(monkeypatch):
     codegen = _Codegen()
     condition = CConstant(0, SimTypeShort(False), codegen=codegen)
     condition.tags = {"ins_addr": 0x1002, "vex_block_addr": 0x1000}
@@ -1206,20 +1250,23 @@ def test_structuring_single_branch_uses_taken_condition_for_taken_owned_body(mon
         [CIfElse([(condition, body)], else_node=None, cstyle_ifs=True, codegen=codegen)],
         codegen=codegen,
     )
-    fact = _targeted_condition(0x1002, 0x1000, 0x1012, 0x1004)
+    facts = (
+        _targeted_condition(0x1002, 0x1000, 0x1004, 0x1020),
+        _targeted_condition(0x1006, 0x1004, 0x1012, 0x1020),
+    )
     graph = _Graph(
-        ((0x1000, 0x1012), (0x1000, 0x1004), (0x1004, 0x1000), (0x1012, 0x1018), (0x1018, 0x1020))
+        ((0x1000, 0x1004), (0x1000, 0x1020), (0x1004, 0x1012), (0x1004, 0x1020))
     )
     function = SimpleNamespace(transition_graph=graph, block_addrs_set=set(graph.nodes) | {0x1000})
     project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
     codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
-    codegen._inertia_typed_conditions = (fact,)
+    codegen._inertia_typed_conditions = facts
     monkeypatch.setattr(
         condition_materialization._legacy_typed_conditions,
         "_build_c_condition_expr",
-        lambda *_args: CBinaryOp(
+        lambda _project, typed_condition, _codegen: CBinaryOp(
             "CmpNE",
-            CConstant(1, SimTypeShort(False), codegen=codegen),
+            CConstant(typed_condition.src_insn, SimTypeShort(False), codegen=codegen),
             CConstant(0, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         ),
@@ -1229,11 +1276,15 @@ def test_structuring_single_branch_uses_taken_condition_for_taken_owned_body(mon
 
     assert changed is True
     replacement = root.statements[0].condition_and_nodes[0][0]
-    assert replacement.op == "CmpNE"
+    assert replacement.op == "LogicalAnd"
+    assert replacement.lhs.lhs.value == 0x1002
+    assert replacement.rhs.lhs.value == 0x1006
     assert replacement.tags["inertia_structuring_single_branch_materialized_8616"] is True
     assert replacement.tags["inertia_structuring_condition_cfg_materialized_8616"] is True
+    provenance = condition_chain_provenance_8616(replacement)
+    assert provenance == ConditionChainProvenance8616((0x1002, 0x1006))
     assert condition_materialization.condition_replay_facts_8616(codegen)[0].true_target == 0x1012
-    assert condition_materialization.condition_replay_facts_8616(codegen)[0].false_target == 0x1004
+    assert condition_materialization.condition_replay_facts_8616(codegen)[0].false_target == 0x1020
 
     changed_again = condition_materialization.materialize_structuring_condition_chains_8616(project, codegen)
 

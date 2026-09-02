@@ -53,6 +53,10 @@ from .stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
     publish_selected_stack_cvar_projection_8616,
 )
+from .wide_stack_argument_views import (
+    WideStackArgumentOwner8616,
+    materialize_wide_stack_argument_subviews_8616,
+)
 
 __all__ = [
     "FunctionParameterWidthFact8616",
@@ -705,6 +709,7 @@ def _prune_stack_slots_covered_by_wide_args_8616(
     codegen: object,
     owned_ranges: Mapping[int, int],
     owner_variables: set[SimStackVariable],
+    retained_variables: frozenset[SimStackVariable] = frozenset(),
 ) -> bool:
     """Prune stack slots through the dynamic third-party angr codegen boundary."""
     cfunc = cast(_StackPrototypeCodegen8616, codegen).cfunc
@@ -723,17 +728,17 @@ def _prune_stack_slots_covered_by_wide_args_8616(
     variables_in_use = typed_cfunc.variables_in_use
     if isinstance(variables_in_use, dict):
         for variable in tuple(variables_in_use):
-            if variable in owner_variables or not isinstance(variable, SimStackVariable):
+            if variable in owner_variables or variable in retained_variables or not isinstance(variable, SimStackVariable):
                 continue
-            if variable.offset in covered_offsets:
+            if machine_bp_offset_for_stack_variable_8616(codegen, variable) in covered_offsets:
                 del variables_in_use[variable]
                 changed = True
     unified = typed_cfunc.unified_local_vars
     if isinstance(unified, dict):
         for variable in tuple(unified):
-            if variable in owner_variables or not isinstance(variable, SimStackVariable):
+            if variable in owner_variables or variable in retained_variables or not isinstance(variable, SimStackVariable):
                 continue
-            if variable.offset in covered_offsets:
+            if machine_bp_offset_for_stack_variable_8616(codegen, variable) in covered_offsets:
                 del unified[variable]
                 changed = True
     return changed
@@ -1184,6 +1189,19 @@ def materialize_annotated_stack_prototype_8616(
         current_arg_names = ()
         return_type = None
         variadic = False
+    current_surfaces_by_offset: dict[int, tuple[SimType, str | None]] = {}
+    for physical_index, current_cvar in enumerate(typed_cfunc.arg_list):
+        if physical_index >= len(current_args):
+            break
+        current_variable = current_cvar.variable
+        current_type = current_args[physical_index]
+        if not isinstance(current_variable, SimStackVariable) or not isinstance(current_type, SimType):
+            continue
+        machine_bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, current_variable)
+        if not isinstance(machine_bp_offset, int):
+            continue
+        current_name = current_arg_names[physical_index] if physical_index < len(current_arg_names) else None
+        current_surfaces_by_offset.setdefault(machine_bp_offset, (current_type, current_name))
     if return_type is None or (isinstance(return_type, SimTypeBottom) and return_type.label != "void"):
         return_type = SimTypeShort(False)
     arg_cvars: list[structured_c.CVariable] = []
@@ -1191,6 +1209,7 @@ def materialize_annotated_stack_prototype_8616(
     arg_names: list[str] = []
     owned_ranges: dict[int, int] = {}
     owner_variables: set[SimStackVariable] = set()
+    wide_argument_owners: list[WideStackArgumentOwner8616] = []
     width_stats = StackPrototypeWidthStats8616()
     width_facts: list[FunctionParameterWidthFact8616] = []
     normalized_header_widths = _normalized_header_arg_widths_8616(codegen, entries, arch=arch)
@@ -1198,8 +1217,11 @@ def materialize_annotated_stack_prototype_8616(
     annotated_names = tuple(name for _offset, name in entries)
     changed = False
     for index, (offset, maybe_name) in enumerate(entries):
+        current_surface = current_surfaces_by_offset.get(offset)
         prototype_name = (
-            current_arg_names[index] if index < len(current_arg_names) else None
+            current_surface[1]
+            if current_surface is not None
+            else current_arg_names[index] if index < len(current_arg_names) else None
         )
         prototype_name_is_unique = bool(
             isinstance(prototype_name, str)
@@ -1226,7 +1248,11 @@ def materialize_annotated_stack_prototype_8616(
             name = cast(str, maybe_name)
         else:
             name = f"arg_{offset:x}"
-        arg_type = current_args[index] if index < len(current_args) else SimTypeShort(False)
+        arg_type = (
+            current_surface[0]
+            if current_surface is not None
+            else current_args[index] if index < len(current_args) else SimTypeShort(False)
+        )
         if arch is not None:
             arg_type = _with_arch_8616(arg_type, arch)
         if not isinstance(arg_type, SimType):
@@ -1319,6 +1345,7 @@ def materialize_annotated_stack_prototype_8616(
         owned_ranges[offset] = width
         if isinstance(variable, SimStackVariable):
             owner_variables.add(variable)
+        wide_argument_owners.append(WideStackArgumentOwner8616(offset, width, cvar))
         arg_cvars.append(cvar)
         arg_types.append(arg_type)
         arg_names.append(name)
@@ -1334,7 +1361,14 @@ def materialize_annotated_stack_prototype_8616(
     _debug_parameter_width_facts_8616("materialize", parameter_width_facts)
     if width_stats.classified_fact_count > 0 and width_stats.materialized_count == 0:
         raise RuntimeError("stack prototype width evidence was classified but not materialized")
-    changed = _prune_stack_slots_covered_by_wide_args_8616(codegen, owned_ranges, owner_variables) or changed
+    subview_result = materialize_wide_stack_argument_subviews_8616(codegen, tuple(wide_argument_owners))
+    changed = subview_result.changed or changed
+    changed = _prune_stack_slots_covered_by_wide_args_8616(
+        codegen,
+        owned_ranges,
+        owner_variables,
+        frozenset(subview_result.retained_variables),
+    ) or changed
     existing_args = list(typed_cfunc.arg_list or ())
     if len(existing_args) != len(arg_cvars) or any(existing is not desired for existing, desired in zip(existing_args, arg_cvars, strict=False)):
         typed_cfunc.arg_list = arg_cvars

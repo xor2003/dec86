@@ -26,6 +26,7 @@ __all__ = (
     "ConditionRegisterSourceBindingStats8616",
     "ConditionRegisterSourceBindingVerdict8616",
     "bind_condition_register_sources_8616",
+    "condition_operand_storage_binding_8616",
     "condition_self_test_register_binding_8616",
     "condition_self_test_storage_bindings_8616",
     "condition_semantic_register_operands_8616",
@@ -113,6 +114,30 @@ def condition_semantic_register_operands_8616(
             (str(semantics[2]).lower(), condition.rhs),
         )
     return ()
+
+
+def condition_operand_storage_binding_8616(
+    condition: ConditionIR,
+    operand: object,
+) -> object:
+    """Resolve one semantic register operand to its exact Alias storage fact."""
+    register_names = tuple(
+        register_name
+        for register_name, semantic_operand in condition_semantic_register_operands_8616(
+            condition
+        )
+        if semantic_operand is operand
+    )
+    if len(register_names) != 1:
+        return operand
+    bindings = tuple(
+        binding.value
+        for binding in condition.register_bindings
+        if binding.register_name.lower() == register_names[0]
+    )
+    if not bindings or any(binding != bindings[0] for binding in bindings[1:]):
+        return operand
+    return bindings[0]
 
 
 def _storage_from_reaching_source_8616(

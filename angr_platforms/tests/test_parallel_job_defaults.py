@@ -214,7 +214,7 @@ def test_make_parallel_defaults_share_cpu_budget() -> None:
 
     assert result.stdout.splitlines() == [
         "7",
-        "-n 7 --dist loadgroup --durations=5",
+        "--tb=short --no-header -n 7 --dist loadgroup --durations=5",
         "7",
         "2",
         "16",

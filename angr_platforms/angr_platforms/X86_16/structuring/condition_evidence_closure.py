@@ -1,8 +1,8 @@
 """Classify final structured-condition evidence closure.
 
 Layer: Structuring.
-Responsibility: compare exact typed ConditionIR identities with their final
-structured AST owners and reject only unresolved CFG branch surfaces.
+Responsibility: require every exact typed ConditionIR identity to have a final
+structured AST owner, including JCCs consumed by proven composite predicates.
 Do not infer branch meaning from rendered C, variable names, or flag equations.
 
 Owns CFG shape, loops, switches, and structured condition lowering from proven
@@ -21,6 +21,7 @@ from angr.analyses.decompiler.structured_codegen.c import CIfElse
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..ir.condition_ir import ConditionIR
+from .condition_chain_provenance import condition_chain_provenance_8616
 
 type ConditionEvidenceKey8616 = tuple[int, int]
 
@@ -118,10 +119,19 @@ def classify_condition_evidence_closure_8616(
     materialized_keys: set[ConditionEvidenceKey8616] = set()
     unresolved_owners: set[int] = set()
     required_blocks = {block_addr for _instruction_addr, block_addr in required_keys}
+    keys_by_instruction: dict[int, set[ConditionEvidenceKey8616]] = {}
+    for key in required_keys:
+        keys_by_instruction.setdefault(key[0], set()).add(key)
     for node in _iter_c_nodes_deep_8616(root):
         key = _tagged_key_8616(_tags_8616(node))
         if key is not None:
             materialized_keys.add(key)
+        provenance = condition_chain_provenance_8616(node)
+        if provenance is not None:
+            for instruction_addr in provenance.jcc_addrs:
+                candidates = keys_by_instruction.get(instruction_addr, set())
+                if len(candidates) == 1:
+                    materialized_keys.update(candidates)
         if not isinstance(node, CIfElse):
             continue
         owner = _binary_cfg_owner_8616(node, successors)

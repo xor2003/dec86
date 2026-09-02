@@ -17,7 +17,7 @@ from typing import Protocol, cast
 from archinfo import Arch
 
 from ..callsite_summary import CallsiteSummary8616, callsite_summary_inventory_8616
-from ..ir.condition_ir import ConditionIR
+from ..ir.condition_ir import ConditionIR, ConditionRegisterBindingIR
 from ..ir.core import IRValue, MemSpace
 from .call_return_stack_stores import (
     CallReturnStackStoreEvidence8616,
@@ -74,15 +74,55 @@ def _is_zero_constant_8616(value: object) -> bool:
     return isinstance(value, IRValue) and value.space is MemSpace.CONST and value.const == 0
 
 
+def _canonical_stack_offset_8616(offset: int) -> int:
+    """Normalize one 16-bit BP displacement to its signed identity."""
+    normalized = offset & 0xFFFF
+    return normalized - 0x10000 if normalized >= 0x8000 else normalized
+
+
+def _is_exact_return_storage_8616(
+    value: object,
+    register: tuple[int, int],
+    store: CallReturnStackStoreEvidence8616,
+    register_bindings: tuple[ConditionRegisterBindingIR, ...],
+) -> bool:
+    """Match either the return register or its exact projected stack store."""
+    if _is_exact_register_8616(value, register):
+        return True
+    stack_matches = (
+        isinstance(value, IRValue)
+        and value.space is MemSpace.SS
+        and value.name == "bp"
+        and isinstance(value.offset, int)
+        and _canonical_stack_offset_8616(value.offset) == _canonical_stack_offset_8616(store.dst_offset)
+        and int(value.size or store.width) == store.width
+    )
+    if not stack_matches:
+        return False
+    bindings = tuple(
+        binding
+        for binding in register_bindings
+        if binding.register_name == store.source_register_name
+        and binding.value == value
+    )
+    return len(bindings) == 1
+
+
 def _condition_kind_8616(
     condition: ConditionIR,
     register: tuple[int, int],
+    store: CallReturnStackStoreEvidence8616,
 ) -> StoredCallReturnConditionKind8616 | None:
-    """Classify an exact zero/nonzero test of one register slice."""
+    """Classify a zero test of the return register or its exact stack store."""
     if condition.width_bits != register[1] * 8:
         return None
     if condition.op in {"zero", "nonzero"}:
-        if not _is_exact_register_8616(condition.lhs, register):
+        if not _is_exact_return_storage_8616(
+            condition.lhs,
+            register,
+            store,
+            condition.register_bindings,
+        ):
             return None
         if condition.rhs is not None and not _is_zero_constant_8616(condition.rhs):
             return None
@@ -94,7 +134,16 @@ def _condition_kind_8616(
     if condition.op not in {"eq", "ne"}:
         return None
     operands = ((condition.lhs, condition.rhs), (condition.rhs, condition.lhs))
-    if not any(_is_exact_register_8616(lhs, register) and _is_zero_constant_8616(rhs) for lhs, rhs in operands):
+    if not any(
+        _is_exact_return_storage_8616(
+            lhs,
+            register,
+            store,
+            condition.register_bindings,
+        )
+        and _is_zero_constant_8616(rhs)
+        for lhs, rhs in operands
+    ):
         return None
     return (
         StoredCallReturnConditionKind8616.ZERO
@@ -142,7 +191,11 @@ def classify_stored_call_return_condition_8616(
     register = typed_project.arch.registers.get(stores[0].source_register_name)
     if register is None or int(register[1]) != stores[0].width:
         return None
-    kind = _condition_kind_8616(conditions[0], (int(register[0]), int(register[1])))
+    kind = _condition_kind_8616(
+        conditions[0],
+        (int(register[0]), int(register[1])),
+        stores[0],
+    )
     if kind is None:
         return None
     return StoredCallReturnConditionEvidence8616(

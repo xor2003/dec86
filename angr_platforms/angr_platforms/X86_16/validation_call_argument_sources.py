@@ -19,6 +19,7 @@ from angr.sim_variable import SimStackVariable
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .callsite_summary import CallsitePushSourceKind8616, CallsiteSummary8616
 from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .validation_stack_projection import validated_stack_projection_fact_8616
 
 
 class CallArgumentSourceIssueKind8616(StrEnum):
@@ -119,7 +120,10 @@ def _stack_byte_projection_offset_8616(
     codegen: object,
     argument: object,
 ) -> int | None:
-    """Return the exact BP byte selected by a whole-argument right shift."""
+    """Return the exact BP view selected by typed evidence or a right shift."""
+    projection = validated_stack_projection_fact_8616(argument)
+    if projection is not None:
+        return int(projection.view_offset)
     while isinstance(argument, CTypeCast):
         argument = argument.expr
     if not isinstance(argument, CBinaryOp) or argument.op != "Shr":

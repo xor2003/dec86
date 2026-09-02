@@ -183,7 +183,7 @@ def test_regenerate_codegen_text_replays_call_arguments_after_broad_simplificati
     text, regenerated = cli_decompilation._regenerate_codegen_text_safely(codegen, context="0x1000 f")
 
     assert regenerated is True
-    assert replay_count >= 3
+    assert replay_count >= 2
     assert events[-2:] == ["stack", "call"]
     assert render_name_events[-2:] == ["normalize", "reapply"]
     assert text == correct_text

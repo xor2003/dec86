@@ -9,6 +9,9 @@ from angr_platforms.X86_16.semantics.branch_target_return import (
     branch_target_return_effect_8616,
     terminal_ax_return_effect_8616,
 )
+from angr_platforms.X86_16.semantics.return_register_preservation import (
+    instruction_preserves_return_registers_8616,
+)
 
 
 class _Insn:
@@ -17,7 +20,7 @@ class _Insn:
         self.operands = tuple(operands)
 
     def reg_name(self, reg: int) -> str:
-        return {1: "ax", 2: "dx", 3: "bp", 4: "ah", 5: "al", 6: "cl", 7: "cx"}.get(reg, "")
+        return {1: "ax", 2: "dx", 3: "bp", 4: "ah", 5: "al", 6: "cl", 7: "cx", 8: "sp"}.get(reg, "")
 
 
 def _reg_operand(reg: int):
@@ -116,6 +119,23 @@ def test_branch_target_return_effect_classifies_return():
     effect = branch_target_return_effect_8616(_Insn("ret"), _no_target)
 
     assert effect.kind is BranchTargetReturnEffectKind8616.RETURN
+
+
+def test_branch_target_return_effect_classifies_return_register_preserving_epilogue_steps():
+    instructions = (
+        _Insn("leave"),
+        _Insn("nop"),
+        _Insn("pop", [_reg_operand(3)]),
+        _Insn("mov", [_reg_operand(8), _reg_operand(3)]),
+    )
+
+    assert all(instruction_preserves_return_registers_8616(insn) for insn in instructions)
+
+
+def test_branch_target_return_effect_refuses_return_register_pop():
+    assert not instruction_preserves_return_registers_8616(
+        _Insn("pop", [_reg_operand(1)])
+    )
 
 
 def test_branch_target_return_effect_classifies_conditional_control_boundary():

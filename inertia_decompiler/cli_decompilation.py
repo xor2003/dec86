@@ -1995,7 +1995,7 @@ def _replay_stack_address_lowering_after_regen_8616(codegen: object) -> bool:
 
 
 def _replay_runtime_segment_lowering_after_regen_8616(codegen: object) -> bool:
-    """Replay Types/Lowering-owned segmented memory after AST regeneration."""
+    """Replay runtime helpers and Lowering-owned identities after regeneration."""
     try:
         project = typing.cast(typing.Any, codegen).project
     except AttributeError:
@@ -2007,9 +2007,11 @@ def _replay_runtime_segment_lowering_after_regen_8616(codegen: object) -> bool:
     except AttributeError:
         target = "portable-flat"
     try:
-        return bool(apply_runtime_segment_lowering_8616(codegen, target=target))
+        runtime_changed = bool(apply_runtime_segment_lowering_8616(codegen, target=target))
     except AttributeError:
-        return False
+        runtime_changed = False
+    named_changed = _replay_named_segmented_global_lowering_after_regen_8616(codegen)
+    return bool(runtime_changed or named_changed)
 
 
 def _finalize_callsite_arguments_after_noncall_regen_8616(codegen: object) -> bool:
@@ -2161,7 +2163,7 @@ def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
 
 
 def _finalize_regenerated_noncall_ast_8616(codegen: object) -> bool:
-    """Run cleanup before replaying final Lowering-owned AST identities."""
+    """Stabilize, replay final Lowering identities, then clean exposed carriers."""
     changed = _stabilize_regenerated_noncall_ast_8616(codegen)
     late_ast_changed = _simplify_structured_expressions_8616(codegen)
     late_ast_changed = _replay_call_return_selector_lowering_after_regen_8616(codegen) or late_ast_changed
@@ -2174,7 +2176,8 @@ def _finalize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     project = getattr(codegen, "project", None)
     final_occurrence_changed = finalize_shared_call_occurrences_8616(project, codegen)
     canonical_for_changed = _recover_canonical_for_loops_after_regen_8616(codegen)
-    return bool(canonical_for_changed or final_occurrence_changed or changed or late_ast_changed or segment_surface_changed)
+    final_cleanup_changed = finalize_late_ast_cleanup_8616(project, codegen).changed
+    return bool(final_cleanup_changed or canonical_for_changed or final_occurrence_changed or changed or late_ast_changed or segment_surface_changed)
 
 
 def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[str, bool]:
@@ -6563,6 +6566,8 @@ def _seed_direct_callee_prototype_from_original_project_8616(
             original_function,
             stub,
             target,
+            target_project=project,
+            target_address=candidate,
         ):
             continue
         return True

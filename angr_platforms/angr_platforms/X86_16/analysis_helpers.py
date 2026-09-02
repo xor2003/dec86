@@ -154,9 +154,15 @@ def seed_wide_stack_prototype_from_binary_address_8616(
     source_function: object,
     target_function: object,
     address: int,
+    *,
+    target_project: object | None = None,
+    target_address: int | None = None,
 ) -> bool:
-    """Infer a wide stack ABI from binary facts and copy its typed contract."""
+    """Infer a wide stack ABI and copy its typed contract across project views."""
     from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence_at_address
+    from .lowering.callee_pointer_contracts import (
+        transfer_callee_pointer_argument_evidence_8616,
+    )
     from .lowering.callee_pointer_evidence import apply_callee_pointer_argument_evidence_at_address_8616
 
     canonical_address = (
@@ -216,6 +222,15 @@ def seed_wide_stack_prototype_from_binary_address_8616(
             ) or pointer_seeded
     if not abi_seeded and not pointer_seeded:
         return False
+    if target_project is not None:
+        if not isinstance(target_address, int):
+            raise ValueError("cross-project ABI seed requires a target address")
+        transfer_callee_pointer_argument_evidence_8616(
+            project,
+            target_project,
+            source_addr=canonical_address,
+            target_addr=target_address,
+        )
     if typed_source.prototype is None or (
         typed_source.is_prototype_guessed and not pointer_seeded
     ):

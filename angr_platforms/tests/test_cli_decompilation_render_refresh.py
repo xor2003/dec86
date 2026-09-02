@@ -171,7 +171,7 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
     ]
 
 
-def test_regenerated_noncall_finalization_returns_lowering_ownership_after_cleanup(
+def test_regenerated_noncall_finalization_cleans_carriers_after_lowering_replay(
     monkeypatch,
 ) -> None:
     project = object()
@@ -263,6 +263,7 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
         "runtime_segment",
         "shared_calls",
         "canonical_for",
+        "cleanup",
     ]
 
 

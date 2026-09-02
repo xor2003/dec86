@@ -12,6 +12,7 @@ from angr_platforms.X86_16.postprocess.pass_validation_policy import (
     MANDATORY_VALIDATION_PASS_NAMES_8616,
     NON_IDIV_DIRECT_STACK_MOVE_SOURCE_KINDS_8616,
     OPTIMIZATION_VALIDATION_PASS_NAMES_8616,
+    PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616,
     PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616,
 )
 from angr_platforms.X86_16.postprocess.validation_contracts import (
@@ -72,6 +73,16 @@ def test_reject_budget_excludes_high_risk_semantic_pass_families() -> None:
     )
 
     assert PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616.isdisjoint(excluded)
+
+
+def test_unused_global_declaration_prune_restores_on_validation_rejection() -> None:
+    """Declaration-only cleanup may be discarded without rejecting valid C."""
+    pass_name = "_prune_unused_unnamed_memory_declarations_8616"
+
+    assert pass_name in PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+    assert pass_name in PASS_REJECT_BUDGET_ELIGIBLE_NAMES_8616
+    assert pass_name not in MANDATORY_VALIDATION_PASS_NAMES_8616
+    assert pass_name not in LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
 
 
 def test_non_idiv_stack_move_policy_excludes_only_signed_remainder() -> None:

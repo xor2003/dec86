@@ -266,7 +266,7 @@ def _wide_stack_word_projection(
     return projected
 
 
-def _project_contained_stack_integer_view_8616(
+def project_contained_stack_integer_view_8616(
     codegen: object,
     declaration: structured_c.CVariable,
     *,
@@ -426,7 +426,7 @@ def materialize_typed_condition_stack_operand_8616(
                 and owner.size > size
                 and isinstance(owner.cvar, structured_c.CVariable)
             ):
-                contained_view = _project_contained_stack_integer_view_8616(
+                contained_view = project_contained_stack_integer_view_8616(
                     codegen,
                     owner.cvar,
                     owner_bp_offset=owner.bp_offset,
@@ -502,4 +502,5 @@ def materialize_typed_condition_stack_operand_8616(
 
 __all__ = [
     "materialize_typed_condition_stack_operand_8616",
+    "project_contained_stack_integer_view_8616",
 ]

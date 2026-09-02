@@ -6,6 +6,8 @@ binary load-site evidence proves that the originating machine load was wider.
 Consumes typed load width, segmented-address decomposition, and the already
 materialized indexed-global value. It does not infer objects from rendered C,
 names, samples, or postprocess shape.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
 from __future__ import annotations

@@ -32,6 +32,9 @@ from angr_platforms.X86_16.lowering.call_return_frame_arguments import (
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     prune_call_return_frame_stack_assignments_8616,
 )
+from angr_platforms.X86_16.lowering.stack_probe_callsite_lowering import (
+    lower_fixed_stack_probe_callsite_artifacts_8616,
+)
 from angr_platforms.X86_16.semantics.call_return_frame_effects import (
     CallReturnFrameEffectCollection8616,
     CallReturnFrameEffectFact8616,
@@ -262,6 +265,92 @@ def test_refuses_exact_store_fact_with_non_stack_lvalue(
     assert stats.classified_fact_count == 0
     assert stats.materialized_count == 0
     assert stats.failure_count == 0
+
+
+@pytest.mark.parametrize("exact_store_key", [True, False])
+def test_fixed_probe_consumes_call_frame_before_removing_helper(
+    exact_store_key: bool,
+) -> None:
+    project, function = _project_for_code(b"\xe8\x00\x00")
+    collection = collect_call_return_frame_effects_8616(
+        project,
+        function,
+        {0x100: 0x103},
+    )
+    store_effect = next(
+        effect
+        for effect in collection.effects
+        if effect.role is CallReturnFrameEffectRole8616.STACK_STORE
+    )
+    codegen = _Codegen()
+    codegen.project = project
+    frame_slot = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x100),
+        codegen=codegen,
+    )
+    return_frame = CAssignment(
+        frame_slot,
+        CConstant(0x103, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": store_effect.key.callsite_addr
+            if exact_store_key
+            else store_effect.key.callsite_addr + 1,
+            "vex_block_addr": store_effect.key.vex_block_addr,
+            "vex_stmt_idx": store_effect.key.vex_stmt_idx,
+        },
+    )
+    probe = CFunctionCall(
+        "sub_103",
+        SimpleNamespace(addr=0x103, name="sub_103"),
+        [],
+        tags={"ins_addr": 0x100},
+        codegen=codegen,
+    )
+    source_write = CAssignment(
+        frame_slot,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=CStatements(
+            [return_frame, CExpressionStatement(probe, codegen=codegen), source_write],
+            codegen=codegen,
+        ),
+    )
+    summary = CallsiteSummary8616(
+        callsite_addr=0x100,
+        target_addr=0x103,
+        return_addr=0x103,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register=None,
+        return_used=False,
+        stack_probe_helper=True,
+        stack_probe_allocation_size=2,
+    )
+    codegen._inertia_callsite_summaries = {id(probe): summary}
+    codegen._inertia_callsite_summary_inventory_8616 = {0x100: summary}
+
+    changed = lower_fixed_stack_probe_callsite_artifacts_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert source_write in statements
+    assert all(
+        not (isinstance(statement, CExpressionStatement) and statement.expr is probe)
+        for statement in statements
+    )
+    assert (return_frame in statements) is not exact_store_key
+    frame_stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert frame_stats.materialized_count == int(exact_store_key)
 
 
 def test_prunes_raw_dereference_with_exact_store_semantic_key(

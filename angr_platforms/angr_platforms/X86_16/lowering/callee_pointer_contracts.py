@@ -11,13 +11,14 @@ source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, cast
 
 __all__ = [
     "CalleePointerArgumentEvidence8616",
     "callee_pointer_argument_evidence_by_addr_8616",
     "record_callee_pointer_argument_evidence_8616",
+    "transfer_callee_pointer_argument_evidence_8616",
 ]
 
 
@@ -144,3 +145,37 @@ def record_callee_pointer_argument_evidence_8616(
     """Record one validated result under its exact callee address."""
     evidence.validate()
     _project_evidence_registry_8616(project)[evidence.target_addr] = evidence
+
+
+def transfer_callee_pointer_argument_evidence_8616(
+    source_project: object,
+    target_project: object,
+    *,
+    source_addr: int,
+    target_addr: int,
+) -> bool:
+    """Rebase one validated binary pointer contract across project views.
+
+    Exact-region projects reuse bytes and function identities from a full-binary
+    project. Transport preserves the already-proven parameter coordinates while
+    rebasing only the callee address; it never classifies a new pointer.
+    """
+    source = callee_pointer_argument_evidence_by_addr_8616(source_project).get(
+        source_addr
+    )
+    if source is None:
+        return False
+    rebased = replace(source, target_addr=target_addr)
+    rebased.validate()
+    target_registry = _project_evidence_registry_8616(target_project)
+    existing = target_registry.get(target_addr)
+    if existing is not None:
+        existing.validate()
+        if existing != rebased:
+            raise ValueError(
+                "callee pointer evidence conflicts across project views: "
+                f"source={source_addr:#x} target={target_addr:#x}"
+            )
+        return False
+    target_registry[target_addr] = rebased
+    return True

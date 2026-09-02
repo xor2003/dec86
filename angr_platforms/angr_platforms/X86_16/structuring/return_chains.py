@@ -1470,6 +1470,10 @@ def linear_terminal_ax_return_scan_8616(
         return TerminalAxScanResult8616()
     terminal_blocks = terminal_value_block_addrs_8616(ordered_block_addrs, load_block, branch_target_imm)
     terminal_block_count = len(terminal_blocks) or int(len(ordered_block_addrs) == 1)
+    if len(terminal_blocks) > 1:
+        return TerminalAxScanResult8616(
+            terminal_value_block_count=terminal_block_count,
+        )
     if terminal_blocks:
         ordered_block_addrs = terminal_blocks
     raw_insns = 0

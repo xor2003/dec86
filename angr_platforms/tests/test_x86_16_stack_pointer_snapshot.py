@@ -34,6 +34,7 @@ from capstone.x86_const import (
     X86_REG_BP,
     X86_REG_BX,
     X86_REG_INVALID,
+    X86_REG_SI,
 )
 
 
@@ -60,14 +61,21 @@ def _imm(value: int, *, size: int = 1) -> SimpleNamespace:
     return SimpleNamespace(type=X86_OP_IMM, imm=value, size=size, access=0)
 
 
-def _mem(base: int, *, displacement: int = 0, size: int = 2, access: int = 0) -> SimpleNamespace:
+def _mem(
+    base: int,
+    *,
+    index: int = X86_REG_INVALID,
+    displacement: int = 0,
+    size: int = 2,
+    access: int = 0,
+) -> SimpleNamespace:
     return SimpleNamespace(
         type=X86_OP_MEM,
         size=size,
         access=access,
         mem=SimpleNamespace(
             base=base,
-            index=X86_REG_INVALID,
+            index=index,
             disp=displacement,
         ),
     )
@@ -154,6 +162,42 @@ def test_collect_near_pointer_fact_ignores_update_to_other_stack_slot() -> None:
     assert len(facts) == 1
     assert facts[0].source_version_delta == 0
     assert facts[0].source_update_ins_addrs == ()
+
+
+def test_collect_near_pointer_fact_accepts_carrier_as_index_register() -> None:
+    function = _function(
+        _instruction(0x100A, X86_INS_MOV, _reg(X86_REG_SI), _mem(X86_REG_BP, displacement=4)),
+        _instruction(
+            0x1010,
+            X86_INS_MOV,
+            _mem(X86_REG_BX, index=X86_REG_SI, size=1, access=3),
+            _reg(X86_REG_AX, size=1),
+        ),
+    )
+
+    assert collect_near_pointer_argument_facts_8616(function) == (
+        NearPointerArgumentFact8616(
+            stack_offset=4,
+            carrier_load_ins_addr=0x100A,
+            dereference_ins_addr=0x1010,
+            access_width_bytes=1,
+        ),
+    )
+
+
+def test_collect_near_pointer_fact_refuses_two_argument_address_carriers() -> None:
+    function = _function(
+        _instruction(0x100A, X86_INS_MOV, _reg(X86_REG_BX), _mem(X86_REG_BP, displacement=4)),
+        _instruction(0x100D, X86_INS_MOV, _reg(X86_REG_SI), _mem(X86_REG_BP, displacement=6)),
+        _instruction(
+            0x1010,
+            X86_INS_MOV,
+            _mem(X86_REG_BX, index=X86_REG_SI, size=1, access=3),
+            _reg(X86_REG_AX, size=1),
+        ),
+    )
+
+    assert collect_near_pointer_argument_facts_8616(function) == ()
 
 
 def test_collect_near_pointer_facts_reuses_project_request_inventory(

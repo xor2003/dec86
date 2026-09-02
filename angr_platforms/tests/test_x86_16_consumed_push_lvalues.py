@@ -12,6 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CIndexedVariable,
     CStatements,
     CStructField,
+    CTypeCast,
     CUnaryOp,
     CVariable,
     CVariableField,
@@ -149,6 +150,51 @@ def test_consumed_push_prunes_unresolved_dereference_stack_effect() -> None:
         stats.materialized_count,
         stats.failure_count,
     ) == (1, 1, 1, 1, 0)
+
+
+def test_consumed_push_prunes_cast_wrapped_high_byte_stack_carrier() -> None:
+    codegen = _Codegen()
+    push_addr = 0x4016
+    word_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    byte_type = SimTypeChar(False).with_arch(codegen.project.arch)
+    carrier = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="carrier", region=0x4010),
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    argument = CVariable(
+        SimStackVariable(6, 2, base="bp", name="argument", region=0x4010),
+        variable_type=word_type,
+        codegen=codegen,
+    )
+    artifact = CAssignment(
+        CTypeCast(
+            word_type,
+            byte_type,
+            CBinaryOp(
+                "Shr",
+                carrier,
+                CConstant(8, word_type, codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        argument,
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    codegen.cfunc.statements.statements.append(artifact)
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        codegen.project,
+        codegen,
+        frozenset({push_addr}),
+        materialized_args_by_push_instruction_addr={push_addr: (argument,)},
+        function=_function_with_instruction(push_addr, X86_INS_PUSH),
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
 
 
 def test_consumed_push_keeps_unresolved_dereference_without_push_provenance() -> None:

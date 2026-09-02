@@ -49,9 +49,11 @@ def test_consumed_push_purity_keeps_ordinary_calls() -> None:
     codegen = _Codegen()
     pointer = CConstant(0x1234, SimTypeShort(False), codegen=codegen)
     memory_read = CFunctionCall("MEM_U16", None, [pointer], codegen=codegen)
+    segmented_read = CFunctionCall("SEG_U16", None, [pointer, pointer], codegen=codegen)
     ordinary_call = CFunctionCall("sub_10010", None, [pointer], codegen=codegen)
 
     assert _pure_consumed_push_carrier_expression_8616(memory_read) is True
+    assert _pure_consumed_push_carrier_expression_8616(segmented_read) is True
     assert _pure_consumed_push_carrier_expression_8616(ordinary_call) is False
 
 

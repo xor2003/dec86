@@ -543,8 +543,15 @@ def test_sortd_bubblesort_sidecar_free_preserves_direct_ds_row_count(tmp_path: P
     assert "mem_0BA2" not in final_body
     assert re.search(r"extern g_08F0_entry g_0B4C\[\d*\];", result.stdout) is not None
     assert "g_0B4E" not in result.stdout
-    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_2 + 1]);" in final_body
-    assert "sub_10768(local_2, local_2 + 1);" in final_body
+    assert re.search(
+        r"sub_107b8\(&g_0B4C\[(?:\(unsigned short\))?local_2\], "
+        r"&g_0B4C\[(?:\(unsigned short\))?local_2 \+ 1\]\);",
+        final_body,
+    )
+    assert re.search(
+        r"sub_10768\(local_2, (?:\(unsigned short\))?local_2 \+ 1\);",
+        final_body,
+    )
 
 
 def test_sortd_exchangesort_sidecar_free_folds_alias_proven_high_byte(tmp_path: Path):
@@ -712,8 +719,17 @@ def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
     assert final_body.count("g_0BA6 = sub_1137e();") == 1
     assert re.search(r"(?m)^\s*sub_1137e\(\);\s*$", final_body) is None
     assert "g_0B4C[local_2] = g_08F0[local_2];" in final_body
-    assert final_body.count("sub_106c8(local_2);") == 1
-    assert "for (local_2 = 0; g_0BA2 > local_2; local_2 += 1)" in final_body
+    assert len(
+        re.findall(
+            r"sub_106c8\((?:\(unsigned short\))?local_2\);",
+            final_body,
+        )
+    ) == 1
+    assert re.search(
+        r"g_0BA2 > (?:\(short\))?local_2|(?:\(short\))?local_2 < g_0BA2",
+        final_body,
+    )
+    assert final_body.count("local_2 += 1;") == 1
     assert "mem_" not in final_body
     assert "vvar_" not in final_body
     assert final_body.count("return;") == 1 or final_body.count("return 0;") == 1
@@ -1111,8 +1127,11 @@ def test_sortdemo_main_uses_portable_flat_int_main_signature():
     assert "gcc syntax check failed:" not in combined
     assert "void main(void)" not in result.stdout
     assert "int main(void)" in result.stdout
-    assert "setvideomode(65535);" in result.stdout
-    assert "return setvideomode(65535);" not in result.stdout
+    assert re.search(r"setvideomode\((?:65535|0xffff)\);", result.stdout)
+    assert not re.search(
+        r"return setvideomode\((?:65535|0xffff)\);",
+        result.stdout,
+    )
     assert result.stdout.count("return 0;") == 1
     assert "InitMenu(" in result.stdout
     scorecard = build_acceptance_scorecard(

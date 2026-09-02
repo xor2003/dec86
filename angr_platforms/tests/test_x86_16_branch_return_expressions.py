@@ -23,6 +23,7 @@ from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
 )
 from angr_platforms.X86_16.structuring import branch_return_expressions
 from angr_platforms.X86_16.structuring.branch_return_expressions import (
+    branch_target_preserves_return_registers_8616,
     recover_branch_target_return_expression_8616,
     sole_return_expression_8616,
 )
@@ -74,6 +75,17 @@ def _project(*insns: _Insn) -> object:
     return SimpleNamespace(factory=_Factory(insns))
 
 
+def _mapped_project(blocks: dict[int, tuple[_Insn, ...]]) -> object:
+    """Build a project whose block factory resolves exact CFG addresses."""
+    return SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda addr, *, opt_level=0: SimpleNamespace(
+                capstone=SimpleNamespace(insns=blocks[addr])
+            )
+        )
+    )
+
+
 def test_sole_return_expression_accepts_one_wrapped_return() -> None:
     codegen = _Codegen()
     expression = CConstant(7, SimTypeShort(False), codegen=codegen)
@@ -103,6 +115,31 @@ def test_branch_target_return_expression_refuses_value_before_conditional_branch
     )
 
     assert recover_branch_target_return_expression_8616(project, codegen, 0x1000) is None
+
+
+def test_branch_target_preservation_follows_jump_only_path_to_epilogue() -> None:
+    project = _mapped_project(
+        {
+            0x1000: (_Insn("jmp", (_Operand(2, imm=0x1010),)),),
+            0x1010: (_Insn("leave", ()), _Insn("ret", ())),
+        }
+    )
+
+    assert branch_target_preserves_return_registers_8616(project, 0x1000)
+
+
+def test_branch_target_preservation_refuses_ax_write_before_epilogue() -> None:
+    project = _mapped_project(
+        {
+            0x1000: (
+                _Insn("mov", (_Operand(1, reg=1), _Operand(2, imm=7))),
+                _Insn("jmp", (_Operand(2, imm=0x1010),)),
+            ),
+            0x1010: (_Insn("ret", ()),),
+        }
+    )
+
+    assert not branch_target_preserves_return_registers_8616(project, 0x1000)
 
 
 def test_branch_target_return_expression_uses_projected_machine_bp_argument() -> None:

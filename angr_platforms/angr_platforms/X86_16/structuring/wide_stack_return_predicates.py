@@ -108,6 +108,19 @@ def _record_result_8616(
     return result
 
 
+def wide_stack_return_predicate_materialized_8616(codegen: object) -> bool:
+    """Return whether the canonical owner still owns the active C root."""
+    boundary = cast(_CodegenSurface8616, codegen)
+    try:
+        result = boundary._inertia_wide_stack_return_predicate_result_8616
+        root_tags = cast(Any, boundary.cfunc.statements).tags
+    except AttributeError:
+        return False
+    if result.status is not WideStackReturnPredicateStatus8616.MATERIALIZED:
+        return False
+    return isinstance(root_tags, dict) and root_tags.get("inertia_structuring_wide_stack_return_predicate_8616") is True
+
+
 def _refused_8616(
     status: WideStackReturnPredicateStatus8616,
     raw_count: int,
@@ -332,5 +345,6 @@ __all__ = [
     "WideStackReturnPredicateStats8616",
     "WideStackReturnPredicateStatus8616",
     "materialize_wide_stack_return_predicate_8616",
+    "wide_stack_return_predicate_materialized_8616",
     "wide_stack_return_predicate_validation_delta_is_proven_8616",
 ]

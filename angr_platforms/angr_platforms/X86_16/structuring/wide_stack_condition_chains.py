@@ -17,6 +17,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
+from ..alias.condition_register_bindings import (
+    condition_operand_storage_binding_8616,
+)
 from ..ir.condition_ir import ConditionIR, ConditionOp
 from ..ir.core import IRValue
 
@@ -44,13 +47,15 @@ class WideStackConditionChainResult8616:
 
 @dataclass(frozen=True, slots=True)
 class WideStackOperandPair8616:
-    """Describe one Widening-proven high/low operand pairing."""
+    """Describe one anchored high/low operand pairing for CFG proof."""
 
     high_left: IRValue
     low_left: IRValue
     high_right: IRValue
     low_right: IRValue
     signed: bool | None
+    left_pair_proven: bool
+    right_pair_proven: bool
 
 
 _SIGNED_OPS_8616: frozenset[ConditionOp] = frozenset({"slt", "sle", "sgt", "sge"})
@@ -75,23 +80,48 @@ def _condition_signedness_8616(condition: ConditionIR) -> bool | None:
     return None
 
 
+def _adjacent_stack_words_8616(high: IRValue, low: IRValue) -> bool:
+    """Require exact typed adjacency before propagating a peer widening proof."""
+    return (
+        isinstance(high.offset, int)
+        and isinstance(low.offset, int)
+        and high.offset == low.offset + 2
+    )
+
+
 def candidate_wide_stack_operand_pairs_8616(
     conditions: tuple[ConditionIR, ...],
     prove_pair: WideStackPairProver8616,
 ) -> tuple[WideStackOperandPair8616, ...]:
-    """Collect unique high/low operand pairs proven by Widening evidence."""
+    """Collect pairs anchored by Widening; peer propagation requires CFG proof."""
     candidates: list[WideStackOperandPair8616] = []
     for high_condition in conditions:
-        high_left = _stack_word_8616(high_condition.lhs)
-        high_right = _stack_word_8616(high_condition.rhs)
+        high_left = _stack_word_8616(
+            condition_operand_storage_binding_8616(
+                high_condition, high_condition.lhs
+            )
+        )
+        high_right = _stack_word_8616(
+            condition_operand_storage_binding_8616(
+                high_condition, high_condition.rhs
+            )
+        )
         if high_left is None or high_right is None:
             continue
         signed = _condition_signedness_8616(high_condition)
         for low_condition in conditions:
             if low_condition.op in _SIGNED_OPS_8616:
                 continue
-            low_left = _stack_word_8616(low_condition.lhs)
-            low_right = _stack_word_8616(low_condition.rhs)
+            low_left = _stack_word_8616(
+                condition_operand_storage_binding_8616(
+                    low_condition, low_condition.lhs
+                )
+            )
+            low_right = _stack_word_8616(
+                condition_operand_storage_binding_8616(
+                    low_condition, low_condition.rhs
+                )
+            )
             if low_left is None or low_right is None:
                 continue
             orientations = (
@@ -99,7 +129,13 @@ def candidate_wide_stack_operand_pairs_8616(
                 (low_right, low_left),
             )
             for paired_left, paired_right in orientations:
-                if not prove_pair(high_left, paired_left) or not prove_pair(high_right, paired_right):
+                if not _adjacent_stack_words_8616(
+                    high_left, paired_left
+                ) or not _adjacent_stack_words_8616(high_right, paired_right):
+                    continue
+                left_pair_proven = prove_pair(high_left, paired_left)
+                right_pair_proven = prove_pair(high_right, paired_right)
+                if not left_pair_proven and not right_pair_proven:
                     continue
                 candidate = WideStackOperandPair8616(
                     high_left=high_left,
@@ -107,6 +143,8 @@ def candidate_wide_stack_operand_pairs_8616(
                     high_right=high_right,
                     low_right=paired_right,
                     signed=signed,
+                    left_pair_proven=left_pair_proven,
+                    right_pair_proven=right_pair_proven,
                 )
                 same_operands = next(
                     (
@@ -139,7 +177,10 @@ def relation_for_wide_stack_condition_8616(
     low_relation: int,
 ) -> int | None:
     """Map one condition to the abstract relation of its proven word pair."""
-    operands = (condition.lhs, condition.rhs)
+    operands = (
+        condition_operand_storage_binding_8616(condition, condition.lhs),
+        condition_operand_storage_binding_8616(condition, condition.rhs),
+    )
     if operands == (pair.high_left, pair.high_right):
         return high_relation
     if operands == (pair.high_right, pair.high_left):
@@ -230,8 +271,10 @@ def reachable_wide_stack_conditions_8616(
     root: ConditionIR,
     conditions_by_block: dict[int, ConditionIR],
     successors: dict[int, tuple[int, ...]],
+    *,
+    stop_targets: frozenset[int] = frozenset(),
 ) -> tuple[ConditionIR, ...]:
-    """Collect typed conditions reachable from one root without CFG guessing."""
+    """Collect typed conditions before proven decision-surface exits."""
     pending = [root]
     result: list[ConditionIR] = []
     seen_conditions: set[int] = set()
@@ -245,7 +288,11 @@ def reachable_wide_stack_conditions_8616(
         result.append(condition)
         for initial_target in (condition.taken_target, condition.fallthrough_target):
             target = initial_target
-            while isinstance(target, int) and target not in visited:
+            while (
+                isinstance(target, int)
+                and target not in visited
+                and target not in stop_targets
+            ):
                 visited.add(target)
                 next_condition = conditions_by_block.get(target)
                 if next_condition is not None:
@@ -267,7 +314,12 @@ def recover_wide_stack_condition_chain_8616(
     prove_pair: WideStackPairProver8616,
 ) -> WideStackConditionChainResult8616:
     """Recover one direct wide comparison only after exhaustive CFG proof."""
-    conditions = reachable_wide_stack_conditions_8616(root, conditions_by_block, successors)
+    conditions = reachable_wide_stack_conditions_8616(
+        root,
+        conditions_by_block,
+        successors,
+        stop_targets=frozenset((true_target, false_target)),
+    )
     pairs = candidate_wide_stack_operand_pairs_8616(conditions, prove_pair)
     if len(pairs) != 1:
         return WideStackConditionChainResult8616(

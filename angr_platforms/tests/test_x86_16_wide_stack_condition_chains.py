@@ -1,11 +1,26 @@
 from __future__ import annotations
 
-from angr.analyses.decompiler.structured_codegen.c import CVariable
+from types import SimpleNamespace
+
+from angr.analyses.decompiler.structured_codegen.c import (
+    CBinaryOp,
+    CConstant,
+    CVariable,
+)
+from angr.sim_type import SimTypeChar, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimStackVariable
-from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.condition_ir import (
+    ConditionIR,
+    ConditionRegisterBindingIR,
+)
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.lowering.wide_stack_pair_evidence import (
     materialize_proven_wide_stack_pair_variable_8616,
+    proven_wide_stack_ir_pair_8616,
+)
+from angr_platforms.X86_16.structuring.local_wide_stack_condition_chains import (
+    recover_local_wide_stack_condition_chain_8616,
 )
 from angr_platforms.X86_16.structuring.wide_stack_condition_chains import (
     reachable_wide_stack_conditions_8616,
@@ -14,6 +29,7 @@ from angr_platforms.X86_16.structuring.wide_stack_condition_chains import (
 from angr_platforms.X86_16.structuring.wide_stack_single_branches import (
     recover_wide_stack_single_body_condition_8616,
 )
+from archinfo import ArchX86
 
 
 def _word(offset: int) -> IRValue:
@@ -49,6 +65,8 @@ class _Codegen:
     def __init__(self) -> None:
         self._ident = 0
         self._node_idx = 0
+        self.cstyle_null_cmp = False
+        self.project = SimpleNamespace(arch=ArchX86())
 
     def next_ident(self, prefix: str) -> str:
         self._ident += 1
@@ -125,6 +143,75 @@ def test_wide_stack_pair_materialization_refuses_wrong_candidate_offset() -> Non
     assert result is None
 
 
+def test_wide_stack_pair_accepts_low_owner_with_adjacent_high_slice() -> None:
+    """A projected four-byte low owner proves its separate upper-word slice."""
+    codegen = _Codegen()
+    low_owner = _stack_expression(codegen, 10, 4, name="value")
+    high_slice = _stack_expression(codegen, 12, 2, name="value_hi")
+    low_projection = CBinaryOp(
+        "And",
+        low_owner,
+        CConstant(0xFFFF, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    assert proven_wide_stack_ir_pair_8616(
+        _word(14),
+        _word(12),
+        high_slice,
+        low_projection,
+    )
+    unrelated_high = _stack_expression(
+        codegen, 12, 2, name="other_hi", region=0x2000
+    )
+    assert not proven_wide_stack_ir_pair_8616(
+        _word(14),
+        _word(12),
+        unrelated_high,
+        low_projection,
+    )
+
+
+def test_wide_stack_pair_accepts_semantic_low_word_cast() -> None:
+    """A required 32-to-16 cast proves the low slice of its stack owner."""
+    codegen = _Codegen()
+    low_owner = _stack_expression(codegen, 10, 4, name="value")
+    high_slice = _stack_expression(codegen, 12, 2, name="value_hi")
+    low_projection = CSemanticCast8616(
+        SimTypeLong(False),
+        SimTypeShort(False),
+        low_owner,
+        codegen=codegen,
+    )
+
+    assert proven_wide_stack_ir_pair_8616(
+        _word(14),
+        _word(12),
+        high_slice,
+        low_projection,
+    )
+
+
+def test_wide_stack_pair_refuses_non_word_semantic_cast() -> None:
+    """Narrowing to a byte does not prove a complete low-word projection."""
+    codegen = _Codegen()
+    low_owner = _stack_expression(codegen, 10, 4, name="value")
+    high_slice = _stack_expression(codegen, 12, 2, name="value_hi")
+    byte_projection = CSemanticCast8616(
+        SimTypeLong(False),
+        SimTypeChar(False),
+        low_owner,
+        codegen=codegen,
+    )
+
+    assert not proven_wide_stack_ir_pair_8616(
+        _word(14),
+        _word(12),
+        high_slice,
+        byte_projection,
+    )
+
+
 def test_wide_stack_condition_chain_recovers_signed_less_equal() -> None:
     true_target = 0x1030
     false_target = 0x1040
@@ -149,6 +236,28 @@ def test_wide_stack_condition_chain_recovers_signed_less_equal() -> None:
     assert result.stats.materialized_count == 1
 
 
+def test_wide_stack_condition_chain_propagates_one_proven_operand_pair() -> None:
+    """One proven wide operand anchors its exhaustively checked comparison peer."""
+    true_target = 0x1030
+    false_target = 0x1040
+    root = _condition("sle", 10, 6, 0x1000, 0x1010, false_target)
+    equal_or_less = _condition("sge", 10, 6, 0x1010, 0x1020, true_target)
+    low = _condition("ule", 8, 4, 0x1020, true_target, false_target)
+
+    result = recover_wide_stack_condition_chain_8616(
+        root,
+        {0x1000: root, 0x1010: equal_or_less, 0x1020: low},
+        {},
+        true_target,
+        false_target,
+        lambda high, low: (high.offset, low.offset) == (10, 8),
+    )
+
+    assert result.condition is not None
+    assert result.condition.op == "sle"
+    assert result.condition.width_bits == 32
+
+
 def test_wide_stack_condition_chain_refuses_missing_low_word_decision() -> None:
     root = _condition("sle", 10, 6, 0x1000, 0x1030, 0x1040)
 
@@ -163,6 +272,82 @@ def test_wide_stack_condition_chain_refuses_missing_low_word_decision() -> None:
 
     assert result.condition is None
     assert result.stats.materialized_count == 0
+
+
+def test_local_wide_stack_condition_stops_before_later_comparison() -> None:
+    """A following independent predicate is outside the direct wide proof."""
+    true_target = 0x1030
+    false_target = 0x1040
+    root = _condition("sle", 10, 6, 0x1000, 0x1010, false_target)
+    equal_or_less = _condition("sge", 10, 6, 0x1010, 0x1020, true_target)
+    low = _condition("ule", 8, 4, 0x1020, true_target, false_target)
+    later = _condition("sgt", 22, 18, true_target, 0x1050, 0x1060)
+
+    result = recover_local_wide_stack_condition_chain_8616(
+        root,
+        {
+            0x1000: root,
+            0x1010: equal_or_less,
+            0x1020: low,
+            true_target: later,
+        },
+        {},
+        _adjacent,
+    )
+
+    assert result.condition is not None
+    assert result.condition.op == "sle"
+    assert result.true_target == true_target
+    assert result.false_target == false_target
+    assert result.consumed_conditions == (root, equal_or_less, low)
+
+
+def test_local_wide_stack_condition_consumes_bound_register_high_word() -> None:
+    """Alias-proven register storage keeps one wide comparison indivisible."""
+    continue_target = 0x1030
+    return_target = 0x1040
+    register_high = IRValue(space=MemSpace.REG, name="dx", size=2)
+    binding = (ConditionRegisterBindingIR("dx", _word(6)),)
+    root = ConditionIR(
+        op="sgt",
+        lhs=register_high,
+        rhs=_word(22),
+        width_bits=16,
+        block_addr=0x1000,
+        taken_target=return_target,
+        fallthrough_target=0x1010,
+        producer_semantics=("cmp_reg_mem16", "dx", ("bp", 22, 22)),
+        register_bindings=binding,
+    )
+    high_less = ConditionIR(
+        op="slt",
+        lhs=register_high,
+        rhs=_word(22),
+        width_bits=16,
+        block_addr=0x1010,
+        taken_target=continue_target,
+        fallthrough_target=0x1020,
+        producer_semantics=("cmp_reg_mem16", "dx", ("bp", 22, 22)),
+        register_bindings=binding,
+    )
+    low = _condition("ugt", 4, 20, 0x1020, return_target, continue_target)
+
+    result = recover_local_wide_stack_condition_chain_8616(
+        root,
+        {0x1000: root, 0x1010: high_less, 0x1020: low},
+        {},
+        _adjacent,
+    )
+
+    assert result.condition is not None
+    assert result.condition.op == "sle"
+    assert result.condition.lhs == IRValue(
+        space=MemSpace.SS, name="bp", offset=4, size=4
+    )
+    assert result.condition.rhs == IRValue(
+        space=MemSpace.SS, name="bp", offset=20, size=4
+    )
+    assert result.consumed_conditions == (root, high_less, low)
 
 
 def test_reachable_conditions_do_not_compare_symbolic_operands() -> None:

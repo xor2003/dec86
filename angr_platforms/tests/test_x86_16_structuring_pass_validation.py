@@ -1265,7 +1265,6 @@ def test_typed_switch_finalizer_replays_after_replacement(monkeypatch):
     codegen = SimpleNamespace()
     synthetic_globals = object()
     cod_metadata = object()
-
     def _replace(_codegen):
         calls.append(("replace", _codegen))
         return True
@@ -1520,6 +1519,7 @@ def test_segment_global_materialization_sequences_lowering_owned_passes(monkeypa
     codegen = SimpleNamespace()
     synthetic_globals = object()
     cod_metadata = object()
+    named_results = iter((False, True))
 
     def _runtime(_codegen, *, target):
         calls.append(("runtime", _codegen, target))
@@ -1527,7 +1527,11 @@ def test_segment_global_materialization_sequences_lowering_owned_passes(monkeypa
 
     def _named(_project, _codegen, _synthetic_globals, *, cod_metadata=None):
         calls.append(("named", _project, _codegen, _synthetic_globals, cod_metadata))
-        return False
+        return next(named_results)
+
+    def _reconcile(_codegen):
+        calls.append(("reconcile", _codegen))
+        return True
 
     def _compare(_project, _codegen, _synthetic_globals, *, cod_metadata=None):
         calls.append(("compare", _project, _codegen, _synthetic_globals, cod_metadata))
@@ -1555,6 +1559,11 @@ def test_segment_global_materialization_sequences_lowering_owned_passes(monkeypa
     monkeypatch.setattr(segment_global_materialization, "materialize_named_segmented_global_loads_8616", _named)
     monkeypatch.setattr(
         segment_global_materialization,
+        "reconcile_recorded_cod_global_storage_identities_8616",
+        _reconcile,
+    )
+    monkeypatch.setattr(
+        segment_global_materialization,
         "materialize_compare_register_global_carriers_8616",
         _compare,
     )
@@ -1578,7 +1587,7 @@ def test_segment_global_materialization_sequences_lowering_owned_passes(monkeypa
     assert result.changed is True
     assert result.runtime_segment_changed is True
     assert result.segmented_load_widening_changed is True
-    assert result.named_global_changed is False
+    assert result.named_global_changed is True
     assert result.compare_register_global_changed is True
     assert result.direct_global_store_changed is False
     assert result.indexed_global_changed is True
@@ -1591,11 +1600,13 @@ def test_segment_global_materialization_sequences_lowering_owned_passes(monkeypa
         ("dos_interrupt", codegen),
         ("widen", codegen),
         ("runtime", codegen, "msc6"),
+        ("named", project, codegen, synthetic_globals, cod_metadata),
+        ("reconcile", codegen),
     ]
     assert codegen._inertia_segment_global_materialization_8616 == {
         "runtime_segment_changed": True,
         "segmented_load_widening_changed": True,
-        "named_global_changed": False,
+        "named_global_changed": True,
         "compare_register_global_changed": True,
         "direct_global_store_changed": False,
         "indexed_global_changed": True,
