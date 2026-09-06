@@ -2285,6 +2285,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_cache_lock.py \
 	angr_platforms/tests/test_function_ir_ssa_source_scope.py \
+	angr_platforms/tests/test_x86_16_indexed_alias_cache_layers.py \
 	angr_platforms/tests/test_program_callsite_cache.py \
 	angr_platforms/tests/test_x86_16_gp_register_state.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
@@ -2659,6 +2660,7 @@ QA_RUFF_TARGETS += \
 
 QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_function_ir_ssa_source_scope.py \
+	angr_platforms/tests/test_x86_16_indexed_alias_cache_layers.py \
 	angr_platforms/tests/test_program_callsite_cache.py \
 	angr_platforms/tests/test_x86_16_clinic_semantic_stages.py \
 	angr_platforms/tests/test_x86_16_gp_register_state.py \

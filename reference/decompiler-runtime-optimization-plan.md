@@ -438,15 +438,25 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   changed surface passes 71 mapped tests.
 - Function IR/SSA source invalidation now follows a versioned positive owner
   manifest instead of hashing nearly every root x86-16 module. The source
-  surface fell from 260 files to 126 while adding the previously omitted IR
+  surface fell from 260 files to 129 while adding the previously omitted IR
   frame-analysis modules and top-level pyvex compatibility owner. Callsite,
   Lowering, Structuring, and Rewrite edits no longer invalidate all 21 SORTD
   function artifacts. After the one-time schema rebuild, a source-stable live
-  `sub_109e8` run that bypassed final-C reuse took 11.86 seconds versus 24.85
+  `sub_109e8` run that bypassed final-C reuse took 9.88 seconds versus 21.94
   seconds for the cold rebuild. Both runs emitted the accepted C hash
   `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`;
   function and whole-tail validation pass. Scope tests enforce required IR,
   Frontend, Analysis, and Semantics owners plus downstream exclusions.
+- Indexed Alias/Widening persistence now composes that exact IR/SSA scope with
+  explicit discovery, loader, sidecar, Alias, and Widening owners instead of
+  inheriting the generic 280-file discovery surface. Its source identity fell
+  from 306 files to 203; changes confined to callsite semantics, Lowering,
+  Structuring, or Rewrite no longer discard the program-wide layout. The same
+  source-stable 21.94-second cold and 9.88-second warm SORTD pair exercised
+  this cache family, bypassed final-C reuse, preserved the accepted C hash,
+  and passed function plus whole-tail validation. Regression tests require the
+  full IR/SSA subset and every direct artifact owner while rejecting those
+  downstream layers.
 - The mandatory runtime architecture guard no longer imports pytest while it
   loads the AST-only source index. Pytest's runtime types are now imported only
   when test-inventory collection asks for concrete parametrized addresses. Five

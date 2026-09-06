@@ -83,6 +83,37 @@ _INDEXED_ALIAS_PROGRAM_X86_16_DEPENDENCY_DIRS_8616 = (
     "ir",
 )
 
+_INDEXED_ALIAS_PROGRAM_DISCOVERY_PATHS_8616 = (
+    "analysis_helpers.py",
+    "annotations.py",
+    "calling_convention_compat.py",
+    "cod_analysis_image.py",
+    "cod_extract.py",
+    "codeview_nb00.py",
+    "codeview_nb02_nb04.py",
+    "compat.py",
+    "exact_region_diagnostics.py",
+    "exepack.py",
+    "flair_extract.py",
+    "frontend_function_boundary_index.py",
+    "frontend_function_instructions.py",
+    "frontend_indirect_jump_targets.py",
+    "function_evidence_inventory.py",
+    "helper_abi.py",
+    "load_dos_mz.py",
+    "load_dos_ne.py",
+    "lst_extract.py",
+    "mz_image.py",
+    "ne_exe_parse.py",
+    "packed_mz.py",
+    "segment_program_layout.py",
+    "segment_program_layout_codec.py",
+    "segment_program_layout_contract.py",
+    "simos_86_16.py",
+    "synthetic_call_stub_evidence.py",
+    "turbo_debug_tdinfo.py",
+)
+
 _INDEXED_ALIAS_PROGRAM_ALIAS_NAMES_8616 = (
     "alias_model_impl.py",
     "domains.py",
@@ -216,9 +247,10 @@ def _indexed_alias_program_cache_source_files_8616() -> tuple[Path, ...]:
         inertia_root / name
         for name in _INDEXED_ALIAS_PROGRAM_INERTIA_NAMES_8616
     }
+    discovered.update(FUNCTION_IR_SSA_CACHE_SOURCE_FILES)
     discovered.update(
-        path
-        for path in FUNCTION_DISCOVERY_CACHE_SOURCE_FILES
+        x86_root / path
+        for path in _INDEXED_ALIAS_PROGRAM_DISCOVERY_PATHS_8616
     )
     discovered.update(
         path
@@ -233,6 +265,7 @@ def _indexed_alias_program_cache_source_files_8616() -> tuple[Path, ...]:
         x86_root / "widening" / name
         for name in _INDEXED_ALIAS_PROGRAM_WIDENING_NAMES_8616
     )
+    discovered.update({_ROOT / "omf_pat.py", _ROOT / "signature_catalog.py"})
     return tuple(sorted(path for path in discovered if path.is_file()))
 
 

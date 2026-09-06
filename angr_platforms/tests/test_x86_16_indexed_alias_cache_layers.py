@@ -26,6 +26,10 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.indexed_alias_program_context as indexed_context
 import inertia_decompiler.indexed_alias_program_recovery as indexed_recovery
+from inertia_decompiler.cache_source_manifest import (
+    FUNCTION_IR_SSA_CACHE_SOURCE_FILES,
+    INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
+)
 from inertia_decompiler.function_ir_ssa_cache import (
     FunctionIRSSACacheStats8616,
     FunctionIRSSACatalogResult8616,
@@ -87,6 +91,30 @@ def _required_callsites() -> GlobalObjectProgramRequirementEvidence8616:
 
 def _empty_ir_ssa_cache() -> FunctionIRSSACatalogResult8616:
     return FunctionIRSSACatalogResult8616((), FunctionIRSSACacheStats8616())
+
+
+def test_indexed_alias_cache_scope_uses_exact_artifact_owners() -> None:
+    indexed_paths = set(INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES)
+    relative_paths = {
+        path.relative_to(Path(__file__).resolve().parents[2]).as_posix()
+        for path in indexed_paths
+    }
+
+    assert set(FUNCTION_IR_SSA_CACHE_SOURCE_FILES) <= indexed_paths
+    assert {
+        "angr_platforms/angr_platforms/X86_16/analysis_helpers.py",
+        "angr_platforms/angr_platforms/X86_16/frontend_indirect_jump_targets.py",
+        "angr_platforms/angr_platforms/X86_16/load_dos_mz.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_program.py",
+        "angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py",
+    } <= relative_paths
+    assert {
+        "angr_platforms/angr_platforms/X86_16/callsite_summary.py",
+        "angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/register_local_declarations.py",
+        "angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py",
+    }.isdisjoint(relative_paths)
+    assert len(relative_paths) < 220
 
 
 def test_callsite_cache_miss_reuses_persisted_alias_widening(

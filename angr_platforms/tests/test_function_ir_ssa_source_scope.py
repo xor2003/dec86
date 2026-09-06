@@ -72,6 +72,8 @@ def test_function_ir_ssa_source_scope_has_exact_layer_owners() -> None:
     assert ir_paths <= paths
     assert {
         "pyvex_compat.py",
+        "angr_platforms/angr_platforms/X86_16/frontend_block_inventory.py",
+        "angr_platforms/angr_platforms/X86_16/frontend_capstone_decode.py",
         "angr_platforms/angr_platforms/X86_16/lift_86_16.py",
         "angr_platforms/angr_platforms/X86_16/analysis/alias.py",
         "angr_platforms/angr_platforms/X86_16/analysis/stack_frame_ir.py",
@@ -79,6 +81,7 @@ def test_function_ir_ssa_source_scope_has_exact_layer_owners() -> None:
     } <= paths
     assert {
         "angr_platforms/angr_platforms/X86_16/callsite_summary.py",
+        "angr_platforms/angr_platforms/X86_16/analysis_helpers.py",
         "angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py",
         "angr_platforms/angr_platforms/X86_16/lowering/register_local_declarations.py",
         "angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py",
