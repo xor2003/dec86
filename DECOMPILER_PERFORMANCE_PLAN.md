@@ -142,6 +142,19 @@ and passed function plus whole-tail validation. No end-to-end percentage is
 claimed because unrelated shared-worktree changes landed between reference and
 acceptance runs.
 
+The direct local Alias requirement query now hydrates the selected function's
+exact raw IR/SSA pair before Alias construction and stores a newly built pair
+immediately afterward. A fresh-project regression proves that the first project
+invokes the raw IR builder once and an exact second project invokes it zero
+times, while both Alias censuses close. After one cache-fill run, three normal
+sidecar-free `sub_109e8` samples completed in 10.74, 10.67, and 10.93 seconds
+(10.74-second median); every run emitted C SHA-256
+`caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`
+and passed function plus whole-tail validation. The hard development gate
+passed 1,949 tests plus its external and generated-C quality lanes. No isolated
+end-to-end percentage is claimed because the fill run also populated discovery
+and program-evidence caches.
+
 Cache-focused and indexed-Alias integration tests pass, and
 `architecture-check-fast` passes. The latest broad pipeline reached 1,911
 passing tests but failed three stack-argument recovery tests; all three failures

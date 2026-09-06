@@ -2490,6 +2490,20 @@ def _apply_structuring_pointer_memory_idioms_8616(project: AngrProjectSurface, c
         codegen._inertia_pointer_memory_idiom_lowering_pass_ran_8616 = True
 
 
+def _replay_structuring_gp_state_after_late_cleanup_8616(
+    codegen: AngrCodegenSurface,
+) -> bool:
+    """Rebind typed GP projections after late Structuring cleanup mutates C AST."""
+    try:
+        replay_count = codegen._inertia_structuring_gp_state_cleanup_replay_count_8616
+    except AttributeError:
+        replay_count = 0
+    codegen._inertia_structuring_gp_state_cleanup_replay_count_8616 = (
+        int(replay_count or 0) + 1
+    )
+    return lower_architectural_gp_register_state_8616(codegen)
+
+
 def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface) -> bool:
     """Prime proven Structuring consumers and report every resulting AST change."""
     if getattr(codegen, "_inertia_structuring_validation_semantics_primed", False):
@@ -2636,7 +2650,7 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         # The late FLAGS owner can retain or restore angr's pointer-shaped
         # high-byte register views inside packed-FLAGS expressions. Reconsume
         # those typed GP projections before the validation baseline is frozen.
-        changed = lower_architectural_gp_register_state_8616(codegen) or changed
+        changed = _replay_structuring_gp_state_after_late_cleanup_8616(codegen) or changed
         # Publish the callsite materialization contract before any per-pass
         # validation baseline is captured. Rebased direct slices can otherwise
         # expose complete generated calls while leaving validation with only
@@ -4433,6 +4447,13 @@ def _decompile_structuring_8616(self: AngrDecompilerSurface) -> None:
                 )
             )
             changed = late_flag_cleanup.changed or changed
+            # Widening replay, carrier pruning, and FLAGS cleanup can rebuild
+            # raw AL/AH-style views after the earlier typed GP replay. Close
+            # the same Lowering contract immediately before validation.
+            final_gp_state_changed = (
+                _replay_structuring_gp_state_after_late_cleanup_8616(self.codegen)
+            )
+            changed = bool(final_gp_state_changed) or changed
             annotate_current_span(
                 raw_fact_count=identical_return_guards.stats.raw_fact_count,
                 materialized_count=identical_return_guards.stats.materialized_count,
@@ -4440,6 +4461,7 @@ def _decompile_structuring_8616(self: AngrDecompilerSurface) -> None:
                 widening_changed=bool(widening_replay_changed),
                 carrier_changed=bool(dead_carrier_changed),
                 flags_changed=late_flag_cleanup.changed,
+                gp_state_changed=bool(final_gp_state_changed),
             )
         with span("x86_16.structuring.final_callsite_closure", function=func_addr):
             final_callsite_changed = _close_final_structuring_callsites_8616(

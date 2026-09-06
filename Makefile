@@ -58,6 +58,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	inertia_decompiler/cache_source_manifest.py \
 	inertia_decompiler/function_ir_ssa_source_scope.py \
 	inertia_decompiler/decompile_file_summary.py \
+	inertia_decompiler/direct_indexed_alias_local_cache.py \
 	inertia_decompiler/indexed_alias_program_context.py \
 	inertia_decompiler/indexed_alias_program_parallel.py \
 	inertia_decompiler/program_callsite_cache.py \

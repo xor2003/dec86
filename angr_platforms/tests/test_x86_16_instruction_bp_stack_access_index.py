@@ -3,12 +3,16 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.alias.stack_memory_ssa import (
     build_x86_16_stack_memory_ssa_alias_artifact,
 )
 from angr_platforms.X86_16.alias.stack_memory_ssa_contracts import (
     StackMemoryAliasFactKind8616,
 )
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import (
     AddressStatus,
     IRAddress,
@@ -34,9 +38,16 @@ from angr_platforms.X86_16.lowering.instruction_bp_stack_access import (
     ensure_instruction_bp_stack_access_index_8616,
     select_instruction_bp_stack_access_8616,
 )
+from angr_platforms.X86_16.lowering.real_mode_linear import (
+    lower_stable_ss_linear_stack_dereferences_8616,
+)
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.lowering.stack_storage_evidence import (
     alias_excludes_stack_range_8616,
     alias_proves_stack_range_8616,
+)
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
 )
 
 
@@ -232,6 +243,115 @@ def test_instruction_bp_stack_index_uses_sole_range_to_correct_shaped_offset() -
         StackMemoryAliasFactKind8616.LOAD,
         InstructionBpStackAccessEvidence8616.EXECUTION_SLICE,
     )
+
+
+def test_instruction_bp_stack_index_uses_unique_logical_owner_for_entry_sp_view() -> None:
+    index = ensure_instruction_bp_stack_access_index_8616(
+        SimpleNamespace(),
+        _byte_split_logical_alias_artifact(),
+    )
+
+    selected = select_instruction_bp_stack_access_8616(
+        index,
+        frozenset({0x1010}),
+        displacement=-4,
+        size=1,
+    )
+
+    assert selected == InstructionBpStackAccess8616(
+        -2,
+        2,
+        StackMemoryAliasFactKind8616.LOAD,
+        InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS,
+    )
+
+
+def test_instruction_logical_owner_rebinds_byte_entry_sp_dereference() -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    target_variable = SimStackVariable(-4, 2, base="bp", name="target")
+    target_cvar = structured_c.CVariable(
+        target_variable,
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    ss = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    bp = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["bp"][0], 2, name="bp"),
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    linear = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Shl",
+            ss,
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CBinaryOp(
+            "Sub",
+            bp,
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    byte_pointer = structured_c.CTypeCast(
+        None,
+        SimTypePointer(SimTypeChar(False)).with_arch(project.arch),
+        linear,
+        codegen=codegen,
+    )
+    dereference = structured_c.CUnaryOp(
+        "Dereference",
+        byte_pointer,
+        codegen=codegen,
+        tags={"ins_addr": 0x1010},
+    )
+    destination = structured_c.CVariable(
+        SimRegisterVariable(0x80, 1, name="dst"),
+        variable_type=SimTypeChar(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    assignment = structured_c.CAssignment(destination, dereference, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=(),
+        variables_in_use={target_variable: target_cvar},
+        unified_local_vars={},
+        statements=structured_c.CStatements(
+            [assignment],
+            addr=0x1000,
+            codegen=codegen,
+        ),
+    )
+    codegen._inertia_stack_memory_ssa_alias_artifact = _byte_split_logical_alias_artifact()
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=target_variable,
+        cvar=target_cvar,
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+    )
+
+    changed = lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CSemanticCast8616)
+    assert assignment.rhs.expr is target_cvar
+    assert codegen._inertia_instruction_bp_stack_access_lane_8616.is_closed
 
 
 def test_complete_alias_artifact_proves_contained_execution_byte_range() -> None:

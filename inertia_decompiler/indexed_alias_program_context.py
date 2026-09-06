@@ -16,7 +16,6 @@ from typing import Protocol, cast
 
 from angr_platforms.X86_16.alias.indexed_address_program import (
     IndexedAliasProgramEvidence8616,
-    build_indexed_alias_program_evidence_8616,
 )
 from angr_platforms.X86_16.lowering.global_object_program_requirement import (
     GlobalObjectProgramRequirementEvidence8616,
@@ -30,12 +29,14 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
     ProjectBoundedGlobalObjectRangeEvidence8616,
 )
 
-from . import indexed_alias_program_parallel as _alias_program_parallel
 from .cache import _cache_key_lock
 from .direct_global_object_cache import direct_global_object_cache_key_8616
 from .direct_global_object_context import (
     attach_available_direct_global_object_evidence_8616,
     publish_recovered_direct_global_object_evidence_8616,
+)
+from .direct_indexed_alias_local_cache import (
+    build_cached_direct_indexed_alias_local_evidence_8616,
 )
 from .function_ir_ssa_cache import store_function_ir_ssa_catalog_8616
 from .indexed_alias_program_publication import publish_discovered_indexed_alias_program_8616
@@ -167,10 +168,9 @@ def prepare_direct_indexed_alias_program_context_8616(
     binary_path: Path | None = None,
 ) -> IndexedAliasProgramContextResult8616:
     """Publish a full catalog only when the direct function needs one."""
-    selection = _alias_program_parallel.indexed_alias_function_selection_8616(function)
-    local_program = build_indexed_alias_program_evidence_8616(
+    local_program = build_cached_direct_indexed_alias_local_evidence_8616(
         target_project,
-        (selection,),
+        function,
     )
     requirement = collect_global_object_program_requirement_8616(
         source_project,

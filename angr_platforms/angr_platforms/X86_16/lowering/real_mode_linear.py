@@ -17590,13 +17590,48 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         )
         if exact is None:
             return None
+        shaped_width = shaped_access.width if isinstance(shaped_access.width, int) else 0
+        if (
+            exact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+            and exact.displacement != shaped_access.displacement
+            and shaped_width > 0
+        ):
+            entry_sp_offset = entry_sp_offset_for_machine_bp_range_8616(
+                codegen,
+                exact.displacement,
+                exact.size,
+            )
+            relative_offset = (
+                shaped_access.displacement - entry_sp_offset
+                if isinstance(entry_sp_offset, int)
+                else -1
+            )
+            projected_displacement = exact.displacement + relative_offset
+            if not 0 <= relative_offset <= exact.size - shaped_width:
+                return None
+            if relative_offset:
+                projected = {
+                    candidate
+                    for source_addr in source_addrs
+                    for candidate in instruction_bp_access_index.by_instruction_addr.get(
+                        source_addr,
+                        (),
+                    )
+                    if candidate.evidence
+                    is InstructionBpStackAccessEvidence8616.EXECUTION_SLICE
+                    and candidate.displacement == projected_displacement
+                    and candidate.size == shaped_width
+                    and candidate.kind is exact.kind
+                }
+                if len(projected) != 1:
+                    return None
+                exact = next(iter(projected))
         instruction_bp_access_lane.raw += 1
         instruction_bp_access_lane.normalized += 1
         size = exact.size
         width = shaped_access.width if isinstance(shaped_access.width, int) and shaped_access.width > 0 else size
         logical_same_base_owner = bool(
             exact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
-            and exact.displacement == shaped_access.displacement
             and size > width > 0
         )
         if size > 0 and width > 0 and size != width and not logical_same_base_owner:

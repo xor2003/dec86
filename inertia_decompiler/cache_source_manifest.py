@@ -72,6 +72,7 @@ _RECOVERY_PIPELINE_DEPENDENCY_NAMES_8616 = (
 _INDEXED_ALIAS_PROGRAM_INERTIA_NAMES_8616 = (
     *_DISCOVERY_INERTIA_NAMES_8616,
     "indexed_alias_program_context.py",
+    "direct_indexed_alias_local_cache.py",
     "indexed_alias_program_parallel.py",
     "indexed_alias_program_publication.py",
     "indexed_alias_program_recovery.py",

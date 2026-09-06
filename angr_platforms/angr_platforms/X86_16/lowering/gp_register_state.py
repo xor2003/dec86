@@ -621,7 +621,7 @@ def _addressed_gp_high_byte_view_8616(
             ),
             None,
         )
-    if bit_shift != 0 or view_width != 2:
+    if bit_shift != 0 or view_width not in {2, 4}:
         return None
     if source is None:
         return None

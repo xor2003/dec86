@@ -196,6 +196,100 @@ def test_gp_runtime_state_projects_addressed_bh_view_before_inner_bx_rewrite() -
     assert view.register_name == "bh"
 
 
+def test_gp_runtime_state_projects_addressed_ah_from_full_eax_carrier() -> None:
+    """Angr may address AH as byte one of the full 32-bit EAX carrier."""
+    artifact = _gp_live_in_artifact("eax")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        _inertia_function_ssa_artifacts_8616={artifact.function_addr: artifact},
+        _inertia_function_ssa_stages_8616={
+            artifact.function_addr: FunctionSSAArtifactStage8616.IR,
+        },
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    eax_offset, eax_size = project.arch.registers["eax"]
+    eax = CVariable(
+        SimRegisterVariable(
+            eax_offset,
+            eax_size,
+            ident="eax_live",
+            region=artifact.function_addr,
+        ),
+        variable_type=SimTypeLong(False),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=artifact.function_addr,
+        statements=CUnaryOp(
+            "Dereference",
+            CBinaryOp(
+                "Add",
+                CUnaryOp("Reference", eax, codegen=codegen),
+                CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        unified_local_vars={},
+    )
+
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    view = runtime_gp_expression_view_8616(codegen.cfunc.statements)
+    assert view is not None
+    assert view.register_name == "ah"
+
+
+def test_gp_runtime_state_projects_addressed_ah_from_owned_eax_lane() -> None:
+    """Late cleanup replay recognizes byte one of an owned runtime EAX lane."""
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        _inertia_function_ssa_artifacts_8616={},
+        _inertia_function_ssa_stages_8616={},
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    runtime_eax = CVariable(
+        SimMemoryVariable(
+            0x10000,
+            4,
+            name="inertia_eax",
+            category="inertia_gp_register_state",
+        ),
+        variable_type=SimTypeLong(False),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x18C19,
+        statements=CUnaryOp(
+            "Dereference",
+            CBinaryOp(
+                "Add",
+                CUnaryOp("Reference", runtime_eax, codegen=codegen),
+                CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        unified_local_vars={},
+    )
+
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    view = runtime_gp_expression_view_8616(codegen.cfunc.statements)
+    assert view is not None
+    assert view.register_name == "ah"
+
+
 def test_gp_runtime_state_projects_addressed_bh_after_inner_bx_rewrite() -> None:
     """A replayed pointer-shaped BH alias recognizes the existing runtime BX view."""
     artifact = _gp_live_in_artifact("bx")

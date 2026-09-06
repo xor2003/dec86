@@ -20,7 +20,9 @@ from angr.sim_type import SimTypeShort
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
 from .far_pointer_segmented_load_evidence import FarPointerSegmentedLoadEvidence8616
 from .segment_access_policy import instruction_addrs_from_node_8616
+from .stack_frame_projection import entry_sp_offset_for_machine_bp_range_8616
 from .stack_lowering_from_facts import materialize_stack_cvar_at_offset_from_facts_8616
+from .stack_variable_coordinates import stack_cvar_for_machine_bp_range_8616
 
 
 class _CFunctionBoundary8616(Protocol):
@@ -54,6 +56,31 @@ class FarPointerSegmentedLoadResult8616:
     stats: FarPointerSegmentedLoadStats8616
 
 
+def _stack_cvar_for_machine_bp_fact_8616(
+    codegen: object,
+    bp_offset: int,
+    size: int,
+) -> CExpression | None:
+    """Resolve one machine-BP fact without treating it as an entry-SP offset."""
+    existing = stack_cvar_for_machine_bp_range_8616(codegen, bp_offset, size)
+    if isinstance(existing, CExpression):
+        return existing
+    entry_sp_offset = entry_sp_offset_for_machine_bp_range_8616(
+        codegen,
+        bp_offset,
+        size,
+    )
+    if entry_sp_offset is None:
+        return None
+    materialized = materialize_stack_cvar_at_offset_from_facts_8616(
+        codegen,
+        entry_sp_offset,
+        size,
+        machine_bp_offset=bp_offset,
+    )
+    return materialized if isinstance(materialized, CExpression) else None
+
+
 def _materialized_offset_expr_8616(
     codegen: object,
     fact: FarPointerSegmentedLoadEvidence8616,
@@ -65,12 +92,12 @@ def _materialized_offset_expr_8616(
         if segment_source is not None and segment_source.width == 2
         else fact.pointer_source.segment_stack_offset
     )
-    segment = materialize_stack_cvar_at_offset_from_facts_8616(
+    segment = _stack_cvar_for_machine_bp_fact_8616(
         codegen,
         segment_stack_offset,
         2,
     )
-    offset = materialize_stack_cvar_at_offset_from_facts_8616(
+    offset = _stack_cvar_for_machine_bp_fact_8616(
         codegen,
         fact.pointer_source.offset_stack_offset,
         2,
@@ -79,7 +106,7 @@ def _materialized_offset_expr_8616(
         return None
     result: CExpression = offset
     if fact.index_stack_offset is not None:
-        index = materialize_stack_cvar_at_offset_from_facts_8616(
+        index = _stack_cvar_for_machine_bp_fact_8616(
             codegen,
             fact.index_stack_offset,
             fact.index_stack_width,

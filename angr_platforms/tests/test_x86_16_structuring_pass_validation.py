@@ -896,6 +896,11 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
     )
     monkeypatch.setattr(
         stage,
+        "_replay_structuring_gp_state_after_late_cleanup_8616",
+        lambda *_args: calls.append("gp-state-final") and False,
+    )
+    monkeypatch.setattr(
+        stage,
         "build_x86_16_tail_validation_cached_result",
         lambda **kwargs: {
             "changed": False,
@@ -932,7 +937,8 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
     final_condition_refresh = len(calls) - 1 - calls[::-1].index("condition_refresh")
     final_fingerprint = len(calls) - 1 - calls[::-1].index("fingerprint")
     assert final_condition_refresh < final_loop_guard < calls.index("switch_loop_exit_return")
-    assert calls.index("switch_loop_exit_return") < final_fingerprint
+    assert calls.index("switch_loop_exit_return") < calls.index("gp-state-final")
+    assert calls.index("gp-state-final") < final_fingerprint
     assert calls.count("lowering_replay") == 1
     assert calls.count("unconsumed_loop_break_jcc") == 2
     assert codegen._inertia_typed_conditions_transferred is True
@@ -1002,6 +1008,11 @@ def test_structuring_return_chain_materialization_triggers_regeneration_before_f
         stage,
         "_replay_structuring_lowering_before_validation_8616",
         lambda *_args: calls.append("lowering_replay") and False,
+    )
+    monkeypatch.setattr(
+        stage,
+        "_replay_structuring_gp_state_after_late_cleanup_8616",
+        lambda *_args: False,
     )
     monkeypatch.setattr(
         stage,
@@ -2217,6 +2228,24 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         "gp-state",
     ]
     assert codegen._inertia_structuring_validation_semantics_primed is True
+    assert codegen._inertia_structuring_gp_state_cleanup_replay_count_8616 == 1
+
+
+def test_late_structuring_gp_state_replay_is_explicit_and_repeatable(monkeypatch):
+    """Every late cleanup boundary reconsumes typed GP projections."""
+    calls: list[object] = []
+    codegen = SimpleNamespace()
+
+    monkeypatch.setattr(
+        stage,
+        "lower_architectural_gp_register_state_8616",
+        lambda actual_codegen: calls.append(actual_codegen) or True,
+    )
+
+    assert stage._replay_structuring_gp_state_after_late_cleanup_8616(codegen) is True
+    assert stage._replay_structuring_gp_state_after_late_cleanup_8616(codegen) is True
+    assert calls == [codegen, codegen]
+    assert codegen._inertia_structuring_gp_state_cleanup_replay_count_8616 == 2
 
 
 def test_structuring_lowering_replay_orders_call_and_pointer_consumers_before_consumed_pushes(

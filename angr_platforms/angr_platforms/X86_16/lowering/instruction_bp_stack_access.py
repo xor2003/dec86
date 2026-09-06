@@ -312,6 +312,13 @@ def select_instruction_bp_stack_access_8616(
         return min(same_base_logical_owners, key=lambda fact: (fact.size, fact.kind.value))
     if exact:
         return min(exact, key=lambda fact: (fact.evidence.value, fact.kind.value))
+    logical = tuple(
+        fact
+        for fact in candidates
+        if fact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+    )
+    if len({(fact.displacement, fact.size) for fact in logical}) == 1:
+        return min(logical, key=lambda fact: fact.kind.value)
     ranges = {(fact.displacement, fact.size) for fact in candidates}
     if len(ranges) != 1:
         return None
