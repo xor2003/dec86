@@ -15,10 +15,12 @@ from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .ir.core import IRFunctionArtifact
+from .lowering.gp_register_state import runtime_gp_expression_view_8616
+from .lowering.software_interrupt_calls import select_software_interrupt_call_8616
 from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .semantics.software_interrupt_inputs import (
     SoftwareInterruptInputArtifact8616,
@@ -142,6 +144,9 @@ def _callsite_addr_8616(call: structured_c.CFunctionCall) -> int | None:
 
 def _actual_value_fingerprint_8616(node: object) -> str | None:
     """Fingerprint the final C subset permitted by interrupt lowering."""
+    gp_view = runtime_gp_expression_view_8616(node)
+    if gp_view is not None:
+        return f"reg:{gp_view.register_name}:size{gp_view.width}"
     if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
         if isinstance(node.type, SimTypeChar):
             size = 1
@@ -157,6 +162,8 @@ def _actual_value_fingerprint_8616(node: object) -> str | None:
             return None
         if isinstance(variable, SimStackVariable):
             return f"stack:SS:BP{variable.offset:+#x}:size{variable.size}"
+        if isinstance(variable, SimRegisterVariable) and isinstance(variable.name, str):
+            return f"reg:{variable.name.lower()}:size{variable.size}"
         return None
     if isinstance(node, structured_c.CBinaryOp):
         lhs = _actual_value_fingerprint_8616(node.lhs)
@@ -173,8 +180,8 @@ def _validate_fact_8616(
     nodes: tuple[object, ...],
 ) -> tuple[bool, list[SoftwareInterruptValidationIssue8616]]:
     """Validate one fact against one exact final callsite."""
-    matches = tuple(call for call in calls if _callsite_addr_8616(call) == fact.callsite_addr)
-    if len(matches) != 1:
+    match = select_software_interrupt_call_8616(calls, fact)
+    if match is None:
         return False, [
             SoftwareInterruptValidationIssue8616(
                 SoftwareInterruptValidationIssueKind8616.MISSING_CALL,
@@ -182,7 +189,7 @@ def _validate_fact_8616(
                 fact.vector,
             )
         ]
-    args = cast(_TaggedCallSurface8616, matches[0]).args
+    args = cast(_TaggedCallSurface8616, match).args
     if not isinstance(args, Sequence) or isinstance(args, (str, bytes)):
         return False, [
             SoftwareInterruptValidationIssue8616(
@@ -221,7 +228,7 @@ def _validate_fact_8616(
     if fact.result_register is not None and _has_stale_selector_return_8616(
         nodes,
         fact,
-        matches[0],
+        match,
     ):
         issues.append(
             SoftwareInterruptValidationIssue8616(

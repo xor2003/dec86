@@ -17,7 +17,7 @@ from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
 from ..codegen_metadata import get_codegen_side_metadata
@@ -31,10 +31,12 @@ from ..semantics.software_interrupt_inputs import (
     software_interrupt_value_fingerprint_8616,
 )
 from ..structured_tags import copy_structured_tags_8616
+from .gp_register_state import runtime_gp_expression_view_8616
 
 __all__ = [
     "SoftwareInterruptMaterializationStats8616",
     "materialize_software_interrupt_calls_8616",
+    "select_software_interrupt_call_8616",
 ]
 
 
@@ -57,10 +59,23 @@ class _CFunctionSurface8616(Protocol):
     arg_list: object
 
 
+class _ArchSurface8616(Protocol):
+    """Architecture fields needed to lower exact register inputs."""
+
+    registers: dict[str, tuple[int, int]]
+
+
+class _ProjectSurface8616(Protocol):
+    """Project fields needed to lower exact register inputs."""
+
+    arch: _ArchSurface8616
+
+
 class _CodegenSurface8616(Protocol):
     """Codegen fields carrying typed IR and interrupt facts."""
 
     cfunc: _CFunctionSurface8616
+    project: _ProjectSurface8616
     _inertia_vex_ir_artifact: IRFunctionArtifact
     _inertia_software_interrupt_input_artifact_8616: SoftwareInterruptInputArtifact8616
 
@@ -70,6 +85,7 @@ class _TaggedCallSurface8616(Protocol):
 
     tags: object
     args: object
+    callee_target: object
 
 
 class _CVariableSurface8616(Protocol):
@@ -177,11 +193,22 @@ def _lower_value_8616(
         if value_type is None:
             return None
         return structured_c.CConstant(value.const, value_type, codegen=codegen)
+    if value.space is MemSpace.REG and value.name is not None and value.size in {1, 2}:
+        arch = cast(_CodegenSurface8616, codegen).project.arch
+        register = arch.registers.get(value.name.lower())
+        if not isinstance(register, tuple) or not register or not isinstance(register[0], int):
+            return None
+        value_type = SimTypeChar(False) if value.size == 1 else SimTypeShort(False)
+        variable = SimRegisterVariable(register[0], value.size, name=value.name.lower())
+        return structured_c.CVariable(variable, variable_type=value_type, codegen=codegen)
     return _stack_cvar_for_value_8616(value, candidates, codegen)
 
 
 def _actual_value_fingerprint_8616(node: object) -> str | None:
     """Fingerprint the final C subset emitted from interrupt input facts."""
+    gp_view = runtime_gp_expression_view_8616(node)
+    if gp_view is not None:
+        return f"reg:{gp_view.register_name}:size{gp_view.width}"
     if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
         if isinstance(node.type, SimTypeChar):
             size = 1
@@ -194,6 +221,9 @@ def _actual_value_fingerprint_8616(node: object) -> str | None:
         variable = _stack_variable_8616(node)
         if variable is not None:
             return f"stack:SS:BP{variable.offset:+#x}:size{variable.size}"
+        raw_variable = cast(_CVariableSurface8616, node).variable
+        if isinstance(raw_variable, SimRegisterVariable) and isinstance(raw_variable.name, str):
+            return f"reg:{raw_variable.name.lower()}:size{raw_variable.size}"
         return None
     if isinstance(node, structured_c.CBinaryOp):
         lhs = _actual_value_fingerprint_8616(node.lhs)
@@ -221,6 +251,42 @@ def _call_has_expected_arguments_8616(
     return actual == expected
 
 
+def _call_targets_fact_8616(
+    call: structured_c.CFunctionCall,
+    fact: SoftwareInterruptInputFact8616,
+) -> bool:
+    """Return whether a call retains the exact typed interrupt core target."""
+    target = cast(_TaggedCallSurface8616, call).callee_target
+    if isinstance(target, int):
+        return target == fact.target_addr
+    return (
+        isinstance(target, structured_c.CConstant)
+        and isinstance(target.value, int)
+        and target.value == fact.target_addr
+    )
+
+
+def select_software_interrupt_call_8616(
+    calls: tuple[structured_c.CFunctionCall, ...],
+    fact: SoftwareInterruptInputFact8616,
+) -> structured_c.CFunctionCall | None:
+    """Select one service call without confusing same-address status helpers."""
+    callsite_calls = tuple(
+        call for call in calls if _callsite_addr_8616(call) == fact.callsite_addr
+    )
+    materialized = tuple(
+        call for call in callsite_calls if _call_has_expected_arguments_8616(call, fact)
+    )
+    if len(materialized) == 1:
+        return materialized[0]
+    targeted = tuple(
+        call for call in callsite_calls if _call_targets_fact_8616(call, fact)
+    )
+    if len(targeted) == 1:
+        return targeted[0]
+    return callsite_calls[0] if len(callsite_calls) == 1 else None
+
+
 def _materialize_fact_8616(
     codegen: _CodegenSurface8616,
     root: object,
@@ -232,11 +298,10 @@ def _materialize_fact_8616(
         node
         for node in _iter_c_nodes_deep_8616(root)
         if isinstance(node, structured_c.CFunctionCall)
-        and _callsite_addr_8616(node) == fact.callsite_addr
     )
-    if len(calls) != 1:
+    call = select_software_interrupt_call_8616(calls, fact)
+    if call is None:
         return False, False
-    call = calls[0]
     if _call_has_expected_arguments_8616(call, fact):
         return True, False
     arguments = tuple(

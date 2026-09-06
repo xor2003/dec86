@@ -17,6 +17,7 @@ from angr_platforms.X86_16.ir.core import (
     IRValue,
     MemSpace,
 )
+from angr_platforms.X86_16.lowering.gp_register_state import runtime_gp_state_expr_8616
 from angr_platforms.X86_16.lowering.software_interrupt_calls import (
     materialize_software_interrupt_calls_8616,
 )
@@ -268,6 +269,146 @@ def test_semantics_recovers_dos_allocate_paragraph_count_after_increment() -> No
     assert software_interrupt_value_fingerprint_8616(recovered.facts[0].argument_values[0]) == (
         "Add(reg:bx:size2,const:0x1:size2):size2"
     )
+
+
+def test_semantics_preserves_untouched_dos_allocate_input_register() -> None:
+    ah = IRValue(MemSpace.REG, name="ah", size=1)
+    artifact = IRFunctionArtifact(
+        function_addr=0x200,
+        blocks=(
+            IRBlock(
+                addr=0x200,
+                instrs=(
+                    IRInstr(
+                        "MOV",
+                        ah,
+                        (IRValue(MemSpace.CONST, const=0x48, size=1),),
+                        size=1,
+                        addr=0x200,
+                    ),
+                    IRInstr(
+                        "CALL",
+                        None,
+                        (IRValue(MemSpace.CONST, const=interrupt_core_addr_8616(0x21), size=2),),
+                        size=2,
+                        addr=0x202,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    recovered = build_software_interrupt_input_artifact_8616(artifact)
+
+    assert recovered.stats == SoftwareInterruptInputStats8616(1, 1, 1, 1, 0)
+    assert software_interrupt_value_fingerprint_8616(recovered.facts[0].argument_values[0]) == "reg:bx:size2"
+
+
+def test_semantics_refuses_explicitly_unresolved_dos_allocate_input_register() -> None:
+    ah = IRValue(MemSpace.REG, name="ah", size=1)
+    bx = IRValue(MemSpace.REG, name="bx", size=2)
+    artifact = IRFunctionArtifact(
+        function_addr=0x200,
+        blocks=(
+            IRBlock(
+                addr=0x200,
+                instrs=(
+                    IRInstr(
+                        "MOV",
+                        bx,
+                        (IRValue(MemSpace.DS, name="di", size=2),),
+                        size=2,
+                        addr=0x200,
+                    ),
+                    IRInstr(
+                        "MOV",
+                        ah,
+                        (IRValue(MemSpace.CONST, const=0x48, size=1),),
+                        size=1,
+                        addr=0x202,
+                    ),
+                    IRInstr(
+                        "CALL",
+                        None,
+                        (IRValue(MemSpace.CONST, const=interrupt_core_addr_8616(0x21), size=2),),
+                        size=2,
+                        addr=0x204,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    recovered = build_software_interrupt_input_artifact_8616(artifact)
+
+    assert recovered.stats == SoftwareInterruptInputStats8616(1, 1, 1, 0, 1)
+    assert recovered.facts == ()
+    assert recovered.refusals[0][2] == "bx"
+
+
+def test_lowering_ignores_same_callsite_interrupt_status_helper() -> None:
+    codegen = _Codegen()
+    ah = IRValue(MemSpace.REG, name="ah", size=1)
+    ir_artifact = IRFunctionArtifact(
+        function_addr=0x200,
+        blocks=(
+            IRBlock(
+                addr=0x200,
+                instrs=(
+                    IRInstr(
+                        "MOV",
+                        ah,
+                        (IRValue(MemSpace.CONST, const=0x48, size=1),),
+                        size=1,
+                        addr=0x200,
+                    ),
+                    IRInstr(
+                        "CALL",
+                        None,
+                        (IRValue(MemSpace.CONST, const=interrupt_core_addr_8616(0x21), size=2),),
+                        size=2,
+                        addr=0x202,
+                    ),
+                ),
+            ),
+        ),
+    )
+    service_call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags={"ins_addr": 0x202},
+        codegen=codegen,
+    )
+    status_call = structured_c.CFunctionCall(
+        "dos_int21_flags",
+        None,
+        [],
+        tags={"ins_addr": 0x202},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [
+            structured_c.CExpressionStatement(service_call, codegen=codegen),
+            structured_c.CExpressionStatement(status_call, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x200, statements=root, arg_list=[])
+    codegen._inertia_vex_ir_artifact = ir_artifact
+
+    assert materialize_software_interrupt_calls_8616(codegen) is True
+    assert materialize_software_interrupt_calls_8616(codegen) is False
+    assert len(service_call.args) == 1
+    assert status_call.args == []
+    assert validate_software_interrupt_inputs_8616(codegen, root).passed
+
+    runtime_bx = runtime_gp_state_expr_8616("bx", codegen=codegen, function_addr=0x200)
+    assert runtime_bx is not None
+    service_call.args = [runtime_bx]
+
+    assert materialize_software_interrupt_calls_8616(codegen) is False
+    assert validate_software_interrupt_inputs_8616(codegen, root).passed
 
 
 def test_lowering_materializes_all_interrupt_arguments() -> None:

@@ -98,6 +98,13 @@ class SoftwareInterruptInputArtifact8616:
 
 _INTERRUPT_ABI_SPECS_8616: tuple[SoftwareInterruptAbiSpec8616, ...] = (
     SoftwareInterruptAbiSpec8616(
+        vector=0x21,
+        selector_register="ah",
+        selector_value=0x48,
+        argument_registers=("bx",),
+        result_register="ax",
+    ),
+    SoftwareInterruptAbiSpec8616(
         vector=0x33,
         selector_register="ax",
         selector_value=0x0004,
@@ -107,7 +114,41 @@ _INTERRUPT_ABI_SPECS_8616: tuple[SoftwareInterruptAbiSpec8616, ...] = (
 )
 
 _BINARY_OPS_8616: dict[str, str] = {
+    "Iop_Add16": "Add",
+    "Iop_Or16": "Or",
+    "Iop_Shr16": "Shr",
     "Iop_Shl16": "Shl",
+}
+
+_REGISTER_SIZES_8616: dict[str, int] = {
+    "al": 1,
+    "ah": 1,
+    "bl": 1,
+    "bh": 1,
+    "cl": 1,
+    "ch": 1,
+    "dl": 1,
+    "dh": 1,
+    "ax": 2,
+    "bx": 2,
+    "cx": 2,
+    "dx": 2,
+    "si": 2,
+    "di": 2,
+    "bp": 2,
+    "sp": 2,
+    "ds": 2,
+    "es": 2,
+    "fs": 2,
+    "gs": 2,
+    "eax": 4,
+    "ebx": 4,
+    "ecx": 4,
+    "edx": 4,
+    "esi": 4,
+    "edi": 4,
+    "ebp": 4,
+    "esp": 4,
 }
 
 
@@ -123,7 +164,7 @@ def _tmp_id_8616(value: IRValue | None) -> int | None:
 def _resolve_value_8616(
     value: object,
     temp_values: dict[int, IRScalarValue8616],
-    register_values: dict[str, IRScalarValue8616],
+    register_values: dict[str, IRScalarValue8616 | None],
 ) -> IRScalarValue8616 | None:
     """Resolve one typed IR value through exact same-block definitions."""
     if isinstance(value, IRBinaryValue):
@@ -137,7 +178,10 @@ def _resolve_value_8616(
     if value.source_tmp is not None:
         return temp_values.get(value.source_tmp)
     if value.space is MemSpace.REG and value.name is not None:
-        return register_values.get(value.name.lower())
+        register_name = value.name.lower()
+        if register_name in register_values:
+            return register_values[register_name]
+        return value
     if value.space in {MemSpace.CONST, MemSpace.SS}:
         return value
     return None
@@ -168,7 +212,7 @@ def _stack_load_value_8616(instr: IRInstr) -> IRValue | None:
 def _record_definition_8616(
     instr: IRInstr,
     temp_values: dict[int, IRScalarValue8616],
-    register_values: dict[str, IRScalarValue8616],
+    register_values: dict[str, IRScalarValue8616 | None],
     definitions: ScalarDefinitionIndex8616,
     logical_memory: IRLogicalMemoryArtifact8616 | None,
     *,
@@ -196,7 +240,17 @@ def _record_definition_8616(
     if temp_id is not None and instr.op in _BINARY_OPS_8616 and len(instr.args) == 2:
         lhs = _resolve_value_8616(instr.args[0], temp_values, register_values)
         rhs = _resolve_value_8616(instr.args[1], temp_values, register_values)
-        if lhs is not None and rhs is not None:
+        byte_stack_recombination = (
+            logical_memory is None
+            and instr.size > 1
+            and any(
+                isinstance(value, IRValue)
+                and value.space is MemSpace.SS
+                and value.size < instr.size
+                for value in (lhs, rhs)
+            )
+        )
+        if lhs is not None and rhs is not None and not byte_stack_recombination:
             temp_values[temp_id] = IRBinaryValue(
                 _BINARY_OPS_8616[instr.op],
                 lhs,
@@ -218,7 +272,7 @@ def _record_definition_8616(
     if instr.dst.space is MemSpace.REG and instr.dst.name is not None:
         register_name = instr.dst.name.lower()
         if resolved is None:
-            register_values.pop(register_name, None)
+            register_values[register_name] = None
         else:
             register_values[register_name] = resolved
 
@@ -236,7 +290,7 @@ def _interrupt_call_target_8616(instr: IRInstr) -> tuple[int, int, int] | None:
 
 def _matching_spec_8616(
     vector: int,
-    register_values: dict[str, IRScalarValue8616],
+    register_values: dict[str, IRScalarValue8616 | None],
 ) -> SoftwareInterruptAbiSpec8616 | None:
     """Select an interrupt ABI only from an exact constant selector."""
     for spec in _INTERRUPT_ABI_SPECS_8616:
@@ -248,6 +302,19 @@ def _matching_spec_8616(
     return None
 
 
+def _required_register_value_8616(
+    register_name: str,
+    register_values: dict[str, IRScalarValue8616 | None],
+) -> IRScalarValue8616 | None:
+    """Resolve a required ABI register, preserving an untouched entry value."""
+    if register_name in register_values:
+        return register_values[register_name]
+    size = _REGISTER_SIZES_8616.get(register_name)
+    if size is None:
+        return None
+    return IRValue(MemSpace.REG, name=register_name, size=size)
+
+
 def _facts_from_block_8616(
     block: IRBlock,
     definitions: ScalarDefinitionIndex8616,
@@ -257,7 +324,7 @@ def _facts_from_block_8616(
 ) -> tuple[list[SoftwareInterruptInputFact8616], list[tuple[int, SoftwareInterruptRefusalKind8616, str]], int, int, int]:
     """Recover interrupt facts and counters from one typed IR block."""
     temp_values: dict[int, IRScalarValue8616] = {}
-    register_values: dict[str, IRScalarValue8616] = {}
+    register_values: dict[str, IRScalarValue8616 | None] = {}
     facts: list[SoftwareInterruptInputFact8616] = []
     refusals: list[tuple[int, SoftwareInterruptRefusalKind8616, str]] = []
     raw_count = 0
@@ -284,7 +351,10 @@ def _facts_from_block_8616(
         if spec is None:
             continue
         classified_count += 1
-        values = tuple(register_values.get(name) for name in spec.argument_registers)
+        values = tuple(
+            _required_register_value_8616(name, register_values)
+            for name in spec.argument_registers
+        )
         if any(value is None for value in values):
             missing = ",".join(
                 name for name, value in zip(spec.argument_registers, values, strict=True) if value is None
@@ -354,4 +424,6 @@ def software_interrupt_value_fingerprint_8616(value: IRScalarValue8616) -> str:
         return f"const:{value.const:#x}:size{value.size}"
     if value.space is MemSpace.SS and value.name is not None:
         return f"stack:SS:{value.name.upper()}{value.offset:+#x}:size{value.size}"
+    if value.space is MemSpace.REG and value.name is not None:
+        return f"reg:{value.name.lower()}:size{value.size}"
     return f"unresolved:{value.space.value}:{value.name or ''}:size{value.size}"
