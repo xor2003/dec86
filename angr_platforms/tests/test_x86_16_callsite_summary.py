@@ -380,6 +380,37 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
     )
 
 
+def test_callsite_summary_keeps_zero_cleanup_pushes_caller_owned(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "push", [_Operand(reg=1, size=2)], reg_names={1: "bx"}),
+            _Insn(0x1001, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1002, "call"),
+            _Insn(0x1005, "pop", [_Operand(reg=3, size=2)], reg_names={3: "dx"}),
+            _Insn(0x1006, "pop", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+        ]
+    )
+    callee = SimpleNamespace(returning=True)
+    function.project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda *, addr, create=False: callee)
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1002, 0x1544, 0x1005, "direct_near")],
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary._callee_stack_cleanup_bytes_8616",
+        lambda *_args, **_kwargs: 0,
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1002)
+
+    assert summary is not None
+    assert summary.arg_count == 0
+    assert summary.arg_widths == ()
+    assert summary.logical_arg_widths == ()
+
+
 def test_callsite_summary_recovers_far_call_pushes_and_cleanup(monkeypatch):
     """Capstone ``lcall`` must enter the same evidence pipeline as ``call``."""
     function = _function_with_block(

@@ -1160,6 +1160,13 @@ def _expected_call_argument_count_8616(
     logical_argument_count = _expected_argument_count_8616(summary)
     if logical_argument_count is not None:
         return logical_argument_count
+    if (
+        summary.arg_count == 0
+        and summary.arg_widths == ()
+        and summary.logical_arg_widths == ()
+        and summary.stack_cleanup == 0
+    ):
+        return 0
     if callee is not None:
         try:
             callee_surface = cast(_PrototypedCalleeSurface8616, callee)

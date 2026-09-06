@@ -2666,6 +2666,27 @@ def _trim_push_args_to_stack_cleanup(arg_widths: tuple[int, ...], cleanup: int |
     return arg_widths
 
 
+def _callee_proven_returning_without_stack_args_8616(
+    function: object,
+    target_addr: int | None,
+    cleanup: int | None,
+) -> bool:
+    """Prove that zero-cleanup PUSHes remain caller-owned across a returning call."""
+    if cleanup != 0 or not isinstance(target_addr, int):
+        return False
+    project = _dynamic_callsite_getattr_8616(function, "project", None)
+    try:
+        functions = _dynamic_callsite_getattr_8616(
+            _dynamic_callsite_getattr_8616(project, "kb", None),
+            "functions",
+            None,
+        )
+        callee = functions.function(addr=target_addr, create=False)
+    except (AttributeError, TypeError):
+        return False
+    return _dynamic_callsite_getattr_8616(callee, "returning", None) is True
+
+
 def _trim_push_arg_sources_to_stack_cleanup(
     arg_widths: tuple[int, ...],
     arg_sources: tuple[_CallsiteTuple8616 | None, ...],
@@ -3563,6 +3584,14 @@ def summarize_x86_16_callsite(
             call_idx,
             argument_byte_limit,
         )
+        if _callee_proven_returning_without_stack_args_8616(
+            function,
+            target_addr,
+            cleanup,
+        ):
+            raw_arg_widths = ()
+            raw_arg_sources = ()
+            raw_push_instruction_addrs = ()
         predecessor_stack_merge = None
         if _push_scan_reaches_block_entry_8616(insns, call_idx, raw_push_instruction_addrs):
             unresolved_entry_push = _unresolved_entry_push_register_8616(
