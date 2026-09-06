@@ -29,8 +29,7 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from angr_platforms.X86_16.quality import measure_x86_16_codegen_quality_8616  # noqa: E402
-
+from inertia_decompiler.acceptance_scorecard import measure_x86_16_codegen_quality_8616  # noqa: E402
 from inertia_decompiler.cli_c_text_postprocess import (  # noqa: E402
     _materialize_missing_synthetic_global_declarations_text,
     _normalize_function_signature_arg_names,

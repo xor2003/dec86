@@ -26,12 +26,11 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from angr_platforms.X86_16.quality import (  # noqa: E402
+from inertia_decompiler.acceptance_scorecard import (  # noqa: E402
     X86_16QualityMetrics,
     measure_x86_16_codegen_quality_8616,
     measure_x86_16_function_quality_8616,
 )
-
 from scripts.mypyc_build_cache import (  # noqa: E402
     disable_importable_project_extensions as _disable_repo_extension_modules,
 )

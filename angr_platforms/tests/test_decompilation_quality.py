@@ -4,12 +4,13 @@ from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 import pytest
-from angr_platforms.X86_16.quality import (
+
+from inertia_decompiler.acceptance_scorecard import (
+    X86_16QualityMetrics,
     format_x86_16_quality_report_8616,
     measure_x86_16_codegen_quality_8616,
     measure_x86_16_function_quality_8616,
 )
-
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_final_generated_c_text
 from scripts import benchmark_optimization_quality_guard as quality_guard
 from scripts.benchmark_optimization_quality_guard import (
@@ -185,6 +186,16 @@ def test_x86_16_quality_report_aggregates_metrics() -> None:
     report = format_x86_16_quality_report_8616(aggregate)
     assert "Quality Report (2 functions)" in report
     assert "tmp conditions:          1" in report
+
+
+def test_x86_16_quality_compatibility_exports_reporting_owner() -> None:
+    """Keep historical package imports identical to the lightweight owner."""
+    from angr_platforms.X86_16 import quality as compatibility_quality
+
+    assert compatibility_quality.X86_16QualityMetrics is X86_16QualityMetrics
+    assert compatibility_quality.measure_x86_16_codegen_quality_8616 is measure_x86_16_codegen_quality_8616
+    assert compatibility_quality.measure_x86_16_function_quality_8616 is measure_x86_16_function_quality_8616
+    assert compatibility_quality.format_x86_16_quality_report_8616 is format_x86_16_quality_report_8616
 
 
 def test_assess_decompiled_c_text_rejects_raw_ir_shaped_output() -> None:

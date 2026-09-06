@@ -496,6 +496,17 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   processes now take 0.55-0.60 seconds (0.57 median) and about 27 MiB RSS, a
   96.6% median wall reduction. Thirty-two focused tests, Ruff, and strict mypy
   pass; no native build or first changed-input smoke is skipped.
+- Generated-C quality metrics now live in the CLI/reporting-owned acceptance
+  scorecard instead of forcing reporting tools through the X86_16 frontend
+  package bootstrap. The historical `angr_platforms.X86_16.quality` module is
+  a typed compatibility re-export, and an identity test proves both APIs expose
+  the same objects. Fresh direct frontend-quality imports previously took
+  3.94-5.89 seconds and about 198 MiB RSS; the reporting owner takes 0.05
+  seconds and about 13 MiB, while quality-guard help starts in 0.10-0.12
+  seconds. The focused reporting test file under required `pytest -n 7` fell
+  from 15.38 to 5.30 seconds (65.5%), with the single compatibility test paying
+  frontend bootstrap only in its executing worker. All twenty tests pass and
+  no production reporting consumer retains the heavyweight import.
 - Pytest target validation now builds only selector and skip/xfail structure;
   assertion, subprocess, and evidence facts are memoized on first inventory
   access. The 74-file profiled index path fell from 2.208 to 1.244 seconds
