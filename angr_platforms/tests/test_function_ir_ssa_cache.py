@@ -25,6 +25,7 @@ from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.function_ir_ssa_cache as ir_ssa_cache
+import inertia_decompiler.function_ir_ssa_cache_codec as ir_ssa_codec
 from inertia_decompiler.function_ir_ssa_cache import (
     FunctionIRSSABundle8616,
     FunctionIRSSACacheFailure8616,
@@ -167,6 +168,15 @@ def test_function_ir_ssa_codec_is_deterministic_and_round_trips(
     cache_key = function_ir_ssa_cache_key_8616(_Project(values), function)
     assert cache_key is not None
     bundle = _bundle(function.addr)
+    ssa_build_count = 0
+    original_ssa_builder = ir_ssa_codec.build_x86_16_function_ssa
+
+    def build_ssa(artifact: IRFunctionArtifact):
+        nonlocal ssa_build_count
+        ssa_build_count += 1
+        return original_ssa_builder(artifact)
+
+    monkeypatch.setattr(ir_ssa_codec, "build_x86_16_function_ssa", build_ssa)
 
     first_record = function_ir_ssa_bundle_record_8616(bundle)
     second_record = function_ir_ssa_bundle_record_8616(bundle)
@@ -175,9 +185,14 @@ def test_function_ir_ssa_codec_is_deterministic_and_round_trips(
 
     assert first_record == second_record
     assert "projection_sha256" not in first_record
+    assert isinstance(
+        pickle.loads(base64.b64decode(str(first_record["payload"]))),
+        IRFunctionArtifact,
+    )
     assert stored.verdict is FunctionIRSSACacheVerdict8616.STORED
     assert restored.verdict is FunctionIRSSACacheVerdict8616.HIT
     assert restored.bundle == bundle
+    assert ssa_build_count == 1
 
 
 def test_function_ir_ssa_cache_rejects_class_outside_ir_ownership(
@@ -185,7 +200,7 @@ def test_function_ir_ssa_cache_rejects_class_outside_ir_ownership(
 ) -> None:
     payload = pickle.dumps(eval, protocol=5)
     record = {
-        "schema": 2,
+        "schema": 3,
         "payload": base64.b64encode(payload).decode("ascii"),
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
     }

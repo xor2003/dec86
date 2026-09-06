@@ -419,13 +419,18 @@ Git history through `3ca6f9497` retains their implementation and evidence.
 - Function IR/SSA persistence no longer computes a second whole-artifact JSON
   projection digest from the same pickle payload. Exact payload hashing,
   restricted owned-class unpickling, function identity, and IR/SSA coherence
-  checks remain mandatory. The previous cold profile attributed 5.282 of
-  13.174 record-encoding seconds to that duplicate traversal. On the same
-  representative 1.28 MiB bundle, current record construction measured 0.371
-  seconds median while the removed projection traversal alone measured 0.609
-  seconds median. A forced 20-function rebuild preserved the accepted C hash
-  and both validation gates; its whole-path wall remained load-variable, so no
-  end-to-end ratio is claimed.
+  checks remain mandatory. Persistence now stores only raw IR and rebuilds the
+  deterministic IR-stage SSA projection on hydration; the SSA builder belongs
+  to the cache's source identity, so implementation changes still invalidate
+  the artifact. The previous cold profile attributed 5.282 of 13.174
+  record-encoding seconds to the duplicate projection traversal. On the same
+  representative function, the raw payload fell from 962,320 to 463,100 bytes
+  (52%) and current record construction measured 0.114 seconds median. The
+  comparable forced 20-function path fell from 36.39 to 28.04 seconds wall and
+  from about 22 to 14 seconds before decompilation; a second forced Alias
+  rebuild hydrated IR, reconstructed SSA, and finished in 18.92 seconds.
+  Every run emitted byte-identical C at the accepted hash and passed function
+  plus whole-tail validation.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -438,11 +443,11 @@ All measurements are checkout-specific; refresh them after correctness is restor
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
 | P1 | Structuring validation priming measured 1.49 seconds in the current instrumented live run | Large functions still pay repeated semantic consumer work | All three direct-stack replays and all three segment/global replays were productive on `sub_109e8`; the next skip needs a narrower authoritative mutation impact, not call-order memoization |
-| P1 | Cold indexed Alias/Widening context construction still spends about 18 seconds between recovered-catalog and binary-ready reports on a forced current rebuild | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Duplicate execution-environment cache families and 5.282 profiled seconds of redundant persistence traversal are removed; typed IR import, SSA construction, pickle encoding, and Alias/Widening remain |
+| P1 | Cold indexed Alias/Widening context construction still spends about 14 seconds before decompilation on a forced current rebuild | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Duplicate execution-environment cache families, redundant projection hashing, and persisted SSA duplication are removed; typed IR import, SSA construction, raw-IR pickle encoding, and Alias/Widening remain |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
-| P2 | Persistent cache storage is unbounded; the current cache occupies about 1.7 GiB, including 1.3 GiB of function IR/SSA records | No semantic defect, but stale generations consume disk and increase maintenance cost | Any eviction policy must avoid a directory scan on every write and remain race-safe across workers |
+| P2 | Persistent cache storage is unbounded; the existing cache occupies about 1.7 GiB, including 1.3 GiB of legacy paired IR/SSA records | New raw-IR records are about 52% smaller, but stale generations still consume disk | Any eviction policy must avoid a directory scan on every write and remain race-safe across workers |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
 | P2 | A current fresh full-CLI import costs about 4.25 seconds across 2,961 modules | Every uncached CLI invocation has a fixed startup cost | No removable module owns more than 0.10 seconds self-time; the earlier 14.06-second observation was load-contaminated, so import refactoring is lower priority than repeated lifting |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |

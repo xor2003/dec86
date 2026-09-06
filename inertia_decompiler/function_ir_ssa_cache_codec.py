@@ -1,8 +1,9 @@
 """Encode exact raw IR and SSA cache payloads with bounded class ownership.
 
 Layer: CLI/fallback/reporting orchestration.
-Responsibility: serialize already-owned IR dataclasses, reject unsafe classes,
-and verify deterministic payload integrity. No semantic recovery occurs here.
+Responsibility: serialize already-owned raw IR, rebuild its deterministic
+IR-stage SSA projection, reject unsafe classes, and verify payload integrity.
+No semantic recovery occurs here.
 """
 
 from __future__ import annotations
@@ -17,9 +18,12 @@ from dataclasses import dataclass, is_dataclass
 from enum import Enum
 
 from angr_platforms.X86_16.ir.function_artifact import IRFunctionArtifact
-from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
+from angr_platforms.X86_16.ir.ssa_function import (
+    SSAFunctionArtifact,
+    build_x86_16_function_ssa,
+)
 
-_FUNCTION_IR_SSA_CACHE_SCHEMA_8616: int = 2
+_FUNCTION_IR_SSA_CACHE_SCHEMA_8616: int = 3
 _MAX_PICKLE_BYTES_8616: int = 64 * 1024 * 1024
 _ALLOWED_IR_MODULE_PREFIXES_8616: tuple[str, ...] = (
     "angr_platforms.X86_16.ir.",
@@ -79,7 +83,7 @@ def function_ir_ssa_bundle_record_8616(
     """Encode one coherent bundle with payload and projection digests."""
     if not bundle.coherent:
         raise ValueError("cannot persist incoherent function IR/SSA artifacts")
-    payload = pickle.dumps((bundle.ir, bundle.ssa), protocol=5)
+    payload = pickle.dumps(bundle.ir, protocol=5)
     if len(payload) > _MAX_PICKLE_BYTES_8616:
         raise ValueError("function IR/SSA cache payload is oversized")
     return {
@@ -108,15 +112,13 @@ def function_ir_ssa_bundle_from_record_8616(
         raise ValueError("function IR/SSA cache payload is oversized")
     if hashlib.sha256(payload).hexdigest() != record.get("payload_sha256"):
         raise ValueError("function IR/SSA cache payload digest disagrees")
-    restored = _RestrictedIRUnpickler8616(io.BytesIO(payload)).load()
-    if not isinstance(restored, tuple) or len(restored) != 2:
-        raise ValueError("function IR/SSA cache payload root is invalid")
-    ir, ssa = restored
-    if not isinstance(ir, IRFunctionArtifact) or not isinstance(
-        ssa,
-        SSAFunctionArtifact,
-    ):
-        raise ValueError("function IR/SSA cache payload types disagree")
+    ir = _RestrictedIRUnpickler8616(io.BytesIO(payload)).load()
+    if not isinstance(ir, IRFunctionArtifact):
+        raise ValueError("function IR/SSA cache payload is not raw IR")
+    try:
+        ssa = build_x86_16_function_ssa(ir)
+    except (AttributeError, KeyError, TypeError, ValueError) as ex:
+        raise ValueError("function IR/SSA cache SSA rebuild failed") from ex
     bundle = FunctionIRSSABundle8616(ir, ssa)
     if not bundle.coherent or ir.function_addr != function_addr:
         raise ValueError("function IR/SSA cache artifacts are incoherent")
