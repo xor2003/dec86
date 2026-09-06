@@ -436,6 +436,23 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   and passed both validation gates. Worker count is execution-only cache
   context; automatic parallelism remains disabled pending a clean A/B. The
   changed surface passes 71 mapped tests.
+- The mandatory runtime architecture guard no longer imports pytest while it
+  loads the AST-only source index. Pytest's runtime types are now imported only
+  when test-inventory collection asks for concrete parametrized addresses. Five
+  fresh guard imports fell from 0.27-0.29 seconds and about 33 MiB RSS to
+  0.08-0.09 seconds and about 20 MiB RSS. Ten source-index tests, eight runtime
+  guard tests, changed-file linters and typing, and the startup architecture
+  gate pass. The concurrent shared tree still makes the current SORTD cache-miss
+  path fail direct validation, so no end-to-end decompilation claim is made.
+- The focused architecture gate now consumes that same content-addressed
+  import attestation for the default tree instead of reparsing all guarded
+  modules. Custom roots still run all import checks directly, cached violations
+  remain visible, and every non-import startup rule still executes. A concurrent
+  same-window A/B reduced `architecture-check-fast` from 13.38 to 10.67 seconds
+  wall (20%) and from 503,972 to 390,116 KiB RSS (23%). Editing checker rules
+  deliberately invalidates all file verdicts and therefore retains a slower
+  one-time cold rebuild. Seventy-four focused tests plus changed-file Ruff,
+  strict mypy, and the fast architecture gate pass.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -454,7 +471,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
 | P2 | Persistent cache storage is unbounded; the existing cache occupies about 1.7 GiB, including 1.3 GiB of legacy paired IR/SSA records | New raw-IR records are about 52% smaller, but stale generations still consume disk | Any eviction policy must avoid a directory scan on every write and remain race-safe across workers |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
-| P2 | A current fresh full-CLI import costs about 4.25 seconds across 2,961 modules | Every uncached CLI invocation has a fixed startup cost | No removable module owns more than 0.10 seconds self-time; the earlier 14.06-second observation was load-contaminated, so import refactoring is lower priority than repeated lifting |
+| P2 | A current fresh full-CLI import costs about 4.25 seconds across 2,961 modules | Every uncached CLI invocation has a fixed startup cost | One accidental pytest dependency is removed, cutting isolated guard import by about 0.19 seconds and 13 MiB; remaining import refactoring is lower priority than repeated lifting |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |
 
 ## Acceptance Invariants

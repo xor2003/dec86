@@ -19,6 +19,7 @@ __all__ = [
     "ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV",
     "DecompilerArchitectureGuardError",
     "assert_decompiler_architecture_clean",
+    "cached_decompiler_architecture_import_violations",
     "format_decompiler_architecture_guard_error",
 ]
 
@@ -91,22 +92,61 @@ def _architecture_guard_source_fingerprint(
 
 def _architecture_guard_cache_is_clean(fingerprint: str) -> bool:
     """Return whether the persistent attestation matches current source bytes."""
-    return architecture_import_attestation.architecture_guard_cache_is_clean(
+    is_clean: bool = architecture_import_attestation.architecture_guard_cache_is_clean(
         _ARCHITECTURE_GUARD_CACHE_PATH,
         fingerprint,
     )
+    return is_clean
 
 
 def _architecture_guard_checker_fingerprint() -> str:
     """Hash rule and cache implementations that determine stored verdicts."""
-    return architecture_import_attestation.architecture_guard_checker_fingerprint(
+    fingerprint: str = architecture_import_attestation.architecture_guard_checker_fingerprint(
         Path(__file__),
     )
+    return fingerprint
+
+
+def cached_decompiler_architecture_import_violations() -> tuple[ArchitectureViolation, ...]:
+    """Return default-tree import violations using the persistent attestation."""
+    global _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID
+    root_path = architecture_check.X86_16_ROOT
+    cli_path = architecture_check.CLI_DECOMPILATION
+    process_pid = os.getpid()
+    if process_pid == _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID:
+        return ()
+    fingerprint = _architecture_guard_source_fingerprint(root_path, cli_path)
+    if _architecture_guard_cache_is_clean(fingerprint):
+        _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID = process_pid
+        return ()
+    checker_fingerprint = _architecture_guard_checker_fingerprint()
+    evaluation = architecture_import_attestation.evaluate_runtime_import_snapshot(
+        _ARCHITECTURE_GUARD_CACHE_PATH,
+        root_path,
+        cli_path,
+        checker_fingerprint,
+    )
+    final_fingerprint = _architecture_guard_source_fingerprint(root_path, cli_path)
+    if final_fingerprint != fingerprint:
+        raise DecompilerArchitectureGuardError(
+            "Decompiler source changed while the runtime import guard was running; retry startup."
+        )
+    architecture_import_attestation.store_architecture_guard_cache(
+        _ARCHITECTURE_GUARD_CACHE_PATH,
+        fingerprint,
+        checker_fingerprint,
+        root_path,
+        cli_path,
+        evaluation,
+    )
+    if not evaluation.violations:
+        _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID = process_pid
+    violations: tuple[ArchitectureViolation, ...] = evaluation.violations
+    return violations
 
 
 def assert_decompiler_architecture_clean() -> None:
     """Stop decompiler startup if runtime import-layer guardrails are violated."""
-    global _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID
     root = os.environ.get("INERTIA_ARCH_GUARD_X86_16_ROOT")
     cli = os.environ.get("INERTIA_ARCH_GUARD_CLI")
     repo_root = os.environ.get("INERTIA_ARCH_GUARD_REPO_ROOT")
@@ -123,56 +163,10 @@ def assert_decompiler_architecture_clean() -> None:
         not (root or cli or repo_root)
         and _runtime_import_violations is _RUNTIME_IMPORT_VIOLATIONS_IMPL
     )
-    process_pid = os.getpid()
-    if cache_allowed and process_pid == _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID:
-        return
-    fingerprint = (
-        _architecture_guard_source_fingerprint(root_path, cli_path)
-        if cache_allowed
-        else None
-    )
-    if fingerprint is not None and _architecture_guard_cache_is_clean(fingerprint):
-        _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID = process_pid
-        return
-    checker_fingerprint = (
-        _architecture_guard_checker_fingerprint()
-        if cache_allowed
-        else None
-    )
-    evaluation = (
-        architecture_import_attestation.evaluate_runtime_import_snapshot(
-            _ARCHITECTURE_GUARD_CACHE_PATH,
-            root_path,
-            cli_path,
-            checker_fingerprint,
-        )
-        if checker_fingerprint is not None
-        else None
-    )
     violations = (
-        evaluation.violations
-        if evaluation is not None
+        cached_decompiler_architecture_import_violations()
+        if cache_allowed
         else _runtime_import_violations(root_path, cli_path)
     )
-    if fingerprint is not None:
-        final_fingerprint = _architecture_guard_source_fingerprint(root_path, cli_path)
-        if final_fingerprint != fingerprint:
-            raise DecompilerArchitectureGuardError(
-                "Decompiler source changed while the runtime import guard was running; retry startup."
-            )
-        if checker_fingerprint is None or evaluation is None:
-            raise DecompilerArchitectureGuardError(
-                "Decompiler architecture guard cache evaluation was not completed."
-            )
-        architecture_import_attestation.store_architecture_guard_cache(
-            _ARCHITECTURE_GUARD_CACHE_PATH,
-            fingerprint,
-            checker_fingerprint,
-            root_path,
-            cli_path,
-            evaluation,
-        )
     if violations:
         raise DecompilerArchitectureGuardError(format_decompiler_architecture_guard_error(violations))
-    if fingerprint is not None:
-        _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID = process_pid

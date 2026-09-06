@@ -9834,6 +9834,8 @@ def check_decompiler_startup_architecture(
     root: Path = X86_16_ROOT,
     cli_path: Path = CLI_DECOMPILATION,
     repo_root: Path = REPO_ROOT,
+    *,
+    prechecked_import_violations: tuple[ArchitectureViolation, ...] | None = None,
 ) -> tuple[ArchitectureViolation, ...]:
     """Return runtime startup violations that must stop decompiler execution.
 
@@ -9843,17 +9845,20 @@ def check_decompiler_startup_architecture(
     recovery leaks before decompilation starts.
     """
 
-    violations: list[ArchitectureViolation] = []
-    violations.extend(_check_postprocess_imports(root))
+    violations = list(prechecked_import_violations or ())
+    if prechecked_import_violations is None:
+        violations.extend(_check_postprocess_imports(root))
     violations.extend(_check_postprocess_source_text_recovery(root))
-    violations.extend(_check_semantic_layers_do_not_import_postprocess(root))
+    if prechecked_import_violations is None:
+        violations.extend(_check_semantic_layers_do_not_import_postprocess(root))
     violations.extend(_check_identical_assignment_arm_structuring_ownership(root))
     violations.extend(_check_terminal_call_result_structuring_ownership(root))
     violations.extend(_check_shared_body_wide_condition_ownership(root))
     violations.extend(_check_compatibility_shims(root))
     violations.extend(_check_architecture_table_unique_keys(repo_root))
     violations.extend(_check_architecture_header_marker_contracts(repo_root))
-    violations.extend(_check_cli_imports(cli_path))
+    if prechecked_import_violations is None:
+        violations.extend(_check_cli_imports(cli_path))
     violations.extend(_check_cli_c_text_cleanup(repo_root / "inertia_decompiler" / "c_text_cleanup.py"))
     violations.extend(
         _check_cli_fallback_source_body_recovery(repo_root / "inertia_decompiler" / "cli_fallback_decompilation.py")
@@ -9942,8 +9947,32 @@ def main(argv: list[str] | None = None) -> int:
     """Run the architecture checker command."""
 
     args = _parse_args(argv)
-    checker = check_decompiler_startup_architecture if args.startup_only else check_decompiler_architecture
-    violations = checker(args.x86_16_root, args.cli, args.repo_root)
+    if args.startup_only:
+        prechecked_import_violations: tuple[ArchitectureViolation, ...] | None = None
+        uses_default_tree = (
+            args.x86_16_root.resolve() == X86_16_ROOT.resolve()
+            and args.cli.resolve() == CLI_DECOMPILATION.resolve()
+            and args.repo_root.resolve() == REPO_ROOT.resolve()
+        )
+        if uses_default_tree and __package__:
+            from inertia_decompiler.architecture_runtime_guard import (
+                DecompilerArchitectureGuardError,
+                cached_decompiler_architecture_import_violations,
+            )
+
+            try:
+                prechecked_import_violations = cached_decompiler_architecture_import_violations()
+            except DecompilerArchitectureGuardError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+        violations = check_decompiler_startup_architecture(
+            args.x86_16_root,
+            args.cli,
+            args.repo_root,
+            prechecked_import_violations=prechecked_import_violations,
+        )
+    else:
+        violations = check_decompiler_architecture(args.x86_16_root, args.cli, args.repo_root)
     if violations:
         for violation in violations:
             print(violation.format(), file=sys.stderr)

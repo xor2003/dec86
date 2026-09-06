@@ -3157,7 +3157,7 @@ architecture-check:
 	$(PYTHON) scripts/check_decompiler_architecture.py
 
 architecture-check-fast:
-	$(PYTHON) scripts/check_decompiler_architecture.py --startup-only
+	$(PYTHON) -m scripts.check_decompiler_architecture --startup-only
 
 agent-context-check:
 	$(Q)$(PYTHON) scripts/agent_context_check.py --compact

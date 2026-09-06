@@ -171,7 +171,7 @@ def test_makefile_exposes_fast_quality_target_with_linters():
         '\ntest-pipeline-fast:\n\tflock "/tmp/vextest-test-pipeline.lock" $(PYTHON) '
         "scripts/test_pipeline.py --tier fast --require-external"
     ) in makefile
-    assert "\narchitecture-check-fast:\n\t$(PYTHON) scripts/check_decompiler_architecture.py --startup-only" in makefile
+    assert "\narchitecture-check-fast:\n\t$(PYTHON) -m scripts.check_decompiler_architecture --startup-only" in makefile
     assert "\ntest-ownership-check:\n\t$(PYTHON) scripts/test_ownership_manifest.py --check" in makefile
 
 

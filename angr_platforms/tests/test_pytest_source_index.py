@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from _pytest.python import CallSpec2
 
 from scripts.pytest_call_hints import concrete_function_addresses
@@ -14,6 +17,20 @@ SKIP_CALLS = frozenset(("pytest.mark.skip", "pytest.skip", "pytest.xfail"))
 
 class _ParameterizedItem:
     pass
+
+
+def test_static_call_hint_import_does_not_load_pytest():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import scripts.pytest_call_hints; "
+            "raise SystemExit('pytest' in sys.modules or '_pytest.python' in sys.modules)",
+        ],
+        check=False,
+    )
+
+    assert result.returncode == 0
 
 
 def test_source_index_reuses_unchanged_content_and_invalidates_mutation(tmp_path):

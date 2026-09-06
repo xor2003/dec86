@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import pytest
-from _pytest.python import CallSpec2
+if TYPE_CHECKING:
+    import pytest
 
 _BINARY_SYMBOL_SUFFIXES = ("_EXE", "_COM", "_COD", "_BINARY")
 
@@ -97,6 +98,7 @@ def extract_pytest_call_hints(call_name: str, node: ast.Call) -> PytestCallHints
 
 def concrete_function_addresses(item: pytest.Item, fallback: tuple[int, ...]) -> tuple[int, ...]:
     """Narrow static candidates using one collected node's concrete parameters."""
+    from _pytest.python import CallSpec2
 
     call_spec = vars(item).get("callspec")
     if not isinstance(call_spec, CallSpec2):
