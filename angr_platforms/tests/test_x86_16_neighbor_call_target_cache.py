@@ -10,6 +10,42 @@ from angr_platforms.X86_16.analysis_helpers import (
 )
 
 
+def test_call_return_low_ip_is_linearized_by_exact_decoded_fallthrough() -> None:
+    instruction = SimpleNamespace(address=0x10069, mnemonic="call", size=2)
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(
+            block=lambda _addr, opt_level=0: SimpleNamespace(
+                capstone=SimpleNamespace(insns=(instruction,))
+            )
+        ),
+    )
+    function = SimpleNamespace(
+        project=project,
+        get_call_return=lambda _callsite: 0x006B,
+    )
+
+    assert analysis_helpers._analysis_function_call_return_8616(function, 0x10069) == 0x1006B
+
+
+def test_call_return_low_ip_mismatch_is_not_linearized() -> None:
+    instruction = SimpleNamespace(address=0x10069, mnemonic="call", size=2)
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(
+            block=lambda _addr, opt_level=0: SimpleNamespace(
+                capstone=SimpleNamespace(insns=(instruction,))
+            )
+        ),
+    )
+    function = SimpleNamespace(
+        project=project,
+        get_call_return=lambda _callsite: 0x0070,
+    )
+
+    assert analysis_helpers._analysis_function_call_return_8616(function, 0x10069) == 0x0070
+
+
 def test_neighbor_call_targets_reuse_post_sanitization_evidence(monkeypatch) -> None:
     project = SimpleNamespace(
         loader=SimpleNamespace(

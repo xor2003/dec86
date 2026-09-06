@@ -97,10 +97,19 @@ def _materialized_offset_expr_8616(
         segment_stack_offset,
         2,
     )
-    offset = _stack_cvar_for_machine_bp_fact_8616(
-        codegen,
-        fact.pointer_source.offset_stack_offset,
-        2,
+    offset_constant = fact.pointer_source.offset_constant
+    offset = (
+        structured_c.CConstant(
+            offset_constant,
+            SimTypeShort(False),
+            codegen=codegen,
+        )
+        if offset_constant is not None
+        else _stack_cvar_for_machine_bp_fact_8616(
+            codegen,
+            fact.pointer_source.offset_stack_offset,
+            2,
+        )
     )
     if not isinstance(segment, CExpression) or not isinstance(offset, CExpression):
         return None

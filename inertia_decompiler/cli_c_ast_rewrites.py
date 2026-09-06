@@ -34,6 +34,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     collect_interrupt_service_calls,
     dos_helper_declarations,
     interrupt_service_addr,
+    interrupt_service_name,
     preferred_known_helper_signature_decl,
     render_dos_int21_call,
     render_interrupt_call,
@@ -4752,9 +4753,9 @@ def _int21_call_replacements(
 
 def _interrupt_call_replacement_map(
     project: AngrProjectValue, function: StructuredAstValue, api_style: str, binary_path: Path | None
-) -> dict[str, str]:
+) -> dict[str, tuple[str, ...]]:
     return cast(  # type: ignore[redundant-cast]
-        dict[str, str],
+        dict[str, tuple[str, ...]],
         _cli_helper_modeling._interrupt_call_replacement_map(
         project,
         function,
@@ -4764,6 +4765,7 @@ def _interrupt_call_replacement_map(
         render_interrupt_call=_compat_callback(render_interrupt_call),
         helper_name=_helper_name,
         interrupt_service_addr=_compat_callback(interrupt_service_addr),
+        interrupt_service_name=_compat_callback(interrupt_service_name),
         ),
     )
 

@@ -37,6 +37,8 @@ from .interrupt_contract import (
     INTERRUPT_CORE_VECTOR_BASE,
     INTERRUPT_CORE_VECTOR_COUNT,
     INTERRUPT_SERVICE_BASE_ADDR,
+    SoftwareInterruptServiceTargetFact8616,
+    record_software_interrupt_service_target_8616,
 )
 
 __all__ = (
@@ -275,13 +277,47 @@ def _analysis_function_call_target_8616(function: object, callsite_addr: int) ->
 
 
 def _analysis_function_call_return_8616(function: object, callsite_addr: int) -> int | None:
-    """Read a call return address from angr's dynamic Function boundary."""
+    """Read and exactly linearize a CALL return from angr's Function boundary.
+
+    angr may expose the architectural 16-bit IP for an indirect real-mode CALL
+    even though function and instruction identities are linear addresses. Only
+    an exact decoded CALL whose fall-through has the same low word authorizes
+    replacing that IP projection with the decoded linear fall-through.
+    """
     get_call_return = _dynamic_analysis_getattr_8616(function, "get_call_return", None)
     if not callable(get_call_return):
         return None
     with contextlib.suppress(Exception):
         return_addr = cast(Any, get_call_return)(callsite_addr)
-        return return_addr if isinstance(return_addr, int) else None
+        if not isinstance(return_addr, int):
+            return None
+        project = _x86_16_project_for_function_8616(function)
+        if project is None:
+            return return_addr
+        block = _analysis_project_block_8616(project, callsite_addr)
+        instructions = _dynamic_analysis_tuple_attr_8616(
+            _dynamic_analysis_getattr_8616(block, "capstone", None),
+            "insns",
+        )
+        matches = tuple(
+            instruction
+            for instruction in instructions
+            if _dynamic_analysis_getattr_8616(instruction, "address", None)
+            == callsite_addr
+            and str(
+                _dynamic_analysis_getattr_8616(instruction, "mnemonic", "") or ""
+            ).lower()
+            in {"call", "lcall"}
+        )
+        if len(matches) != 1:
+            return return_addr
+        size = _dynamic_analysis_getattr_8616(matches[0], "size", None)
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            return return_addr
+        decoded_fallthrough = callsite_addr + size
+        if (return_addr & 0xFFFF) == (decoded_fallthrough & 0xFFFF):
+            return decoded_fallthrough
+        return return_addr
     return None
 
 
@@ -881,8 +917,20 @@ def patch_interrupt_service_call_sites(
 
     changed = False
     function_any = cast(Any, function)
+    function_addr = _dynamic_analysis_getattr_8616(function, "addr", None)
     for call in collect_interrupt_service_calls(function, binary_path, vectors=vectors):
         target_addr, name = ensure_interrupt_service_hook(project, call)
+        if isinstance(function_addr, int):
+            record_software_interrupt_service_target_8616(
+                project,
+                SoftwareInterruptServiceTargetFact8616(
+                    function_addr=function_addr,
+                    callsite_addr=call.insn_addr,
+                    vector=call.vector,
+                    target_addr=target_addr,
+                    helper_name=name,
+                ),
+            )
         return_addr = _analysis_function_call_return_8616(function, call.insn_addr)
         spec = _interrupt_service_spec_for_call(call)
         if spec is not None and spec.no_return:

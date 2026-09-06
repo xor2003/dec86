@@ -27,6 +27,10 @@ from capstone.x86_const import (
     X86_REG_INVALID,
 )
 
+from .far_pointer_constant_flow import (
+    FarPointerConstantState8616,
+    apply_far_pointer_constant_instruction_8616,
+)
 from .register_constant_segmented_store import (
     InstructionView8616,
     OperandView8616,
@@ -56,6 +60,7 @@ class FarPointerStackSource8616:
     offset_stack_offset: int
     segment_stack_offset: int
     segment_value_source: FarPointerStackValueSource8616 | None = None
+    offset_constant: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +222,7 @@ def recover_far_pointer_segmented_loads_8616(
     far_offsets: dict[str, FarPointerStackSource8616] = {}
     segment_sources: dict[FarPointerSegmentRegister8616, FarPointerStackSource8616] = {}
     stack_value_sources: dict[int, FarPointerStackValueSource8616] = {}
+    constant_state = FarPointerConstantState8616()
     recovered: list[FarPointerSegmentedLoadEvidence8616] = []
     for instruction in instructions:
         evidence = _segmented_load_evidence_8616(
@@ -230,6 +236,17 @@ def recover_far_pointer_segmented_loads_8616(
         if evidence is not None:
             recovered.append(evidence)
         operands = instruction.operands
+        apply_far_pointer_constant_instruction_8616(
+            constant_state,
+            instruction,
+            register_name=register_name,
+            stack_slot=lambda current_instruction, operand: _stack_slot_8616(
+                current_instruction,
+                operand,
+                register_name=register_name,
+                segment_name=segment_name,
+            ),
+        )
         far_kind = _far_pointer_load_kind_8616(instruction.instruction_id)
         if far_kind is not None and len(operands) == 2 and operands[0].kind == X86_OP_REG:
             destination = register_name(instruction.raw, operands[0].register)
@@ -248,6 +265,7 @@ def recover_far_pointer_segmented_loads_8616(
                     source_slot[0],
                     segment_offset,
                     stack_value_sources.get(segment_offset),
+                    constant_state.stack_constant(source_slot[0], 2),
                 )
                 far_offsets[destination] = pointer_source
                 segment_sources[far_kind] = pointer_source

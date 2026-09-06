@@ -63,6 +63,12 @@ class _CodegenCallReturnFrameSurface8616(Protocol):
     _inertia_call_return_frame_effect_collection_8616: CallReturnFrameEffectCollection8616
 
 
+class _RebasedProjectSurface8616(Protocol):
+    """Owned slice-project contract for mapping original addresses to active ones."""
+
+    _inertia_original_linear_delta: int
+
+
 def _assignment_effect_key_8616(
     statement: structured_c.CAssignment,
 ) -> CallReturnFrameEffectKey8616 | None:
@@ -83,6 +89,37 @@ def _assignment_effect_key_8616(
         cast(int, block_addr),
         cast(int, statement_index),
     )
+
+
+def _semantic_key_candidates_8616(
+    project: object,
+    structured_key: CallReturnFrameEffectKey8616,
+    semantic_keys: frozenset[CallReturnFrameEffectKey8616],
+) -> tuple[CallReturnFrameEffectKey8616, ...]:
+    """Resolve current/original address domains through the exact slice contract.
+
+    Structured tags may survive from the original project while the Semantics
+    collector operates on a rebased slice. The explicit linear delta is the
+    only permitted projection. Multiple matches are returned so the caller can
+    refuse an ambiguous cross-domain join.
+    """
+    candidates = [structured_key]
+    try:
+        delta = cast(_RebasedProjectSurface8616, project)._inertia_original_linear_delta
+    except AttributeError:
+        delta = None
+    if isinstance(delta, int) and not isinstance(delta, bool) and delta:
+        projected_callsite = structured_key.callsite_addr - delta
+        projected_block = structured_key.vex_block_addr - delta
+        if projected_callsite >= 0 and projected_block >= 0:
+            candidates.append(
+                CallReturnFrameEffectKey8616(
+                    projected_callsite,
+                    projected_block,
+                    structured_key.vex_stmt_idx,
+                )
+            )
+    return tuple(dict.fromkeys(key for key in candidates if key in semantic_keys))
 
 
 def _is_exact_sp_projection_lhs_8616(project: object, lhs: StructuredAstValue) -> bool:
@@ -183,6 +220,7 @@ def prune_exact_call_return_frame_projections_8616(
         for refusal in collection.projection_collection.refusals
         for producer_key in refusal.producer_keys
     }
+    semantic_keys = frozenset((*effects, *producer_relations, *refused_producer_keys))
     root = surface.cfunc.statements
     if not effects:
         return CallReturnFrameCarrierPrune8616(0, 0, 0, 0, 0)
@@ -200,18 +238,27 @@ def prune_exact_call_return_frame_projections_8616(
                 retained.append(statement)
                 continue
             key = _assignment_effect_key_8616(statement)
-            relations = tuple(producer_relations.get(key, ())) if key is not None else ()
-            if key not in effects and not relations and key not in refused_producer_keys:
+            semantic_matches = (
+                _semantic_key_candidates_8616(project, key, semantic_keys)
+                if key is not None
+                else ()
+            )
+            if not semantic_matches:
                 retained.append(statement)
                 continue
             raw_count += 1
-            if key is None or key in refused_producer_keys:
+            if len(semantic_matches) != 1:
+                retained.append(statement)
+                continue
+            semantic_key = semantic_matches[0]
+            relations = tuple(producer_relations.get(semantic_key, ()))
+            if semantic_key in refused_producer_keys:
                 retained.append(statement)
                 continue
             normalized_count += 1
-            exact_effect = effects.get(key)
+            exact_effect = effects.get(semantic_key)
             relation_matches = _producer_relations_are_exact_8616(
-                key,
+                semantic_key,
                 relations,
                 effects,
             )

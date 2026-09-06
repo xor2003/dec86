@@ -6,7 +6,9 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.rustylib.ailment import Tags
 from angr_platforms.X86_16.interrupt_contract import (
     DOS_SERVICE_BASE_ADDR,
+    SoftwareInterruptServiceTargetFact8616,
     interrupt_core_addr_8616,
+    record_software_interrupt_service_target_8616,
 )
 from angr_platforms.X86_16.lowering.software_interrupt_calls import (
     _callsite_addr_8616 as lowering_callsite_addr_8616,
@@ -80,3 +82,41 @@ def test_software_interrupt_targets_follow_exact_tags_not_ast_order() -> None:
     assert materialize_software_interrupt_service_targets_8616(codegen)
     assert exit_call.callee_target == DOS_SERVICE_BASE_ADDR + 0x4C
     assert print_call.callee_target == DOS_SERVICE_BASE_ADDR + 0x09
+
+
+def test_software_interrupt_targets_survive_rebuilt_function_callsite_map() -> None:
+    """Project evidence survives a rebuilt function with stale raw targets."""
+    codegen = _Codegen()
+    call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags=Tags({"ins_addr": 0x1030}),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([call], codegen=codegen)
+    function = SimpleNamespace(
+        get_call_target=lambda _addr: interrupt_core_addr_8616(0x21)
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda *, addr: function if addr == 0x1000 else None
+            )
+        )
+    )
+    record_software_interrupt_service_target_8616(
+        project,
+        SoftwareInterruptServiceTargetFact8616(
+            function_addr=0x1000,
+            callsite_addr=0x1030,
+            vector=0x21,
+            target_addr=DOS_SERVICE_BASE_ADDR + 0x4C,
+            helper_name="dos_exit",
+        ),
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen.project = project
+
+    assert materialize_software_interrupt_service_targets_8616(codegen)
+    assert call.callee_target == "dos_exit"

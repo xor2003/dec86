@@ -25,6 +25,8 @@ from ..interrupt_contract import (
     DOS_SERVICE_BASE_ADDR,
     INTERRUPT_SERVICE_BASE_ADDR,
     interrupt_vector_from_core_addr_8616,
+    software_interrupt_service_fact_8616,
+    software_interrupt_service_target_8616,
 )
 from ..ir.core import IRBinaryValue, IRFunctionArtifact, IRValue, MemSpace
 from ..pipeline.errors import PipelineHardError
@@ -194,14 +196,34 @@ def materialize_software_interrupt_service_targets_8616(
         try:
             target_addr = function.get_call_target(callsite_addr)
         except (AttributeError, KeyError, TypeError, ValueError):
-            continue
+            target_addr = None
+        if not isinstance(target_addr, int) or not _service_target_matches_vector_8616(
+            target_addr,
+            vector,
+        ):
+            target_addr = software_interrupt_service_target_8616(
+                surface.project,
+                function_addr=function_addr,
+                callsite_addr=callsite_addr,
+                vector=vector,
+            )
         if not isinstance(target_addr, int) or not _service_target_matches_vector_8616(
             target_addr,
             vector,
         ):
             continue
         stats.classified_fact_count += 1
-        cast(_TaggedCallSurface8616, node).callee_target = target_addr
+        service_fact = software_interrupt_service_fact_8616(
+            surface.project,
+            function_addr=function_addr,
+            callsite_addr=callsite_addr,
+            vector=vector,
+        )
+        cast(_TaggedCallSurface8616, node).callee_target = (
+            service_fact.helper_name
+            if service_fact is not None and service_fact.target_addr == target_addr
+            else target_addr
+        )
         stats.materialized_count += 1
         changed = True
     get_codegen_side_metadata(codegen)["software_interrupt_target_materialization_8616"] = stats

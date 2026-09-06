@@ -72,6 +72,7 @@ from .lowering.call_argument_carrier_liveness import (
 from .lowering.call_cleanup_carriers import (
     prune_consumed_call_cleanup_carriers_8616,
 )
+from .lowering.call_return_frame_arguments import prune_exact_call_return_frame_arguments_8616
 from .lowering.call_return_selectors import replay_call_return_switch_selectors_8616
 from .lowering.callee_pointer_evidence import (
     callee_pointer_argument_is_proven_8616,

@@ -3524,7 +3524,9 @@ def summarize_x86_16_callsite(
             insn_addr = _instruction_address_8616(call_insn)
             insn_size = _instruction_size_8616(call_insn)
             if isinstance(insn_addr, int) and isinstance(insn_size, int) and insn_size > 0:
-                return_addr = (insn_addr + insn_size) & 0xFFFF
+                # Summary identities use linear addresses. The architectural
+                # return IP remains the low word of this exact fall-through.
+                return_addr = insn_addr + insn_size
 
         cleanup_evidence = _stack_cleanup_after_call(
             function,

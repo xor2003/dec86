@@ -262,7 +262,12 @@ def _producer_consumers_8616(
                 reads = _read_temporaries_8616(statement.data)
             elif tag == "Ist_Store":
                 data_reads = _read_temporaries_8616(statement.data)
-                address = getattr(statement, "addr", None)
+                # Dynamic pyvex statement boundary: mocked and versioned store
+                # nodes do not all expose an address child uniformly.
+                try:
+                    address = statement.addr
+                except AttributeError:
+                    address = None
                 address_reads = (
                     frozenset()
                     if address is None

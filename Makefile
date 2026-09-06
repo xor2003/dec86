@@ -53,6 +53,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_constant_flow.py \
 	inertia_decompiler/cache.py \
 	inertia_decompiler/cache_file_digest.py \
 	inertia_decompiler/cache_source_manifest.py \
@@ -372,6 +373,7 @@ check-all: ruff-all pyright-all type-ratchet-changed architecture-check agent-co
 
 QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_constant_flow.py \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py \
@@ -1351,6 +1353,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_stack_restore.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_value_projection.py \
 	angr_platforms/angr_platforms/X86_16/validation/entry_stack_ranges.py \
+	inertia_decompiler/cache_file_digest.py \
+	inertia_decompiler/direct_indexed_alias_local_cache.py \
 	inertia_decompiler/function_ir_ssa_cache.py \
 	inertia_decompiler/function_ir_ssa_cache_codec.py \
 	inertia_decompiler/function_ir_ssa_cache_identity.py \
@@ -1358,6 +1362,7 @@ QA_TYPED_FILES := \
 
 QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_constant_flow.py \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py \
@@ -2659,6 +2664,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_stack_restore.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_value_projection.py \
 	angr_platforms/angr_platforms/X86_16/validation/entry_stack_ranges.py \
+	inertia_decompiler/cache_file_digest.py \
+	inertia_decompiler/direct_indexed_alias_local_cache.py \
 	inertia_decompiler/function_ir_ssa_cache.py \
 	inertia_decompiler/function_ir_ssa_cache_codec.py \
 	inertia_decompiler/function_ir_ssa_cache_identity.py

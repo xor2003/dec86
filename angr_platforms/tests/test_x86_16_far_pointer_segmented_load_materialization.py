@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -116,6 +117,23 @@ def test_far_pointer_materialization_resolves_machine_bp_coordinates() -> None:
     assert indexed_offset.lhs is not decoy_cvar
     assert isinstance(indexed_offset.rhs, structured_c.CBinaryOp)
     assert indexed_offset.rhs.lhs is index_cvar
+
+    constant_fact = replace(
+        fact,
+        pointer_source=replace(fact.pointer_source, offset_constant=36),
+    )
+    constant_expressions = _materialized_offset_expr_8616(codegen, constant_fact)
+
+    assert constant_expressions is not None
+    constant_segment, constant_offset = constant_expressions
+    assert constant_segment is segment_cvar
+    assert isinstance(constant_offset, structured_c.CBinaryOp)
+    constant_indexed_offset = constant_offset.lhs
+    assert isinstance(constant_indexed_offset, structured_c.CBinaryOp)
+    assert isinstance(constant_indexed_offset.lhs, structured_c.CConstant)
+    assert constant_indexed_offset.lhs.value == 36
+    assert isinstance(constant_indexed_offset.rhs, structured_c.CBinaryOp)
+    assert constant_indexed_offset.rhs.lhs is index_cvar
 
 
 def test_far_pointer_word_load_preserves_enclosing_wide_return() -> None:

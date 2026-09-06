@@ -70,6 +70,14 @@ def _mem(*, base: int, displacement: int, size: int, segment: int | None = None)
     )
 
 
+def _indexed_mem(*, base: int, index: int, displacement: int, size: int) -> _Operand:
+    return _Operand(
+        X86_OP_MEM,
+        size=size,
+        memory=_Memory(base=base, index=index, displacement=displacement),
+    )
+
+
 def _overlay_load_sequence(*, overlap_segment_destination: bool = False) -> tuple[_Instruction, ...]:
     instructions = [
         _Instruction(None, X86_INS_MOV, 0x1010, (_reg(_AX), _mem(base=_BP, displacement=4, size=2))),
@@ -88,7 +96,11 @@ def _overlay_load_sequence(*, overlap_segment_destination: bool = False) -> tupl
     return tuple(instructions)
 
 
-def _constant_offset_load_sequence(*, overwrite_offset: bool = False) -> tuple[_Instruction, ...]:
+def _constant_offset_load_sequence(
+    *,
+    overwrite_offset: bool = False,
+    unknown_offset_write: bool = False,
+) -> tuple[_Instruction, ...]:
     instructions = [
         _Instruction(None, X86_INS_SUB, 0x1000, (_reg(_AX), _reg(_AX))),
         _Instruction(None, X86_INS_ADD, 0x1002, (_reg(_AX), _imm(36))),
@@ -99,6 +111,15 @@ def _constant_offset_load_sequence(*, overwrite_offset: bool = False) -> tuple[_
     if overwrite_offset:
         instructions.append(
             _Instruction(None, X86_INS_MOV, 0x100E, (_mem(base=_BP, displacement=-4, size=2), _reg(_DX)))
+        )
+    if unknown_offset_write:
+        instructions.append(
+            _Instruction(
+                None,
+                X86_INS_MOV,
+                0x100F,
+                (_indexed_mem(base=_BP, index=_BX, displacement=-4, size=2), _reg(_DX)),
+            )
         )
     instructions.extend(
         (
@@ -149,6 +170,18 @@ def test_far_pointer_load_invalidates_overwritten_constant_offset() -> None:
     """Refuse a constant after any overlapping stack write replaces it."""
     evidence = recover_far_pointer_segmented_loads_8616(
         _constant_offset_load_sequence(overwrite_offset=True),
+        register_name=_register_name,
+        segment_name=_register_name,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].pointer_source.offset_constant is None
+
+
+def test_far_pointer_load_refuses_constant_after_unknown_stack_write() -> None:
+    """Refuse an offset constant after an unresolved BP-relative write."""
+    evidence = recover_far_pointer_segmented_loads_8616(
+        _constant_offset_load_sequence(unknown_offset_write=True),
         register_name=_register_name,
         segment_name=_register_name,
     )

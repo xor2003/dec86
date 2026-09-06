@@ -21,6 +21,7 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.lowering import call_return_frame as frame_lowering
 from angr_platforms.X86_16.lowering import call_return_frame_arguments as frame_argument_lowering
 from angr_platforms.X86_16.lowering.call_return_frame import (
     prune_exact_call_return_frame_projections_8616,
@@ -399,6 +400,142 @@ def test_prunes_raw_dereference_with_exact_store_semantic_key(
         result.materialized_count,
         result.failure_count,
     ) == (1, 1, 1, 1, 0)
+
+
+def _store_projection_with_key(
+    project: Any,
+    key: CallReturnFrameEffectKey8616,
+) -> tuple[_Codegen, CAssignment]:
+    """Build one raw structured store carrying an explicit semantic join key."""
+    codegen = _Codegen()
+    codegen.project = project
+    assignment = CAssignment(
+        CUnaryOp(
+            "Dereference",
+            CConstant(0x200, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        CConstant(0x102, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": key.callsite_addr,
+            "vex_block_addr": key.vex_block_addr,
+            "vex_stmt_idx": key.vex_stmt_idx,
+        },
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=key.callsite_addr,
+        statements=CStatements([assignment], codegen=codegen),
+    )
+    return codegen, assignment
+
+
+def test_prunes_original_address_tags_via_explicit_slice_delta() -> None:
+    project, function = _project_for_code(b"\xff\xd0")
+    collection = collect_call_return_frame_effects_8616(project, function, {0x100: 0x102})
+    store_key = next(
+        effect.key
+        for effect in collection.effects
+        if effect.role is CallReturnFrameEffectRole8616.STACK_STORE
+    )
+    delta = 0xF000
+    project._inertia_original_linear_delta = delta
+    original_key = CallReturnFrameEffectKey8616(
+        store_key.callsite_addr + delta,
+        store_key.vex_block_addr + delta,
+        store_key.vex_stmt_idx,
+    )
+    codegen, _assignment = _store_projection_with_key(project, original_key)
+
+    result = prune_exact_call_return_frame_projections_8616(
+        project,
+        codegen,
+        function,
+        {0x100: 0x102},
+    )
+
+    assert codegen.cfunc.statements.statements == []
+    assert (
+        result.raw_fact_count,
+        result.normalized_fact_count,
+        result.classified_fact_count,
+        result.materialized_count,
+        result.failure_count,
+    ) == (1, 1, 1, 1, 0)
+
+
+def test_original_address_tags_without_slice_delta_are_kept() -> None:
+    project, function = _project_for_code(b"\xff\xd0")
+    collection = collect_call_return_frame_effects_8616(project, function, {0x100: 0x102})
+    store_key = next(
+        effect.key
+        for effect in collection.effects
+        if effect.role is CallReturnFrameEffectRole8616.STACK_STORE
+    )
+    original_key = CallReturnFrameEffectKey8616(
+        store_key.callsite_addr + 0xF000,
+        store_key.vex_block_addr + 0xF000,
+        store_key.vex_stmt_idx,
+    )
+    codegen, assignment = _store_projection_with_key(project, original_key)
+
+    result = prune_exact_call_return_frame_projections_8616(
+        project,
+        codegen,
+        function,
+        {0x100: 0x102},
+    )
+
+    assert codegen.cfunc.statements.statements == [assignment]
+    assert result.materialized_count == 0
+
+
+def test_ambiguous_current_and_original_address_join_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, function = _project_for_code(b"\xff\xd0")
+    collection = collect_call_return_frame_effects_8616(project, function, {0x100: 0x102})
+    store_fact = next(
+        effect
+        for effect in collection.effects
+        if effect.role is CallReturnFrameEffectRole8616.STACK_STORE
+    )
+    delta = 0xF000
+    project._inertia_original_linear_delta = delta
+    original_key = CallReturnFrameEffectKey8616(
+        store_fact.key.callsite_addr + delta,
+        store_fact.key.vex_block_addr + delta,
+        store_fact.key.vex_stmt_idx,
+    )
+    ambiguous = replace(
+        collection,
+        effects=(
+            *collection.effects,
+            CallReturnFrameEffectFact8616(original_key, store_fact.role),
+        ),
+    )
+    monkeypatch.setattr(
+        frame_lowering,
+        "collect_call_return_frame_effects_8616",
+        lambda *_args, **_kwargs: ambiguous,
+    )
+    codegen, assignment = _store_projection_with_key(project, original_key)
+
+    result = prune_exact_call_return_frame_projections_8616(
+        project,
+        codegen,
+        function,
+        {0x100: 0x102},
+    )
+
+    assert codegen.cfunc.statements.statements == [assignment]
+    assert (
+        result.raw_fact_count,
+        result.normalized_fact_count,
+        result.classified_fact_count,
+        result.materialized_count,
+        result.failure_count,
+    ) == (1, 0, 0, 0, 1)
 
 
 def _near_call_argument_surface(

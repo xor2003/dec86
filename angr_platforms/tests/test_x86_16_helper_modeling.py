@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from angr.sim_type import SimStruct, SimTypeShort
 from angr_platforms.X86_16.analysis_helpers import interrupt_service_declarations
 
+from inertia_decompiler import cli_helper_modeling
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"
 
@@ -14,6 +16,27 @@ assert _spec is not None and _spec.loader is not None
 _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
+
+
+def test_interrupt_replacement_map_includes_explicit_pseudo_service_name():
+    calls = [SimpleNamespace(insn_addr=0x1234), SimpleNamespace(insn_addr=0x1236)]
+
+    replacements = cli_helper_modeling._interrupt_call_replacement_map(
+        object(),
+        object(),
+        "modern",
+        None,
+        collect_interrupt_service_calls=lambda _function, _binary_path: calls,
+        render_interrupt_call=lambda call, _style: f"print_dos_string({call.insn_addr})",
+        helper_name=lambda _project, _addr: None,
+        interrupt_service_addr=lambda _call: 0xFF021,
+        interrupt_service_name=lambda _call, _style: "dos_print_dollar_string",
+    )
+
+    assert replacements["dos_print_dollar_string"] == (
+        "print_dos_string(4660)",
+        "print_dos_string(4662)",
+    )
 
 
 def test_dos_pseudo_callee_attachment_accepts_partial_callnode_matches(monkeypatch):
@@ -847,7 +870,7 @@ def test_interrupt_helper_formatting_uses_helper_names(monkeypatch):
     replacements = _decompile._interrupt_call_replacement_map(project, function, "pseudo", None)
     declarations = _decompile._interrupt_helper_declarations(function, "pseudo", None)
 
-    assert replacements["bios_int12_memory_size"] == "bios_memsize()"
+    assert replacements["bios_int12_memory_size"] == ("bios_memsize()",)
     assert "int bios_memsize(void);" in declarations
 
 

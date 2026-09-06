@@ -4857,15 +4857,18 @@ def _format_known_helper_calls(
                     break
 
         interrupt_replacements = _interrupt_call_replacement_map(project, function, api_style, binary_path)
-        for source_name, replacement in sorted(
+        for source_name, replacements in sorted(
             interrupt_replacements.items(), key=lambda item: len(item[0]), reverse=True
         ):
-            c_text = re.sub(
-                rf"(?<![A-Za-z_]){re.escape(source_name)}\s*\(\s*\)",
-                replacement,
-                c_text,
-                count=1,
-            )
+            for replacement in replacements:
+                c_text, count = re.subn(
+                    rf"(?<![A-Za-z_]){re.escape(source_name)}\s*\(\s*\)",
+                    replacement,
+                    c_text,
+                    count=1,
+                )
+                if not count:
+                    break
 
         declarations = _dos_helper_declarations(function, api_style, binary_path)
         declarations.extend(_interrupt_helper_declarations(function, api_style, binary_path))

@@ -48,8 +48,13 @@ def _interrupt_call_replacement_map(
     render_interrupt_call: Callable[[object, str], str],
     helper_name: Callable[[object, int], str | None],
     interrupt_service_addr: Callable[[object], int],
-) -> dict[str, str]:
-    replacements: dict[str, str] = {}
+    interrupt_service_name: Callable[[object, str], str],
+) -> dict[str, tuple[str, ...]]:
+    pending_replacements: dict[str, list[str]] = {}
+
+    def append_replacement(source_name: str, replacement: str) -> None:
+        pending_replacements.setdefault(source_name, []).append(replacement)
+
     for call in collect_interrupt_service_calls(function, binary_path):
         replacement = render_interrupt_call(call, api_style)
         if isinstance(call, _InstructionAddressCall) and isinstance(function, _CallTargetLookup):
@@ -57,15 +62,21 @@ def _interrupt_call_replacement_map(
         else:
             target_addr = None
         if isinstance(target_addr, int):
-            replacements[str(target_addr)] = replacement
-            replacements[hex(target_addr)] = replacement
-            replacements[hex(target_addr).upper().replace("X", "x")] = replacement
+            append_replacement(str(target_addr), replacement)
+            append_replacement(hex(target_addr), replacement)
+            append_replacement(hex(target_addr).upper().replace("X", "x"), replacement)
 
+        semantic_name = interrupt_service_name(call, "pseudo")
         known_helper_name = helper_name(project, interrupt_service_addr(call))
-        if known_helper_name:
-            replacements[known_helper_name] = replacement
-            replacements[known_helper_name.lstrip("_")] = replacement
-    return replacements
+        if known_helper_name and known_helper_name != semantic_name:
+            append_replacement(known_helper_name, replacement)
+            unprefixed_helper_name = known_helper_name.lstrip("_")
+            if unprefixed_helper_name != known_helper_name:
+                append_replacement(unprefixed_helper_name, replacement)
+
+        if semantic_name:
+            append_replacement(semantic_name, replacement)
+    return {source_name: tuple(values) for source_name, values in pending_replacements.items()}
 
 
 def _dos_helper_declarations(

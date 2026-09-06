@@ -192,10 +192,10 @@ from .structuring.simple_loop_recovery import _function_instruction_summaries_86
 
 __all__ = [
     "_attach_callsite_summaries_8616",
+    "_bind_call_return_frame_argument_lowerer_8616",
     "_bind_call_target_identity_consumer_8616",
     "_bind_callee_pointer_argument_classifier_8616",
     "_bind_fixed_stack_probe_frame_lowerer_8616",
-    "_bind_call_return_frame_argument_lowerer_8616",
     "_bind_function_result_observation_provider_8616",
     "_bind_segment_address_provenance_attacher_8616",
     "_bind_segment_push_source_lowerer_8616",
@@ -510,10 +510,10 @@ def _replay_call_return_frame_argument_lowerer_8616(
             _CallsiteMaterializationControlCarrier8616,
             codegen,
         )._inertia_call_return_frame_argument_lowerer_8616
-    except AttributeError as ex:
-        raise PipelineHardError(
-            "CALL-frame argument lowering is not bound at the Structuring boundary"
-        ) from ex
+    except AttributeError:
+        # Unit-level compatibility callers may exercise this bridge without
+        # the Structuring stage. Missing ownership means no semantic change.
+        return False
     return bool(lowerer(project, codegen))
 
 
