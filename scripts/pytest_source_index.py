@@ -21,6 +21,11 @@ if __package__:
         PytestSourceIndex,
         build_pytest_structure_index,
     )
+    from scripts.pytest_source_structure_cache import (
+        CachedPytestStructure,
+        load_cached_pytest_structure,
+        store_cached_pytest_structure,
+    )
 else:
     from pytest_assertion_facts import PytestNodeFacts, expectation_kind, resolve_local_helper_facts
     from pytest_call_hints import extract_pytest_call_hints
@@ -29,6 +34,11 @@ else:
         PytestFactsProvider,
         PytestSourceIndex,
         build_pytest_structure_index,
+    )
+    from pytest_source_structure_cache import (
+        CachedPytestStructure,
+        load_cached_pytest_structure,
+        store_cached_pytest_structure,
     )
 
 _INPUT_SUFFIXES = (
@@ -300,22 +310,33 @@ def load_pytest_source_index(path: Path, skip_calls: frozenset[str]) -> PytestSo
     cached = _SOURCE_INDEX_CACHE.get(cache_key)
     if cached is not None and cached[0] == digest:
         return cached[1]
-    try:
-        tree = ast.parse(source, filename=str(path))
-    except SyntaxError:
-        index = PytestSourceIndex(frozenset(), (), PytestFactsProvider(lambda: ()))
-    else:
 
-        def load_facts() -> PytestFactsByNode:
-            """Build full facts from the captured content version."""
+    def load_facts() -> PytestFactsByNode:
+        """Build full facts from the captured content version."""
 
-            return build_pytest_source_index(source, path, skip_calls).all_facts()
+        return build_pytest_source_index(source, path, skip_calls).all_facts()
 
-        index = build_pytest_structure_index(
-            tree,
-            skip_calls,
-            PytestFactsProvider(load_facts),
+    facts = PytestFactsProvider(load_facts)
+    persisted = load_cached_pytest_structure(path, digest, skip_calls)
+    if persisted is not None:
+        index = PytestSourceIndex(
+            persisted.nodes,
+            persisted.skip_xfail_lines_by_node,
+            facts,
         )
+    else:
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError:
+            index = PytestSourceIndex(frozenset(), (), facts)
+        else:
+            index = build_pytest_structure_index(tree, skip_calls, facts)
+            store_cached_pytest_structure(
+                path,
+                digest,
+                skip_calls,
+                CachedPytestStructure(index.nodes, index.skip_xfail_lines_by_node),
+            )
     _SOURCE_INDEX_CACHE[cache_key] = (digest, index)
     return index
 

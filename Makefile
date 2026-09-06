@@ -1297,6 +1297,7 @@ QA_TYPED_FILES := \
 	scripts/pytest_source_state.py \
 	scripts/pytest_source_index.py \
 	scripts/pytest_source_structure.py \
+	scripts/pytest_source_structure_cache.py \
 	scripts/test_pipeline.py \
 	scripts/test_ownership_manifest.py \
 	scripts/check_changed_non_test_types.py \
@@ -2280,6 +2281,7 @@ QA_RUFF_TARGETS := \
 	scripts/pytest_source_state.py \
 	scripts/pytest_source_index.py \
 	scripts/pytest_source_structure.py \
+	scripts/pytest_source_structure_cache.py \
 	scripts/sortdemo_decompiler_status.py \
 	scripts/test_pipeline.py \
 	scripts/test_ownership_manifest.py \

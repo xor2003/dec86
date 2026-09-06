@@ -478,12 +478,16 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   assertion, subprocess, and evidence facts are memoized on first inventory
   access. The 74-file profiled index path fell from 2.208 to 1.244 seconds
   (43.7%), with no full-fact builds in the architecture lane. Its DoD is met:
-  content mutation invalidates the index, lazy facts build once, and 75 source
-  index, inventory, profile, and ownership tests pass. A 448 KiB one-file
-  check measured 0.306 seconds cold, 0.002 warm, and 0.298 after content
-  invalidation. An explicit-stack AST walker was rejected because profiler
-  allocation cost made the same path slower; restoring it without contrary
-  aggregate evidence is a failure.
+  exact source, skip-policy, parser implementation, and Python ABI identities
+  guard a bounded persistent structure record; malformed records and same-size
+  content changes reparse; full facts are never serialized. The ownership gate
+  measured 3.89 seconds cold and 0.31 warm (92.0%), and a warm profile contained
+  zero `ast.parse` calls. Lazy facts build once, and 77 source-index, inventory,
+  profile, and ownership tests pass. A 448 KiB one-file check measured 0.306
+  seconds cold, 0.002 warm, and 0.298 after content invalidation. An
+  explicit-stack AST walker was rejected because profiler allocation cost made
+  the same path slower; restoring it without contrary aggregate evidence is a
+  failure.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is

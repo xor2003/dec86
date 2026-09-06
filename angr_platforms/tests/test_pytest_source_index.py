@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
 from _pytest.python import CallSpec2
 
-from scripts import pytest_source_index
+from scripts import pytest_source_index, pytest_source_structure_cache
 from scripts.pytest_call_hints import concrete_function_addresses
 from scripts.pytest_source_index import (
     build_pytest_source_index,
@@ -76,6 +77,82 @@ def test_loaded_source_index_defers_full_facts_until_requested(tmp_path, monkeyp
     assert first.assertion_count == 1
     assert first.evidence_hints == ("exit-code",)
     assert fact_builds == 1
+
+
+def test_persistent_structure_cache_reuses_exact_content_without_persisting_facts(
+    tmp_path,
+    monkeypatch,
+):
+    cache_root = tmp_path / "cache"
+    test_path = tmp_path / "test_sample.py"
+    test_path.write_text("def test_case():\n    assert result.returncode == 0\n", encoding="utf-8")
+    monkeypatch.setattr(pytest_source_structure_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(pytest_source_structure_cache, "_CACHE_ROOT", cache_root)
+
+    clear_pytest_source_index_cache()
+    first = load_pytest_source_index(test_path, SKIP_CALLS)
+    cache_path = next(cache_root.glob("*.json"))
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert "facts" not in payload
+
+    original_parse = pytest_source_index.ast.parse
+    parse_count = 0
+
+    def recording_parse(*args, **kwargs):
+        nonlocal parse_count
+        parse_count += 1
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(pytest_source_index.ast, "parse", recording_parse)
+    clear_pytest_source_index_cache()
+    cached = load_pytest_source_index(test_path, SKIP_CALLS)
+    assert cached.nodes == first.nodes
+    assert parse_count == 0
+
+    assert cached.facts("test_case").assertion_count == 1
+    assert parse_count == 1
+
+    test_path.write_text("def test_next():\n    assert result.returncode == 0\n", encoding="utf-8")
+    clear_pytest_source_index_cache()
+    invalidated = load_pytest_source_index(test_path, SKIP_CALLS)
+    assert invalidated.has_node("test_next")
+    assert not invalidated.has_node("test_case")
+    assert parse_count == 2
+
+
+def test_persistent_structure_cache_refuses_malformed_payload_and_changed_skip_policy(
+    tmp_path,
+    monkeypatch,
+):
+    cache_root = tmp_path / "cache"
+    test_path = tmp_path / "test_sample.py"
+    test_path.write_text("def test_case():\n    pytest.mark.skipif(False)\n", encoding="utf-8")
+    monkeypatch.setattr(pytest_source_structure_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(pytest_source_structure_cache, "_CACHE_ROOT", cache_root)
+
+    clear_pytest_source_index_cache()
+    load_pytest_source_index(test_path, SKIP_CALLS)
+    cache_path = next(cache_root.glob("*.json"))
+    cache_path.write_text("{broken", encoding="utf-8")
+
+    original_parse = pytest_source_index.ast.parse
+    parse_count = 0
+
+    def recording_parse(*args, **kwargs):
+        nonlocal parse_count
+        parse_count += 1
+        return original_parse(*args, **kwargs)
+
+    monkeypatch.setattr(pytest_source_index.ast, "parse", recording_parse)
+    clear_pytest_source_index_cache()
+    repaired = load_pytest_source_index(test_path, SKIP_CALLS)
+    assert repaired.has_node("test_case")
+    assert parse_count == 1
+
+    clear_pytest_source_index_cache()
+    changed_policy = load_pytest_source_index(test_path, SKIP_CALLS | {"pytest.mark.skipif"})
+    assert changed_policy.skip_xfail_lines("test_case") == (2,)
+    assert parse_count == 2
 
 
 def test_source_index_preserves_file_class_and_method_skip_scope(tmp_path):
