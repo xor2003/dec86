@@ -11745,6 +11745,15 @@ def prune_call_return_frame_stack_assignments_8616(
         function,
         return_addr_by_callsite,
     )
+    if debug_return_frame:
+        collection = codegen._inertia_call_return_frame_effect_collection_8616
+        log.warning(
+            "[call-return-frame] exact=%r effects=%r projections=%r refusals=%r",
+            exact_result,
+            collection.effects,
+            collection.projection_collection.projections,
+            collection.projection_collection.refusals,
+        )
     raw_count = exact_result.raw_fact_count
     normalized_count = exact_result.normalized_fact_count
     classified_count = exact_result.classified_fact_count
@@ -11764,11 +11773,13 @@ def prune_call_return_frame_stack_assignments_8616(
         ):
             log.warning(
                 "[call-return-frame] candidate ins_addr=%#x lhs_type=%s "
-                "rhs_type=%s indexed_ss_stack=%s",
+                "rhs_type=%s indexed_ss_stack=%s tags=%r rhs_tags=%r",
                 ins_addr,
                 type(lhs).__name__,
                 type(rhs).__name__,
                 _is_indexed_ss_stack_store_lhs_8616(project, lhs),
+                tags,
+                getattr(rhs, "tags", None),
             )
         if not (
             _is_consumed_push_stack_carrier_lhs_8616(project, lhs)

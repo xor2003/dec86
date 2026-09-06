@@ -56,7 +56,7 @@ class SharedTailCallOccurrence8616:
 
     kind: SharedTailCallOccurrenceKind8616
     call: structured_c.CFunctionCall
-    statement: structured_c.CStatement
+    statement: object
     parent: structured_c.CStatements
     statement_index: int
     control_path: tuple[_ControlPathStep8616, ...]
@@ -149,6 +149,18 @@ def collect_shared_tail_call_occurrences_8616(
         if not isinstance(statements, list):
             continue
         for index, statement in enumerate(statements):
+            if isinstance(statement, structured_c.CFunctionCall):
+                occurrences.append(
+                    SharedTailCallOccurrence8616(
+                        SharedTailCallOccurrenceKind8616.STANDALONE,
+                        statement,
+                        statement,
+                        parent,
+                        index,
+                        control_path,
+                    )
+                )
+                continue
             if isinstance(statement, structured_c.CStatements):
                 step = _ControlPathStep8616(id(statement), id(parent), index, "statements", 0, parent)
                 pending.append((statement, (*control_path, step)))

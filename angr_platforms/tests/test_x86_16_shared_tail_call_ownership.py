@@ -358,6 +358,39 @@ def test_shared_tail_ownership_removes_nested_clone_before_common_tail() -> None
     assert id(retained_statement.expr) in codegen._inertia_callsite_summaries
 
 
+def test_shared_tail_ownership_removes_bare_call_clone_before_common_tail() -> None:
+    """Bare angr call statements retain the same typed occurrence ownership."""
+    codegen = _Codegen()
+    nested_call = CFunctionCall("sink", None, [], tags={"ins_addr": 0x1034}, codegen=codegen)
+    retained_call = CFunctionCall("sink", None, [], tags={"ins_addr": 0x1034}, codegen=codegen)
+    nested_body = CStatements([nested_call], codegen=codegen)
+    branch = CIfElse(
+        [(CConstant(1, SimTypeShort(False), codegen=codegen), nested_body)],
+        else_node=CStatements([], codegen=codegen),
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    root = CStatements([branch, retained_call], codegen=codegen)
+    summary = _summary(return_used=False)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen._inertia_callsite_summaries = {
+        id(nested_call): summary,
+        id(retained_call): summary,
+    }
+    codegen._inertia_callsite_summary_inventory_8616 = {summary.callsite_addr: summary}
+
+    result = materialize_shared_tail_call_ownership_8616(
+        _project(shared_tail=True),
+        codegen,
+    )
+
+    assert result.status is SharedTailCallOwnershipStatus8616.MATERIALIZED
+    assert result.stats == SharedTailCallOwnershipStats8616(1, 1, 1, 1, 0)
+    assert nested_body.statements == []
+    assert root.statements == [branch, retained_call]
+    assert codegen._inertia_callsite_summaries == {id(retained_call): summary}
+
+
 def test_shared_tail_ownership_refuses_retained_call_before_nested_call() -> None:
     codegen, clone_body, _retained_statement = _nested_standalone_codegen(
         retained_after_branch=False,
