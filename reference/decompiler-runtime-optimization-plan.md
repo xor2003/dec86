@@ -343,15 +343,16 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   inventory per function and now keeps terminal-cleanup plus callee-save facts
   in its request-local Semantics cache. Exact containing, next, and direct-jump
   blocks consume the existing Frontend block inventory; sized linear windows
-  retain their distinct fail-closed factory fallback. On the current
-  sidecar-free SORTD `sub_109e8` profile, the first two routes reduced callsite
-  summarization from 6.441 to 3.265 seconds, containing-block lookup from 1.311
-  to 0.023 seconds, and next-block lookup from 2.596 to 0.007 seconds. The later
-  direct-jump and callee-save reuse has focused cache/wiring coverage but awaits
-  an isolated profile because another decompiler batch occupies the machine.
-  The shared tree already failed portable-flat recompilation on signed-char
-  array subscripts before this change, so no end-to-end semantic acceptance or
-  wall-time speedup is claimed from that red baseline.
+  retain their distinct fail-closed factory fallback. The accepted sidecar-free
+  SORTD `sub_109e8` profile reduced total callsite summarization from 6.441 to
+  1.908 seconds (70%), containing-block lookup from 1.311 to 0.023 seconds,
+  next-block lookup from 2.596 to 0.006 seconds, direct-jump following from
+  0.707 to 0.055 seconds, and callee-save recovery from 0.769 to 0.078 seconds.
+  Generated C remains byte-identical at
+  `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`;
+  function and whole-tail validation pass. IR/SSA construction rose to 25.118
+  seconds in that run, so the owner reduction is accepted but no whole-process
+  wall-time speedup is claimed. The cache and wiring have 122 focused tests.
 - Request-local Capstone-only block inventory now decodes bounded loaded bytes
   directly and enters the VEX-backed factory only on a typed refusal. An
   initial differential found 24 of 646 boundaries incorrectly crossing
