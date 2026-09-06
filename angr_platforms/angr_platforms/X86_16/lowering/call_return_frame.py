@@ -31,6 +31,10 @@ from ..semantics.call_return_frame_effects import (
     CallReturnFrameEffectRole8616,
     collect_call_return_frame_effects_8616,
 )
+from ..semantics.call_return_frame_projections import (
+    CallReturnFrameProjectionFact8616,
+    CallReturnFrameProjectionRole8616,
+)
 from .runtime_segment_access import runtime_segment_access_space_8616
 
 __all__ = [
@@ -131,6 +135,27 @@ def _lvalue_matches_role_8616(
     return _is_exact_ss_store_projection_lhs_8616(project, codegen, lhs)
 
 
+def _is_exact_value_producer_lhs_8616(lhs: StructuredAstValue) -> bool:
+    """Recognize a side-effect-free C carrier for one exclusive VEX producer."""
+    return isinstance(lhs, (structured_c.CVariable, structured_c.CDirtyExpression))
+
+
+def _producer_relations_are_exact_8616(
+    key: CallReturnFrameEffectKey8616,
+    relations: tuple[CallReturnFrameProjectionFact8616, ...],
+    effects: Mapping[CallReturnFrameEffectKey8616, CallReturnFrameEffectRole8616],
+) -> bool:
+    """Require every projection of one producer to belong to exact frame stores."""
+    return bool(relations) and all(
+        relation.projection_key == key
+        and relation.role is CallReturnFrameProjectionRole8616.VALUE_PRODUCER
+        and relation.store_key.callsite_addr == key.callsite_addr
+        and relation.store_key.vex_block_addr == key.vex_block_addr
+        and effects.get(relation.store_key) is CallReturnFrameEffectRole8616.STACK_STORE
+        for relation in relations
+    )
+
+
 def prune_exact_call_return_frame_projections_8616(
     project: object,
     codegen: StructuredAstValue,
@@ -146,6 +171,18 @@ def prune_exact_call_return_frame_projections_8616(
     )
     surface._inertia_call_return_frame_effect_collection_8616 = collection
     effects = {effect.key: effect.role for effect in collection.effects}
+    producer_relations: dict[
+        CallReturnFrameEffectKey8616,
+        list[CallReturnFrameProjectionFact8616],
+    ] = {}
+    for relation in collection.projection_collection.projections:
+        if relation.role is CallReturnFrameProjectionRole8616.VALUE_PRODUCER:
+            producer_relations.setdefault(relation.projection_key, []).append(relation)
+    refused_producer_keys = {
+        producer_key
+        for refusal in collection.projection_collection.refusals
+        for producer_key in refusal.producer_keys
+    }
     root = surface.cfunc.statements
     if not effects:
         return CallReturnFrameCarrierPrune8616(0, 0, 0, 0, 0)
@@ -163,17 +200,33 @@ def prune_exact_call_return_frame_projections_8616(
                 retained.append(statement)
                 continue
             key = _assignment_effect_key_8616(statement)
-            if key not in effects:
+            relations = tuple(producer_relations.get(key, ())) if key is not None else ()
+            if key not in effects and not relations and key not in refused_producer_keys:
                 retained.append(statement)
                 continue
             raw_count += 1
+            if key is None or key in refused_producer_keys:
+                retained.append(statement)
+                continue
             normalized_count += 1
-            if not _lvalue_matches_role_8616(
-                project,
-                codegen,
-                statement.lhs,
-                effects[key],
-            ):
+            exact_effect = effects.get(key)
+            relation_matches = _producer_relations_are_exact_8616(
+                key,
+                relations,
+                effects,
+            )
+            if exact_effect is not None:
+                lvalue_matches = _lvalue_matches_role_8616(
+                    project,
+                    codegen,
+                    statement.lhs,
+                    exact_effect,
+                )
+            else:
+                lvalue_matches = relation_matches and _is_exact_value_producer_lhs_8616(
+                    statement.lhs
+                )
+            if not lvalue_matches:
                 retained.append(statement)
                 continue
             classified_count += 1

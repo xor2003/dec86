@@ -44,6 +44,7 @@ class CallReturnFrameProjectionRefusalReason8616(StrEnum):
     CYCLIC_DEPENDENCY = "cyclic_dependency"
     CROSS_CALLSITE_DEPENDENCY = "cross_callsite_dependency"
     SHARED_PRODUCER = "shared_producer"
+    NON_FRAME_CONSUMER = "non_frame_consumer"
 
 
 _Reason8616 = CallReturnFrameProjectionRefusalReason8616
@@ -216,6 +217,80 @@ def _dependencies_8616(
     return _DependencyResult8616(tuple(sorted(producers)), None, ())
 
 
+def _read_temporaries_8616(expression_value: object) -> frozenset[int] | None:
+    """Return all VEX temporaries read by one expression, or refuse an opaque tree."""
+    expression = cast(DynamicValue, expression_value)
+    try:
+        tag = expression.tag
+    except AttributeError:
+        return None
+    if tag == "Iex_RdTmp":
+        try:
+            temporary = expression.tmp
+        except AttributeError:
+            return None
+        return frozenset((temporary,)) if _is_int_8616(temporary) else None
+    try:
+        children = tuple(expression.child_expressions)
+    except (AttributeError, TypeError):
+        return None
+    reads: set[int] = set()
+    for child in children:
+        child_reads = _read_temporaries_8616(child)
+        if child_reads is None:
+            return None
+        reads.update(child_reads)
+    return frozenset(reads)
+
+
+def _producer_consumers_8616(
+    vex: DynamicValue,
+    statements: tuple[DynamicValue, ...],
+) -> dict[int, frozenset[int]] | None:
+    """Index every VEX temporary consumer, including the IRSB next expression."""
+    consumers: dict[int, set[int]] = {}
+    for index, statement in enumerate(statements):
+        reads = _read_temporaries_8616(statement)
+        if reads is None:
+            try:
+                tag = statement.tag
+            except AttributeError:
+                return None
+            if tag == "Ist_IMark":
+                reads = frozenset()
+            elif tag == "Ist_WrTmp":
+                reads = _read_temporaries_8616(statement.data)
+            elif tag == "Ist_Store":
+                data_reads = _read_temporaries_8616(statement.data)
+                address = getattr(statement, "addr", None)
+                address_reads = (
+                    frozenset()
+                    if address is None
+                    else _read_temporaries_8616(address)
+                )
+                reads = (
+                    data_reads | address_reads
+                    if data_reads is not None and address_reads is not None
+                    else None
+                )
+        if reads is None:
+            return None
+        for temporary in reads:
+            consumers.setdefault(temporary, set()).add(index)
+    try:
+        next_expression = vex.next
+    except AttributeError:
+        next_expression = None
+    if next_expression is None:
+        return {temporary: frozenset(indices) for temporary, indices in consumers.items()}
+    next_reads = _read_temporaries_8616(next_expression)
+    if next_reads is None:
+        return None
+    for temporary in next_reads:
+        consumers.setdefault(temporary, set()).add(len(statements))
+    return {temporary: frozenset(indices) for temporary, indices in consumers.items()}
+
+
 def _finalize_8616(
     raw_count: int,
     normalized_count: int,
@@ -296,16 +371,27 @@ def collect_call_return_frame_store_projections_8616(
             store_index=store_index,
         )
 
-    stores_by_producer: dict[int, set[int]] = {}
-    for store_index, dependency in dependencies.items():
-        if dependency.reason is None:
-            for producer_index in dependency.producers:
-                stores_by_producer.setdefault(producer_index, set()).add(store_index)
-    shared_by_store: dict[int, set[int]] = {}
-    for producer_index, stores in stores_by_producer.items():
-        if len(stores) > 1:
-            for store_index in stores:
-                shared_by_store.setdefault(store_index, set()).add(producer_index)
+    producer_indices = {
+        producer_index
+        for dependency in dependencies.values()
+        if dependency.reason is None
+        for producer_index in dependency.producers
+    }
+    allowed_consumer_indices = producer_indices | set(dependencies)
+    consumers = _producer_consumers_8616(cast(DynamicValue, vex), statements)
+    non_frame_producers: set[int] = set()
+    for producer_index in producer_indices:
+        try:
+            temporary = statements[producer_index].tmp
+        except (AttributeError, IndexError):
+            non_frame_producers.add(producer_index)
+            continue
+        if (
+            consumers is None
+            or not _is_int_8616(temporary)
+            or not consumers.get(temporary, frozenset()).issubset(allowed_consumer_indices)
+        ):
+            non_frame_producers.add(producer_index)
 
     producer_facts: list[CallReturnFrameProjectionFact8616] = []
     normalized_count = 0
@@ -313,9 +399,14 @@ def collect_call_return_frame_store_projections_8616(
         store_key = CallReturnFrameEffectKey8616(callsite_addr, vex_block_addr, store_index)
         reason = dependency.reason
         implicated = dependency.implicated
-        if reason is None and store_index in shared_by_store:
-            reason = _Reason8616.SHARED_PRODUCER
-            implicated = tuple(sorted(shared_by_store[store_index]))
+        unsafe_producers = tuple(
+            producer_index
+            for producer_index in dependency.producers
+            if producer_index in non_frame_producers
+        )
+        if reason is None and unsafe_producers:
+            reason = _Reason8616.NON_FRAME_CONSUMER
+            implicated = unsafe_producers
         if reason is not None:
             refusals.append(
                 CallReturnFrameProjectionRefusal8616(

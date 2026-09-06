@@ -774,6 +774,14 @@ def _refusal_case(
             _vex_store(_vex_expr("Iex_RdTmp", temporary=1)),
         )
         return SimpleNamespace(statements=statements), (2, 3), CallReturnFrameEffectKey8616(0x100, 0x100, 1), CallReturnFrameProjectionRefusalReason8616.SHARED_PRODUCER
+    if case == "non_frame_consumer":
+        statements = (
+            _vex_imark(0x100),
+            _vex_wrtmp(1, const),
+            _vex_wrtmp(2, _vex_expr("Iex_RdTmp", temporary=1)),
+            _vex_store(_vex_expr("Iex_RdTmp", temporary=1)),
+        )
+        return SimpleNamespace(statements=statements), (3,), CallReturnFrameEffectKey8616(0x100, 0x100, 1), CallReturnFrameProjectionRefusalReason8616.NON_FRAME_CONSUMER
     raise AssertionError(f"unknown refusal case: {case}")
 
 
@@ -801,7 +809,7 @@ def _effect_collection_with_projections(
 
 @pytest.mark.parametrize(
     "case",
-    ("incomplete", "cyclic", "ambiguous", "cross_callsite", "shared"),
+    ("incomplete", "cyclic", "ambiguous", "cross_callsite", "non_frame_consumer"),
 )
 def test_invalid_dependency_ancestry_is_published_as_refusal_and_kept(
     case: str,
@@ -853,6 +861,74 @@ def test_invalid_dependency_ancestry_is_published_as_refusal_and_kept(
         result.stats.failure_count,
     ) == (1, 0, 0, 0, 1)
     assert result.stats.closed
+
+
+def test_shared_producer_exclusive_to_frame_stores_is_published() -> None:
+    vex, store_indices, producer_key, _reason = _refusal_case("shared")
+
+    projections = collect_call_return_frame_store_projections_8616(
+        vex,
+        callsite_addr=0x100,
+        vex_block_addr=0x100,
+        store_statement_indices=store_indices,
+    )
+
+    producer_facts = tuple(
+        fact
+        for fact in projections.projections
+        if fact.projection_key == producer_key
+        and fact.role is CallReturnFrameProjectionRole8616.VALUE_PRODUCER
+    )
+    assert projections.closed
+    assert projections.refusals == ()
+    assert {fact.store_key.vex_stmt_idx for fact in producer_facts} == {2, 3}
+
+
+def test_prunes_shared_indirect_call_return_ip_producer_assignment() -> None:
+    project, function = _project_for_code(b"\xff\xd0")
+    collection = collect_call_return_frame_effects_8616(
+        project,
+        function,
+        {0x100: 0x102},
+    )
+    relations_by_key: dict[CallReturnFrameEffectKey8616, list[CallReturnFrameProjectionFact8616]] = {}
+    for relation in collection.projection_collection.projections:
+        if relation.role is CallReturnFrameProjectionRole8616.VALUE_PRODUCER:
+            relations_by_key.setdefault(relation.projection_key, []).append(relation)
+    producer_key = next(key for key, relations in relations_by_key.items() if len(relations) > 1)
+    codegen = _Codegen()
+    codegen.project = project
+    carrier = CAssignment(
+        CVariable(
+            SimStackVariable(-2, 2, base="bp", name="return_ip", region=0x100),
+            codegen=codegen,
+        ),
+        CConstant(0x102, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": producer_key.callsite_addr,
+            "vex_block_addr": producer_key.vex_block_addr,
+            "vex_stmt_idx": producer_key.vex_stmt_idx,
+        },
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=CStatements([carrier], codegen=codegen),
+    )
+
+    result = prune_exact_call_return_frame_projections_8616(
+        project,
+        codegen,
+        function,
+        {0x100: 0x102},
+    )
+
+    assert codegen.cfunc.statements.statements == []
+    assert result.raw_fact_count == 1
+    assert result.normalized_fact_count == 1
+    assert result.classified_fact_count == 1
+    assert result.materialized_count == 1
+    assert result.failure_count == 0
 
 
 def test_address_only_vex_dependency_is_not_published_and_is_kept(

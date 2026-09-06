@@ -17,7 +17,7 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.analyses.decompiler.structured_codegen.c import CExpression
 from angr.sim_type import SimTypeShort
 
-from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
+from ..c_ast_utils import _replace_c_children_8616
 from .far_pointer_segmented_load_evidence import FarPointerSegmentedLoadEvidence8616
 from .segment_access_policy import instruction_addrs_from_node_8616
 from .stack_frame_projection import entry_sp_offset_for_machine_bp_range_8616
@@ -137,12 +137,29 @@ def _is_materializable_load_shape_8616(node: object, width: int) -> bool:
         return True
     if width != 2 or not isinstance(node, structured_c.CBinaryOp) or node.op != "Or":
         return False
-    dereferences = tuple(
-        child
-        for child in _iter_c_nodes_deep_8616(node)
-        if isinstance(child, structured_c.CUnaryOp) and child.op == "Dereference"
+
+    def _is_byte_load(candidate: object) -> bool:
+        """Recognize one direct byte-load arm through scalar casts only."""
+        while isinstance(candidate, structured_c.CTypeCast):
+            candidate = candidate.expr
+        return isinstance(candidate, structured_c.CUnaryOp) and candidate.op == "Dereference"
+
+    def _is_high_byte(candidate: object) -> bool:
+        """Recognize the exact high-byte load shifted into a 16-bit word."""
+        while isinstance(candidate, structured_c.CTypeCast):
+            candidate = candidate.expr
+        if not isinstance(candidate, structured_c.CBinaryOp) or candidate.op != "Shl":
+            return False
+        shift = candidate.rhs
+        return (
+            _is_byte_load(candidate.lhs)
+            and isinstance(shift, structured_c.CConstant)
+            and shift.value == 8
+        )
+
+    return (_is_byte_load(node.lhs) and _is_high_byte(node.rhs)) or (
+        _is_high_byte(node.lhs) and _is_byte_load(node.rhs)
     )
-    return len(dereferences) == 2
 
 
 def materialize_far_pointer_segmented_loads_8616(
