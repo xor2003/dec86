@@ -2,7 +2,7 @@
 
 Layer: CLI/fallback/reporting orchestration.
 Responsibility: serialize already-owned IR dataclasses, reject unsafe classes,
-and verify deterministic public projections. No semantic recovery occurs here.
+and verify deterministic payload integrity. No semantic recovery occurs here.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import base64
 import hashlib
 import importlib
 import io
-import json
 import pickle
 from collections.abc import Mapping
 from dataclasses import dataclass, is_dataclass
@@ -20,7 +19,7 @@ from enum import Enum
 from angr_platforms.X86_16.ir.function_artifact import IRFunctionArtifact
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
 
-_FUNCTION_IR_SSA_CACHE_SCHEMA_8616: int = 1
+_FUNCTION_IR_SSA_CACHE_SCHEMA_8616: int = 2
 _MAX_PICKLE_BYTES_8616: int = 64 * 1024 * 1024
 _ALLOWED_IR_MODULE_PREFIXES_8616: tuple[str, ...] = (
     "angr_platforms.X86_16.ir.",
@@ -74,17 +73,6 @@ class _RestrictedIRUnpickler8616(pickle.Unpickler):
         return candidate
 
 
-def _projection_digest_8616(bundle: FunctionIRSSABundle8616) -> str:
-    """Return a deterministic digest of both public typed projections."""
-    projection = {"ir": bundle.ir.to_dict(), "ssa": bundle.ssa.to_dict()}
-    encoded = json.dumps(
-        projection,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def function_ir_ssa_bundle_record_8616(
     bundle: FunctionIRSSABundle8616,
 ) -> dict[str, object]:
@@ -99,7 +87,6 @@ def function_ir_ssa_bundle_record_8616(
         "function_addr": bundle.ir.function_addr,
         "payload": base64.b64encode(payload).decode("ascii"),
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
-        "projection_sha256": _projection_digest_8616(bundle),
     }
 
 
@@ -133,8 +120,6 @@ def function_ir_ssa_bundle_from_record_8616(
     bundle = FunctionIRSSABundle8616(ir, ssa)
     if not bundle.coherent or ir.function_addr != function_addr:
         raise ValueError("function IR/SSA cache artifacts are incoherent")
-    if _projection_digest_8616(bundle) != record.get("projection_sha256"):
-        raise ValueError("function IR/SSA cache projection digest disagrees")
     return bundle
 
 

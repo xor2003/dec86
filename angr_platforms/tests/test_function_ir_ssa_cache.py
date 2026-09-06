@@ -174,6 +174,7 @@ def test_function_ir_ssa_codec_is_deterministic_and_round_trips(
     restored = load_function_ir_ssa_cache_8616(cache_key, function.addr)
 
     assert first_record == second_record
+    assert "projection_sha256" not in first_record
     assert stored.verdict is FunctionIRSSACacheVerdict8616.STORED
     assert restored.verdict is FunctionIRSSACacheVerdict8616.HIT
     assert restored.bundle == bundle
@@ -184,11 +185,23 @@ def test_function_ir_ssa_cache_rejects_class_outside_ir_ownership(
 ) -> None:
     payload = pickle.dumps(eval, protocol=5)
     record = {
-        "schema": 1,
+        "schema": 2,
         "payload": base64.b64encode(payload).decode("ascii"),
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
-        "projection_sha256": "invalid",
     }
+    monkeypatch.setattr(ir_ssa_cache, "_load_cache_json", lambda *_args: record)
+
+    result = load_function_ir_ssa_cache_8616({}, 0x1000)
+
+    assert result.verdict is FunctionIRSSACacheVerdict8616.REFUSED
+    assert result.failure is FunctionIRSSACacheFailure8616.MALFORMED_ENTRY
+
+
+def test_function_ir_ssa_cache_rejects_payload_digest_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = function_ir_ssa_bundle_record_8616(_bundle(0x1000))
+    record["payload_sha256"] = "invalid"
     monkeypatch.setattr(ir_ssa_cache, "_load_cache_json", lambda *_args: record)
 
     result = load_function_ir_ssa_cache_8616({}, 0x1000)

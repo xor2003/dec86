@@ -244,6 +244,8 @@ def test_function_cache_key_ignores_non_semantic_runtime_environment(monkeypatch
     monkeypatch.setenv("INERTIA_ALLOW_PARALLEL_MSC6_WORKERS", "0")
     monkeypatch.setenv("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "1.5")
     monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "0")
+    monkeypatch.setenv("INERTIA_CORE_CPROFILE_PATH", str(tmp_path / "first.prof"))
+    monkeypatch.setenv("INERTIA_DECOMPILE_VENV", "0")
     monkeypatch.setenv("INERTIA_DISABLE_TIMING", "0")
     first_key = cache_module._function_decompilation_cache_key(**key_args)
     monkeypatch.setenv("INERTIA_SERIAL_CLEAN_WORKER_RESULT", str(tmp_path / "second.json"))
@@ -251,6 +253,8 @@ def test_function_cache_key_ignores_non_semantic_runtime_environment(monkeypatch
     monkeypatch.setenv("INERTIA_ALLOW_PARALLEL_MSC6_WORKERS", "1")
     monkeypatch.setenv("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "4")
     monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "1")
+    monkeypatch.setenv("INERTIA_CORE_CPROFILE_PATH", str(tmp_path / "second.prof"))
+    monkeypatch.setenv("INERTIA_DECOMPILE_VENV", "1")
     monkeypatch.setenv("INERTIA_DISABLE_TIMING", "1")
     second_key = cache_module._function_decompilation_cache_key(**key_args)
 

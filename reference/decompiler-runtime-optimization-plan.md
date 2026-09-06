@@ -404,6 +404,28 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   the profiler's process-total comparison. Strict file gates, 93 focused
   frontend/callsite tests, 1,906 curated fast-pipeline tests, and all three
   external quality constructs pass.
+- Semantic cache identity now excludes the execution-only
+  `INERTIA_DECOMPILE_VENV` handoff marker and the diagnostic-only
+  `INERTIA_CORE_CPROFILE_PATH`. Before the fix, the profiled `sub_109e8`
+  request spent 36 seconds before the binary report and 58.29 seconds wall
+  because it built a separate IR/SSA and Alias cache family. After one normal
+  population, the profiled variant reached the binary report in about one
+  second and finished in 31.19 seconds despite larger core-profile overhead;
+  direct venv execution reused the same family, finished in 13.99 seconds, and
+  emitted byte-identical C at
+  `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`.
+  Function and whole-tail validation pass, and 45 focused cache tests preserve
+  semantic-environment invalidation.
+- Function IR/SSA persistence no longer computes a second whole-artifact JSON
+  projection digest from the same pickle payload. Exact payload hashing,
+  restricted owned-class unpickling, function identity, and IR/SSA coherence
+  checks remain mandatory. The previous cold profile attributed 5.282 of
+  13.174 record-encoding seconds to that duplicate traversal. On the same
+  representative 1.28 MiB bundle, current record construction measured 0.371
+  seconds median while the removed projection traversal alone measured 0.609
+  seconds median. A forced 20-function rebuild preserved the accepted C hash
+  and both validation gates; its whole-path wall remained load-variable, so no
+  end-to-end ratio is claimed.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -415,12 +437,12 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P0 | Current shared tree fails `sub_109e8` validation identically with direct block decoding enabled or forcibly refused | Focused output is partial because unresolved stack locals leak into final C | Semantic performance candidates cannot close their validation DoD until concurrent lowering/return changes restore the baseline |
-| P1 | Structuring validation priming costs 3.72 seconds in the accepted warm profile | Large functions still pay repeated semantic consumer work | Raw IR and frontend condition relifting are eliminated when complete evidence closes; direct-stack and segment/global consumers still replay sequentially |
-| P1 | Cold indexed Alias/Widening context construction spends 16.9 seconds building the complete function-artifact census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Capstone-only helper relifts are removed; bounded per-function fork work did not repeatably beat serial construction, so the next gain must reduce or accelerate complete typed IR/SSA work without raw-cache evidence loss |
+| P1 | Structuring validation priming measured 1.49 seconds in the current instrumented live run | Large functions still pay repeated semantic consumer work | All three direct-stack replays and all three segment/global replays were productive on `sub_109e8`; the next skip needs a narrower authoritative mutation impact, not call-order memoization |
+| P1 | Cold indexed Alias/Widening context construction still spends about 18 seconds between recovered-catalog and binary-ready reports on a forced current rebuild | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Duplicate execution-environment cache families and 5.282 profiled seconds of redundant persistence traversal are removed; typed IR import, SSA construction, pickle encoding, and Alias/Widening remain |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
+| P2 | Persistent cache storage is unbounded; the current cache occupies about 1.7 GiB, including 1.3 GiB of function IR/SSA records | No semantic defect, but stale generations consume disk and increase maintenance cost | Any eviction policy must avoid a directory scan on every write and remain race-safe across workers |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
 | P2 | A current fresh full-CLI import costs about 4.25 seconds across 2,961 modules | Every uncached CLI invocation has a fixed startup cost | No removable module owns more than 0.10 seconds self-time; the earlier 14.06-second observation was load-contaminated, so import refactoring is lower priority than repeated lifting |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |
