@@ -302,6 +302,33 @@ def test_parameter_lowering_materializes_proven_wide_body_argument(
     assert codegen._inertia_wide_stack_argument_width_evidence_8616.materialized_count == 1
 
 
+def test_parameter_lowering_grows_storage_when_wide_type_is_already_correct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Make the physical owner cover every byte proven by body widening."""
+    project, codegen, function = _short_parameter_fixture()
+    wide_type = SimTypeLong(False).with_arch(project.arch)
+    prototype = SimTypeFunction(
+        [wide_type],
+        SimTypeShort(False).with_arch(project.arch),
+        arg_names=("wait",),
+    ).with_arch(project.arch)
+    function.prototype = prototype
+    codegen.cfunc.functy = prototype
+    codegen.cfunc.arg_list[0].variable_type = wide_type
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_wide_stack_argument_width_evidence_8616",
+        lambda _project, _function: WideStackArgumentWidthEvidence8616(1, 1, (4,)),
+    )
+
+    changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
+
+    assert changed is True
+    assert codegen.cfunc.arg_list[0].variable.size == 4
+    assert codegen._inertia_wide_stack_argument_width_evidence_8616.materialized_count == 1
+
+
 def test_parameter_lowering_refuses_conflicting_body_and_callsite_widths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

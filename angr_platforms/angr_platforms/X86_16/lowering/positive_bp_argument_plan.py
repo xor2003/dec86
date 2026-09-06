@@ -10,7 +10,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 from __future__ import annotations
 
 from collections.abc import Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from angr.analyses.decompiler.structured_codegen.c import CVariable
@@ -53,26 +53,39 @@ def complete_positive_bp_body_word_access_plan_8616(
     word_access_offsets: Collection[int],
     *,
     default_argument_type: SimType,
+    wide_access_offsets: Collection[int] = (),
 ) -> tuple[PositiveBpArgumentPlanEntry8616, ...]:
-    """Complete one contiguous body plan from exact decoded word accesses.
+    """Complete one contiguous body plan from decoded word and wide accesses.
 
     Existing typed entries remain authoritative. A missing slot is synthesized
     only when the binary contains an exact word access at the current ABI
-    cursor; the first gap ends recovery.
+    cursor; widening-proven adjacent words become one four-byte owner. The first
+    gap ends recovery.
     """
     entries_by_offset = {entry.bp_offset: entry for entry in body_entries}
     accesses = frozenset(offset for offset in word_access_offsets if offset >= 4)
+    wide_accesses = frozenset(
+        offset for offset in wide_access_offsets if offset >= 4
+    )
     completed: list[PositiveBpArgumentPlanEntry8616] = []
     cursor = 4
-    while cursor in entries_by_offset or cursor in accesses:
+    while (
+        cursor in entries_by_offset
+        or cursor in accesses
+        or cursor in wide_accesses
+    ):
         entry = entries_by_offset.get(cursor)
         if entry is None:
             entry = PositiveBpArgumentPlanEntry8616(
                 bp_offset=cursor,
-                width=2,
+                width=4 if cursor in wide_accesses else 2,
                 name=f"arg_{cursor:x}",
                 argument_type=default_argument_type,
             )
+        elif cursor in wide_accesses:
+            if entry.width not in {2, 4}:
+                break
+            entry = replace(entry, width=4)
         if entry.width < 2 or entry.width % 2:
             break
         completed.append(entry)

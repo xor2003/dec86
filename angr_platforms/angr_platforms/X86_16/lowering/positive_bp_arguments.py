@@ -20,13 +20,17 @@ from angr.sim_type import (
     SimTypeChar,
     SimTypeFunction,
     SimTypeInt,
+    SimTypeLong,
     SimTypePointer,
     SimTypeShort,
 )
 from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
-from ..calling_convention_compat import collect_bp_word_stack_access_offsets_8616
+from ..calling_convention_compat import (
+    collect_bp_word_stack_access_offsets_8616,
+    collect_wide_stack_argument_width_evidence_8616,
+)
 from .authoritative_function_prototypes import (
     authoritative_function_prototype_8616,
     publish_authoritative_function_prototype_8616,
@@ -199,6 +203,17 @@ def _argument_type_for_proven_stack_width_8616(
     proven_width: int | None,
 ) -> SimType:
     """Apply an exact decoded stack-access width to one scalar argument type."""
+    if (
+        proven_width == 4
+        and isinstance(argument_type, SimTypeInt)
+        and not isinstance(argument_type, SimTypeLong)
+    ):
+        wide_type = SimTypeLong(argument_type.signed)
+        try:
+            project_dynamic = cast(Any, project)
+            return cast(SimType, wide_type.with_arch(project_dynamic.arch))
+        except AttributeError:
+            return wide_type
     if proven_width == 2 and isinstance(argument_type, SimTypeChar):
         word_type = SimTypeShort(argument_type.signed)
         try:
@@ -261,6 +276,14 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
         else ()
     )
     word_access_ranges = frozenset((offset, 2) for offset in word_access_offsets)
+    wide_argument_offsets = frozenset(
+        collect_wide_stack_argument_width_evidence_8616(
+            project,
+            function,
+        ).classified_offsets
+        if function is not None
+        else ()
+    )
     try:
         if typed_codegen._inertia_return_selector_materialized_8616:
             return False
@@ -317,8 +340,14 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
     for cvar in existing_arg_list:
         collect(cvar, body=False)
 
-    raw_count = sum(len(bucket) for bucket in candidates.values()) + len(word_access_offsets)
-    normalized_count = len(set(candidates).union(word_access_offsets))
+    raw_count = (
+        sum(len(bucket) for bucket in candidates.values())
+        + len(word_access_offsets)
+        + len(wide_argument_offsets)
+    )
+    normalized_count = len(
+        set(candidates).union(word_access_offsets, wide_argument_offsets)
+    )
     read_offsets = _stack_variable_read_offsets_8616(cfunc.statements)
     try:
         project_arch = cast(Any, project).arch
@@ -424,6 +453,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             tuple(body_plan_entries),
             eligible_word_access_offsets,
             default_argument_type=SimTypeShort(False),
+            wide_access_offsets=wide_argument_offsets,
         )
     )
     candidate_count = len(body_plan_entries)
@@ -593,8 +623,9 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             project,
             argument_type,
             proven_width=(
-                2
+                entry.width
                 if entry.bp_offset in word_access_offsets
+                or entry.bp_offset in wide_argument_offsets
                 else None
             ),
         )

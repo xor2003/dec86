@@ -1053,7 +1053,11 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
                 failed,
             )
         )
-        if materialized and variable.size != exact_width:
+        if (
+            not failed
+            and reconciled_width == exact_width
+            and variable.size != exact_width
+        ):
             variable.size = exact_width
             changed = True
         previous_end = canonical_offset + exact_width

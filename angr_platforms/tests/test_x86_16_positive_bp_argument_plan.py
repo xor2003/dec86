@@ -314,6 +314,27 @@ def test_body_word_access_plan_refuses_to_bridge_binary_gap() -> None:
     assert tuple((entry.bp_offset, entry.width) for entry in completed) == ((4, 2),)
 
 
+def test_body_word_access_plan_coalesces_widening_proven_adjacent_words() -> None:
+    word = SimTypeShort(False)
+    entries = tuple(
+        PositiveBpArgumentPlanEntry8616(offset, 2, name, word)
+        for offset, name in ((4, "left_low"), (6, "left_high"), (8, "right"))
+    )
+
+    completed = complete_positive_bp_body_word_access_plan_8616(
+        entries,
+        (4, 6, 8),
+        default_argument_type=word,
+        wide_access_offsets=(4,),
+    )
+
+    assert tuple((entry.bp_offset, entry.width) for entry in completed) == (
+        (4, 4),
+        (8, 2),
+    )
+    assert tuple(entry.name for entry in completed) == ("left_low", "right")
+
+
 def test_positive_bp_pointer_class_join_preserves_existing_pointee() -> None:
     arch = Arch86_16()
     byte_pointer = near_pointer_type_8616(SimTypeChar(False).with_arch(arch), arch)
