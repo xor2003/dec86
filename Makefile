@@ -54,6 +54,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py \
 	inertia_decompiler/cache.py \
+	inertia_decompiler/cache_file_digest.py \
 	inertia_decompiler/cache_source_manifest.py \
 	inertia_decompiler/function_ir_ssa_source_scope.py \
 	inertia_decompiler/decompile_file_summary.py \

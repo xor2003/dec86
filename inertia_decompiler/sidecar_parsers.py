@@ -11,6 +11,7 @@ import re
 import struct
 import tempfile
 import typing
+from bisect import bisect_right
 from functools import lru_cache
 from pathlib import Path
 from typing import Protocol, cast
@@ -51,6 +52,11 @@ _IDA_LST_PROC_RE = re.compile(
     r"^(?P<seg>[A-Za-z_]\w*):(?P<off>[0-9A-Fa-f]{4,5})\s+(?P<name>[A-Za-z_$?@][\w$?@]*)\s+proc\b",
     re.IGNORECASE,
 )
+_IDA_LST_ENDP_RE = re.compile(
+    r"^(?P<seg>[A-Za-z_]\w*):(?P<off>[0-9A-Fa-f]{4,5})\s+(?P<name>[A-Za-z_$?@][\w$?@]*)\s+endp\b",
+    re.IGNORECASE,
+)
+_IDA_LST_ADDR_RE = re.compile(r"^(?P<seg>[A-Za-z_]\w*):(?P<off>[0-9A-Fa-f]{4,5})\b")
 _IDC_SET_NAME_RE = re.compile(r"set_name\s*\(\s*0X([0-9A-Fa-f]+)\s*,\s*\"([^\"]+)\"", re.IGNORECASE)
 _INC_STRUCT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s+struc\b")
 _MZRE_SEGMENT_RE = re.compile(r"^([A-Za-z_]\w*)\s+(CODE|DATA|STACK)\s+([0-9A-Fa-f]+)$", re.IGNORECASE)
@@ -174,6 +180,51 @@ def _parse_ida_lst_proc_metadata(
         linear = load_base_linear + segment_offsets[segment_name] + offset
         code_labels.setdefault(linear, match.group("name").lstrip("_"))
     return code_labels
+
+
+def _parse_ida_lst_proc_ranges(
+    lst_path: Path,
+    *,
+    load_base_linear: int,
+    segment_offsets: dict[str, int],
+) -> dict[int, tuple[int, int]]:
+    """Return exact IDA ``proc``/``endp`` ranges in linear address space."""
+    lines = lst_path.read_text(errors="ignore").splitlines()
+    offsets_by_segment: dict[str, set[int]] = {}
+    for line in lines:
+        match = _IDA_LST_ADDR_RE.match(line.strip())
+        if match is not None:
+            offsets_by_segment.setdefault(match.group("seg"), set()).add(int(match.group("off"), 16))
+    ordered_offsets = {segment: sorted(offsets) for segment, offsets in offsets_by_segment.items()}
+
+    starts: dict[tuple[str, str], int] = {}
+    ranges: dict[int, tuple[int, int]] = {}
+    for line in lines:
+        stripped = line.strip()
+        proc_match = _IDA_LST_PROC_RE.match(stripped)
+        if proc_match is not None:
+            starts[(proc_match.group("seg"), proc_match.group("name").lstrip("_"))] = int(
+                proc_match.group("off"), 16
+            )
+            continue
+        endp_match = _IDA_LST_ENDP_RE.match(stripped)
+        if endp_match is None:
+            continue
+        segment = endp_match.group("seg")
+        if segment not in segment_offsets:
+            continue
+        key = (segment, endp_match.group("name").lstrip("_"))
+        start_offset = starts.pop(key, None)
+        if start_offset is None:
+            continue
+        endp_offset = int(endp_match.group("off"), 16)
+        offsets = ordered_offsets.get(segment, ())
+        next_index = bisect_right(offsets, endp_offset)
+        end_offset = offsets[next_index] if next_index < len(offsets) else endp_offset + 1
+        segment_base = load_base_linear + segment_offsets[segment]
+        start = segment_base + start_offset
+        ranges[start] = (start, segment_base + end_offset)
+    return ranges
 
 
 def _parse_idc_metadata(idc_path: Path) -> tuple[dict[int, str], dict[int, str]]:

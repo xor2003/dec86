@@ -356,6 +356,7 @@ def _replace_c_children_8616(
         "callee_target",
         "else_node",
         "retval",
+        "stmts",
     )
     list_attrs = ("args", "operands", "statements")
 

@@ -880,29 +880,30 @@ def _pick_function_lean(
             raise KeyError(f"Function {target_addr:#x} was not recovered by CFGFast.")
 
         function = cfg.functions[target_addr]
-        if extend_far_calls and project.arch.name == "86_16":
-            extended_cfg = cast(
-                _AngrCfg,
-                extend_cfg_for_far_calls(
-                    project,
-                    function,
-                    entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
-                ),
-            )
-            if extended_cfg is not None and target_addr in extended_cfg.functions:
-                cfg = extended_cfg
-                function = cfg.functions[target_addr]
-            extended_cfg = cast(
-                _AngrCfg,
-                extend_cfg_for_neighbor_calls(
-                    project,
-                    function,
-                    entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
-                ),
-            )
-            if extended_cfg is not None and target_addr in extended_cfg.functions:
-                cfg = extended_cfg
-                function = cfg.functions[target_addr]
+        if project.arch.name == "86_16":
+            if extend_far_calls:
+                extended_cfg = cast(
+                    _AngrCfg,
+                    extend_cfg_for_far_calls(
+                        project,
+                        function,
+                        entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+                    ),
+                )
+                if extended_cfg is not None and target_addr in extended_cfg.functions:
+                    cfg = extended_cfg
+                    function = cfg.functions[target_addr]
+                extended_cfg = cast(
+                    _AngrCfg,
+                    extend_cfg_for_neighbor_calls(
+                        project,
+                        function,
+                        entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+                    ),
+                )
+                if extended_cfg is not None and target_addr in extended_cfg.functions:
+                    cfg = extended_cfg
+                    function = cfg.functions[target_addr]
             patch_interrupt_service_call_sites(function, _dynamic_attr(project.loader.main_object, "binary", None))
         if seed_calling_conventions_enabled:
             seed_calling_conventions(cfg)

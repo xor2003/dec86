@@ -15,6 +15,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import cast
 
+from inertia_decompiler.cache_file_digest import (
+    cache_content_fingerprint_8616,
+    cache_file_digest_8616,
+    cache_file_fingerprint_8616,
+)
 from inertia_decompiler.cache_io import load_cache_json_path, store_cache_json_path
 from inertia_decompiler.cache_lock import cache_path_lock
 from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_8616
@@ -164,37 +169,18 @@ DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = tuple(
 
 
 def _cache_sha256_file(path: Path) -> str:
-    """Return a streamed content digest for one cache input file."""
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """Return an exact content digest with bounded process-local reuse."""
+    return cache_file_digest_8616(path).sha256
 
 
 def _cache_file_fingerprint(path: Path | None) -> dict[str, object] | None:
-    if path is None:
-        return None
-    try:
-        resolved = path.resolve()
-        stat = resolved.stat()
-        content_sha256 = _cache_sha256_file(resolved)
-    except OSError:
-        return None
-    return {
-        "path": str(resolved),
-        "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-        "sha256": content_sha256,
-    }
+    """Preserve the cache module's path-qualified fingerprint contract."""
+    return cache_file_fingerprint_8616(path)
 
 
 def _cache_content_fingerprint(path: Path | None) -> dict[str, object] | None:
-    """Return path-independent identity for content-addressed cache inputs."""
-    fingerprint = _cache_file_fingerprint(path)
-    if fingerprint is None:
-        return None
-    return {key: fingerprint[key] for key in ("size", "sha256")}
+    """Preserve the cache module's path-independent fingerprint contract."""
+    return cache_content_fingerprint_8616(path)
 
 
 def is_non_semantic_cache_environment_name(name: str) -> bool:

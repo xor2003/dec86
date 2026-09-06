@@ -2183,6 +2183,11 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         "prune_dead_flag_assignments_after_structuring_8616",
         dead_flag_cleanup,
     )
+    monkeypatch.setattr(
+        stage,
+        "lower_architectural_gp_register_state_8616",
+        lambda *_args, **_kwargs: calls.append("gp-state") or False,
+    )
     stage._prime_structuring_validation_semantics_8616(project, codegen)
 
     assert calls == [
@@ -2209,6 +2214,7 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         "widening",
         "carrier-prune",
         "dead-flags",
+        "gp-state",
     ]
     assert codegen._inertia_structuring_validation_semantics_primed is True
 

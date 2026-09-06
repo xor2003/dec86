@@ -98,6 +98,7 @@ from .lowering.direct_stack_replay import (
 )
 from .lowering.explicit_char_types import materialize_explicit_scalar_char_types_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from .lowering.gp_register_state import lower_architectural_gp_register_state_8616
 from .lowering.indexed_address_collector_parity import (
     collect_indexed_address_collector_parity_8616,
 )
@@ -2632,6 +2633,10 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
             codegen,
         )
         changed = late_flag_cleanup.changed or changed
+        # The late FLAGS owner can retain or restore angr's pointer-shaped
+        # high-byte register views inside packed-FLAGS expressions. Reconsume
+        # those typed GP projections before the validation baseline is frozen.
+        changed = lower_architectural_gp_register_state_8616(codegen) or changed
         # Publish the callsite materialization contract before any per-pass
         # validation baseline is captured. Rebased direct slices can otherwise
         # expose complete generated calls while leaving validation with only

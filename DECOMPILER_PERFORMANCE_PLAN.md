@@ -130,6 +130,18 @@ function and whole-tail validation passed. Missing or malformed cache evidence
 is opportunistic only and cannot turn valid transported Widening evidence into
 a decompilation failure.
 
+Exact file fingerprints now reuse SHA-256 digests for unchanged file generations
+within a bounded process-local memo. Device, inode, size, `mtime`, and `ctime`
+admit reuse only; persisted keys remain content-addressed, and pre/post-read
+identity checks retry or refuse concurrent mutation. Three fingerprints of the
+47.9 MiB signature catalog improved from 0.592 seconds to 0.159 seconds (73.2%
+isolated), with one physical read instead of three. A sidecar-free `sub_109e8`
+acceptance run completed in 27.32 seconds, emitted the established C SHA-256
+`caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`,
+and passed function plus whole-tail validation. No end-to-end percentage is
+claimed because unrelated shared-worktree changes landed between reference and
+acceptance runs.
+
 Cache-focused and indexed-Alias integration tests pass, and
 `architecture-check-fast` passes. The latest broad pipeline reached 1,911
 passing tests but failed three stack-argument recovery tests; all three failures

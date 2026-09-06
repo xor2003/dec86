@@ -11,6 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CDirtyExpression,
     CReturn,
+    CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
@@ -295,6 +296,84 @@ def test_gp_runtime_state_projects_casted_addressed_bh_view() -> None:
 
     assert lower_architectural_gp_register_state_8616(codegen) is True
     view = runtime_gp_expression_view_8616(codegen.cfunc.statements)
+    assert view is not None
+    assert view.register_name == "bh"
+
+
+def test_gp_runtime_state_reconciles_late_raw_bh_with_owned_ebx_lane() -> None:
+    """An existing runtime EBX lane owns later raw SSA subviews on replay."""
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        _inertia_function_ssa_artifacts_8616={},
+        _inertia_function_ssa_stages_8616={},
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    runtime_ebx = CVariable(
+        SimMemoryVariable(
+            0x1000C,
+            4,
+            name="inertia_ebx",
+            category="inertia_gp_register_state",
+        ),
+        variable_type=SimTypeLong(False),
+        codegen=codegen,
+    )
+    bx_offset, bx_size = project.arch.registers["bx"]
+    bx = CVariable(
+        SimRegisterVariable(bx_offset, bx_size, ident="bx_3", region=0x1AF_CF),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    casted_bh = CUnaryOp(
+        "Dereference",
+        CTypeCast(
+            None,
+            SimTypeLong(False),
+            CBinaryOp(
+                "Add",
+                CTypeCast(
+                    None,
+                    SimTypeLong(False),
+                    CUnaryOp("Reference", bx, codegen=codegen),
+                    codegen=codegen,
+                ),
+                CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1AF_CF,
+        statements=CStatements(
+            [
+                CAssignment(
+                    runtime_ebx,
+                    CConstant(0, SimTypeLong(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    bx,
+                    CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CReturn(casted_bh, codegen=codegen),
+            ],
+            codegen=codegen,
+        ),
+        unified_local_vars={},
+    )
+
+    assert gp_live_in_names_from_c_ast_8616(codegen.cfunc.statements, project) == frozenset()
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    view = runtime_gp_expression_view_8616(codegen.cfunc.statements.statements[-1].retval)
     assert view is not None
     assert view.register_name == "bh"
 

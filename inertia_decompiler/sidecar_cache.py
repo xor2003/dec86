@@ -37,7 +37,7 @@ _SOURCE_FORMAT_DROP_TOKENS = {
     "local_pat",
     "peer_exe",
 }
-_SIDECAR_METADATA_PARSER_CACHE_VERSION = 12
+_SIDECAR_METADATA_PARSER_CACHE_VERSION = 13
 
 type PayloadSequence = tuple[object, ...]
 type PayloadPairs = tuple[tuple[object, object], ...]

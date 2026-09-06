@@ -1205,9 +1205,31 @@ def collect_interrupt_calls(
                 else:
                     regs["dx"] = (None, None)
 
-        for block_addr in sorted(_dynamic_analysis_getattr_8616(function, "block_addrs_set", ())):
-            block = project.factory.block(block_addr, opt_level=0)
-            for ins in block.capstone.insns:
+        block_sizes: dict[int, int] = {}
+        graph = _dynamic_analysis_getattr_8616(function, "transition_graph", None)
+        if graph is not None:
+            for node in tuple(_dynamic_analysis_getattr_8616(graph, "nodes", ())):
+                node_addr = _dynamic_analysis_getattr_8616(node, "addr", None)
+                node_size = _dynamic_analysis_getattr_8616(node, "size", None)
+                if isinstance(node_addr, int) and isinstance(node_size, int) and node_size > 0:
+                    block_sizes[node_addr] = node_size
+        block_addrs = {
+            *(
+                addr
+                for addr in _dynamic_analysis_getattr_8616(function, "block_addrs_set", ())
+                if isinstance(addr, int)
+            ),
+            *block_sizes,
+        }
+        for block_addr in sorted(block_addrs):
+            block_size = block_sizes.get(block_addr)
+            if block_size is None:
+                block = project.factory.block(block_addr, opt_level=0)
+            else:
+                block = project.factory.block(block_addr, size=block_size, opt_level=0)
+            block_bytes = bytes(_dynamic_analysis_getattr_8616(block, "bytes", b""))
+            capstone_engine = cast(Any, project).arch.capstone
+            for ins in capstone_engine.disasm(block_bytes, block_addr):
                 operands = _dynamic_analysis_getattr_8616(ins, "operands", ())
                 if ins.mnemonic == "mov" and len(operands) == 2:
                     dst, src = operands

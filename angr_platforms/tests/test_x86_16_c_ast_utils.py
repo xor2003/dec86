@@ -6,6 +6,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CExpressionStatement,
+    CMultiStatementExpression,
     CStatements,
     CVariable,
 )
@@ -147,3 +148,24 @@ def test_replace_c_children_only_reads_declared_child_slots() -> None:
     assert changed is True
     assert root.lhs is replacement
     assert root.rhs_read_count == 0
+
+
+def test_replace_c_children_descends_into_multi_statement_expression() -> None:
+    """Replacement must reach statements embedded in comma expressions."""
+    codegen = _DummyCodegen()
+    original = CConstant(1, SimTypeShort(False), codegen=codegen)
+    replacement = CConstant(2, SimTypeShort(False), codegen=codegen)
+    embedded = CExpressionStatement(original, codegen=codegen)
+    root = CMultiStatementExpression(
+        CStatements([embedded], codegen=codegen),
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    changed = _replace_c_children_8616(
+        root,
+        lambda node: replacement if node is original else node,
+    )
+
+    assert changed is True
+    assert embedded.expr is replacement

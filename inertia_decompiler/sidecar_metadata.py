@@ -39,6 +39,7 @@ from inertia_decompiler.sidecar_parsers import (
     _detect_flair_metadata,
     _parse_cod_sidecar_metadata,
     _parse_ida_lst_proc_metadata,
+    _parse_ida_lst_proc_ranges,
     _parse_ida_map_metadata,
     _parse_idc_metadata,
     _parse_inc_struct_names,
@@ -231,6 +232,13 @@ def _load_lst_sidecar(
             if ida_proc_labels:
                 code_labels.update(ida_proc_labels)
                 function_entry_addrs.update(ida_proc_labels)
+                code_ranges.update(
+                    _parse_ida_lst_proc_ranges(
+                        lst_path,
+                        load_base_linear=load_base_linear,
+                        segment_offsets=segment_offsets,
+                    )
+                )
                 source_formats.append("ida_lst")
         except Exception as exc:
             print(f"[dbg] failed to parse IDA proc listing {lst_path}: {exc}")

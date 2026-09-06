@@ -641,6 +641,14 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
     if resolution.verdict is FunctionSSAArtifactVerdict8616.PROVEN and resolution.artifact is not None:
         live_ins.update(gp_live_in_names_from_ssa_8616(resolution.artifact))
     live_ins.update(gp_live_in_names_from_c_ast_8616(cfunc.statements, project))
+    state_owned_names = set(live_ins)
+    state_owned_names.update(
+        register_name
+        for node in _iter_c_nodes_deep_8616(cfunc.statements)
+        if isinstance(node, structured_c.CVariable)
+        for register_name in (runtime_gp_name_for_variable_8616(node.variable),)
+        if register_name is not None
+    )
     raw_ids: set[int] = set()
     materialized_ids: set[int] = set()
 
@@ -650,7 +658,7 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
         if high_byte_view is not None:
             register_name, carrier = high_byte_view
             raw_ids.add(id(node))
-            if register_name not in live_ins:
+            if register_name not in state_owned_names:
                 return node
             materialized_ids.add(id(node))
             record_global_declaration_spec_8616(
@@ -693,7 +701,7 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
                 )
             if lhs_projection is not None:
                 register_name, bit_shift, view_width = lhs_projection
-                if register_name in live_ins and view_width < 4:
+                if register_name in state_owned_names and view_width < 4:
                     raw_ids.add(id(lhs))
                     materialized_ids.add(id(lhs))
                     record_global_declaration_spec_8616(
@@ -728,7 +736,7 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
             return node
         register_name, bit_shift, view_width = projection
         raw_ids.add(id(node))
-        if register_name not in live_ins:
+        if register_name not in state_owned_names:
             return node
         materialized_ids.add(id(node))
         record_global_declaration_spec_8616(
@@ -758,7 +766,7 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
         for variable in tuple(unified_local_vars):
             if isinstance(variable, SimRegisterVariable):
                 projection = _register_projection_for_shape_8616(project, variable.reg, variable.size)
-                if projection is not None and projection[0] in live_ins:
+                if projection is not None and projection[0] in state_owned_names:
                     del unified_local_vars[variable]
                     changed = True
     classified = len(materialized_ids)

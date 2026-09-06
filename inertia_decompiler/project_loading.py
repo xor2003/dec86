@@ -315,6 +315,7 @@ _build_project_cached = cast(
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
     arch = Arch86_16()
     arch.bits = max(arch.bits, 32)
+    arch.cs_mode = Arch86_16.cs_mode
     return _finalize_x86_16_project(
         angr.Project(
             io.BytesIO(code),

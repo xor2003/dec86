@@ -2443,6 +2443,35 @@ def test_pick_function_lean_can_extend_traced_neighbor_calls(monkeypatch):
     assert patched == [extended_func]
 
 
+def test_pick_function_lean_patches_interrupts_without_far_call_extension(monkeypatch):
+    function = SimpleNamespace(addr=0x1000)
+    cfg = SimpleNamespace(functions={0x1000: function})
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+        analyses=SimpleNamespace(CFGFast=lambda **_kwargs: cfg),
+    )
+    patched: list[object] = []
+    monkeypatch.setattr(
+        decompile,
+        "patch_interrupt_service_call_sites",
+        lambda patched_function, *_args, **_kwargs: patched.append(patched_function),
+    )
+
+    result_cfg, result_function = decompile._pick_function_lean(
+        project,
+        0x1000,
+        regions=[(0x1000, 0x1080)],
+        extend_far_calls=False,
+        seed_calling_conventions_enabled=False,
+    )
+
+    assert result_cfg is cfg
+    assert result_function is function
+    assert patched == [function]
+
+
 @requires_life_binary
 def test_find_codeview_nb00_detects_life_exe():
     found = find_codeview_nb00(LIFE_EXE.read_bytes())
@@ -14828,6 +14857,46 @@ def test_format_sidecar_function_catalog_omits_signature_matched_functions():
 
     assert "real_func" in formatted
     assert "sig_func" not in formatted
+
+
+def test_parse_ida_lst_proc_ranges_excludes_foreign_function_chunk(tmp_path):
+    listing = tmp_path / "sample.lst"
+    listing.write_text(
+        "\n".join(
+            (
+                "seg000:0DBA sub_10DBA proc near",
+                "seg000:0E30 mov ax, 4C00h",
+                "seg000:0E33 int 21h",
+                "seg000:0E33 sub_10DBA endp",
+                "seg000:0E35 loc_10E35: call sub_16546",
+                "seg000:0E85 sub_10E85 proc near",
+            )
+        )
+    )
+
+    ranges = sidecar_metadata._parse_ida_lst_proc_ranges(
+        listing,
+        load_base_linear=0x10000,
+        segment_offsets={"seg000": 0},
+    )
+
+    assert ranges[0x10DBA] == (0x10DBA, 0x10E35)
+
+
+def test_build_project_from_bytes_keeps_real_mode_capstone_defaults():
+    project = decompile._build_project_from_bytes(
+        b"\xb8\x00\x4c\xcd\x21",
+        base_addr=0x1000,
+        entry_point=0x0,
+    )
+
+    instructions = tuple(project.arch.capstone.disasm(b"\xb8\x00\x4c\xcd\x21", 0x1000))
+
+    assert project.arch.bits == 32
+    assert [(instruction.mnemonic, instruction.op_str) for instruction in instructions] == [
+        ("mov", "ax, 0x4c00"),
+        ("int", "0x21"),
+    ]
 
 
 def test_extract_lst_metadata_supports_uasm_proc_ranges_from_snake_listing():

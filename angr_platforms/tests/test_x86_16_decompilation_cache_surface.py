@@ -1,10 +1,13 @@
+import hashlib
 import os
 from pathlib import Path
 
 import pytest
 
 import inertia_decompiler.cache as cache_module
+import inertia_decompiler.cache_file_digest as cache_file_digest_module
 from inertia_decompiler.cache import DECOMPILATION_CACHE_SOURCE_FILES, _cache_file_fingerprint
+from inertia_decompiler.cache_file_digest import clear_cache_file_digest_memo_8616
 from inertia_decompiler.cache_source_manifest import (
     FUNCTION_DISCOVERY_CACHE_SOURCE_FILES,
     INDEXED_ALIAS_PROGRAM_CACHE_SOURCE_FILES,
@@ -162,6 +165,57 @@ def test_binary_cache_fingerprint_changes_for_same_size_and_mtime_content(tmp_pa
     assert first["size"] == second["size"]
     assert first["mtime_ns"] == second["mtime_ns"]
     assert first["sha256"] != second["sha256"]
+
+
+def test_binary_cache_fingerprint_reuses_one_stable_content_read(monkeypatch, tmp_path: Path):
+    binary = tmp_path / "SORTD.EXE"
+    binary.write_bytes(b"stable-content")
+    original_stream_sha256 = cache_file_digest_module._stream_sha256_8616
+    physical_reads: list[Path] = []
+
+    def record_stream_sha256(stream):
+        physical_reads.append(binary)
+        return original_stream_sha256(stream)
+
+    clear_cache_file_digest_memo_8616()
+    monkeypatch.setattr(cache_file_digest_module, "_stream_sha256_8616", record_stream_sha256)
+    try:
+        first = _cache_file_fingerprint(binary)
+        second = _cache_file_fingerprint(binary)
+    finally:
+        clear_cache_file_digest_memo_8616()
+
+    assert first == second
+    assert physical_reads == [binary]
+
+
+def test_binary_cache_fingerprint_retries_content_mutation_during_read(monkeypatch, tmp_path: Path):
+    binary = tmp_path / "SORTD.EXE"
+    first_content = b"first-content"
+    final_content = b"other-content"
+    binary.write_bytes(first_content)
+    original_stat = binary.stat()
+    original_stream_sha256 = cache_file_digest_module._stream_sha256_8616
+    mutated = False
+
+    def mutate_after_read(stream):
+        nonlocal mutated
+        sha256 = original_stream_sha256(stream)
+        if not mutated:
+            mutated = True
+            binary.write_bytes(final_content)
+            os.utime(binary, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        return sha256
+
+    clear_cache_file_digest_memo_8616()
+    monkeypatch.setattr(cache_file_digest_module, "_stream_sha256_8616", mutate_after_read)
+    try:
+        fingerprint = _cache_file_fingerprint(binary)
+    finally:
+        clear_cache_file_digest_memo_8616()
+
+    assert fingerprint is not None
+    assert fingerprint["sha256"] == hashlib.sha256(final_content).hexdigest()
 
 
 def test_function_cache_key_reuses_equivalent_binary_at_different_paths(tmp_path: Path):
