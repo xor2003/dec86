@@ -50,6 +50,7 @@ from .compiler_helpers import (
     is_x86_16_registered_stack_probe_target_8616,
     is_x86_16_stack_probe_name_8616,
 )
+from .frontend_block_inventory import decoded_block_instructions_8616
 from .frontend_caller_return_use_program import (
     CallerReturnUseProgramStatus8616,
     build_caller_return_use_program_evidence_8616,
@@ -982,11 +983,12 @@ def _block_insns_for_callsite(function: object, callsite_addr: int) -> tuple[obj
 
         for block_addr in reversed(candidate_addrs):
             try:
-                block = project.factory.block(block_addr, opt_level=0)
+                insns = tuple(
+                    decoded_block_instructions_8616(project, block_addr, opt_level=0)
+                )
             except Exception as ex:
                 log.debug("callsite block decode failed block=%#x: %s", block_addr, ex)
                 continue
-            insns = tuple(_dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(block, "capstone", None), "insns", ()) or ())
             _debug_insns(f"factory-block start={block_addr:#x}", insns)
             call_idx = _find_call_index(insns, callsite_addr)
             if call_idx is not None and call_idx > 0:
@@ -1010,11 +1012,12 @@ def _next_linear_block_insns(function: object, callsite_addr: int) -> tuple[obje
     candidate_addrs = sorted(addr for addr in (_dynamic_callsite_getattr_8616(function, "block_addrs_set", ()) or ()) if addr > callsite_addr)
     for block_addr in candidate_addrs:
         try:
-            block = project.factory.block(block_addr, opt_level=0)
+            insns = tuple(
+                decoded_block_instructions_8616(project, block_addr, opt_level=0)
+            )
         except Exception as ex:
             log.debug("callsite next block decode failed block=%#x: %s", block_addr, ex)
             continue
-        insns = tuple(_dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(block, "capstone", None), "insns", ()) or ())
         if insns:
             return insns
     return ()
@@ -1430,11 +1433,19 @@ def _filter_callee_saved_frame_pushes_8616(
     widths: tuple[int, ...],
     sources: tuple[_CallsiteTuple8616 | None, ...],
     instruction_addrs: tuple[int, ...],
+    request_cache: CallsiteSummaryRequestCache8616 | None,
 ) -> tuple[tuple[int, ...], tuple[_CallsiteTuple8616 | None, ...], tuple[int, ...]]:
     """Remove only push/pop-proven frame saves from physical call arguments."""
     if not widths or len(widths) != len(sources) or len(widths) != len(instruction_addrs):
         return widths, sources, instruction_addrs
-    frame_push_addrs = _callee_saved_frame_push_addresses_8616(function)
+    frame_push_addrs = (
+        _callee_saved_frame_push_addresses_8616(function)
+        if request_cache is None
+        else request_cache.callee_saved_frame_pushes(
+            function,
+            lambda: _callee_saved_frame_push_addresses_8616(function),
+        )
+    )
     if not frame_push_addrs:
         return widths, sources, instruction_addrs
     kept = tuple(index for index, address in enumerate(instruction_addrs) if address not in frame_push_addrs)
@@ -2838,12 +2849,12 @@ def _extend_follow_insns_through_direct_jumps_8616(
             continue
         decoded_targets.add(target)
         try:
-            block = project.factory.block(target, opt_level=0)
+            target_insns = tuple(
+                decoded_block_instructions_8616(project, target, opt_level=0)
+            )
         except Exception as ex:
             log.debug("return-use jump target decode failed target=%#x: %s", target, ex)
             continue
-        raw_target_insns = _dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(block, "capstone", None), "insns", None)
-        target_insns = tuple(raw_target_insns) if isinstance(raw_target_insns, tuple | list) else ()
         if not target_insns:
             continue
         existing_addrs = {_instruction_address_8616(insn) for insn in expanded}
@@ -3577,6 +3588,7 @@ def summarize_x86_16_callsite(
             raw_arg_widths,
             raw_arg_sources,
             raw_push_instruction_addrs,
+            request_cache,
         )
         if (
             predecessor_stack_merge is None

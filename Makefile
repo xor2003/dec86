@@ -3046,6 +3046,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_return_compat_counters.py \
 	angr_platforms/tests/test_x86_16_frontend_function_boundary_index.py \
 	angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py \
+	angr_platforms/tests/test_x86_16_callsite_block_inventory_reuse.py \
 	angr_platforms/tests/test_x86_16_analysis_helper_direct_blocks.py \
 	angr_platforms/tests/test_x86_16_stitched_direct_blocks.py \
 	angr_platforms/tests/test_cli_decompilation_render_refresh.py \
@@ -3090,6 +3091,7 @@ QA_PYTEST_TARGETS += \
 	angr_platforms/tests/test_build_msc6_artifact_names.py \
 	angr_platforms/tests/test_x86_16_call_argument_carrier_liveness.py \
 	angr_platforms/tests/test_x86_16_callee_saved_frame.py \
+	angr_platforms/tests/test_x86_16_callsite_block_inventory_reuse.py \
 	angr_platforms/tests/test_x86_16_canonical_frame_carriers.py \
 	angr_platforms/tests/test_x86_16_canonical_frame_setup_carriers.py \
 	angr_platforms/tests/test_x86_16_cod_extract_control_flow.py \

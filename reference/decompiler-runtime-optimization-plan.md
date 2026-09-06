@@ -339,20 +339,19 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   and both validation gates passed, but the speedup did not repeat. Serial
   therefore remains the default; `INERTIA_INDEXED_ALIAS_WORKERS` is explicit
   opt-in evidence gathering for larger function censuses.
-- Complete project callsite collection now builds one immutable typed target
-  inventory per recovered function and supplies it to every summary. This
-  removes the summary's per-callsite fallback target enumeration while keeping
-  standalone summary fallback intact. A two-callsite regression proves one
-  function enumeration and one shared complete inventory. A request-local
-  Semantics cache also reuses complete and refused terminal-cleanup evidence
-  only inside that immutable census; closed SORTD accounting reduced 47 cleanup
-  requests to 14 builds plus 33 reuses (70% of builds removed). Standalone and
-  later requests still recompute refusals. A same-tree cache-on/off pair emitted
-  byte-identical C at
-  `f4b9c76a0cce4c322d19ab866a57941d89db9e30c1c69f6a5043fe11df5b310a`
-  with function and whole-tail validation passing. Wall was 31.47 seconds on
-  versus 30.32 off, so this is accepted only as a local work reduction; no
-  end-to-end speedup is claimed.
+- Complete project callsite collection builds one immutable typed target
+  inventory per function and now keeps terminal-cleanup plus callee-save facts
+  in its request-local Semantics cache. Exact containing, next, and direct-jump
+  blocks consume the existing Frontend block inventory; sized linear windows
+  retain their distinct fail-closed factory fallback. On the current
+  sidecar-free SORTD `sub_109e8` profile, the first two routes reduced callsite
+  summarization from 6.441 to 3.265 seconds, containing-block lookup from 1.311
+  to 0.023 seconds, and next-block lookup from 2.596 to 0.007 seconds. The later
+  direct-jump and callee-save reuse has focused cache/wiring coverage but awaits
+  an isolated profile because another decompiler batch occupies the machine.
+  The shared tree already failed portable-flat recompilation on signed-char
+  array subscripts before this change, so no end-to-end semantic acceptance or
+  wall-time speedup is claimed from that red baseline.
 - Request-local Capstone-only block inventory now decodes bounded loaded bytes
   directly and enters the VEX-backed factory only on a typed refusal. An
   initial differential found 24 of 646 boundaries incorrectly crossing

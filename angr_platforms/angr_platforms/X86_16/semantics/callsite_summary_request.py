@@ -1,8 +1,8 @@
 """Retain callsite semantic lookups for one immutable summary cohort.
 
 Layer: Semantics.
-Responsibility: reuse exact terminal stack-cleanup evidence, including typed
-refusals, only while one complete recovered function catalog is summarized.
+Responsibility: reuse exact terminal stack-cleanup and callee-save evidence,
+including typed refusals, only while one complete recovered function catalog is summarized.
 Nothing in this request-local cache survives later discovery or project
 mutation.
 
@@ -70,11 +70,15 @@ class CallsiteSummaryRequestStats8616:
 
 @dataclass(slots=True)
 class CallsiteSummaryRequestCache8616:
-    """Cache exact cleanup evidence during one immutable summary request."""
+    """Cache exact callsite semantics during one immutable summary request."""
 
     _cleanup_by_key: dict[
         tuple[CallsiteCleanupProjectRole8616, int],
         TerminalStackCleanupEvidence8616,
+    ] = field(default_factory=dict)
+    _frame_pushes_by_function_identity: dict[
+        int,
+        tuple[object, frozenset[int]],
     ] = field(default_factory=dict)
     _raw_fact_count: int = 0
     _build_count: int = 0
@@ -107,6 +111,32 @@ class CallsiteSummaryRequestCache8616:
         self._cleanup_by_key[key] = evidence
         self._build_count += 1
         return evidence
+
+    def callee_saved_frame_pushes(
+        self,
+        function: object,
+        collector: Callable[[], frozenset[int]],
+    ) -> frozenset[int]:
+        """Return one function's proven frame pushes, collecting them once."""
+        self._raw_fact_count += 1
+        key = id(function)
+        cached = self._frame_pushes_by_function_identity.get(key)
+        if cached is not None and cached[0] is function:
+            self._reuse_count += 1
+            return cached[1]
+        try:
+            addresses = collector()
+        except Exception:
+            self._failure_count += 1
+            raise
+        if not isinstance(addresses, frozenset) or any(
+            not isinstance(address, int) or address < 0 for address in addresses
+        ):
+            self._failure_count += 1
+            raise TypeError("callee-saved frame pushes must be nonnegative integers")
+        self._frame_pushes_by_function_identity[key] = (function, addresses)
+        self._build_count += 1
+        return addresses
 
     def stats(self) -> CallsiteSummaryRequestStats8616:
         """Return validated closed accounting for this request."""
