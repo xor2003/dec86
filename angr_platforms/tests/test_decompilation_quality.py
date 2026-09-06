@@ -11,8 +11,11 @@ from angr_platforms.X86_16.quality import (
 )
 
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_final_generated_c_text
+from scripts import benchmark_optimization_quality_guard as quality_guard
 from scripts.benchmark_optimization_quality_guard import (
+    DecompileMode,
     _disable_repo_extension_modules,
+    _execution_modes_are_equivalent,
     _iter_repo_extension_modules,
 )
 
@@ -47,15 +50,11 @@ def test_quality_guard_scopes_and_restores_python_extensions(tmp_path) -> None:
         path.write_bytes(path.name.encode())
     stale_neighbor.write_bytes(b"stale")
 
-    assert _iter_repo_extension_modules(tmp_path) == (
-        cache_extension,
-        package_extension,
-        root_extension,
-    )
+    assert _iter_repo_extension_modules(tmp_path) == (package_extension, root_extension)
     with _disable_repo_extension_modules(tmp_path):
         assert not root_extension.exists()
         assert not package_extension.exists()
-        assert not cache_extension.exists()
+        assert cache_extension.exists()
         assert unrelated_library.exists()
         assert stale_neighbor.read_bytes() == b"stale"
 
@@ -64,6 +63,84 @@ def test_quality_guard_scopes_and_restores_python_extensions(tmp_path) -> None:
     assert cache_extension.exists()
     assert unrelated_library.exists()
     assert stale_neighbor.read_bytes() == b"stale"
+
+
+def test_quality_guard_reuses_modes_only_without_importable_extensions(tmp_path) -> None:
+    cache_extension = tmp_path / ".cache" / "mypyc" / "lib" / f"cached{EXTENSION_SUFFIXES[0]}"
+    cache_extension.parent.mkdir(parents=True)
+    cache_extension.write_bytes(b"cached")
+
+    assert _execution_modes_are_equivalent(
+        DecompileMode.PURE_PYTHON,
+        DecompileMode.DEFAULT,
+        tmp_path,
+    )
+
+    active_extension = tmp_path / "inertia_decompiler" / f"active{EXTENSION_SUFFIXES[0]}"
+    active_extension.parent.mkdir(parents=True)
+    active_extension.write_bytes(b"active")
+    assert not _execution_modes_are_equivalent(
+        DecompileMode.PURE_PYTHON,
+        DecompileMode.DEFAULT,
+        tmp_path,
+    )
+    assert _execution_modes_are_equivalent(
+        DecompileMode.DEFAULT,
+        DecompileMode.DEFAULT,
+        tmp_path,
+    )
+
+
+@pytest.mark.parametrize(
+    ("active_extension", "expected_modes"),
+    (
+        (False, (DecompileMode.DEFAULT,)),
+        (True, (DecompileMode.PURE_PYTHON, DecompileMode.DEFAULT)),
+    ),
+)
+def test_quality_guard_executes_only_distinct_import_surfaces(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    active_extension: bool,
+    expected_modes: tuple[DecompileMode, ...],
+) -> None:
+    if active_extension:
+        extension = tmp_path / "inertia_decompiler" / f"active{EXTENSION_SUFFIXES[0]}"
+        extension.parent.mkdir(parents=True)
+        extension.write_bytes(b"active")
+
+    observed_modes: list[DecompileMode] = []
+    metrics = measure_x86_16_codegen_quality_8616("void f(void) {}", function_name="f")
+    artifact = quality_guard.FunctionArtifact(
+        function_addr=0x1000,
+        function_name="f",
+        source_path=tmp_path / "f.c",
+        quality=metrics,
+    )
+
+    def fake_run_decompile(
+        *,
+        mode: DecompileMode,
+        request: quality_guard.DecompileRunRequest,
+    ) -> quality_guard.DecompileRunResult:
+        observed_modes.append(mode)
+        return quality_guard.DecompileRunResult(
+            mode=mode,
+            command=(str(request.python_executable),),
+            returncode=0,
+            wall_seconds=1.0,
+            validation=quality_guard.ValidationStatus.PASSED,
+            artifacts=(artifact,),
+        )
+
+    monkeypatch.setattr(quality_guard, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(quality_guard, "_run_decompile", fake_run_decompile)
+
+    assert quality_guard.main([str(tmp_path / "sample.exe")]) == 0
+    assert tuple(observed_modes) == expected_modes
+    output = capsys.readouterr().out
+    assert ("decompiled once" in output) is (not active_extension)
 
 
 def test_quality_guard_restores_python_extensions_after_exception(tmp_path) -> None:

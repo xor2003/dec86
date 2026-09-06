@@ -1,15 +1,17 @@
-"""Incremental cache ownership for isolated mypyc developer builds.
+"""Mypyc build and import-artifact ownership for developer tooling.
 
 Layer: Tooling/gates.
-Responsibility: reconcile mypyc schema and module-cohort changes without
-discarding unrelated valid native artifacts.
+Responsibility: reconcile mypyc schema and module-cohort changes, and isolate
+only native artifacts that can participate in project imports.
 """
 
 from __future__ import annotations
 
 import importlib.machinery
+import os
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,47 @@ class MypycBuildCacheLayout:
     def cache_root(self) -> Path:
         """Return the absolute cache root."""
         return self.repo_root / self.cache_dir
+
+
+def iter_importable_project_extensions(repo_root: Path) -> tuple[Path, ...]:
+    """List project extensions reachable through normal source-package imports."""
+    search_roots = (
+        repo_root / "inertia_decompiler",
+        repo_root / "angr_platforms" / "angr_platforms",
+    )
+    candidates = set(repo_root.glob("*.so"))
+    for search_root in search_roots:
+        if search_root.is_dir():
+            candidates.update(search_root.rglob("*.so"))
+    suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    return tuple(sorted(path for path in candidates if path.name.endswith(suffixes)))
+
+
+@contextmanager
+def disable_importable_project_extensions(repo_root: Path) -> Iterator[None]:
+    """Temporarily park importable project extensions and restore every file."""
+    modules = iter_importable_project_extensions(repo_root)
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for index, path in enumerate(modules):
+            parked = path.with_name(f".{path.name}.pure-python-{os.getpid()}-{index}")
+            if parked.exists():
+                raise FileExistsError(f"pure-Python extension parking path exists: {parked}")
+            path.replace(parked)
+            moved.append((parked, path))
+        yield
+    finally:
+        conflicts: list[Path] = []
+        for parked, original in reversed(moved):
+            if not parked.exists():
+                continue
+            if original.exists():
+                conflicts.append(original)
+                continue
+            parked.replace(original)
+        if conflicts:
+            paths = ", ".join(str(path) for path in sorted(conflicts))
+            raise FileExistsError(f"cannot restore parked Python extensions: {paths}")
 
 
 def _read_lines(path: Path) -> tuple[str, ...]:

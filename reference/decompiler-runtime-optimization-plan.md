@@ -474,6 +474,17 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   deliberately invalidates all file verdicts and therefore retains a slower
   one-time cold rebuild. Seventy-four focused tests plus changed-file Ruff,
   strict mypy, and the fast architecture gate pass.
+- The optimization quality guard now distinguishes importable in-place mypyc
+  extensions from isolated build-cache artifacts. When `default` and
+  `pure_python` have the same active import surface, it runs decompilation once
+  and compares two typed result views; an active extension still requires two
+  independent executions. Cached `.cache/mypyc/lib` artifacts are no longer
+  renamed despite being unreachable from the normal decompiler import path.
+  On the current failing CMP16 shared-tree snapshot, guard wall time fell from
+  26.95 to 11.88 seconds (55.9%) while preserving the same return-code,
+  function-count, and validation failures. Twenty-eight focused tests, Ruff,
+  strict mypy, type ratchet, startup architecture, context, and ownership gates
+  pass; no semantic decompiler acceptance is claimed from the failing snapshot.
 - Pytest target validation now builds only selector and skip/xfail structure;
   assertion, subprocess, and evidence facts are memoized on first inventory
   access. The 74-file profiled index path fell from 2.208 to 1.244 seconds

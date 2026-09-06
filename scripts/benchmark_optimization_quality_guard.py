@@ -18,10 +18,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
-from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -32,6 +30,13 @@ from angr_platforms.X86_16.quality import (  # noqa: E402
     X86_16QualityMetrics,
     measure_x86_16_codegen_quality_8616,
     measure_x86_16_function_quality_8616,
+)
+
+from scripts.mypyc_build_cache import (  # noqa: E402
+    disable_importable_project_extensions as _disable_repo_extension_modules,
+)
+from scripts.mypyc_build_cache import (  # noqa: E402
+    iter_importable_project_extensions as _iter_repo_extension_modules,
 )
 
 DECOMPILE_SCRIPT: Path = REPO_ROOT / "decompile.py"
@@ -61,6 +66,18 @@ class FunctionArtifact:
     function_name: str
     source_path: Path
     quality: X86_16QualityMetrics
+
+
+@dataclass(frozen=True, slots=True)
+class DecompileRunRequest:
+    """Own immutable inputs shared by both quality-guard execution modes."""
+
+    binary_path: Path
+    decompiler_args: tuple[str, ...]
+    timeout_seconds: float
+    output_dir_root: Path
+    python_executable: Path
+    repo_root: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,68 +187,35 @@ def _collect_function_artifacts(
     return tuple(artifacts)
 
 
-def _iter_repo_extension_modules(repo_root: Path) -> tuple[Path, ...]:
-    """List importable project Python extensions that can skew comparisons."""
-    search_roots = (
-        repo_root / "inertia_decompiler",
-        repo_root / "angr_platforms" / "angr_platforms",
-        repo_root / ".cache" / "mypyc" / "lib",
-    )
-    candidates = set(repo_root.glob("*.so"))
-    for search_root in search_roots:
-        if search_root.is_dir():
-            candidates.update(search_root.rglob("*.so"))
-    suffixes = tuple(EXTENSION_SUFFIXES)
-    return tuple(sorted(path for path in candidates if path.name.endswith(suffixes)))
-
-
-@contextlib.contextmanager
-def _disable_repo_extension_modules(repo_root: Path) -> Iterator[None]:
-    """Temporarily park project Python extensions and restore every file."""
-    modules = _iter_repo_extension_modules(repo_root)
-    moved: list[tuple[Path, Path]] = []
-    try:
-        for index, path in enumerate(modules):
-            parked = path.with_name(f".{path.name}.pure-python-{os.getpid()}-{index}")
-            if parked.exists():
-                raise FileExistsError(f"pure-Python extension parking path exists: {parked}")
-            path.replace(parked)
-            moved.append((parked, path))
-        yield
-    finally:
-        conflicts: list[Path] = []
-        for parked, original in reversed(moved):
-            if not parked.exists():
-                continue
-            if original.exists():
-                conflicts.append(original)
-                continue
-            parked.replace(original)
-        if conflicts:
-            paths = ", ".join(str(path) for path in sorted(conflicts))
-            raise FileExistsError(f"cannot restore parked Python extensions: {paths}")
+def _execution_modes_are_equivalent(
+    baseline_mode: DecompileMode,
+    candidate_mode: DecompileMode,
+    repo_root: Path,
+) -> bool:
+    """Return whether both requests execute the same active Python import surface."""
+    if baseline_mode is candidate_mode:
+        return True
+    compared_modes = frozenset((baseline_mode, candidate_mode))
+    if compared_modes != frozenset((DecompileMode.DEFAULT, DecompileMode.PURE_PYTHON)):
+        return False
+    return not _iter_repo_extension_modules(repo_root)
 
 
 def _run_decompile(
     *,
     mode: DecompileMode,
-    binary_path: Path,
-    decompiler_args: tuple[str, ...],
-    timeout_seconds: float,
-    output_dir_root: Path,
-    python_executable: Path,
-    repo_root: Path,
+    request: DecompileRunRequest,
 ) -> DecompileRunResult:
     """Run one decompiler mode and materialize evidence artifacts."""
-    temp_dir = Path(tempfile.mkdtemp(prefix="vextest-opt-guard-", dir=str(output_dir_root)))
-    decompiler_args = _normalize_decompiler_args(decompiler_args)
+    temp_dir = Path(tempfile.mkdtemp(prefix="vextest-opt-guard-", dir=str(request.output_dir_root)))
+    decompiler_args = _normalize_decompiler_args(request.decompiler_args)
     run_output_dir = temp_dir / "generated_c"
     run_output_dir.mkdir(parents=True, exist_ok=True)
 
     command: list[str] = [
-        str(python_executable),
+        str(request.python_executable),
         str(DECOMPILE_SCRIPT),
-        str(binary_path),
+        str(request.binary_path),
         *decompiler_args,
         "--output-c-dir",
         str(run_output_dir),
@@ -245,7 +229,7 @@ def _run_decompile(
     start = time.perf_counter()
     context: contextlib.AbstractContextManager[None]
     if mode is DecompileMode.PURE_PYTHON:
-        context = _disable_repo_extension_modules(repo_root)
+        context = _disable_repo_extension_modules(request.repo_root)
     else:
         context = contextlib.nullcontext()
 
@@ -255,9 +239,9 @@ def _run_decompile(
             capture_output=True,
             text=True,
             env=env,
-            timeout=timeout_seconds,
+            timeout=request.timeout_seconds,
             check=False,
-            cwd=str(repo_root),
+            cwd=str(request.repo_root),
         )
     wall_seconds = time.perf_counter() - start
 
@@ -476,8 +460,7 @@ def main(argv: list[str] | None = None) -> int:
     output_root = tempfile.mkdtemp(prefix="vextest-opt-guard-out-")
     output_root_path = Path(output_root)
     try:
-        baseline = _run_decompile(
-            mode=args.baseline_mode,
+        run_request = DecompileRunRequest(
             binary_path=args.binary,
             decompiler_args=decompiler_args,
             timeout_seconds=args.mode_timeout,
@@ -485,16 +468,23 @@ def main(argv: list[str] | None = None) -> int:
             python_executable=args.python,
             repo_root=REPO_ROOT,
         )
-
-        candidate = _run_decompile(
-            mode=args.candidate_mode,
-            binary_path=args.binary,
-            decompiler_args=decompiler_args,
-            timeout_seconds=args.mode_timeout,
-            output_dir_root=output_root_path,
-            python_executable=args.python,
-            repo_root=REPO_ROOT,
+        reused_execution = _execution_modes_are_equivalent(
+            args.baseline_mode,
+            args.candidate_mode,
+            REPO_ROOT,
         )
+        if reused_execution:
+            execution_mode = (
+                DecompileMode.DEFAULT
+                if DecompileMode.DEFAULT in (args.baseline_mode, args.candidate_mode)
+                else args.baseline_mode
+            )
+            shared_result = _run_decompile(mode=execution_mode, request=run_request)
+            baseline = replace(shared_result, mode=args.baseline_mode)
+            candidate = replace(shared_result, mode=args.candidate_mode)
+        else:
+            baseline = _run_decompile(mode=args.baseline_mode, request=run_request)
+            candidate = _run_decompile(mode=args.candidate_mode, request=run_request)
 
         passed, regressions = _compare_quality(
             baseline,
@@ -515,6 +505,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - {line}")
         else:
             print("[gate] quality gate passed: candidate quality is not worse than baseline")
+        if reused_execution:
+            print("[gate] execution modes share one active import surface; decompiled once")
 
         speed_delta = candidate.wall_seconds - baseline.wall_seconds
         speed_ratio = candidate.wall_seconds / baseline.wall_seconds if baseline.wall_seconds > 0 else float("inf")
