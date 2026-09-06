@@ -126,6 +126,15 @@ _JCC_COMPARE_MASK_TESTS_8616: dict[str, tuple[int, bool]] = {
     "jpo": (0x4, False),
 }
 
+_JCC_BLOCK_ENTRY_CARRY_TESTS_8616: dict[str, tuple[int, bool]] = {
+    "jb": (0x1, True),
+    "jc": (0x1, True),
+    "jnae": (0x1, True),
+    "jae": (0x1, False),
+    "jnb": (0x1, False),
+    "jnc": (0x1, False),
+}
+
 _INVERT_CMP_OP_8616: dict[str, str] = {
     "CmpEQ": "CmpNE",
     "CmpNE": "CmpEQ",
@@ -145,6 +154,7 @@ class _DecodedCmpGuard8616:
     op: str
     expr: object | None = None
     consumed_branch_keys: tuple[tuple[int, int], ...] = ()
+    status_output_proven: bool = False
 
 
 class _JccPolarityEvidence8616(Enum):
@@ -1404,7 +1414,7 @@ def _decode_block_and_jcc_index_8616(
             _log.warning("[jcc-rewrite] block decode failed block=%#x jcc=%#x", block_addr, jcc_addr)
         return None, None
     jcc_index = next((idx for idx, insn in enumerate(insns) if int(insn.address) == int(jcc_addr)), None)
-    if jcc_index is None or jcc_index == 0:
+    if jcc_index is None:
         if debug_jcc:
             _log.warning(
                 "[jcc-rewrite] jcc index missing block=%#x jcc=%#x insn_count=%d", block_addr, jcc_addr, len(insns)
@@ -1449,6 +1459,52 @@ def _decode_mask_test_guard_8616(
         ),
         rhs=_const_8616(0, codegen),
         op=("CmpNE" if is_set else "CmpEQ"),
+    )
+
+
+def _decode_block_entry_carry_guard_8616(
+    project: Any,
+    codegen: Any,
+    jcc_mnemonic: str,
+) -> _DecodedCmpGuard8616 | None:
+    """Decode a carry JCC whose flag producer belongs to a predecessor block."""
+    test = _JCC_BLOCK_ENTRY_CARRY_TESTS_8616.get(jcc_mnemonic)
+    flags_offset = _reg_offset_8616(project, "flags")
+    status_stats = getattr(
+        codegen,
+        "_inertia_software_interrupt_status_output_stats_8616",
+        None,
+    )
+    if (
+        test is None
+        or flags_offset is None
+        or int(getattr(status_stats, "materialized_count", 0) or 0) <= 0
+    ):
+        return None
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    status_carriers = tuple(
+        node.lhs
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CAssignment)
+        and isinstance(node.lhs, CVariable)
+        and isinstance(getattr(node, "tags", None), dict)
+        and node.tags.get("inertia_software_interrupt_status_output_8616") is True
+        and isinstance(node.lhs.variable, SimRegisterVariable)
+        and node.lhs.variable.reg == flags_offset
+    )
+    if len(status_carriers) != 1:
+        return None
+    bitmask, is_set = test
+    return _DecodedCmpGuard8616(
+        lhs=CBinaryOp(
+            "And",
+            status_carriers[0],
+            _const_8616(bitmask, codegen),
+            codegen=codegen,
+        ),
+        rhs=_const_8616(0, codegen),
+        op="CmpNE" if is_set else "CmpEQ",
+        status_output_proven=True,
     )
 
 
@@ -1905,6 +1961,14 @@ def _translate_cmp_jcc_guard_8616(
         mask_decoded = _decode_mask_test_guard_8616(project, codegen, jcc_mnemonic, block_addr, jcc_addr, debug_jcc)
         if mask_decoded is not None:
             return mask_decoded
+        if jcc_index == 0:
+            entry_carry_decoded = _decode_block_entry_carry_guard_8616(
+                project,
+                codegen,
+                jcc_mnemonic,
+            )
+            if entry_carry_decoded is not None:
+                return entry_carry_decoded
 
         cmp_insn = _nearest_flag_producer_before_jcc_8616(insns, jcc_index)
         if cmp_insn is None:
@@ -2950,7 +3014,10 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
             # treat it as materialized. Exception: a compare sourced from an
             # unstable positive BP placeholder is weaker evidence than a decoded
             # JCC guard whose operands are stable BP-local stack slots.
-            if _has_materialized_nonflag_cmp_8616(cond):
+            if _has_materialized_nonflag_cmp_8616(cond) and not _c_expr_uses_register_8616(
+                cond,
+                flags_offset,
+            ):
                 if not _expr_uses_unstable_positive_stack_arg_placeholder_8616(cond):
                     if not _decoded_guard_uses_raw_state_register_8616(decoded):
                         _record_decoded_guard_fingerprint_8616(decoded)
@@ -3092,7 +3159,10 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                         planned_signature,
                     )
                 return None
-            if _decoded_guard_uses_raw_state_register_8616(decoded):
+            if (
+                _decoded_guard_uses_raw_state_register_8616(decoded)
+                and not decoded.status_output_proven
+            ):
                 should_count_refusal = True
                 if isinstance(key, tuple):
                     should_count_refusal = narrowed_key not in raw_state_refused_keys
@@ -3215,7 +3285,16 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
             key = _condition_tags_8616(node)
             if isinstance(key, tuple) and key in unknown_polarity_refused_keys:
                 return node
-            changed_in_place = _replace_c_children_8616(node, _replace_tagged_condition)
+
+            def _replace_nested_condition(child: object) -> object:
+                nested_replacement = _rewrite_condition(child)
+                return child if nested_replacement is None else nested_replacement
+
+            # _replace_c_children_8616 already owns a cycle-aware iterative
+            # subtree walk. Recursing from its transform callback makes every
+            # ancestor traverse the same descendants again, which is
+            # exponential for deeply nested lifted flag expressions.
+            changed_in_place = _replace_c_children_8616(node, _replace_nested_condition)
             if changed_in_place:
                 changed = True
             return node

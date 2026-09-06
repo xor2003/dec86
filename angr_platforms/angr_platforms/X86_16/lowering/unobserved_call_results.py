@@ -27,7 +27,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CUnaryOp,
 )
-from angr.sim_type import SimTypeBottom
+from angr.sim_type import SimType, SimTypeBottom
 
 from ..analysis_helpers import (
     InterruptServiceResultKind8616,
@@ -44,7 +44,12 @@ from .callsite_prototype_declarations import (
     CallsiteCResultContract8616,
     CallsiteCResultKind8616,
 )
+from .gp_register_state import runtime_gp_expression_view_8616
 from .physical_registers import physical_register_view_8616
+from .structured_intrinsics import (
+    is_structured_insert_intrinsic_8616,
+    lower_structured_insert_call_8616,
+)
 
 __all__ = (
     "UnobservedCallResultLoweringStats8616",
@@ -161,10 +166,55 @@ def _is_proven_unobserved_ax_result_8616(
     return view is not None and view.reg_offset == 0 and view.width in {2, 4}
 
 
-def _projected_call_result_8616(node: object) -> CFunctionCall | None:
-    """Return the sole call in an exact generated wide-result projection."""
+@dataclass(frozen=True, slots=True)
+class _ProjectedCallResult8616:
+    """One call effect and any independent value retained by its projection."""
+
+    call: CFunctionCall
+    residual: object | None = None
+
+
+def _insert_projection_without_call_result_8616(
+    node: CFunctionCall,
+) -> _ProjectedCallResult8616 | None:
+    """Split an Insert whose base call result is proven disposable later."""
+    if not is_structured_insert_intrinsic_8616(node):
+        return None
+    raw_args = node.args
+    if not isinstance(raw_args, (list, tuple)) or len(raw_args) != 3:
+        return None
+    base, offset, value = raw_args
+    if not isinstance(base, CFunctionCall):
+        return None
+    if any(
+        isinstance(candidate, CFunctionCall)
+        for operand in (offset, value)
+        for candidate in (operand, *_iter_c_nodes_deep_8616(operand))
+    ):
+        return None
+    base_type = base.type
+    if not isinstance(base_type, SimType):
+        return None
+    zero_base = CConstant(0, base_type, codegen=node.codegen)
+    residual_insert = CFunctionCall(
+        node.callee_target,
+        node.callee_func,
+        [zero_base, offset, value],
+        tags=node.tags,
+        codegen=node.codegen,
+    )
+    residual = lower_structured_insert_call_8616(residual_insert)
+    if residual is None:
+        return None
+    return _ProjectedCallResult8616(base, residual)
+
+
+def _projected_call_result_8616(node: object) -> _ProjectedCallResult8616 | None:
+    """Return the sole call in an exact generated result projection."""
     if isinstance(node, CFunctionCall):
-        return node
+        if is_structured_insert_intrinsic_8616(node):
+            return _insert_projection_without_call_result_8616(node)
+        return _ProjectedCallResult8616(node)
     if isinstance(node, CUnaryOp) and node.op in {"Dereference", "Reference"}:
         return _projected_call_result_8616(node.operand)
     if isinstance(node, CBinaryOp) and node.op in {"Add", "Sub"}:
@@ -172,6 +222,63 @@ def _projected_call_result_8616(node: object) -> CFunctionCall | None:
             return _projected_call_result_8616(node.lhs)
         if node.op == "Add" and isinstance(node.lhs, CConstant) and node.lhs.value == 1:
             return _projected_call_result_8616(node.rhs)
+    return None
+
+
+def _masked_subregister_call_result_8616(
+    assignment: CAssignment,
+) -> _ProjectedCallResult8616 | None:
+    """Recognize an exact preserved-carrier OR masked-call projection."""
+    rhs = assignment.rhs
+    if not isinstance(rhs, CBinaryOp) or rhs.op != "Or":
+        return None
+    for preserved, projected in ((rhs.lhs, rhs.rhs), (rhs.rhs, rhs.lhs)):
+        if not isinstance(preserved, CBinaryOp) or preserved.op != "And":
+            continue
+        if not isinstance(projected, CBinaryOp) or projected.op != "And":
+            continue
+        preserved_parts = (
+            (preserved.lhs, preserved.rhs)
+            if isinstance(preserved.rhs, CConstant)
+            else (preserved.rhs, preserved.lhs)
+        )
+        projected_parts = (
+            (projected.lhs, projected.rhs)
+            if isinstance(projected.rhs, CConstant)
+            else (projected.rhs, projected.lhs)
+        )
+        preserved_value, preserved_mask = preserved_parts
+        projected_value, projected_mask = projected_parts
+        if not isinstance(preserved_mask, CConstant) or not isinstance(projected_mask, CConstant):
+            continue
+        projection = _projected_call_result_8616(projected_value)
+        if projection is None or projection.residual is not None:
+            continue
+        destination_view = physical_register_view_8616(assignment.lhs)
+        preserved_view = physical_register_view_8616(preserved_value)
+        runtime_destination_view = runtime_gp_expression_view_8616(assignment.lhs)
+        runtime_preserved_view = runtime_gp_expression_view_8616(preserved_value)
+        if not (
+            (destination_view is not None and preserved_view == destination_view)
+            or (
+                runtime_destination_view is not None
+                and runtime_preserved_view == runtime_destination_view
+            )
+        ):
+            continue
+        destination_width = (
+            destination_view.width
+            if destination_view is not None
+            else runtime_destination_view.width
+        )
+        full_mask = (1 << (destination_width * 8)) - 1
+        preserved_bits = int(preserved_mask.value) & full_mask
+        projected_bits = int(projected_mask.value) & full_mask
+        if preserved_bits & projected_bits:
+            continue
+        if preserved_bits | projected_bits != full_mask:
+            continue
+        return projection
     return None
 
 
@@ -272,12 +379,20 @@ def lower_unobserved_call_result_assignments_8616(codegen: object) -> bool:
         for index, statement in enumerate(statements):
             if not isinstance(statement, CAssignment):
                 continue
-            direct_call = statement.rhs if isinstance(statement.rhs, CFunctionCall) else None
-            projected_call = (
+            direct_call = (
+                statement.rhs
+                if isinstance(statement.rhs, CFunctionCall)
+                and not is_structured_insert_intrinsic_8616(statement.rhs)
+                else None
+            )
+            projection = (
                 None
                 if direct_call is not None
                 else _projected_call_result_8616(statement.rhs)
             )
+            if direct_call is None and projection is None:
+                projection = _masked_subregister_call_result_8616(statement)
+            projected_call = projection.call if projection is not None else None
             call = direct_call or projected_call
             if call is None:
                 continue
@@ -321,7 +436,17 @@ def lower_unobserved_call_result_assignments_8616(codegen: object) -> bool:
             if not direct_is_proven and not projected_is_proven:
                 continue
             classified_fact_count += 1
-            statements[index] = CExpressionStatement(call, codegen=statement.codegen)
+            call_statement = CExpressionStatement(call, codegen=statement.codegen)
+            if projection is not None and projection.residual is not None:
+                residual_assignment = CAssignment(
+                    statement.lhs,
+                    projection.residual,
+                    tags=statement.tags,
+                    codegen=statement.codegen,
+                )
+                statements[index : index + 1] = [call_statement, residual_assignment]
+            else:
+                statements[index] = call_statement
             materialized_count += 1
             changed = True
         if changed:

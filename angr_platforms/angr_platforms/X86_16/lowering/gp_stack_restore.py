@@ -39,6 +39,8 @@ __all__ = [
     "materialize_gp_stack_restores_8616",
 ]
 
+_GP_STACK_SAVE_ANCHOR_TAG_8616 = "inertia_x86_16_gp_stack_save_anchor"
+
 
 class _ArchRegisters8616(Protocol):
     """Third-party architecture register map used for physical identity."""
@@ -107,16 +109,32 @@ def _snapshot_insertion_point_8616(
     containers: tuple[structured_c.CStatements, ...],
     save_addr: int,
     restore_addr: int,
+    restore_register: str,
 ) -> tuple[structured_c.CStatements, int] | None:
     """Find the unique earliest structured statement following a proven save."""
+    anchor_identity = (save_addr, restore_addr, restore_register)
+    anchored: list[tuple[structured_c.CStatements, int]] = []
+    for container in containers:
+        anchored_indices = tuple(
+            index
+            for index, statement in enumerate(container.statements)
+            if isinstance(getattr(statement, "tags", None), dict)
+            and statement.tags.get(_GP_STACK_SAVE_ANCHOR_TAG_8616) == anchor_identity
+        )
+        if anchored_indices:
+            anchored.append((container, min(anchored_indices)))
+    unique_anchors = {(id(container), index) for container, index in anchored}
+    if len(unique_anchors) == 1:
+        return anchored[0]
+    if unique_anchors:
+        return None
+
     candidates: list[tuple[int, int, int, structured_c.CStatements, int]] = []
     for container in containers:
         container_addrs = tuple(
             instruction_addrs_from_node_8616(statement)
             for statement in container.statements
         )
-        if not any(restore_addr in addresses for addresses in container_addrs):
-            continue
         following_indices: list[tuple[int, int]] = []
         for index, statement in enumerate(container.statements):
             if not isinstance(
@@ -145,9 +163,9 @@ def _snapshot_insertion_point_8616(
             )
             candidates.append(
                 (
+                    earliest_addr,
                     len(container.statements),
                     len(set().union(*container_addrs)),
-                    earliest_addr,
                     container,
                     insertion_index,
                 )
@@ -159,7 +177,7 @@ def _snapshot_insertion_point_8616(
     unique = {(id(container), index) for _addr, _span, _size, container, index in owners}
     if len(unique) != 1:
         return None
-    _size, _span, _addr, container, index = owners[0]
+    _addr, _size, _span, container, index = owners[0]
     return container, index
 
 
@@ -171,30 +189,49 @@ def _snapshot_variable_8616(
     project: _Project8616,
     function_addr: int,
 ) -> structured_c.CVariable:
-    """Build one exact two-byte stack object for the Alias-proven save range."""
+    """Build or reuse one exact stack object for the Alias-proven save range."""
     offset = min(fact.stack_offsets)
-    exemplar = next(
-        (
-            node
-            for container in containers
-            for node in _iter_c_nodes_deep_8616(container)
-            if isinstance(node, structured_c.CVariable)
-            and isinstance(node.variable, SimStackVariable)
-            and node.variable.offset == offset
-        ),
+    exemplars = tuple(
+        node
+        for container in containers
+        for node in _iter_c_nodes_deep_8616(container)
+        if isinstance(node, structured_c.CVariable)
+        and isinstance(node.variable, SimStackVariable)
+        and node.variable.offset == offset
+    )
+    exact_exemplar = next(
+        (node for node in exemplars if node.variable.size == 2),
         None,
     )
-    base = exemplar.variable.base if exemplar is not None else "bp"
-    name = exemplar.variable.name if exemplar is not None else f"local_{abs(offset):x}"
-    variable = SimStackVariable(
-        offset,
-        2,
-        base=base,
-        name=name,
-        region=function_addr,
-    )
+    naming_exemplar = exact_exemplar or next(iter(exemplars), None)
+    if exact_exemplar is not None:
+        variable = exact_exemplar.variable
+    else:
+        base = naming_exemplar.variable.base if naming_exemplar is not None else "bp"
+        name = (
+            naming_exemplar.variable.name
+            if naming_exemplar is not None
+            else f"local_{abs(offset):x}"
+        )
+        variable = SimStackVariable(
+            offset,
+            2,
+            base=base,
+            name=name,
+            region=function_addr,
+        )
     value_type = SimTypeShort(False).with_arch(project.arch)
-    cvar = structured_c.CVariable(variable, variable_type=value_type, codegen=codegen)
+    unified_variable = (
+        exact_exemplar.unified_variable
+        if exact_exemplar is not None
+        else None
+    )
+    cvar = structured_c.CVariable(
+        variable,
+        unified_variable=unified_variable,
+        variable_type=value_type,
+        codegen=codegen,
+    )
     cfunc = cast(_CodegenBoundary8616, codegen).cfunc
     if cfunc is not None:
         cfunc.unified_local_vars[variable] = {(cvar, value_type)}
@@ -217,6 +254,7 @@ def _materialize_fact_8616(
         containers,
         fact.saved_instruction_addr,
         fact.restore_instruction_addr,
+        fact.restore_register,
     )
     source = runtime_gp_state_expr_8616(
         fact.saved_register,
@@ -303,6 +341,37 @@ def _materialize_fact_8616(
             ),
         },
     )
+    anchor_identity = (
+        fact.saved_instruction_addr,
+        fact.restore_instruction_addr,
+        fact.restore_register,
+    )
+    for statement in target.statements[index:]:
+        addresses = instruction_addrs_from_node_8616(statement)
+        if not any(
+            fact.saved_instruction_addr < address < fact.restore_instruction_addr
+            for address in addresses
+        ):
+            continue
+        statement_tags = getattr(statement, "tags", None)
+        statement.tags = {
+            **(dict(statement_tags) if isinstance(statement_tags, dict) else {}),
+            _GP_STACK_SAVE_ANCHOR_TAG_8616: anchor_identity,
+        }
+    if os.environ.get("INERTIA_DEBUG_GP_STACK_RESTORE"):
+        logging.getLogger(__name__).warning(
+            "[gp-stack-restore-placement] save=%#x restore=%#x index=%d statements=%r",
+            fact.saved_instruction_addr,
+            fact.restore_instruction_addr,
+            index,
+            tuple(
+                (
+                    type(statement).__name__,
+                    tuple(sorted(instruction_addrs_from_node_8616(statement))),
+                )
+                for statement in target.statements
+            ),
+        )
     target.statements.insert(index, assignment)
     return True
 
@@ -409,9 +478,13 @@ def materialize_gp_stack_restores_8616(codegen: object) -> bool:
     boundary._inertia_gp_stack_restore_lowering_stats_8616 = stats
     if os.environ.get("INERTIA_DEBUG_GP_STACK_RESTORE"):
         logging.getLogger(__name__).warning(
-            "[gp-stack-restore-lowering] function=%#x stats=%s",
+            "[gp-stack-restore-lowering] function=%#x stats=%s root=%#x containers=%d live_assignments=%d newly_materialized=%d",
             cfunc.addr,
             stats,
+            id(cfunc.statements),
+            len(containers),
+            len(live_assignments),
+            newly_materialized,
         )
     if facts and materialized == 0:
         raise PipelineHardError(

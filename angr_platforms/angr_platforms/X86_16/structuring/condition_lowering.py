@@ -9,6 +9,9 @@ rewrite cleanup, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+import contextlib
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
@@ -37,6 +40,9 @@ if TYPE_CHECKING:
     from angr.analyses.decompiler.structured_codegen.c import CConstant, CExpression
 
 __all__ = [
+    "SameBlockRegisterProjectionResult8616",
+    "SameBlockRegisterProjectionStats8616",
+    "SameBlockRegisterProjectionVerdict8616",
     "attach_condition_segment_access_provenance_8616",
     "condition_op_to_structured_kind_8616",
     "condition_origin_tags_8616",
@@ -45,6 +51,7 @@ __all__ = [
     "lower_typed_condition_to_c_expr_8616",
     "materialize_condition_stack_declaration_view_8616",
     "materialize_indexed_segmented_condition_value_8616",
+    "materialize_same_block_register_projection_8616",
     "materialize_typed_condition_stack_operand_8616",
     "stable_stack_condition_binding_tags_8616",
 ]
@@ -58,10 +65,50 @@ class _CodegenFunctionBoundary8616(Protocol):
     cfunc: object
 
 
+class _CFunctionStatementsBoundary8616(Protocol):
+    """Third-party C function surface exposing structured statements."""
+
+    statements: object
+
+
+class _CFunctionBodyBoundary8616(Protocol):
+    """Third-party C function surface exposing an optional body root."""
+
+    body: object
+
+
 class _CFunctionAddressBoundary8616(Protocol):
     """Third-party C function surface exposing its address."""
 
     addr: object
+
+
+class SameBlockRegisterProjectionVerdict8616(StrEnum):
+    """Typed outcome of one same-block condition-register projection."""
+
+    MATERIALIZED = "materialized"
+    NO_CANDIDATE = "no_candidate"
+    UNKNOWN_REFUSE = "unknown_refuse"
+
+
+@dataclass(frozen=True, slots=True)
+class SameBlockRegisterProjectionStats8616:
+    """Closed evidence counters for a same-block register projection."""
+
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SameBlockRegisterProjectionResult8616:
+    """Return one projected expression with its typed evidence accounting."""
+
+    expression: object | None
+    verdict: SameBlockRegisterProjectionVerdict8616
+    stats: SameBlockRegisterProjectionStats8616
 
 
 def _make_c_constant_8616(value: int, codegen: object, signed: bool = False) -> CConstant:
@@ -91,6 +138,179 @@ def lower_ir_value_to_c_expr_8616(
 ) -> object | None:
     """Convert typed IR value evidence into a structured-codegen C expression."""
     return _ir_value_to_cvar_8616(value, project, codegen, resolve_register_name=resolve_register_name)
+
+
+def materialize_same_block_register_projection_8616(
+    value: IRValue,
+    condition: ConditionIR,
+    project: object,
+    codegen: object,
+) -> SameBlockRegisterProjectionResult8616:
+    """Project a condition subregister from its unique same-block assignment.
+
+    The source assignment must precede the condition producer in the exact VEX
+    block and fully contain the requested byte view. A later partial overlap or
+    multiple assignments at the same instruction are explicit refusals.
+    """
+    from angr.analyses.decompiler.structured_codegen.c import (
+        CAssignment,
+        CBinaryOp,
+        CConstant,
+        CExpression,
+        CFunctionCall,
+        CVariable,
+    )
+    from angr.sim_type import SimTypeShort
+    from angr.sim_variable import SimRegisterVariable
+
+    if value.space is not MemSpace.REG:
+        return SameBlockRegisterProjectionResult8616(
+            None,
+            SameBlockRegisterProjectionVerdict8616.NO_CANDIDATE,
+            SameBlockRegisterProjectionStats8616(),
+        )
+    bind_addr = condition.operand_bind_insn
+    if not isinstance(bind_addr, int):
+        bind_addr = condition.producer_insn
+    if not isinstance(bind_addr, int) or not isinstance(condition.block_addr, int):
+        return SameBlockRegisterProjectionResult8616(
+            None,
+            SameBlockRegisterProjectionVerdict8616.UNKNOWN_REFUSE,
+            SameBlockRegisterProjectionStats8616(raw_fact_count=1, failure_count=1),
+        )
+
+    requested_offset, requested_size = _register_offset_size_for_value_8616(
+        value,
+        project,
+    )
+    requested_end = requested_offset + requested_size
+    candidates: list[tuple[int, object, object, tuple[int, int]]] = []
+    roots: list[object] = []
+    try:
+        cfunc = cast(_CodegenFunctionBoundary8616, codegen).cfunc
+    except AttributeError:
+        cfunc = None
+    if cfunc is not None:
+        roots.append(cfunc)
+        with contextlib.suppress(AttributeError):
+            roots.append(cast(_CFunctionStatementsBoundary8616, cfunc).statements)
+        with contextlib.suppress(AttributeError):
+            roots.append(cast(_CFunctionBodyBoundary8616, cfunc).body)
+    seen_nodes: set[int] = set()
+    for root in roots:
+        for node in _iter_c_nodes_deep_8616(root):
+            if id(node) in seen_nodes:
+                continue
+            seen_nodes.add(id(node))
+            if not isinstance(node, CAssignment):
+                continue
+            tags = node.tags if isinstance(node.tags, dict) else {}
+            ins_addr = tags.get("ins_addr")
+            block_addr = tags.get("vex_block_addr")
+            if (
+                not isinstance(ins_addr, int)
+                or ins_addr >= bind_addr
+                or block_addr != condition.block_addr
+                or not isinstance(node.lhs, CVariable)
+                or not isinstance(node.lhs.variable, SimRegisterVariable)
+            ):
+                continue
+            written_offset = int(node.lhs.variable.reg)
+            written_size = int(node.lhs.variable.size)
+            written_end = written_offset + written_size
+            if requested_offset >= written_end or written_offset >= requested_end:
+                continue
+            candidates.append(
+                (
+                    ins_addr,
+                    node.lhs,
+                    node.rhs,
+                    (written_offset, written_size),
+                )
+            )
+
+    if not candidates:
+        return SameBlockRegisterProjectionResult8616(
+            None,
+            SameBlockRegisterProjectionVerdict8616.NO_CANDIDATE,
+            SameBlockRegisterProjectionStats8616(raw_fact_count=1),
+        )
+    latest_addr = max(candidate[0] for candidate in candidates)
+    latest = tuple(candidate for candidate in candidates if candidate[0] == latest_addr)
+    normalized = len(latest)
+    if len(latest) != 1:
+        return SameBlockRegisterProjectionResult8616(
+            None,
+            SameBlockRegisterProjectionVerdict8616.UNKNOWN_REFUSE,
+            SameBlockRegisterProjectionStats8616(
+                raw_fact_count=len(candidates),
+                normalized_fact_count=normalized,
+                failure_count=1,
+            ),
+        )
+    _candidate_addr, lhs, rhs, (written_offset, written_size) = latest[0]
+    if not (
+        written_offset <= requested_offset
+        and requested_end <= written_offset + written_size
+    ):
+        return SameBlockRegisterProjectionResult8616(
+            None,
+            SameBlockRegisterProjectionVerdict8616.UNKNOWN_REFUSE,
+            SameBlockRegisterProjectionStats8616(
+                raw_fact_count=len(candidates),
+                normalized_fact_count=1,
+                failure_count=1,
+            ),
+        )
+    source = (
+        lhs
+        if any(
+            isinstance(child, CFunctionCall)
+            for child in _iter_c_nodes_deep_8616(rhs)
+        )
+        else rhs
+    )
+    if not isinstance(source, CExpression):
+        return SameBlockRegisterProjectionResult8616(
+            None,
+            SameBlockRegisterProjectionVerdict8616.UNKNOWN_REFUSE,
+            SameBlockRegisterProjectionStats8616(
+                raw_fact_count=len(candidates),
+                normalized_fact_count=1,
+                classified_fact_count=1,
+                failure_count=1,
+            ),
+        )
+    expression: CExpression = source
+    shift_bits = (requested_offset - written_offset) * 8
+    if shift_bits:
+        expression = CBinaryOp(
+            "Shr",
+            expression,
+            CConstant(shift_bits, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+    if requested_size < written_size:
+        expression = CBinaryOp(
+            "And",
+            expression,
+            CConstant(
+                (1 << (requested_size * 8)) - 1,
+                SimTypeShort(False),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        )
+    return SameBlockRegisterProjectionResult8616(
+        expression,
+        SameBlockRegisterProjectionVerdict8616.MATERIALIZED,
+        SameBlockRegisterProjectionStats8616(
+            raw_fact_count=len(candidates),
+            normalized_fact_count=1,
+            classified_fact_count=1,
+            materialized_count=1,
+        ),
+    )
 
 
 def stable_stack_condition_binding_tags_8616(

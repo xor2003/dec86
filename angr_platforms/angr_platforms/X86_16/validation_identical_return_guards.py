@@ -34,15 +34,16 @@ class IdenticalReturnGuardValidationStatus8616(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class IdenticalReturnGuardValidationResult8616:
-    """Validation outcome and consumed observation counts."""
+    """Validation outcome, consumed observations, and residual-delta state."""
 
     status: IdenticalReturnGuardValidationStatus8616
     consumed_condition_count: int = 0
     consumed_control_effect_count: int = 0
+    residual_changed: bool = False
 
     @property
     def accepted(self) -> bool:
-        """Return whether the exact typed delta was consumed."""
+        """Return whether this owner's exact typed observations were consumed."""
         return self.status is IdenticalReturnGuardValidationStatus8616.ACCEPTED
 
 
@@ -75,7 +76,7 @@ def consume_identical_return_guard_validation_delta_8616(
     result: IdenticalReturnGuardCollapseResult8616 | None,
     validation: MutableMapping[str, object],
 ) -> IdenticalReturnGuardValidationResult8616:
-    """Consume only the exact no-effect delta for one proved guard collapse."""
+    """Consume one proved guard collapse and preserve a balanced residual delta."""
     if result is None:
         return IdenticalReturnGuardValidationResult8616(
             IdenticalReturnGuardValidationStatus8616.REFUSED_NO_RESULT
@@ -89,7 +90,7 @@ def consume_identical_return_guard_validation_delta_8616(
         return IdenticalReturnGuardValidationResult8616(
             IdenticalReturnGuardValidationStatus8616.REFUSED_MALFORMED_DELTA
         )
-    channels: dict[str, tuple[object, ...]] = {}
+    channels: dict[str, tuple[tuple[object, ...], tuple[object, ...]]] = {}
     for field_name, field_delta in delta.items():
         added = _tokens_8616(field_delta, "added")
         removed = _tokens_8616(field_delta, "removed")
@@ -97,23 +98,17 @@ def consume_identical_return_guard_validation_delta_8616(
             return IdenticalReturnGuardValidationResult8616(
                 IdenticalReturnGuardValidationStatus8616.REFUSED_MALFORMED_DELTA
             )
-        if added:
-            return IdenticalReturnGuardValidationResult8616(
-                IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
-            )
-        if removed:
-            channels[str(field_name)] = removed
-    if set(channels) != {"conditions", "control_flow_effects"}:
+        if added or removed:
+            channels[str(field_name)] = (added, removed)
+    if set(channels) - {"conditions", "control_flow_effects"}:
         return IdenticalReturnGuardValidationResult8616(
             IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
         )
-    conditions = channels["conditions"]
-    control = channels["control_flow_effects"]
-    if (
-        len(conditions) != 1
-        or not isinstance(conditions[0], str)
-        or len(control) not in {1, 2, 3}
-        or any(not isinstance(item, str) for item in control)
+    condition_added, condition_removed = channels.get("conditions", ((), ()))
+    control_added, control_removed = channels.get("control_flow_effects", ((), ()))
+    if any(
+        not isinstance(item, str)
+        for item in condition_added + condition_removed + control_added + control_removed
     ):
         return IdenticalReturnGuardValidationResult8616(
             IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
@@ -123,12 +118,63 @@ def consume_identical_return_guard_validation_delta_8616(
             IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
         )
 
-    validation["changed"] = False
-    validation["status"] = "stable"
-    validation["summary_text"] = "no observable whole-tail changes"
-    validation.pop("delta", None)
+    matched_conditions = tuple(
+        condition
+        for condition in condition_removed
+        if f"if:{condition}" in control_removed
+    )
+    if len(matched_conditions) != 1:
+        return IdenticalReturnGuardValidationResult8616(
+            IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
+        )
+    consumed_condition = matched_conditions[0]
+    consumed_control = f"if:{consumed_condition}"
+    remaining_conditions = tuple(
+        condition for condition in condition_removed if condition != consumed_condition
+    )
+    remaining_control = tuple(
+        effect for effect in control_removed if effect != consumed_control
+    )
+    consumed_control_count = 1
+    if (
+        result.materializations[0].shape
+        is IdenticalReturnGuardShape8616.ELSE_RETURN
+        and "if:else" in remaining_control
+    ):
+        remaining_control = tuple(effect for effect in remaining_control if effect != "if:else")
+        consumed_control_count += 1
+
+    residual_changed = bool(
+        condition_added
+        or remaining_conditions
+        or control_added
+        or remaining_control
+    )
+    if residual_changed and not all(
+        (condition_added, remaining_conditions, control_added, remaining_control)
+    ):
+        return IdenticalReturnGuardValidationResult8616(
+            IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
+        )
+
+    condition_delta = delta.get("conditions")
+    control_delta = delta.get("control_flow_effects")
+    if not isinstance(condition_delta, MutableMapping) or not isinstance(
+        control_delta, MutableMapping
+    ):
+        return IdenticalReturnGuardValidationResult8616(
+            IdenticalReturnGuardValidationStatus8616.REFUSED_MALFORMED_DELTA
+        )
+    condition_delta["removed"] = remaining_conditions
+    control_delta["removed"] = remaining_control
+    if not residual_changed:
+        validation["changed"] = False
+        validation["status"] = "stable"
+        validation["summary_text"] = "no observable whole-tail changes"
+        validation.pop("delta", None)
     return IdenticalReturnGuardValidationResult8616(
         IdenticalReturnGuardValidationStatus8616.ACCEPTED,
         consumed_condition_count=1,
-        consumed_control_effect_count=len(control),
+        consumed_control_effect_count=consumed_control_count,
+        residual_changed=residual_changed,
     )

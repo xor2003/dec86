@@ -673,6 +673,28 @@ def test_required_callsite_validation_reports_call_loss() -> None:
     )
 
 
+def test_required_callsite_validation_uses_unrepresented_owned_inventory() -> None:
+    """A deleted call remains required through the authoritative binary inventory."""
+    codegen = _Codegen()
+    summary = _summary()
+    codegen._inertia_callsite_summaries = {}
+    codegen._inertia_callsite_summary_inventory_8616 = {
+        summary.callsite_addr: summary,
+    }
+
+    report = validate_required_callsites_8616(codegen, CStatements([], codegen=codegen))
+
+    assert not report.passed
+    assert report.raw_fact_count == 1
+    assert report.normalized_fact_count == 1
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 0
+    assert report.failure_count == 1
+    assert report.missing_calls == (
+        "missing-required-call:callsite=0x1010:target=0x2000:argc=2",
+    )
+
+
 def test_required_callsite_validation_excludes_stack_probe_helpers() -> None:
     codegen = _Codegen()
     codegen._inertia_callsite_summaries = {1: _summary(stack_probe_helper=True)}

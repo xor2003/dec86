@@ -88,6 +88,7 @@ def rollback_final_semantic_drift_8616(
     *,
     refresh_validation: Callable[[object, object], FinalSemanticReport8616],
     restore_cfunc: Callable[[object], bool],
+    replay_projections: Callable[[object], bool] | None = None,
     function_addr: int,
 ) -> bool:
     """Restore and revalidate a trusted AST after an absolute final guard failure."""
@@ -114,6 +115,8 @@ def rollback_final_semantic_drift_8616(
         current_project_tail_snapshot = None
     if not restore_cfunc(trusted.cfunc):
         return False
+    if replay_projections is not None:
+        replay_projections(codegen)
 
     restored_tail_snapshot = copy.deepcopy(trusted.tail_validation_snapshot)
     dynamic_codegen._inertia_tail_validation_snapshot = restored_tail_snapshot
@@ -123,6 +126,8 @@ def rollback_final_semantic_drift_8616(
             raise RuntimeError(
                 "failed to restore the current C AST after rejecting an invalid rollback snapshot"
             )
+        if replay_projections is not None:
+            replay_projections(codegen)
         dynamic_codegen._inertia_tail_validation_snapshot = current_codegen_tail_snapshot
         dynamic_project._inertia_last_tail_validation_snapshot = current_project_tail_snapshot
         return False

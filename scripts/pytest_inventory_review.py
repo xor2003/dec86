@@ -29,6 +29,7 @@ REVIEWED_TEST_MODULE_LAYERS: Final[Mapping[str, tuple[str, ...]]] = MappingProxy
             "inertia_decompiler/cli",
         ),
         "angr_platforms/tests/test_decompile_jit_restart.py": ("inertia_decompiler/cli",),
+        "angr_platforms/tests/test_makefile_quiet_output.py": ("tooling/gates",),
         "angr_platforms/tests/test_omf_pat_far_transfer_variants.py": ("compiler-flags",),
         "angr_platforms/tests/test_omf_pat_fixup_widths.py": ("compiler-flags",),
         "angr_platforms/tests/test_omf_pat_lidata.py": ("compiler-flags",),
@@ -53,6 +54,14 @@ REVIEWED_TEST_MODULE_LAYERS: Final[Mapping[str, tuple[str, ...]]] = MappingProxy
         "angr_platforms/tests/test_x86_16_string_corpus_anchors.py": ("inertia_decompiler/cli",),
         "angr_platforms/tests/test_x86_16_structuring_cyclic.py": ("X86_16/structuring",),
         "angr_platforms/tests/test_x86_16_structuring_stage_environment.py": ("X86_16/structuring",),
+        "angr_platforms/tests/test_x86_16_tail_callsite_inventory.py": (
+            "X86_16/frontend-or-analysis",
+            "X86_16/postprocess",
+        ),
+        "angr_platforms/tests/test_x86_16_void_return_pass_ownership.py": (
+            "X86_16/postprocess",
+            "X86_16/tail-validation",
+        ),
     }
 )
 

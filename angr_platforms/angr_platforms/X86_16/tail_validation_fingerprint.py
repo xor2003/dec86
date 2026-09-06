@@ -63,6 +63,7 @@ from .decompiler_postprocess_utils import (
 from .lowering.gp_register_state import runtime_gp_name_for_variable_8616
 from .lowering.segment_register_state import runtime_segment_name_for_variable_8616
 from .lowering.segmented_global_loads import IndexedSegmentedGlobalStoreEvidence8616
+from .lowering.semantic_cast import CSemanticCast8616
 from .lowering.stack_function_coordinates import (
     c_function_argument_machine_bp_offset_8616,
 )
@@ -90,7 +91,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION: int = 37
+TAIL_VALIDATION_FINGERPRINT_VERSION: int = 38
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 500000
@@ -1401,6 +1402,22 @@ def _strip_validation_casts(node: object) -> object:
     return node
 
 
+def _strip_cosmetic_validation_casts_8616(node: object) -> object:
+    """Strip ordinary codegen casts while retaining proven semantic casts."""
+    while isinstance(node, CTypeCast) and not isinstance(node, CSemanticCast8616):
+        node = node.expr
+    return node
+
+
+def _semantic_cast_type_fingerprint_8616(type_: object) -> str:
+    """Fingerprint the observable width and signedness of one angr C type."""
+    size = _dynamic_tail_validation_getattr_8616(type_, "size", None)
+    signed = _dynamic_tail_validation_getattr_8616(type_, "signed", None)
+    size_token = str(size) if isinstance(size, int) else "unknown"
+    signed_token = str(signed).lower() if isinstance(signed, bool) else "unknown"
+    return f"{type(type_).__name__}:bits={size_token}:signed={signed_token}"
+
+
 def _strip_validation_casts_and_dirty_aliases_8616(node: object) -> object:
     node = _strip_validation_casts(node)
     if isinstance(node, CDirtyExpression):
@@ -2037,7 +2054,7 @@ def _normalize_zero_flag_comparison_8616(node: object) -> object:
 def _simplify_expr_for_fingerprint_8616(node: Any) -> Any:
     def _impl() -> Any:
         nonlocal node
-        node = _strip_validation_casts(node)
+        node = _strip_cosmetic_validation_casts_8616(node)
         if isinstance(node, CUnaryOp):
             operand = _simplify_expr_for_fingerprint_8616(_dynamic_tail_validation_getattr_8616(node, "operand", None))
             if operand is not _dynamic_tail_validation_getattr_8616(node, "operand", None):
@@ -2307,6 +2324,14 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
                 cache[cache_key] = result
                 cache_nodes[cache_key] = node
             return result
+
+        if isinstance(node, CSemanticCast8616):
+            source_type = _semantic_cast_type_fingerprint_8616(node.src_type)
+            destination_type = _semantic_cast_type_fingerprint_8616(node.dst_type)
+            expression = _expr_fingerprint(node.expr, project, _child_seen())
+            return _cached(
+                f"SemanticCast({source_type}->{destination_type},{expression})"
+            )
 
         stack_pair = _stack_word_pair_fingerprint(node, project)
         if stack_pair is not None:

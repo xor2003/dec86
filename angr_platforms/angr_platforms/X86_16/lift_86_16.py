@@ -540,6 +540,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             src_reg8,
             dst_reg8,
             dst_indexed_mem8,
+            src_indexed_mem8,
             dst_indexed_mem16,
             src_indexed_mem16,
             src,
@@ -629,6 +630,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         src_reg8: Any,
         dst_reg8: Any,
         dst_indexed_mem8: Any,
+        src_indexed_mem8: Any,
         dst_indexed_mem16: Any,
         src_indexed_mem16: Any,
         src: Any,
@@ -665,6 +667,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 return ("cmp_reg_imm8", dst_reg8, src_imm8)
             if dst_indexed_mem8 is not None and src_reg8:
                 return ("cmp_indexed_abs_reg8", dst_indexed_mem8, src_reg8)
+            if dst_reg8 and src_indexed_mem8 is not None:
+                return ("cmp_reg_indexed_abs8", dst_reg8, src_indexed_mem8)
             if dst_indexed_mem16 is not None and src_imm is not None:
                 return ("cmp_mem_imm16", dst_indexed_mem16, src_imm)
             if dst_indexed_mem16 is not None and src_reg:
@@ -752,6 +756,14 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 _, mem_spec, src_reg = semantics
                 lhs_val = self._load_indexed_abs(mem_spec, width_bytes=1)
                 rhs_val = self.get(src_reg, Type.int_8)
+                self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_binop_flags16("sub", lhs_val, rhs_val)
+                return True
+            if kind == "cmp_reg_indexed_abs8":
+                _, lhs_reg, mem_spec = semantics
+                lhs_val = self.get(lhs_reg, Type.int_8)
+                rhs_val = self._load_indexed_abs(mem_spec, width_bytes=1)
                 self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
                 if not self._next_instruction_is_simple_jcc():
                     self._update_binop_flags16("sub", lhs_val, rhs_val)
@@ -1352,6 +1364,9 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             if kind == "cmp_indexed_abs_reg8":
                 _, mem_spec, rhs_reg = semantics
                 return self._load_indexed_abs(mem_spec, width_bytes=1), self.get(rhs_reg, Type.int_8)
+            if kind == "cmp_reg_indexed_abs8":
+                _, lhs_reg, mem_spec = semantics
+                return self.get(lhs_reg, Type.int_8), self._load_indexed_abs(mem_spec, width_bytes=1)
             if kind == "cmp_indexed_abs_reg16":
                 _, mem_spec, rhs_reg = semantics
                 return self._load_indexed_abs(mem_spec, width_bytes=2), self._get_reg16(rhs_reg)
@@ -1727,12 +1742,15 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 self._condition_direct_ds_value_8616(offset, width_bits=8),
                 self._condition_const_value_8616(imm, width_bits=8),
             )
-        if kind == "cmp_indexed_abs_reg8":
-            _, mem_spec, rhs_reg = semantics
+        if kind in {"cmp_indexed_abs_reg8", "cmp_reg_indexed_abs8"}:
+            _, first, second = semantics
+            mem_spec = first if kind == "cmp_indexed_abs_reg8" else second
+            reg_name = second if kind == "cmp_indexed_abs_reg8" else first
             base_reg = str(mem_spec[0]).lower() if isinstance(mem_spec, tuple) and mem_spec else ""
-            lhs = Instruction_ANY._condition_indexed_ds_value_8616(
+            index_state = Instruction_ANY._inertia_condition_index_reg_state_8616.get(base_reg)
+            indexed = Instruction_ANY._condition_indexed_ds_value_8616(
                 mem_spec,
-                Instruction_ANY._inertia_condition_index_reg_state_8616.get(base_reg),
+                index_state,
                 width_bits=8,
                 memory_access_insn=(
                     int(self.addr)
@@ -1740,22 +1758,43 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     else None
                 ),
             )
-            rhs = self._condition_proven_reg_value_8616(
-                rhs_reg,
+            if indexed is None:
+                register_index = self._condition_reg_value_8616(base_reg, width_bits=16)
+                if register_index is not None:
+                    indexed = Instruction_ANY._condition_indexed_ds_value_8616(
+                        mem_spec,
+                        (register_index, 0),
+                        width_bits=8,
+                        memory_access_insn=self.addr,
+                    )
+            register = self._condition_proven_reg_value_8616(
+                reg_name,
                 width_bits=8,
-            ) or self._condition_reg_value_8616(rhs_reg, width_bits=8)
-            return (lhs, rhs) if lhs is not None and rhs is not None else None
+            ) or self._condition_reg_value_8616(reg_name, width_bits=8)
+            if indexed is None or register is None:
+                return None
+            return (indexed, register) if kind == "cmp_indexed_abs_reg8" else (register, indexed)
         if kind in {"cmp_indexed_abs_reg16", "cmp_reg_indexed_abs16"}:
             _, first, second = semantics
             mem_spec = first if kind == "cmp_indexed_abs_reg16" else second
             reg_name = second if kind == "cmp_indexed_abs_reg16" else first
             base_reg = str(mem_spec[0]).lower()
+            index_state = Instruction_ANY._inertia_condition_index_reg_state_8616.get(base_reg)
             indexed = Instruction_ANY._condition_indexed_ds_value_8616(
                 mem_spec,
-                Instruction_ANY._inertia_condition_index_reg_state_8616.get(base_reg),
+                index_state,
                 width_bits=16,
                 memory_access_insn=self.addr,
             )
+            if indexed is None:
+                register_index = self._condition_reg_value_8616(base_reg, width_bits=16)
+                if register_index is not None:
+                    indexed = Instruction_ANY._condition_indexed_ds_value_8616(
+                        mem_spec,
+                        (register_index, 0),
+                        width_bits=16,
+                        memory_access_insn=self.addr,
+                    )
             register = self._condition_proven_reg_value_8616(
                 reg_name,
                 width_bits=16,
@@ -2535,17 +2574,30 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         displacement: int,
         instruction_size: int,
     ) -> None:
-        """Record the post-decrement counter condition owned by plain LOOP."""
+        """Record the exact post-decrement counter condition owned by plain LOOP."""
         block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
+        counter_offset = int(self.arch.get_register_offset(counter_name))
         self._record_typed_condition_8616(
             ConditionIR(
-                op="nonzero",
-                lhs=IRValue(MemSpace.REG, name=counter_name, size=counter_size),
+                op="ne",
+                lhs=IRValue(
+                    MemSpace.REG,
+                    name=counter_name,
+                    offset=counter_offset,
+                    size=counter_size,
+                ),
+                rhs=IRValue(MemSpace.CONST, const=1, size=counter_size),
+                width_bits=counter_size * 8,
                 source=("loop",),
                 src_insn=self.addr,
                 block_addr=block_addr,
                 producer_insn=self.addr,
                 operand_bind_insn=self.addr,
+                producer_semantics=(
+                    "loop_counter_predecrement",
+                    counter_name,
+                    1,
+                ),
                 taken_target=self.addr + instruction_size + displacement,
                 fallthrough_target=self.addr + instruction_size,
             )

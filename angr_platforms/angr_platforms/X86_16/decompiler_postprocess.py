@@ -3394,8 +3394,7 @@ def _prune_void_function_return_values_8616(project: object, codegen: SimpleName
                 rewritten.append(CReturn(None, codegen=stmt.codegen))
                 local_changed = True
                 continue
-            stmt.retval = None
-            rewritten.append(stmt)
+            rewritten.append(CReturn(None, codegen=stmt.codegen))
             local_changed = True
         if local_changed:
             container.statements = rewritten

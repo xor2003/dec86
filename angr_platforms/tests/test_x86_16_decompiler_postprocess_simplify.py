@@ -111,6 +111,40 @@ def test_simplify_structured_expressions_folds_nested_literal_arithmetic_to_one_
     assert result.value == 1193180
 
 
+def test_simplify_structured_expressions_removes_zero_shift_from_condition_value():
+    codegen = _codegen([])
+    source = CUnaryOp("Not", _global(0x1680, codegen), codegen=codegen)
+    expr = CBinaryOp("Shl", source, _const(0, codegen), codegen=codegen)
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements is source
+
+
+def test_simplify_structured_expressions_folds_register_self_xor_to_zero():
+    """A zeroing XOR must not leave an undefined C register read behind."""
+    codegen = _codegen([])
+    reg_offset, reg_size = _project().arch.registers["bx"]
+    source = CVariable(
+        SimRegisterVariable(reg_offset, reg_size, name="incoming_bx"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    expr = CBinaryOp("Xor", source, source, codegen=codegen)
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CConstant)
+    assert result.value == 0
+
+
 def test_simplify_structured_expressions_folds_casted_literal_arithmetic_inside_call_arg():
     codegen = _codegen([])
     long_type = SimTypeLong(False)

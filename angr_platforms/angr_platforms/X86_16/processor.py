@@ -512,7 +512,11 @@ class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic fron
                 if self.vex_offsets is None:
                     raise ValueError("vex_offsets not initialized for lifting mode")
                 offset = self.vex_offsets.get(name, 0)
-                flags_value = value if n in {reg16_t.FLAGS, reg32_t.EFLAGS} else None
+                is_flags_register = (
+                    (isinstance(n, reg16_t) and n is reg16_t.FLAGS)
+                    or (isinstance(n, reg32_t) and n is reg32_t.EFLAGS)
+                )
+                flags_value = value if is_flags_register else None
                 if isinstance(value, int):
                     value = self.constant(value, TYPES[type(n)])
                 if isinstance(value, VexValue):

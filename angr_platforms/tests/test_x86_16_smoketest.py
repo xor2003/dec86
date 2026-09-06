@@ -278,6 +278,7 @@ def test_immediate_far_call_lifts_as_call_edge():
 
     assert block.vex.jumpkind == "Ijk_Call"
     assert "PUT(cs)" in block.vex._pp_str()
+    assert "PUT(d)" not in block.vex._pp_str()
     assert "lcall" in "\n".join(f"{insn.mnemonic} {insn.op_str}".strip().lower() for insn in block.capstone.insns)
 
 

@@ -5,6 +5,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CExpression,
     CForLoop,
     CFunctionCall,
     CGoto,
@@ -16,9 +17,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionRegisterBindingIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     WideCallReturnConditionResult8616,
@@ -402,6 +403,270 @@ def _targeted_condition(src_insn, block_addr, taken_target, fallthrough_target):
         taken_target=taken_target,
         fallthrough_target=fallthrough_target,
     )
+
+
+def test_structuring_lowers_proven_loop_counter_binding() -> None:
+    """Structuring must consume Alias's exact LOOP input instead of a register live-in."""
+    codegen = _Codegen()
+    condition = ConditionIR(
+        op="ne",
+        lhs=IRValue(MemSpace.REG, name="cx", size=2),
+        rhs=IRValue(MemSpace.CONST, const=1, size=2),
+        width_bits=16,
+        source=("loop",),
+        src_insn=0x1003,
+        block_addr=0x1003,
+        producer_insn=0x1003,
+        producer_semantics=("loop_counter_predecrement", "cx", 1),
+        register_bindings=(
+            ConditionRegisterBindingIR(
+                "cx",
+                IRValue(MemSpace.CONST, const=0xC8, size=2),
+            ),
+        ),
+    )
+
+    expression = condition_materialization.materialize_condition_ir_expression_8616(
+        codegen.project,
+        codegen,
+        condition,
+    )
+
+    assert isinstance(expression, CBinaryOp)
+    assert expression.op == "CmpNE"
+    assert isinstance(expression.lhs, CConstant)
+    assert expression.lhs.value == 0xC8
+    assert isinstance(expression.rhs, CConstant)
+    assert expression.rhs.value == 1
+
+
+def test_structuring_projects_high_byte_from_same_block_word_assignment() -> None:
+    """A BH condition must reuse the exact BX SSA definition in its VEX block."""
+    codegen = _Codegen()
+    prior_bx = CVariable(
+        SimRegisterVariable(12, 2, ident="ir_6", region=0x1000, name="bx"),
+        codegen=codegen,
+    )
+    updated_bx = CVariable(
+        SimRegisterVariable(12, 2, ident="ir_9", region=0x1000, name="bx"),
+        codegen=codegen,
+    )
+    update = CAssignment(
+        updated_bx,
+        CBinaryOp(
+            "Add",
+            prior_bx,
+            CConstant(0x16C, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x100D, "vex_block_addr": 0x100D},
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=CStatements([update], codegen=codegen),
+    )
+    condition = ConditionIR(
+        op="ult",
+        lhs=IRValue(MemSpace.REG, name="bh", offset=13, size=1),
+        rhs=IRValue(MemSpace.CONST, const=0x40, size=1),
+        width_bits=8,
+        source=("cmp", "jb"),
+        src_insn=0x1012,
+        block_addr=0x100D,
+        producer_insn=0x100F,
+        taken_target=0x0FFE,
+        fallthrough_target=0x1014,
+        producer_semantics=("cmp_reg_imm8", "bh", 0x40),
+    )
+
+    expression = condition_materialization.materialize_condition_ir_expression_8616(
+        codegen.project,
+        codegen,
+        condition,
+    )
+
+    assert isinstance(expression, CBinaryOp)
+    assert expression.op == "CmpLT"
+    assert isinstance(expression.lhs, CBinaryOp)
+    assert expression.lhs.op == "And"
+    assert isinstance(expression.lhs.lhs, CBinaryOp)
+    assert expression.lhs.lhs.op == "Shr"
+    assert expression.lhs.lhs.rhs.value == 8
+    assert expression.lhs.rhs.value == 0xFF
+    assert expression.rhs.value == 0x40
+
+
+def test_structuring_replays_high_byte_projection_into_typed_condition() -> None:
+    """The structuring pass must project conditions built by the legacy consumer."""
+    codegen = _Codegen()
+    prior_bx = CVariable(
+        SimRegisterVariable(12, 2, ident="ir_6", region=0x1000, name="bx"),
+        codegen=codegen,
+    )
+    updated_bx = CVariable(
+        SimRegisterVariable(12, 2, ident="ir_9", region=0x1000, name="bx"),
+        codegen=codegen,
+    )
+    update = CAssignment(
+        updated_bx,
+        CBinaryOp(
+            "Add",
+            prior_bx,
+            CConstant(0x16C, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x100D, "vex_block_addr": 0x100D},
+    )
+    typed = CBinaryOp(
+        "CmpLT",
+        CVariable(
+            SimRegisterVariable(13, 1, ident="ir_bh", region=0x1000, name="bh"),
+            codegen=codegen,
+        ),
+        CConstant(0x40, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": 0x100D,
+            "vex_block_addr": 0x100D,
+        },
+    )
+    branch = CIfElse(
+        [(typed, CStatements([], codegen=codegen))],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    root = CStatements([update, branch], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    condition = ConditionIR(
+        op="ult",
+        lhs=IRValue(MemSpace.REG, name="bh", offset=13, size=1),
+        rhs=IRValue(MemSpace.CONST, const=0x40, size=1),
+        width_bits=8,
+        source=("cmp", "jb"),
+        src_insn=0x1012,
+        block_addr=0x100D,
+        producer_insn=0x100F,
+        taken_target=0x0FFE,
+        fallthrough_target=0x1014,
+        producer_semantics=("cmp_reg_imm8", "bh", 0x40),
+    )
+
+    stats = condition_materialization.materialize_same_block_condition_register_projections_8616(
+        root,
+        codegen.project,
+        codegen,
+        (condition,),
+    )
+
+    assert stats == condition_materialization.SameBlockConditionRegisterProjectionStats8616(
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        changed_count=1,
+    )
+    assert isinstance(typed.lhs, CBinaryOp)
+    assert typed.lhs.op == "And"
+    assert isinstance(typed.lhs.lhs, CBinaryOp)
+    assert typed.lhs.lhs.op == "Shr"
+    assert typed.lhs.lhs.rhs.value == 8
+    assert typed.lhs.rhs.value == 0xFF
+
+
+def test_structuring_preserves_noncanonical_duplicate_instruction_surface(monkeypatch) -> None:
+    """One typed owner must prevent a second internal exit claiming the same fact."""
+    codegen = _Codegen()
+    untyped = CConstant(
+        0,
+        SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1003, "vex_block_addr": 0x1003},
+    )
+    typed = CBinaryOp(
+        "CmpNE",
+        CConstant(0xC8, SimTypeShort(False), codegen=codegen),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": 0x1003,
+            "vex_block_addr": 0x1003,
+            "typed_condition": True,
+        },
+    )
+    first = CIfElse(
+        [(untyped, _tagged_statements(0x1005, codegen))],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    second = CIfElse(
+        [(typed, _tagged_statements(0x1003, codegen))],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    root = CStatements([first, second], codegen=codegen)
+    fact = ConditionIR(
+        op="ne",
+        lhs=IRValue(MemSpace.REG, name="cx", size=2),
+        rhs=IRValue(MemSpace.CONST, const=1, size=2),
+        width_bits=16,
+        source=("loop",),
+        src_insn=0x1003,
+        block_addr=0x1003,
+        producer_insn=0x1003,
+        taken_target=0x1003,
+        fallthrough_target=0x1005,
+        producer_semantics=("loop_counter_predecrement", "cx", 1),
+    )
+    graph = _Graph(((0x1003, 0x1003), (0x1003, 0x1005)))
+    function = SimpleNamespace(
+        transition_graph=graph,
+        block_addrs_set=set(graph.nodes),
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function))
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x1003, statements=root)
+    codegen._inertia_typed_conditions = (fact,)
+    calls: list[CExpression] = []
+
+    def _materialize(
+        _project,
+        _codegen,
+        _fact,
+        structured_condition,
+        _body,
+        _conditions_by_block,
+        _successors,
+        **_kwargs,
+    ):
+        calls.append(structured_condition)
+        return CBinaryOp(
+            "CmpNE",
+            CConstant(0xC8, SimTypeShort(False), codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    monkeypatch.setattr(
+        condition_materialization,
+        "_materialize_cfg_single_branch_expr_8616",
+        _materialize,
+    )
+
+    assert condition_materialization.materialize_structuring_condition_chains_8616(
+        project,
+        codegen,
+    )
+    assert calls == [typed]
+    assert first.condition_and_nodes[0][0] is untyped
+    replacement = second.condition_and_nodes[0][0]
+    assert replacement.tags["inertia_structuring_condition_cfg_materialized_8616"] is True
+    assert codegen._inertia_structuring_condition_chain_stats_8616.materialized_count == 1
 
 
 def test_structuring_condition_surface_token_detects_in_place_branch_reownership():

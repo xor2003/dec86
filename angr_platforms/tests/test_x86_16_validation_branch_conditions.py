@@ -10,7 +10,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeInt, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16 import validation_branch_conditions
 from angr_platforms.X86_16.callsite_summary import (
@@ -36,6 +36,7 @@ from angr_platforms.X86_16.ir.logical_memory_register_transfer_contracts import 
     LogicalMemoryRegisterTransferKind8616,
 )
 from angr_platforms.X86_16.ir.ssa import SSABlock
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.tail_validation import (
     _canonicalize_final_branch_condition_fingerprint_8616,
 )
@@ -151,6 +152,8 @@ def _fingerprint(expression: object) -> str:
         return f"var:{expression.variable.name}"
     if isinstance(expression, CConstant):
         return f"const:{expression.value}"
+    if isinstance(expression, CSemanticCast8616):
+        return f"SemanticCast({_fingerprint(expression.expr)})"
     raise TypeError(type(expression).__name__)
 
 
@@ -297,6 +300,107 @@ def test_bound_loop_condition_refuses_wrong_stack_slot() -> None:
     assert not report.passed
     assert report.issues[0].kind is BranchConditionIssueKind8616.PREDICATE_MISMATCH
     assert report.issues[0].actual == "CmpLE(var:local_6,var:arg)"
+
+
+def _semantic_cast_loop_root(
+    codegen: _Codegen,
+    *,
+    destination_type: SimTypeShort | SimTypeInt,
+) -> CStatements:
+    """Build one fallthrough-oriented loop condition with explicit value views."""
+    source_type = SimTypeShort(False)
+
+    def _view(offset: int, name: str) -> CSemanticCast8616:
+        return CSemanticCast8616(
+            source_type,
+            destination_type,
+            _variable(codegen, offset, name),
+            codegen=codegen,
+        )
+
+    condition = CBinaryOp(
+        "CmpGT",
+        _view(-4, "local_4"),
+        _view(4, "arg"),
+        codegen=codegen,
+        tags={
+            "ins_addr": 0x4015,
+            "vex_block_addr": 0x4010,
+            "inertia_typed_loop_condition_bound_8616": True,
+            "inertia_typed_loop_condition_key_8616": (0x4015, 0x4010),
+            "inertia_typed_loop_continuation_edge_8616": "fallthrough",
+        },
+    )
+    return CStatements(
+        [CDoWhileLoop(condition, CStatements([], codegen=codegen), codegen=codegen)],
+        codegen=codegen,
+    )
+
+
+def test_bound_loop_accepts_exact_signed_semantic_views() -> None:
+    """Same-width signed views preserve a fallthrough-oriented typed compare."""
+    fact = ConditionIR(
+        "sle",
+        IRValue(MemSpace.SS, name="bp", offset=-4, size=2),
+        IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+        src_insn=0x4015,
+        block_addr=0x4010,
+    )
+    codegen = _Codegen(fact)
+
+    report = validate_materialized_branch_conditions_8616(
+        codegen,
+        _semantic_cast_loop_root(codegen, destination_type=SimTypeShort(True)),
+        condition_fingerprint=_fingerprint,
+        condition_ir_fingerprint=lambda _condition: "CmpLE(var:local_4,var:arg)",
+    )
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_bound_loop_refuses_wrong_semantic_view_signedness() -> None:
+    """An unsigned destination view cannot satisfy a signed ConditionIR fact."""
+    fact = ConditionIR(
+        "sle",
+        IRValue(MemSpace.SS, name="bp", offset=-4, size=2),
+        IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+        src_insn=0x4015,
+        block_addr=0x4010,
+    )
+    codegen = _Codegen(fact)
+
+    report = validate_materialized_branch_conditions_8616(
+        codegen,
+        _semantic_cast_loop_root(codegen, destination_type=SimTypeShort(False)),
+        condition_fingerprint=_fingerprint,
+        condition_ir_fingerprint=lambda _condition: "CmpLE(var:local_4,var:arg)",
+    )
+
+    assert not report.passed
+    assert report.issues[0].kind is BranchConditionIssueKind8616.PREDICATE_MISMATCH
+
+
+def test_bound_loop_refuses_width_changing_semantic_view() -> None:
+    """A widening cast changes the typed value domain and remains visible."""
+    fact = ConditionIR(
+        "sle",
+        IRValue(MemSpace.SS, name="bp", offset=-4, size=2),
+        IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+        src_insn=0x4015,
+        block_addr=0x4010,
+    )
+    codegen = _Codegen(fact)
+
+    report = validate_materialized_branch_conditions_8616(
+        codegen,
+        _semantic_cast_loop_root(codegen, destination_type=SimTypeInt(True)),
+        condition_fingerprint=_fingerprint,
+        condition_ir_fingerprint=lambda _condition: "CmpLE(var:local_4,var:arg)",
+    )
+
+    assert not report.passed
+    assert report.issues[0].kind is BranchConditionIssueKind8616.PREDICATE_MISMATCH
 
 
 def test_bound_do_while_condition_accepts_proven_terminal_induction_state() -> None:

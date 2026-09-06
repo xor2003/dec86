@@ -909,11 +909,13 @@ def test_pointer_arg_indirect_load_stats_count_existing_indexed_load(monkeypatch
 def test_force_regeneration_prefers_live_cfunc_repr_after_ast_cleanup(monkeypatch):
     stale_text = "void f(void) { vvar_1 = 1; }\n"
     fresh_text = "void f(void) { return; }\n"
+    finalization_calls: list[object] = []
 
     class _FakeCFunc:
         text = fresh_text
 
         def c_repr(self):
+            assert finalization_calls
             return self.text
 
     class _FakeCodegen:
@@ -934,6 +936,11 @@ def test_force_regeneration_prefers_live_cfunc_repr_after_ast_cleanup(monkeypatc
 
     monkeypatch.setattr(cli_decompilation, "repair_cfunctioncall_render_targets_8616", lambda _codegen: None)
     monkeypatch.setattr(cli_decompilation, "_bind_codegen_render_variable_types_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_finalize_typed_interfaces_and_projections_before_render_8616",
+        lambda active_codegen: finalization_calls.append(active_codegen) or False,
+    )
     monkeypatch.setattr(
         cli_decompilation,
         "replay_callsite_stack_arguments_after_regeneration_8616",
@@ -976,6 +983,7 @@ def test_force_regeneration_prefers_live_cfunc_repr_after_ast_cleanup(monkeypatc
     assert regenerated is True
     assert text == fresh_text
     assert codegen.text == fresh_text
+    assert finalization_calls == [codegen]
 
 
 def test_render_candidate_score_refuses_stale_stack_base_when_calls_tie():

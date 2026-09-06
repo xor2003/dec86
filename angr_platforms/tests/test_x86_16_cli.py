@@ -7525,6 +7525,46 @@ def test_collect_direct_calls_prefers_exact_capstone_target_over_stale_cfg_offse
     assert direct_calls == [(0x10537, 0x10F18, 0x1053A)]
 
 
+def test_parse_direct_far_calls_preserves_distinct_offsets_in_same_segment():
+    def far_call(offset):
+        operands = (
+            SimpleNamespace(type=2, imm=0x1C83, size=2),
+            SimpleNamespace(type=2, imm=offset, size=2),
+        )
+        return SimpleNamespace(
+            mnemonic="lcall",
+            op_str=f"0x1c83, {offset:#x}",
+            insn=SimpleNamespace(operands=operands),
+        )
+
+    assert cli_decompilation._parse_direct_call_target_8616(far_call(0x15D5)) == 0x1DE05
+    assert cli_decompilation._parse_direct_call_target_8616(far_call(0x00C1)) == 0x1C8F1
+
+
+def test_original_callee_name_checks_absolute_far_target_before_slice_delta(monkeypatch):
+    original_project = SimpleNamespace(
+        loader=SimpleNamespace(main_object=SimpleNamespace(min_addr=0x10000, max_addr=0x30000)),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda **_kwargs: None),
+            labels={},
+        ),
+        _inertia_lst_metadata=SimpleNamespace(
+            code_labels={0x1DE05: "sub_1DE05", 0x2CE05: "aErrorCodeIs"},
+        ),
+    )
+    project = SimpleNamespace(
+        _inertia_original_project=original_project,
+        _inertia_original_linear_delta=0xF000,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_compiler_helper_name_at_addr_8616",
+        lambda _project, _addr: None,
+    )
+
+    assert cli_decompilation._original_callee_name_8616(project, 0x1DE05) == "sub_1DE05"
+
+
 def test_collect_direct_calls_merges_linear_exact_region_calls(monkeypatch):
     function = SimpleNamespace(
         block_addrs_set=set(),

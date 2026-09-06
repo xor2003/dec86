@@ -14,7 +14,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import typing
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, cast
@@ -134,6 +134,7 @@ class _AngrCodegenBoundary8616(Protocol):
     _inertia_near_pointer_argument_stats_8616: NearPointerArgumentStats8616
     _inertia_stack_pointer_snapshot_stats_8616: StackPointerSnapshotStats8616
     _inertia_linear_global_decomposition_cache_stats_8616: LinearGlobalDecompositionCacheStats8616
+    _inertia_final_codegen_projection_replayer_8616: Callable[[object], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1957,13 +1958,16 @@ def finalize_runtime_stack_lowering_8616(
 
 
 def replay_final_codegen_projections_8616(codegen: object) -> bool:
-    """Replay exact lowering-owned live-in projections after AST cleanup.
+    """Replay exact lowering-owned state projections after AST cleanup.
 
     Cleanup passes may replace structured-C nodes after the initial lowering
-    boundary. Re-materialize only live-ins whose typed lowering evidence still
+    boundary. Re-materialize only state whose typed lowering evidence still
     exists; do not infer new semantics at this orchestration boundary.
     """
-    return bool(lower_packed_flags_live_in_8616(codegen))
+    flags_changed = lower_packed_flags_live_in_8616(codegen)
+    gp_state_changed = lower_architectural_gp_register_state_8616(codegen)
+    gp_stack_changed = materialize_gp_stack_restores_8616(codegen)
+    return flags_changed or gp_state_changed or gp_stack_changed
 
 
 def apply_runtime_segment_lowering_8616(
@@ -1973,6 +1977,7 @@ def apply_runtime_segment_lowering_8616(
 ) -> bool:
     """Apply all runtime segmented-memory lowering passes for one generated C function."""
     typed_codegen = cast(_AngrCodegenBoundary8616, codegen)
+    typed_codegen._inertia_final_codegen_projection_replayer_8616 = replay_final_codegen_projections_8616
     cfunc = typed_codegen.cfunc
     project = typed_codegen.project
     if cfunc is None or project is None:

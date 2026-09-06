@@ -3,6 +3,8 @@
 Layer: Types/Lowering.
 Responsibility: map dynamic angr C-AST instruction and block ownership tags to
 unique machine-access instructions already proven by the IR segment contract.
+Consumes alias, widening, and typed facts.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 This module does not infer storage identity or inspect assembly/rendered C.
 """
 
@@ -85,7 +87,8 @@ def unique_access_instruction_in_tagged_blocks_8616(
     instruction_addrs = {
         fact.instruction_addr
         for fact in contract.accesses
-        if fact.block_addr in block_addrs
+        if isinstance(fact.instruction_addr, int)
+        and fact.block_addr in block_addrs
         and fact.segment_register == segment_register
         and (access_kind is None or fact.kind is access_kind)
         and fact.address.size > 0

@@ -26,6 +26,7 @@ from .shared_call_result_aliases import materialize_shared_call_result_aliases_8
 from .shared_tail_call_ownership import materialize_shared_tail_call_ownership_8616
 from .stored_call_result_assignments import materialize_stored_call_result_assignments_8616
 from .stored_call_result_occurrences import materialize_stored_call_result_occurrences_8616
+from .unused_call_result_self_xor import materialize_unused_call_result_self_xor_8616
 
 __all__ = ["finalize_shared_call_occurrences_8616"]
 
@@ -56,9 +57,13 @@ def finalize_shared_call_occurrences_8616(project: object, codegen: object) -> b
     changed = stored_result.changed or changed
     if os.environ.get("INERTIA_DEBUG_STORED_CALL_RESULT_OCCURRENCES") == "1":
         logger.warning("[stored-call-result-occurrences] result=%r", stored_result)
+    self_xor = materialize_unused_call_result_self_xor_8616(codegen)
+    changed = self_xor.changed or changed
     changed = bool(_codegen.coalesce_shared_call_side_effect_statements_8616(codegen)) or changed
     shared_tail = materialize_shared_tail_call_ownership_8616(project, codegen)
     changed = shared_tail.changed or changed
+    if os.environ.get("INERTIA_DEBUG_STORED_CALL_RESULT_OCCURRENCES") == "1":
+        logger.warning("[shared-tail-call-ownership] result=%r", shared_tail)
     if changed:
         boundary = cast(_CodegenOccurrenceSurface8616, codegen)
         boundary._inertia_codegen_decl_refresh_required_8616 = True

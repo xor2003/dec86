@@ -20,6 +20,9 @@ from angr_platforms.X86_16.lowering.gp_register_state import (
 from angr_platforms.X86_16.lowering.gp_stack_restore import (
     materialize_gp_stack_restores_8616,
 )
+from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
+    replay_final_codegen_projections_8616,
+)
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.postprocess.optimization.dce import (
     _dead_code_elimination_8616,
@@ -134,9 +137,14 @@ def test_materializes_exact_ax_push_bytes_and_observes_pop_write() -> None:
     assert codegen._inertia_gp_stack_restore_snapshots_8616 == (snapshot.lhs,)
 
     codegen.cfunc.statements.statements.remove(snapshot)
-    assert materialize_gp_stack_restores_8616(codegen) is True
+    marker.tags["ins_addr"] = 0x0
+    unified_snapshot = SimStackVariable(-2, 2, base="bp", name="local_2")
+    restore.rhs.unified_variable = unified_snapshot
+    assert replay_final_codegen_projections_8616(codegen) is True
     snapshot = codegen.cfunc.statements.statements[0]
     assert isinstance(snapshot, structured_c.CAssignment)
+    assert snapshot.lhs.variable is restore.rhs.variable
+    assert snapshot.lhs.unified_variable is unified_snapshot
 
     _dead_code_elimination_8616(codegen)
     assert snapshot in codegen.cfunc.statements.statements

@@ -19,6 +19,7 @@ from collections.abc import Iterator, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol, cast
 
 from ..pipeline.errors import PipelineHardError
@@ -66,6 +67,25 @@ class _FunctionBoundary8616(Protocol):
     info: MutableMapping[str, object]
 
 
+class _FunctionManagerLookupBoundary8616(Protocol):
+    """Third-party knowledge-base function lookup surface."""
+
+    def function(self, *, addr: int, create: bool) -> object | None:
+        """Return one exact function without creating synthetic state."""
+
+
+class _KnowledgeBaseLookupBoundary8616(Protocol):
+    """Third-party knowledge base containing the function manager."""
+
+    functions: _FunctionManagerLookupBoundary8616
+
+
+class _ArtifactProjectBoundary8616(Protocol):
+    """Third-party project surface used for finalized artifact lookup."""
+
+    kb: _KnowledgeBaseLookupBoundary8616
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class StatusFlagLiftCandidate8616:
     """One exact instruction write with a CFG-proven dead status-bit subset."""
@@ -103,6 +123,21 @@ class StatusFlagLiftArtifact8616:
             for candidate in self.candidates
             if candidate.dead_writes != candidate.written
         )
+
+
+class StatusFlagLiftArtifactSource8616(Enum):
+    """Typed ownership source for a resolved status-flag lift artifact."""
+
+    ACTIVE = "active"
+    PUBLISHED = "published"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedStatusFlagLiftArtifact8616:
+    """One exact status-flag artifact and its durable ownership source."""
+
+    artifact: StatusFlagLiftArtifact8616
+    source: StatusFlagLiftArtifactSource8616
 
 
 @dataclass(slots=True)
@@ -265,7 +300,12 @@ def _original_linear_delta_8616(project: object) -> int:
 
 
 def _publish_stats_8616(function: object, session: StatusFlagLiftSession8616) -> None:
-    """Attach the finalized typed artifact and counters to its owning function."""
+    """Attach finalized counters without shrinking prior function evidence.
+
+    Retry and fallback analyses may relift a strict subset of the same function.
+    Such a narrower projection cannot replace already-published instruction
+    coverage because downstream lowering runs after the active lift context.
+    """
     from .status_flag_lift_codec import encode_status_flag_lift_artifact_8616
 
     try:
@@ -274,8 +314,18 @@ def _publish_stats_8616(function: object, session: StatusFlagLiftSession8616) ->
         return
     if isinstance(info, MutableMapping):
         info["status_flag_lift_stats_8616"] = session.stats.to_dict()
+        artifact = session.artifact
+        previous = published_status_flag_lift_artifact_8616(function)
+        if (
+            previous is not None
+            and previous.function_address == artifact.function_address
+            and previous.packed_preservation_addresses.issuperset(
+                artifact.packed_preservation_addresses
+            )
+        ):
+            artifact = previous
         info["status_flag_lift_artifact_8616"] = encode_status_flag_lift_artifact_8616(
-            session.artifact
+            artifact
         )
 
 
@@ -374,12 +424,44 @@ def active_status_flag_lift_artifact_8616(
     return session.artifact
 
 
+def resolve_status_flag_lift_artifact_8616(
+    project: object,
+    function_address: int,
+) -> ResolvedStatusFlagLiftArtifact8616 | None:
+    """Resolve active evidence first, then the finalized function-owned artifact."""
+    artifact = active_status_flag_lift_artifact_8616(function_address)
+    if artifact is not None:
+        return ResolvedStatusFlagLiftArtifact8616(
+            artifact,
+            StatusFlagLiftArtifactSource8616.ACTIVE,
+        )
+    try:
+        function = cast(_ArtifactProjectBoundary8616, project).kb.functions.function(
+            addr=function_address,
+            create=False,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if function is None:
+        return None
+    artifact = published_status_flag_lift_artifact_8616(function)
+    if artifact is None:
+        return None
+    return ResolvedStatusFlagLiftArtifact8616(
+        artifact,
+        StatusFlagLiftArtifactSource8616.PUBLISHED,
+    )
+
+
 __all__ = [
+    "ResolvedStatusFlagLiftArtifact8616",
     "StatusFlagLiftArtifact8616",
+    "StatusFlagLiftArtifactSource8616",
     "StatusFlagLiftCandidate8616",
     "StatusFlagLiftSession8616",
     "active_status_flag_lift_artifact_8616",
     "active_status_flag_lift_context_8616",
     "cfg_status_flag_dead_write_mask_8616",
     "published_status_flag_lift_artifact_8616",
+    "resolve_status_flag_lift_artifact_8616",
 ]

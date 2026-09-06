@@ -50,7 +50,10 @@ from .compiler_helpers import (
     is_x86_16_registered_stack_probe_target_8616,
     is_x86_16_stack_probe_name_8616,
 )
-from .frontend_block_inventory import decoded_block_instructions_8616
+from .frontend_block_inventory import (
+    decoded_block_instructions_8616,
+    decoded_function_instructions_8616,
+)
 from .frontend_caller_return_use_program import (
     CallerReturnUseProgramStatus8616,
     build_caller_return_use_program_evidence_8616,
@@ -1337,34 +1340,7 @@ def _linear_window_insns_for_callsite_8616(function: object, callsite_addr: int)
 
 def _function_cfg_instruction_inventory_8616(function: object) -> tuple[object, ...]:
     """Return the address-ordered Capstone instructions owned by one function CFG."""
-    blocks: tuple[object, ...] = ()
-    try:
-        blocks = tuple(cast(Iterable[object], _dynamic_callsite_getattr_8616(function, "blocks", ())))
-    except Exception as ex:
-        log.debug("callee-save function block enumeration failed: %s", ex)
-
-    project = _dynamic_callsite_getattr_8616(function, "project", None)
-    if not blocks and project is not None:
-        decoded_blocks: list[object] = []
-        for block_addr in sorted(
-            addr
-            for addr in (_dynamic_callsite_getattr_8616(function, "block_addrs_set", ()) or ())
-            if isinstance(addr, int)
-        ):
-            try:
-                decoded_blocks.append(project.factory.block(block_addr, opt_level=0))
-            except Exception as ex:
-                log.debug("callee-save block decode failed block=%#x: %s", block_addr, ex)
-        blocks = tuple(decoded_blocks)
-
-    by_addr: dict[int, object] = {}
-    for block in blocks:
-        capstone = _dynamic_callsite_getattr_8616(block, "capstone", None)
-        for insn in tuple(_dynamic_callsite_getattr_8616(capstone, "insns", ()) or ()):
-            address = _instruction_address_8616(insn)
-            if isinstance(address, int):
-                by_addr.setdefault(address, insn)
-    return tuple(by_addr[address] for address in sorted(by_addr))
+    return tuple(decoded_function_instructions_8616(function))
 
 
 def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:

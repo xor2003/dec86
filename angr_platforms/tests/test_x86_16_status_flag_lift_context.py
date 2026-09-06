@@ -9,13 +9,16 @@ import pytest
 from angr.analyses.decompiler.clinic import Clinic
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.compat import apply_x86_16_compatibility
+from angr_platforms.X86_16.ir import status_flag_lift_context
 from angr_platforms.X86_16.ir.status_flag_lift_context import (
     StatusFlagLiftArtifact8616,
+    StatusFlagLiftArtifactSource8616,
     StatusFlagLiftCandidate8616,
     StatusFlagLiftSession8616,
     active_status_flag_lift_artifact_8616,
     active_status_flag_lift_context_8616,
     published_status_flag_lift_artifact_8616,
+    resolve_status_flag_lift_artifact_8616,
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -188,11 +191,19 @@ def test_cfg_context_emits_only_the_status_bit_live_at_successor_condition() -> 
         assert isinstance(artifact, StatusFlagLiftArtifact8616)
         assert artifact.partial_write_addresses == frozenset({0x1000})
         assert artifact.packed_preservation_addresses == frozenset({0x1000, 0x1005})
+        active_resolution = resolve_status_flag_lift_artifact_8616(project, function.addr)
+        assert active_resolution is not None
+        assert active_resolution.artifact == artifact
+        assert active_resolution.source is StatusFlagLiftArtifactSource8616.ACTIVE
 
     assert session.stats.complete
     published = published_status_flag_lift_artifact_8616(function)
     assert isinstance(published, StatusFlagLiftArtifact8616)
     assert published.packed_preservation_addresses == frozenset({0x1000, 0x1005})
+    published_resolution = resolve_status_flag_lift_artifact_8616(project, function.addr)
+    assert published_resolution is not None
+    assert published_resolution.artifact == published
+    assert published_resolution.source is StatusFlagLiftArtifactSource8616.PUBLISHED
     evidence = packed_status_flag_preservation_evidence_8616(
         project,
         SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr)),
@@ -303,6 +314,29 @@ def test_session_consumes_original_address_candidate_from_rebased_slice() -> Non
     assert session.materialized_addresses == frozenset({0x1419B})
     session.finalize()
     assert session.stats.complete
+
+
+def test_narrow_relift_does_not_shrink_published_preservation_coverage() -> None:
+    """A fallback subset cannot erase full-function packed-FLAGS evidence."""
+    function = SimpleNamespace(info={})
+    full = StatusFlagLiftSession8616(
+        function_address=0x1000,
+        candidates=(),
+        packed_preservation_addresses=frozenset({0x1000, 0x1004, 0x1008}),
+    )
+    full.finalize()
+    status_flag_lift_context._publish_stats_8616(function, full)
+    narrow = StatusFlagLiftSession8616(
+        function_address=0x1000,
+        candidates=(),
+        packed_preservation_addresses=frozenset({0x1000}),
+    )
+    narrow.finalize()
+    status_flag_lift_context._publish_stats_8616(function, narrow)
+
+    published = published_status_flag_lift_artifact_8616(function)
+    assert published is not None
+    assert published.packed_preservation_addresses == full.packed_preservation_addresses
 
 
 def test_clinic_fast_relift_does_not_bypass_custom_x86_16_lifter() -> None:

@@ -11,7 +11,11 @@ from __future__ import annotations
 import typing
 
 from .pipeline.render_authority import CodegenRenderAuthority8616
-from .string_instruction_lowering import StringIntrinsicArtifact, render_x86_16_string_intrinsic_c
+from .string_instruction_lowering import (
+    StringInstructionCoverage8616,
+    StringIntrinsicArtifact,
+    render_x86_16_string_intrinsic_c,
+)
 
 __all__ = ["apply_x86_16_string_codegen_override"]
 
@@ -28,7 +32,11 @@ def _render_override_text(codegen: object) -> str | None:
     artifact = getattr(codegen, "_inertia_string_intrinsic_artifact", None)
     if not isinstance(artifact, StringIntrinsicArtifact):
         return None
-    if artifact.refusals or not artifact.records:
+    if (
+        artifact.coverage is not StringInstructionCoverage8616.EXACT_FUNCTION
+        or artifact.refusals
+        or not artifact.records
+    ):
         return None
     name = getattr(cfunc, "name", None) or f"sub_{getattr(cfunc, 'addr', 0):x}"
     return render_x86_16_string_intrinsic_c(name, artifact)

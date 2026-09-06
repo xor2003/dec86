@@ -1279,6 +1279,13 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 tags=node.tags,
             )
 
+        if (
+            isinstance(node, CBinaryOp)
+            and node.op in {"Shl", "Shr", "Sar"}
+            and _is_c_constant_int_8616(node.rhs, 0)
+        ):
+            return node.lhs
+
         if isinstance(node, CBinaryOp) and node.op == "Mul":  # noqa: SIM102
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
                 type_ = (
@@ -1372,7 +1379,11 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                         codegen=codegen,
                         tags=node.tags,
                     )
-        if isinstance(node, CBinaryOp) and node.op == "Sub" and _same_c_expression_8616(node.lhs, node.rhs):
+        if (
+            isinstance(node, CBinaryOp)
+            and node.op in {"Sub", "Xor"}
+            and _same_c_expression_8616(node.lhs, node.rhs)
+        ):
             type_ = node.type or node.lhs.type
             if type_ is not None:
                 return CConstant(0, type_, codegen=codegen)

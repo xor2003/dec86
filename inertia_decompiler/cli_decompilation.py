@@ -2061,6 +2061,12 @@ def _finalize_typed_call_interfaces_before_render_8616(codegen: object) -> bool:
     return bool(changed)
 
 
+def _finalize_typed_interfaces_and_projections_before_render_8616(codegen: object) -> bool:
+    """Finalize typed interfaces, then restore Lowering projections they may expose."""
+    changed = _finalize_typed_call_interfaces_before_render_8616(codegen)
+    return _replay_final_codegen_projections_after_regen_8616(codegen) or changed
+
+
 def _replay_direct_stack_mov_after_regen_8616(codegen: object) -> bool:
     """Replay proven direct stack moves after angr replaces the structured C tree."""
     # Dynamic angr/codegen compatibility boundary.
@@ -2134,6 +2140,30 @@ def _replay_call_return_selector_lowering_after_regen_8616(codegen: object) -> b
     return bool(replayer(codegen))
 
 
+def _replay_final_codegen_projections_after_regen_8616(codegen: object) -> bool:
+    """Invoke the bound Lowering owner after late CLI AST cleanup."""
+    try:
+        replayer = cast(
+            Callable[[object], bool],
+            cast(Any, codegen)._inertia_final_codegen_projection_replayer_8616,
+        )
+    except AttributeError:
+        if os.environ.get("INERTIA_DEBUG_GP_STACK_RESTORE"):
+            logging.getLogger(__name__).warning(
+                "[final-codegen-projection-replay] codegen=%#x available=False",
+                id(codegen),
+            )
+        return False
+    changed = bool(replayer(codegen))
+    if os.environ.get("INERTIA_DEBUG_GP_STACK_RESTORE"):
+        logging.getLogger(__name__).warning(
+            "[final-codegen-projection-replay] codegen=%#x available=True changed=%s",
+            id(codegen),
+            changed,
+        )
+    return changed
+
+
 def _recover_canonical_for_loops_after_regen_8616(codegen: object) -> bool:
     """Invoke Structuring only when the dynamic codegen exposes a live AST root."""
     try:
@@ -2177,7 +2207,16 @@ def _finalize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     final_occurrence_changed = finalize_shared_call_occurrences_8616(project, codegen)
     canonical_for_changed = _recover_canonical_for_loops_after_regen_8616(codegen)
     final_cleanup_changed = finalize_late_ast_cleanup_8616(project, codegen).changed
-    return bool(final_cleanup_changed or canonical_for_changed or final_occurrence_changed or changed or late_ast_changed or segment_surface_changed)
+    final_projection_changed = _replay_final_codegen_projections_after_regen_8616(codegen)
+    return bool(
+        final_projection_changed
+        or final_cleanup_changed
+        or canonical_for_changed
+        or final_occurrence_changed
+        or changed
+        or late_ast_changed
+        or segment_surface_changed
+    )
 
 
 def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[str, bool]:
@@ -2261,6 +2300,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                     codegen,
                     preserve_setup=True,
                 )
+                _replay_final_codegen_projections_after_regen_8616(codegen)
                 restored_text = _direct_cfunc_text_or_none(f"{replay_tag}-restored-cfunc")
                 if isinstance(restored_text, str) and restored_text.strip():
                     restored_evidence = _render_refresh_preservation_evidence_8616(
@@ -2341,7 +2381,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
         def _render_text_or_none(tag: str) -> str | None:
             require_codegen_render_integrity_8616(codegen, context=context)
             _normalize_stack_identifiers_before_render_8616()
-            _finalize_typed_call_interfaces_before_render_8616(codegen)
+            _finalize_typed_interfaces_and_projections_before_render_8616(codegen)
             # Dynamic third-party angr/codegen boundary.
             render_text = typing.cast(typing.Any, codegen).render_text
             rendered = render_text(getattr(codegen, "cfunc", None))
@@ -2362,7 +2402,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                 with contextlib.suppress(Exception):
                     _finalize_callsite_arguments_after_noncall_regen_8616(codegen)
             _normalize_stack_identifiers_before_render_8616()
-            _finalize_typed_call_interfaces_before_render_8616(codegen)
+            _finalize_typed_interfaces_and_projections_before_render_8616(codegen)
             cfunc = getattr(codegen, "cfunc", None)
             c_repr = getattr(cfunc, "c_repr", None)
             if not callable(c_repr):
@@ -4524,13 +4564,11 @@ def _decompile_function(
             cfunc = getattr(dec.codegen, "cfunc", None)
             if cfunc is None:
                 return None
-            return typing.cast(
-                object,
-                snapshot_trusted_cfunc_8616(
-                    cfunc,
-                    preserve_objects=(dec.codegen, project, project.arch),
-                ),
+            snapshot: object | None = snapshot_trusted_cfunc_8616(
+                cfunc,
+                preserve_objects=(dec.codegen, project, project.arch),
             )
+            return snapshot
 
         def _restore_codegen_cfunc(snapshot: Any) -> bool:
             if snapshot is None:
@@ -5456,6 +5494,10 @@ def _decompile_function(
                 typing.cast(typing.Any, dec.codegen)._inertia_codegen_decl_refresh_required_8616 = True
                 typing.cast(typing.Any, dec.codegen)._inertia_force_codegen_regeneration_8616 = True
                 _run_dead_local_prune_with_call_guard("bounded direct-stack materialization prune removed call expressions")
+        if _replay_final_codegen_projections_after_regen_8616(dec.codegen):
+            changed = True
+            typing.cast(typing.Any, dec.codegen)._inertia_codegen_decl_refresh_required_8616 = True
+            typing.cast(typing.Any, dec.codegen)._inertia_force_codegen_regeneration_8616 = True
         if rollback_final_semantic_drift_8616(
             project,
             dec.codegen,
@@ -5469,11 +5511,12 @@ def _decompile_function(
                 )
             ),
             restore_cfunc=_restore_codegen_cfunc,
+            replay_projections=_replay_final_codegen_projections_after_regen_8616,
             function_addr=function_original_addr(function),
         ):
             changed = True
             postprocess_semantic_changed = False
-        changed = _finalize_typed_call_interfaces_before_render_8616(dec.codegen) or changed
+        changed = _finalize_typed_interfaces_and_projections_before_render_8616(dec.codegen) or changed
         render_refresh_required = bool(
             changed
             or postprocess_semantic_changed
@@ -6165,6 +6208,31 @@ def _label_at_addr_8616(project: angr.Project, addr: int) -> str | None:
     return label if isinstance(label, str) and label else None
 
 
+def _ordered_original_target_candidates_8616(
+    project: angr.Project,
+    slice_target: int,
+) -> tuple[int, ...]:
+    """Order original addresses for rebased near and absolute far targets."""
+    original_project = getattr(project, "_inertia_original_project", None)
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    if original_project is None or not isinstance(original_delta, int):
+        return ()
+    original_object = getattr(getattr(original_project, "loader", None), "main_object", None)
+    original_min = getattr(original_object, "min_addr", None)
+    original_max = getattr(original_object, "max_addr", None)
+    target_is_original_linear = (
+        isinstance(original_min, int)
+        and isinstance(original_max, int)
+        and original_min <= slice_target <= original_max
+    )
+    candidates = (
+        (slice_target, slice_target + original_delta)
+        if target_is_original_linear
+        else (slice_target + original_delta, slice_target)
+    )
+    return tuple(dict.fromkeys(candidate for candidate in candidates if candidate >= 0))
+
+
 def _original_callee_name_8616(project: angr.Project, slice_target: int) -> str | None:
     cache = getattr(project, "_inertia_original_callee_name_cache_8616", None)
     if not isinstance(cache, dict):
@@ -6184,10 +6252,7 @@ def _original_callee_name_8616(project: angr.Project, slice_target: int) -> str 
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     if original_project is None or not isinstance(original_delta, int):
         return _cache_result(None)
-    original_targets: list[int] = []
-    for candidate in (slice_target + original_delta, slice_target):
-        if isinstance(candidate, int) and candidate >= 0 and candidate not in original_targets:
-            original_targets.append(candidate)
+    original_targets = _ordered_original_target_candidates_8616(project, slice_target)
 
     def _helper_overrides_generic_name(helper_name: str | None, known_name: str | None) -> bool:
         if not isinstance(helper_name, str) or not helper_name:
@@ -6255,10 +6320,8 @@ def _function_named_addr_8616(project: angr.Project, name: str) -> int | None:
 
 
 def _candidate_original_target_8616(project: angr.Project, candidate: int) -> int | None:
-    original_delta = getattr(project, "_inertia_original_linear_delta", None)
-    if not isinstance(original_delta, int):
-        return None
-    return candidate + original_delta
+    candidates = _ordered_original_target_candidates_8616(project, candidate)
+    return candidates[0] if candidates else None
 
 
 def _call_name_matches_target_evidence_8616(
@@ -6294,9 +6357,20 @@ def _call_name_matches_target_evidence_8616(
 
 def _parse_direct_call_target_8616(insn: object) -> int | None:
     def _impl() -> int | None:
-        capstone_insn = getattr(insn, "insn", None)
+        capstone_insn = getattr(insn, "insn", insn)
         operands = getattr(capstone_insn, "operands", None)
         if operands:
+            mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+            if (
+                mnemonic == "lcall"
+                and len(operands) == 2
+                and all(getattr(operand, "type", None) == 2 for operand in operands)
+                and all(isinstance(getattr(operand, "imm", None), int) for operand in operands)
+            ):
+                segment = int(operands[0].imm) & 0xFFFF
+                offset_width = 32 if getattr(operands[1], "size", 2) == 4 else 16
+                offset = int(operands[1].imm) & ((1 << offset_width) - 1)
+                return (segment << 4) + offset
             operand = operands[0]
             if getattr(operand, "type", None) == 2 and isinstance(getattr(operand, "imm", None), int):
                 return int(operand.imm)
@@ -6331,7 +6405,7 @@ def _iter_capstone_direct_calls_8616(
                 )
                 continue
             for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
-                if getattr(insn, "mnemonic", "").lower() != "call":
+                if getattr(insn, "mnemonic", "").lower() not in {"call", "lcall"}:
                     continue
                 target = _parse_direct_call_target_8616(insn)
                 if isinstance(target, int):
@@ -6548,14 +6622,11 @@ def _seed_direct_callee_prototype_from_original_project_8616(
             candidate,
         ))
     # Dynamic exact-slice project extension boundary.
-    original_delta = getattr(project, "_inertia_original_linear_delta", None)
-    targets = [candidate]
-    if isinstance(original_delta, int):
-        targets.insert(0, candidate + original_delta)
+    targets = _ordered_original_target_candidates_8616(project, candidate)
     original_object = original_project.loader.main_object
     original_min = original_object.min_addr
     original_max = original_object.max_addr
-    for target in dict.fromkeys(targets):
+    for target in targets:
         if not original_min <= target <= original_max:
             continue
         original_function = original_project.kb.functions.function(addr=target, create=True)

@@ -347,7 +347,7 @@ def canonicalize_callsite_target_identities_8616(
     project: object,
     codegen: object,
 ) -> bool:
-    """Rebind padding aliases to exact typed callsite-summary targets."""
+    """Rebind each exact callsite to its authoritative target function and name."""
     carrier = cast(_CodegenSurface8616, codegen)
     stats = CallTargetIdentityStats8616()
     carrier._inertia_call_target_identity_stats_8616 = stats
@@ -380,23 +380,20 @@ def canonicalize_callsite_target_identities_8616(
             )
             continue
         current_addr = _callee_addr_8616(node)
-        if current_addr == summary.target_addr:
-            stats.normalized_fact_count += 1
-            decisions.append((current_addr, summary.target_addr, "already-canonical"))
-            continue
-        exact_far_target = (
-            callsite_machine_frame_kind_8616(summary)
-            is CallsiteMachineFrameKind8616.FAR
-        )
-        canonical_addr = (
-            summary.target_addr
-            if exact_far_target
-            else normalize_x86_16_call_target_addr_8616(project, current_addr)
-        )
-        if canonical_addr != summary.target_addr:
-            stats.failure_count += 1
-            decisions.append((current_addr, summary.target_addr, "target-mismatch"))
-            continue
+        if current_addr != summary.target_addr:
+            exact_far_target = (
+                callsite_machine_frame_kind_8616(summary)
+                is CallsiteMachineFrameKind8616.FAR
+            )
+            canonical_addr = (
+                summary.target_addr
+                if exact_far_target
+                else normalize_x86_16_call_target_addr_8616(project, current_addr)
+            )
+            if canonical_addr != summary.target_addr:
+                stats.failure_count += 1
+                decisions.append((current_addr, summary.target_addr, "target-mismatch"))
+                continue
         stats.normalized_fact_count += 1
         try:
             canonical_function = functions.function(
@@ -406,6 +403,8 @@ def canonicalize_callsite_target_identities_8616(
         except (KeyError, TypeError):
             canonical_function = None
         if canonical_function is None:
+            if current_addr == summary.target_addr:
+                canonical_function = node.callee_func
             canonical_name: object = f"sub_{summary.target_addr:x}"
             decision = "materialized-generic"
         else:
@@ -423,6 +422,9 @@ def canonicalize_callsite_target_identities_8616(
         ):
             stats.failure_count += 1
             decisions.append((current_addr, summary.target_addr, "name-missing"))
+            continue
+        if node.callee_func is canonical_function and node.callee_target == canonical_name:
+            decisions.append((current_addr, summary.target_addr, "already-canonical"))
             continue
         stats.classified_fact_count += 1
         node.callee_func = canonical_function

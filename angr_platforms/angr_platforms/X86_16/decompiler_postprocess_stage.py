@@ -8288,11 +8288,6 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
             True,
         ),
         DecompilerPostprocessPassSpec(
-            "_prune_void_function_return_values_8616",
-            _post._prune_void_function_return_values_8616,
-            True,
-        ),
-        DecompilerPostprocessPassSpec(
             "_prune_surplus_void_empty_return_guards_8616",
             _prune_surplus_void_empty_return_guards_8616,
             True,
@@ -8454,7 +8449,7 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
             False,
         ),
         DecompilerPostprocessPassSpec(
-            "_replay_packed_flags_live_ins_after_cleanup_8616",
+            "_replay_lowering_projections_after_cleanup_8616",
             replay_final_codegen_projections_8616,
             False,
         ),
@@ -8527,7 +8522,6 @@ def _wrapper_passes_8616() -> tuple[DecompilerPostprocessPassSpec, ...]:
         "_materialize_callsite_prototypes_8616",
         "_rewrite_decoded_jcc_conditions_after_calls_8616",
         "_classify_return_shape_8616",
-        "_prune_void_function_return_values_8616",
         "_materialize_empty_if_return_branches_8616",
         "_materialize_void_tail_call_guard_from_cfg_8616",
         "_prune_surplus_void_empty_return_guards_8616",

@@ -53,6 +53,9 @@ from .ir.logical_memory_register_transfer_contracts import (
 from .ir.ssa_cfg import build_ssa_cfg_snapshot_8616, compute_ssa_dominators_8616
 from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .validation_condition_chains import validate_complete_condition_chain_8616
+from .validation_condition_identity import (
+    condition_semantic_view_projection_fingerprint_8616,
+)
 from .validation_condition_precision import condition_precision_evidence_8616
 
 __all__ = [
@@ -622,6 +625,19 @@ def validate_materialized_branch_conditions_8616(
             condition_fingerprint(candidates[0]),
             condition_fingerprint_normalizer,
         )
+        semantic_view_raw = condition_semantic_view_projection_fingerprint_8616(
+            facts[0],
+            candidates[0],
+            condition_fingerprint=condition_fingerprint,
+        )
+        semantic_view_actual = (
+            _normalized_fingerprint_8616(
+                semantic_view_raw,
+                condition_fingerprint_normalizer,
+            )
+            if semantic_view_raw is not None
+            else None
+        )
         post_body_raw = _post_body_do_while_fingerprint_8616(
             root,
             candidates[0],
@@ -664,6 +680,7 @@ def validate_materialized_branch_conditions_8616(
         )
         if (
             actual in {expected, inverted}
+            or semantic_view_actual in {expected, inverted}
             or post_body_actual in {expected, inverted}
             or precision_after == {actual}
             or actual in logical_reload_fingerprints

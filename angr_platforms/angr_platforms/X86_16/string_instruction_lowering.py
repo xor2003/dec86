@@ -10,9 +10,14 @@ import typing
 from dataclasses import dataclass
 from typing import Protocol
 
-from .string_instruction_artifact import StringInstructionArtifact, StringInstructionRecord
+from .string_instruction_artifact import (
+    StringInstructionArtifact,
+    StringInstructionCoverage8616,
+    StringInstructionRecord,
+)
 
 __all__ = [
+    "StringInstructionCoverage8616",
     "StringIntrinsicArtifact",
     "StringIntrinsicRecord",
     "StringIntrinsicRefusal",
@@ -64,14 +69,16 @@ class StringIntrinsicRefusal:
 
 @dataclass(frozen=True, slots=True)
 class StringIntrinsicArtifact:
-    """Lowered intrinsic records plus explicit refusal evidence."""
+    """Lowered intrinsic records, refusal evidence, and proved coverage scope."""
 
     records: tuple[StringIntrinsicRecord, ...] = ()
     refusals: tuple[StringIntrinsicRefusal, ...] = ()
+    coverage: StringInstructionCoverage8616 = StringInstructionCoverage8616.PARTIAL_FUNCTION
 
     def to_dict(self) -> dict[str, object]:
         """Serialize intrinsic evidence for function metadata/reporting."""
         return {
+            "coverage": self.coverage.value,
             "records": [
                 {
                     "index": rec.index,
@@ -237,7 +244,11 @@ def build_x86_16_string_intrinsic_artifact(artifact: StringInstructionArtifact) 
             refusals.append(
                 StringIntrinsicRefusal("no_lowering_signal", "string artifact produced no generic lowering")
             )
-        return StringIntrinsicArtifact(records=tuple(lowered_records), refusals=tuple(refusals))
+        return StringIntrinsicArtifact(
+            records=tuple(lowered_records),
+            refusals=tuple(refusals),
+            coverage=artifact.coverage,
+        )
 
     return _impl()
 

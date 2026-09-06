@@ -16,7 +16,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CVariableField,
 )
-from angr.sim_type import SimStruct, SimTypeChar, SimTypeFunction, SimTypeShort
+from angr.sim_type import SimStruct, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimTemporaryVariable
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -24,6 +24,7 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _attach_tail_validation_widened_carrier_provenance_8616,
     _deepcopy_cfunc_for_validation_8616,
 )
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.lowering.stack_variable_binding import StackVariableBinding
 from angr_platforms.X86_16.lowering.structured_intrinsics import lower_structured_insert_call_8616
 from angr_platforms.X86_16.tail_validation_fingerprint import (
@@ -784,6 +785,27 @@ def test_expr_fingerprint_ignores_nested_casts_inside_segmented_add():
     )
 
     assert _expr_fingerprint(plain, project) == _expr_fingerprint(cast_wrapped, project)
+
+
+def test_expr_fingerprint_preserves_semantic_cast_signedness():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    call = CFunctionCall("clock", None, [], codegen=codegen)
+    signed = CSemanticCast8616(
+        SimTypeLong(False),
+        SimTypeLong(True),
+        call,
+        codegen=codegen,
+    )
+    unsigned = CSemanticCast8616(
+        SimTypeLong(False),
+        SimTypeLong(False),
+        call,
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(signed, project) != _expr_fingerprint(call, project)
+    assert _expr_fingerprint(signed, project) != _expr_fingerprint(unsigned, project)
 
 
 def test_deref_location_fingerprint_ignores_redundant_ss_linear_term_for_stack_slot():

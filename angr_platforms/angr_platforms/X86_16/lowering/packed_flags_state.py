@@ -28,7 +28,10 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
-from ..ir.status_flag_lift_context import active_status_flag_lift_artifact_8616
+from ..ir.status_flag_lift_context import (
+    active_status_flag_lift_artifact_8616,
+    resolve_status_flag_lift_artifact_8616,
+)
 from ..semantics.expression_analysis import (
     VirtualValueIdentityKind8616,
     describe_virtual_value_identity_8616,
@@ -127,17 +130,29 @@ def lower_packed_flags_live_in_8616(codegen: object) -> bool:
     project = boundary.project
     cfunc = boundary.cfunc
     empty = PackedFlagsStateStats8616(0, 0, 0, 0, 0)
-    if project is None or cfunc is None or not isinstance(cfunc.statements, structured_c.CStatements):
+    if (
+        project is None
+        or cfunc is None
+        or not isinstance(cfunc.statements, structured_c.CStatement)
+    ):
         boundary._inertia_packed_flags_state_stats_8616 = empty
         return False
     shape = project.arch.registers.get("flags")
     artifact = active_status_flag_lift_artifact_8616(cfunc.addr)
+    if artifact is None:
+        resolution = resolve_status_flag_lift_artifact_8616(project, cfunc.addr)
+        artifact = resolution.artifact if resolution is not None else None
     if shape is None or len(shape) < 2 or artifact is None:
         boundary._inertia_packed_flags_state_stats_8616 = empty
         return False
     flags_shape = shape[:2]
     candidates: dict[tuple[int, int, int, int | str], structured_c.CExpression] = {}
     defined_identities: set[tuple[int, int, int, int | str]] = set()
+    definition_counts: dict[tuple[int, int, int, int | str], int] = {}
+    self_dependent_roots: dict[
+        tuple[int, int, int, int | str],
+        structured_c.CExpression,
+    ] = {}
     all_inputs: dict[tuple[int, int, int, int | str], structured_c.CExpression] = {}
     for node in _iter_c_nodes_deep_8616(cfunc.statements):
         if not isinstance(node, structured_c.CAssignment):
@@ -145,8 +160,11 @@ def lower_packed_flags_live_in_8616(codegen: object) -> bool:
         lhs_identity = _identity_8616(node.lhs)
         if lhs_identity is not None and lhs_identity[:2] == flags_shape:
             defined_identities.add(lhs_identity)
+            definition_counts[lhs_identity] = definition_counts.get(lhs_identity, 0) + 1
         rhs_inputs = _flags_inputs_8616(node.rhs, flags_shape)
         all_inputs.update(rhs_inputs)
+        if lhs_identity is not None and lhs_identity in rhs_inputs:
+            self_dependent_roots.setdefault(lhs_identity, rhs_inputs[lhs_identity])
         instruction_addr = node.tags.get("ins_addr")
         if (
             not isinstance(instruction_addr, int)
@@ -159,15 +177,21 @@ def lower_packed_flags_live_in_8616(codegen: object) -> bool:
         for identity, exemplar in all_inputs.items()
         if identity not in defined_identities
     )
+    candidates.update(
+        (identity, exemplar)
+        for identity, exemplar in self_dependent_roots.items()
+        if definition_counts.get(identity) == 1
+    )
     existing = {
         _identity_8616(node.lhs)
-        for node in cfunc.statements.statements
+        for node in _iter_c_nodes_deep_8616(cfunc.statements)
         if isinstance(node, structured_c.CAssignment)
         and isinstance(node.rhs, structured_c.CVariable)
         and isinstance(node.rhs.variable, SimMemoryVariable)
         and node.rhs.variable.category == "inertia_flags_state"
     }
     materialized = 0
+    initializers: list[structured_c.CAssignment] = []
     for identity, exemplar in sorted(candidates.items(), key=lambda item: repr(item[0])):
         if identity in existing:
             continue
@@ -183,8 +207,16 @@ def lower_packed_flags_live_in_8616(codegen: object) -> bool:
             variable_type=SimTypeShort(False),
             codegen=codegen,
         )
-        cfunc.statements.statements.insert(0, structured_c.CAssignment(lhs, rhs, codegen=codegen))
+        initializers.append(structured_c.CAssignment(lhs, rhs, codegen=codegen))
         materialized += 1
+    if initializers:
+        if isinstance(cfunc.statements, structured_c.CStatements):
+            cfunc.statements.statements[0:0] = initializers
+        else:
+            cfunc.statements = structured_c.CStatements(
+                [*initializers, cfunc.statements],
+                codegen=codegen,
+            )
     if materialized:
         record_global_declaration_spec_8616(
             codegen,
@@ -193,7 +225,7 @@ def lower_packed_flags_live_in_8616(codegen: object) -> bool:
             array_len=None,
         )
     live_in_owners: list[object] = []
-    for node in cfunc.statements.statements:
+    for node in _iter_c_nodes_deep_8616(cfunc.statements):
         if not (
             isinstance(node, structured_c.CAssignment)
             and isinstance(node.rhs, structured_c.CVariable)

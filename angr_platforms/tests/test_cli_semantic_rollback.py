@@ -67,6 +67,7 @@ def test_semantic_rollback_restores_and_revalidates_trusted_core() -> None:
         tail_validation_snapshot={"postprocess": {"status": "stable"}},
     )
     reports = iter((_Report({"def_use": ("v9",)}), _Report({})))
+    replayed: list[object] = []
 
     def refresh(_project: object, _codegen: object) -> _Report:
         return next(reports)
@@ -81,6 +82,7 @@ def test_semantic_rollback_restores_and_revalidates_trusted_core() -> None:
         trusted,
         refresh_validation=refresh,
         restore_cfunc=restore,
+        replay_projections=lambda active_codegen: not replayed.append(active_codegen.cfunc),
         function_addr=0x10678,
     )
 
@@ -91,6 +93,7 @@ def test_semantic_rollback_restores_and_revalidates_trusted_core() -> None:
     assert project._inertia_last_tail_validation_snapshot == trusted.tail_validation_snapshot
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
     assert codegen._inertia_force_codegen_regeneration_8616 is True
+    assert replayed == ["trusted"]
 
 
 def test_semantic_rollback_rejects_invalid_snapshot_transactionally() -> None:
@@ -109,6 +112,7 @@ def test_semantic_rollback_rejects_invalid_snapshot_transactionally() -> None:
             _Report({"def_use": ("virtual-carrier:v324",)}),
         )
     )
+    replayed: list[object] = []
 
     def restore(cfunc: object) -> bool:
         codegen.cfunc = cfunc
@@ -120,6 +124,7 @@ def test_semantic_rollback_rejects_invalid_snapshot_transactionally() -> None:
         trusted,
         refresh_validation=lambda _project, _codegen: next(reports),
         restore_cfunc=restore,
+        replay_projections=lambda active_codegen: not replayed.append(active_codegen.cfunc),
         function_addr=0x10678,
     )
 
@@ -127,6 +132,7 @@ def test_semantic_rollback_rejects_invalid_snapshot_transactionally() -> None:
     assert codegen.cfunc == "current"
     assert codegen._inertia_tail_validation_snapshot == {"current": "passed"}
     assert project._inertia_last_tail_validation_snapshot == {"current": "passed"}
+    assert replayed == ["invalid-trusted", "current"]
 
 
 def test_semantic_rollback_leaves_clean_ast_unchanged() -> None:

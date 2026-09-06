@@ -866,6 +866,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_projection.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_inventory_presence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_codegen_access_provenance.py \
@@ -1041,6 +1042,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_return_predicates.py \
 	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py \
+	angr_platforms/angr_platforms/X86_16/structuring/unused_call_result_self_xor.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_stack_views.py \
 	angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_rendering.py \
@@ -1850,6 +1852,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_projection.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_inventory_presence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_codegen_access_provenance.py \
@@ -2025,6 +2028,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_return_predicates.py \
 	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py \
+	angr_platforms/angr_platforms/X86_16/structuring/unused_call_result_self_xor.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_stack_views.py \
 	angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_rendering.py \
@@ -3019,6 +3023,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_cod_module_caller_evidence.py \
 	angr_platforms/tests/test_x86_16_frontend_function_boundary_index.py \
 	angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py \
+	angr_platforms/tests/test_x86_16_function_callsite_inventory.py \
 	angr_platforms/tests/test_x86_16_return_compat_counters.py \
 	angr_platforms/tests/test_x86_16_boolean_condition_ites.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_indexed_use.py \
@@ -3058,6 +3063,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_frontend_function_boundary_index.py \
 	angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py \
 	angr_platforms/tests/test_x86_16_callsite_block_inventory_reuse.py \
+	angr_platforms/tests/test_x86_16_function_callsite_inventory.py \
 	angr_platforms/tests/test_x86_16_analysis_helper_direct_blocks.py \
 	angr_platforms/tests/test_x86_16_stitched_direct_blocks.py \
 	angr_platforms/tests/test_cli_decompilation_render_refresh.py \

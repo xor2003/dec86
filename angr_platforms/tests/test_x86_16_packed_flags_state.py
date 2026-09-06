@@ -237,3 +237,99 @@ def test_initializes_exact_flags_ssa_root_without_covered_owner(monkeypatch) -> 
     assert isinstance(initializer, structured_c.CAssignment)
     assert isinstance(initializer.lhs, structured_c.CVariable)
     assert initializer.lhs.variable.ident == "ir_5"
+
+
+def test_initializes_unique_self_dependent_flags_root_without_coverage(monkeypatch) -> None:
+    """A unique partial-FLAGS recurrence requires an explicit entry seed."""
+    codegen = _Codegen(project=SimpleNamespace(arch=Arch86_16()))
+    loop_flags = structured_c.CVariable(
+        SimRegisterVariable(36, 2, ident="ir_9", region=0x100),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    update = structured_c.CAssignment(
+        loop_flags,
+        structured_c.CBinaryOp(
+            "Or",
+            structured_c.CBinaryOp(
+                "And",
+                loop_flags,
+                structured_c.CConstant(0xF72A, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CConstant(0x80, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=structured_c.CStatements([update], codegen=codegen),
+    )
+    monkeypatch.setattr(
+        packed_flags_state,
+        "active_status_flag_lift_artifact_8616",
+        lambda _addr: SimpleNamespace(
+            covers_packed_preservation_8616=lambda _address: False,
+            packed_preservation_addresses=frozenset(),
+            candidates=(),
+        ),
+    )
+    monkeypatch.setattr(packed_flags_state, "record_global_declaration_spec_8616", lambda *_args, **_kwargs: None)
+
+    assert packed_flags_state.lower_packed_flags_live_in_8616(codegen) is True
+    initializer = codegen.cfunc.statements.statements[0]
+    assert isinstance(initializer, structured_c.CAssignment)
+    assert isinstance(initializer.lhs, structured_c.CVariable)
+    assert initializer.lhs.variable.ident == "ir_9"
+    assert isinstance(initializer.rhs, structured_c.CVariable)
+    assert initializer.rhs.variable.name == "inertia_flags"
+    assert codegen.cfunc.statements.statements[1] is update
+
+
+def test_wraps_structured_branch_root_before_flags_initialization(monkeypatch) -> None:
+    """A structured branch root still receives its architectural entry seed."""
+    codegen = _Codegen(project=SimpleNamespace(arch=Arch86_16()))
+    incoming_flags = structured_c.CVariable(
+        SimRegisterVariable(36, 2, ident="ir_31", region=0x100),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    use = structured_c.CAssignment(
+        structured_c.CVariable(
+            SimRegisterVariable(0, 2, ident="ir_37", region=0x100),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        incoming_flags,
+        codegen=codegen,
+        tags={"ins_addr": 0x104},
+    )
+    root = structured_c.CIfElse(
+        [
+            (
+                structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                structured_c.CStatements([use], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x100, statements=root)
+    monkeypatch.setattr(
+        packed_flags_state,
+        "active_status_flag_lift_artifact_8616",
+        lambda _addr: SimpleNamespace(
+            covers_packed_preservation_8616=lambda address: address == 0x104,
+            packed_preservation_addresses=frozenset({0x104}),
+            candidates=(),
+        ),
+    )
+    monkeypatch.setattr(packed_flags_state, "record_global_declaration_spec_8616", lambda *_args, **_kwargs: None)
+
+    assert packed_flags_state.lower_packed_flags_live_in_8616(codegen) is True
+    assert isinstance(codegen.cfunc.statements, structured_c.CStatements)
+    initializer, preserved_root = codegen.cfunc.statements.statements
+    assert isinstance(initializer, structured_c.CAssignment)
+    assert isinstance(initializer.lhs, structured_c.CVariable)
+    assert initializer.lhs.variable.ident == "ir_31"
+    assert preserved_root is root

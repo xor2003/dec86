@@ -18,7 +18,7 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeLong
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
-from ..c_ast_utils import _replace_c_children_8616
+from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
 from ..ir.core import IRAddress, IRBinaryValue, IRCondition, IRValue, MemSpace
 from ..ir.function_ssa_registry import (
     FunctionSSAArtifactVerdict8616,
@@ -33,6 +33,7 @@ from .global_declarations import (
 __all__ = [
     "GPRegisterStateLoweringStats8616",
     "RuntimeGPExpressionView8616",
+    "gp_live_in_names_from_c_ast_8616",
     "gp_live_in_names_from_ssa_8616",
     "lower_architectural_gp_register_state_8616",
     "runtime_gp_expression_view_8616",
@@ -390,6 +391,52 @@ def gp_live_in_names_from_ssa_8616(artifact: SSAFunctionArtifact) -> frozenset[s
     )
 
 
+def _c_register_identity_8616(
+    node: object,
+    project: _ProjectGPRegisters8616,
+) -> tuple[tuple[int, int, str | None, int | None], str] | None:
+    """Return one exact structured-C register identity and its GP parent."""
+    if not isinstance(node, structured_c.CVariable) or not isinstance(
+        node.variable,
+        SimRegisterVariable,
+    ):
+        return None
+    variable = node.variable
+    if variable.ident is None:
+        return None
+    projection = _register_projection_for_shape_8616(project, variable.reg, variable.size)
+    if projection is None:
+        return None
+    register_name, _bit_shift, _view_width = projection
+    return (
+        (variable.reg, variable.size, variable.ident, variable.region),
+        register_name,
+    )
+
+
+def gp_live_in_names_from_c_ast_8616(
+    root: object,
+    project: _ProjectGPRegisters8616,
+) -> frozenset[str]:
+    """Return GP parents with an SSA C carrier read but never defined in the AST."""
+    observed: dict[tuple[int, int, str | None, int | None], str] = {}
+    defined: set[tuple[int, int, str | None, int | None]] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        identity = _c_register_identity_8616(node, project)
+        if identity is not None:
+            key, register_name = identity
+            observed[key] = register_name
+        if isinstance(node, structured_c.CAssignment):
+            lhs_identity = _c_register_identity_8616(node.lhs, project)
+            if lhs_identity is not None:
+                defined.add(lhs_identity[0])
+    return frozenset(
+        register_name
+        for key, register_name in observed.items()
+        if key not in defined
+    )
+
+
 def _register_projection_for_shape_8616(
     project: _ProjectGPRegisters8616,
     offset: int,
@@ -508,6 +555,71 @@ def _runtime_gp_subview_write_8616(
     )
 
 
+def _addressed_gp_high_byte_view_8616(
+    node: object,
+    project: _ProjectGPRegisters8616,
+) -> tuple[str, structured_c.CVariable] | None:
+    """Recognize angr's ``*((byte *)&word_register + 1)`` high-byte view."""
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        return None
+    address = node.operand
+    if not isinstance(address, structured_c.CBinaryOp) or address.op != "Add":
+        return None
+    reference: structured_c.CUnaryOp | None = None
+    displacement: structured_c.CConstant | None = None
+    for candidate_reference, candidate_displacement in (
+        (address.lhs, address.rhs),
+        (address.rhs, address.lhs),
+    ):
+        if (
+            isinstance(candidate_reference, structured_c.CUnaryOp)
+            and candidate_reference.op in {"Reference", "AddressOf"}
+            and isinstance(candidate_displacement, structured_c.CConstant)
+            and candidate_displacement.value == 1
+        ):
+            reference = candidate_reference
+            displacement = candidate_displacement
+            break
+    if reference is None or displacement is None:
+        return None
+    carrier = reference.operand
+    source: structured_c.CVariable | None = None
+    if isinstance(carrier, structured_c.CVariable) and isinstance(
+        carrier.variable,
+        SimRegisterVariable,
+    ):
+        projection = _register_projection_for_shape_8616(
+            project,
+            carrier.variable.reg,
+            carrier.variable.size,
+        )
+        if projection is None:
+            return None
+        register_name, bit_shift, view_width = projection
+        source = carrier
+    else:
+        runtime_view = runtime_gp_expression_view_8616(carrier)
+        if runtime_view is None:
+            return None
+        register_name = runtime_view.parent_name
+        bit_shift = runtime_view.bit_shift
+        view_width = runtime_view.width
+        source = next(
+            (
+                candidate
+                for candidate in (carrier, *_iter_c_nodes_deep_8616(carrier))
+                if isinstance(candidate, structured_c.CVariable)
+                and runtime_gp_name_for_variable_8616(candidate.variable) == register_name
+            ),
+            None,
+        )
+    if bit_shift != 0 or view_width != 2:
+        return None
+    if source is None:
+        return None
+    return register_name, source
+
+
 def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
     """Materialize SSA-proven GP live-ins as explicit runtime globals."""
     boundary = cast(_CodegenGPRegisters8616, codegen)
@@ -517,15 +629,35 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
         boundary._inertia_gp_register_state_lowering_stats_8616 = GPRegisterStateLoweringStats8616(0, 0, 0, 0, 0)
         return False
     resolution = registered_function_ssa_artifact_8616(project, cfunc.addr)
-    if resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or resolution.artifact is None:
-        boundary._inertia_gp_register_state_lowering_stats_8616 = GPRegisterStateLoweringStats8616(0, 0, 0, 0, 0)
-        return False
-    live_ins = gp_live_in_names_from_ssa_8616(resolution.artifact)
+    live_ins: set[str] = set()
+    if resolution.verdict is FunctionSSAArtifactVerdict8616.PROVEN and resolution.artifact is not None:
+        live_ins.update(gp_live_in_names_from_ssa_8616(resolution.artifact))
+    live_ins.update(gp_live_in_names_from_c_ast_8616(cfunc.statements, project))
     raw_ids: set[int] = set()
     materialized_ids: set[int] = set()
 
     def transform(node: object) -> object:
         """Replace one exact live-in register carrier."""
+        high_byte_view = _addressed_gp_high_byte_view_8616(node, project)
+        if high_byte_view is not None:
+            register_name, carrier = high_byte_view
+            raw_ids.add(id(node))
+            if register_name not in live_ins:
+                return node
+            materialized_ids.add(id(node))
+            record_global_declaration_spec_8616(
+                codegen,
+                ctype=GlobalDeclarationCType8616.UNSIGNED_LONG,
+                name=_RUNTIME_GP_STATE_SYMBOLS_8616[register_name],
+                array_len=None,
+            )
+            return _runtime_gp_expr_8616(
+                register_name,
+                8,
+                1,
+                carrier,
+                cfunc.addr,
+            )
         if isinstance(node, structured_c.CAssignment):
             lhs = node.lhs
             lhs_projection: tuple[str, int, int] | None = None
@@ -534,12 +666,13 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
                 if (
                     dirty.category is VirtualVariableCategory.REGISTER
                     and isinstance(dirty.oident, int)
-                    and isinstance(dirty.size, int)
+                    # Dynamic angr AIL boundary: compatibility nodes may omit size.
+                    and isinstance(getattr(dirty, "size", None), int)
                 ):
                     lhs_projection = _register_projection_for_shape_8616(
                         project,
                         dirty.oident,
-                        dirty.size,
+                        cast(int, dirty.size),
                     )
             elif isinstance(lhs, structured_c.CVariable) and isinstance(
                 lhs.variable,
@@ -575,7 +708,8 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
             dirty = node.dirty
             if dirty.category is VirtualVariableCategory.REGISTER:
                 offset = dirty.oident
-                size = dirty.size
+                # Dynamic angr AIL boundary: compatibility nodes may omit size.
+                size = getattr(dirty, "size", None)
                 if isinstance(offset, int) and isinstance(size, int):
                     projection = _register_projection_for_shape_8616(project, offset, size)
         elif isinstance(node, structured_c.CVariable):
@@ -610,12 +744,15 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
         cfunc.statements = new_root
     if _replace_c_children_8616(cfunc.statements, transform):
         changed = True
-    for variable in tuple(cfunc.unified_local_vars):
-        if isinstance(variable, SimRegisterVariable):
-            projection = _register_projection_for_shape_8616(project, variable.reg, variable.size)
-            if projection is not None and projection[0] in live_ins:
-                del cfunc.unified_local_vars[variable]
-                changed = True
+    # Dynamic angr/codegen boundary adapters may omit the unified-local mapping.
+    unified_local_vars = getattr(cfunc, "unified_local_vars", None)
+    if isinstance(unified_local_vars, MutableMapping):
+        for variable in tuple(unified_local_vars):
+            if isinstance(variable, SimRegisterVariable):
+                projection = _register_projection_for_shape_8616(project, variable.reg, variable.size)
+                if projection is not None and projection[0] in live_ins:
+                    del unified_local_vars[variable]
+                    changed = True
     classified = len(materialized_ids)
     boundary._inertia_gp_register_state_lowering_stats_8616 = GPRegisterStateLoweringStats8616(
         raw_fact_count=len(raw_ids),

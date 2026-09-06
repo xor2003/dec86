@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
@@ -55,11 +55,12 @@ from angr.sim_variable import SimStackVariable
 
 from .. import decompiler_postprocess_jcc as _legacy_jcc
 from .. import decompiler_postprocess_typed_conditions as _legacy_typed_conditions
+from ..alias.condition_register_bindings import condition_operand_storage_binding_8616
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from ..callsite_summary import callsite_machine_frame_kind_8616
 from ..condition_call_effects import classify_condition_call_effects_8616
 from ..ir.condition_ir import ConditionIR
-from ..ir.core import IRValue
+from ..ir.core import IRValue, MemSpace
 from ..lowering.call_execution_frame_carriers import (
     CallExecutionFrameCarrierStats8616,
     prune_consumed_call_execution_frame_carriers_8616,
@@ -91,7 +92,12 @@ from .condition_evidence_closure import (
     ConditionEvidenceClosure8616,
     classify_condition_evidence_closure_8616,
 )
-from .condition_lowering import lower_ir_value_to_c_expr_8616
+from .condition_lowering import (
+    condition_op_to_structured_kind_8616,
+    condition_origin_tags_8616,
+    lower_ir_value_to_c_expr_8616,
+    materialize_same_block_register_projection_8616,
+)
 from .condition_ownership import structured_node_owns_condition_fact_8616 as _structured_node_owns_condition_fact_8616
 from .condition_provenance import (
     StructuredConditionProvenanceStats8616,
@@ -161,7 +167,38 @@ def materialize_condition_ir_expression_8616(
     must provide the exact typed condition selected from CFG ownership; this
     function performs no condition discovery or instruction decoding.
     """
-    expression = _legacy_typed_conditions._build_c_condition_expr(project, condition, codegen)
+    bound_condition = replace(
+        condition,
+        lhs=condition_operand_storage_binding_8616(condition, condition.lhs),
+        rhs=condition_operand_storage_binding_8616(condition, condition.rhs),
+    )
+    expression = _legacy_typed_conditions._build_c_condition_expr(
+        project,
+        bound_condition,
+        codegen,
+    )
+    projection_stats = []
+    if isinstance(expression, CBinaryOp):
+        lhs_projection = materialize_same_block_register_projection_8616(
+            bound_condition.lhs,
+            bound_condition,
+            project,
+            codegen,
+        ) if isinstance(bound_condition.lhs, IRValue) else None
+        rhs_projection = materialize_same_block_register_projection_8616(
+            bound_condition.rhs,
+            bound_condition,
+            project,
+            codegen,
+        ) if isinstance(bound_condition.rhs, IRValue) else None
+        if lhs_projection is not None:
+            projection_stats.append(lhs_projection.stats)
+            if isinstance(lhs_projection.expression, CExpression):
+                expression.lhs = lhs_projection.expression
+        if rhs_projection is not None:
+            projection_stats.append(rhs_projection.stats)
+            if isinstance(rhs_projection.expression, CExpression):
+                expression.rhs = rhs_projection.expression
     if isinstance(expression, CExpression):
         bind_condition_replay_identity_8616(expression, condition)
     if os.environ.get("INERTIA_DEBUG_CONDITION_MATERIALIZATION") == "1":
@@ -169,6 +206,7 @@ def materialize_condition_ir_expression_8616(
             "lowered-expression",
             condition=condition,
             expression_tree=_condition_debug_tree_8616(expression),
+            register_projection_stats=tuple(projection_stats),
         )
     return expression if isinstance(expression, CExpression) else None
 
@@ -193,6 +231,7 @@ class _ConditionMaterializationCodegen8616(Protocol):
     _inertia_structuring_condition_evidence_closure_8616: ConditionEvidenceClosure8616
     _inertia_typed_loop_condition_stats_8616: LoopConditionMaterializationStats8616
     _inertia_structured_condition_provenance_stats_8616: StructuredConditionProvenanceStats8616
+    _inertia_same_block_condition_register_projection_stats_8616: SameBlockConditionRegisterProjectionStats8616
     _inertia_multi_arm_return_chain_materialized_8616: bool
     _inertia_multi_arm_return_expressions_8616: tuple[CExpression, ...]
     _inertia_return_expr_chain_materialized_8616: bool
@@ -236,6 +275,18 @@ class _ConditionMaterializationFunction8616(Protocol):
 
     transition_graph: object
     block_addrs_set: set[int]
+
+
+@dataclass(frozen=True, slots=True)
+class SameBlockConditionRegisterProjectionStats8616:
+    """Account for exact same-block subregister projections in conditions."""
+
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
+    changed_count: int = 0
 
 
 class _ConditionMaterializationGraph8616(Protocol):
@@ -480,6 +531,129 @@ def condition_key_from_tags_8616(node: object) -> tuple[int, int] | None:
         if isinstance(ins_addr, int) and isinstance(block_addr, int):
             return ins_addr, block_addr
     return None
+
+
+def materialize_same_block_condition_register_projections_8616(
+    root: object,
+    project: object,
+    codegen: object,
+    conditions: tuple[ConditionIR, ...],
+) -> SameBlockConditionRegisterProjectionStats8616:
+    """Replay exact same-block register projections into typed comparisons."""
+    conditions_by_key: dict[tuple[int, int], list[ConditionIR]] = {}
+    conditions_by_block: dict[int, list[ConditionIR]] = {}
+    for condition in conditions:
+        if isinstance(condition.src_insn, int) and isinstance(condition.block_addr, int):
+            conditions_by_key.setdefault(
+                (condition.src_insn, condition.block_addr),
+                [],
+            ).append(condition)
+            conditions_by_block.setdefault(condition.block_addr, []).append(condition)
+
+    raw_count = normalized_count = classified_count = 0
+    materialized_count = failure_count = changed_count = 0
+    seen_nodes: set[int] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        if id(node) in seen_nodes or not isinstance(node, CBinaryOp):
+            continue
+        seen_nodes.add(id(node))
+        tags = _copied_condition_tags_8616(node)
+        if str(node.op).startswith("Cmp"):
+            _debug_condition_chain_8616(
+                "register-projection-candidate",
+                key=condition_key_from_tags_8616(node),
+                op=node.op,
+                typed=tags.get("typed_condition"),
+            )
+        key = condition_key_from_tags_8616(node)
+        if key is None:
+            continue
+        matching = tuple(conditions_by_key.get(key, ()))
+        if not matching and key[0] == key[1]:
+            matching = tuple(conditions_by_block.get(key[1], ()))
+        if len(matching) != 1:
+            if matching:
+                raw_count += len(matching)
+                failure_count += 1
+            continue
+        condition = matching[0]
+        if node.op != condition_op_to_structured_kind_8616(condition.op):
+            continue
+        bound_lhs = condition_operand_storage_binding_8616(condition, condition.lhs)
+        bound_rhs = condition_operand_storage_binding_8616(condition, condition.rhs)
+        if bound_lhs != condition.lhs or bound_rhs != condition.rhs:
+            lowered = materialize_condition_ir_expression_8616(
+                project,
+                codegen,
+                condition,
+            )
+            raw_count += 1
+            normalized_count += 1
+            if not isinstance(lowered, CBinaryOp) or lowered.op != node.op:
+                failure_count += 1
+                continue
+            classified_count += 1
+            materialized_count += 1
+            changed = not _same_c_expression_8616(node, lowered)
+            if changed:
+                node.lhs = lowered.lhs
+                node.rhs = lowered.rhs
+                changed_count += 1
+            node.tags = {
+                **tags,
+                **condition_origin_tags_8616(condition),
+            }
+            continue
+        projected = False
+        for side, value in (("lhs", condition.lhs), ("rhs", condition.rhs)):
+            if not isinstance(value, IRValue) or value.space is not MemSpace.REG:
+                continue
+            result = materialize_same_block_register_projection_8616(
+                value,
+                condition,
+                project,
+                codegen,
+            )
+            raw_count += result.stats.raw_fact_count
+            normalized_count += result.stats.normalized_fact_count
+            classified_count += result.stats.classified_fact_count
+            materialized_count += result.stats.materialized_count
+            failure_count += result.stats.failure_count
+            replacement = result.expression
+            current = node.lhs if side == "lhs" else node.rhs
+            if not isinstance(replacement, CExpression) or _same_c_expression_8616(
+                current,
+                replacement,
+            ):
+                continue
+            if side == "lhs":
+                node.lhs = replacement
+            else:
+                node.rhs = replacement
+            changed_count += 1
+            projected = True
+        if projected:
+            node.tags = {
+                **tags,
+                **condition_origin_tags_8616(condition),
+            }
+
+    stats = SameBlockConditionRegisterProjectionStats8616(
+        raw_fact_count=raw_count,
+        normalized_fact_count=normalized_count,
+        classified_fact_count=classified_count,
+        materialized_count=materialized_count,
+        failure_count=failure_count,
+        changed_count=changed_count,
+    )
+    metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
+    metadata_codegen._inertia_same_block_condition_register_projection_stats_8616 = stats
+    _debug_condition_chain_8616("register-projection-stats", stats=stats)
+    if stats.classified_fact_count > 0 and stats.materialized_count == 0:
+        raise PipelineHardError(
+            "classified same-block condition register projection was not materialized"
+        )
+    return stats
 
 
 def _direct_tagged_ins_addr_8616(node: object) -> int | None:
@@ -1611,6 +1785,17 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
     preserved_side_effect_count = 0
     changed = False
     tag_session = StructuredSubtreeEntryTagQuerySession8616(root)
+    typed_surface_ids_by_key: dict[tuple[int, int], set[int]] = {}
+    for candidate_node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(candidate_node, CIfElse):
+            continue
+        for candidate_condition, _candidate_body in candidate_node.condition_and_nodes:
+            candidate_tags = _copied_condition_tags_8616(candidate_condition)
+            candidate_key = condition_key_from_tags_8616(candidate_condition)
+            if candidate_key is not None and candidate_tags.get("typed_condition") is True:
+                typed_surface_ids_by_key.setdefault(candidate_key, set()).add(
+                    id(candidate_condition)
+                )
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CIfElse):
             continue
@@ -1952,6 +2137,14 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         key = condition_key_from_tags_8616(condition)
         node_ins_addr = _direct_tagged_ins_addr_8616(node)
         condition_ins_addr = key[0] if key is not None else None
+        typed_surface_ids = typed_surface_ids_by_key.get(key, set()) if key is not None else set()
+        if len(typed_surface_ids) == 1 and id(condition) not in typed_surface_ids:
+            _debug_condition_chain_8616(
+                "noncanonical-duplicate-surface-preserved",
+                condition_key=key,
+                node_ins_addr=node_ins_addr,
+            )
+            continue
         condition_fact = conditions_by_src.get(condition_ins_addr) if condition_ins_addr is not None else None
         node_fact = conditions_by_src.get(node_ins_addr) if node_ins_addr is not None else None
         node_owner_overrode_condition_origin = False
@@ -2289,9 +2482,12 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         changed = True
         _debug_condition_chain_8616(
             "materialized",
+            body_target=_first_tagged_ins_addr_8616(body),
+            condition_tags=tags,
             fact_block=root_fact.block_addr,
             fact_src=root_fact.src_insn,
             marker=marker,
+            node_ins_addr=node_ins_addr,
         )
     scalar_returns = materialize_complete_scalar_return_leaves_8616(
         tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CReturn)),
@@ -2356,8 +2552,27 @@ def materialize_structuring_conditions_8616(
     legacy_codegen = cast(SimpleNamespace, codegen)
     metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
     stage_project = cast(_ConditionMaterializationProject8616, project)
+    try:
+        root = cast(
+            _ConditionMaterializationCFunction8616,
+            metadata_codegen.cfunc,
+        ).statements
+    except AttributeError:
+        root = None
+    try:
+        raw_typed_conditions = metadata_codegen._inertia_typed_conditions
+    except AttributeError:
+        raw_typed_conditions = ()
+    typed_conditions = (
+        tuple(condition for condition in raw_typed_conditions if isinstance(condition, ConditionIR))
+        if isinstance(raw_typed_conditions, (list, tuple))
+        else ()
+    )
     if wide_stack_return_predicate_materialized_8616(codegen):
         chains_changed = typed_changed = jcc_changed = False
+        metadata_codegen._inertia_same_block_condition_register_projection_stats_8616 = (
+            SameBlockConditionRegisterProjectionStats8616()
+        )
     else:
         stage_project._inertia_decompiler_stage = "structuring:condition_materialization:typed"
         typed_changed = bool(
@@ -2375,22 +2590,16 @@ def materialize_structuring_conditions_8616(
         )
         stage_project._inertia_decompiler_stage = "structuring:condition_materialization:chains"
         chains_changed = materialize_structuring_condition_chains_8616(project, codegen)
-    try:
-        root = cast(
-            _ConditionMaterializationCFunction8616,
-            metadata_codegen.cfunc,
-        ).statements
-    except AttributeError:
-        root = None
-    try:
-        raw_typed_conditions = metadata_codegen._inertia_typed_conditions
-    except AttributeError:
-        raw_typed_conditions = ()
-    typed_conditions = (
-        tuple(condition for condition in raw_typed_conditions if isinstance(condition, ConditionIR))
-        if isinstance(raw_typed_conditions, (list, tuple))
-        else ()
-    )
+        stage_project._inertia_decompiler_stage = (
+            "structuring:condition_materialization:register_projections"
+        )
+        projection_stats = materialize_same_block_condition_register_projections_8616(
+            root,
+            project,
+            codegen,
+            typed_conditions,
+        )
+        typed_changed = bool(projection_stats.changed_count) or typed_changed
     stage_project._inertia_decompiler_stage = "structuring:condition_materialization:loops"
     loop_stats = materialize_typed_loop_continuation_conditions_8616(
         root,

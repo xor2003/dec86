@@ -724,9 +724,10 @@ def _stmt_to_instr(
         if tag == "Ist_Put":
             offset = _stmt_offset(stmt)
             src = convert(_stmt_data(stmt), tmps, conditions)
-            # Byte registers share their 16-bit parent's storage identity;
-            # true 32-bit writes retain the full 80386 parent width.
-            dst_size = 4 if src.size == 4 else 2
+            # Preserve the exact register view. Alias owns parent/slice storage
+            # identity; typed IR must retain whether a byte write targets AL or
+            # AH so selector semantics can consume the correct lane.
+            dst_size = src.size if src.size in {1, 2, 4} else 2
             dst = IRValue(MemSpace.REG, name=register_name_from_offset(offset, size=dst_size), size=dst_size)
             return IRInstr(op="MOV", dst=dst, args=(src,), size=src.size or dst.size, addr=instruction_addr)
         if tag == "Ist_Store":

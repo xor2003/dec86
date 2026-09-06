@@ -50,6 +50,9 @@ _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST: dict[str, frozenset[str]] = {
             # Compatibility-only edge: typed call-argument expression
             # materialization is owned by Types/Lowering.
             ".lowering.call_argument_expression",
+            # Compatibility-only edge: exact live callsite presence is owned
+            # by Types/Lowering; the legacy bridge only consumes its result.
+            ".lowering.callsite_inventory_presence",
             # Cache-only edge: the legacy call bridge compares materialized
             # argument tokens owned by Lowering; it must not produce proof.
             ".lowering.call_argument_semantic_token",
@@ -698,8 +701,8 @@ _RECOVERY_REPORTING_HEADER_MARKERS: dict[str, tuple[str, ...]] = {
     ),
     "quality.py": (
         "Layer: Recovery/reporting",
-        "measure decompilation quality with VEX/tmp leakage metrics",
-        "semantic recovery, postprocess cleanup ownership, or validation acceptance",
+        "preserve the historical X86_16 quality API",
+        "CLI/reporting layer owns the implementation",
     ),
     "readability_goals.py": (
         "Layer: Recovery/reporting",
@@ -1749,8 +1752,10 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/project_global_object_layout.py",
     "angr_platforms/angr_platforms/X86_16/lowering/real_mode_linear.py",
     "angr_platforms/angr_platforms/X86_16/lowering/linear_global_decomposition_cache.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/callsite_inventory_presence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py",
     "angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/segment_codegen_access_provenance.py",
     "angr_platforms/angr_platforms/X86_16/lowering/segment_access_policy.py",
     "angr_platforms/angr_platforms/X86_16/lowering/segment_global_materialization.py",
     "angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py",
@@ -1927,6 +1932,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_return_predicates.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/unused_call_result_self_xor.py",
     "angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_rendering.py",
     "angr_platforms/angr_platforms/X86_16/structuring/indexed_stack_ranges.py",

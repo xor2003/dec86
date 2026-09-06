@@ -1,6 +1,6 @@
 """Compatibility exports for generated-C quality reporting.
 
-Layer: Frontend compatibility surface.
+Layer: Recovery/reporting compatibility surface.
 Responsibility: preserve the historical X86_16 quality API while the
 CLI/reporting layer owns the implementation.
 """

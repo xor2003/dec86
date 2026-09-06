@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.decompiler_postprocess_typed_conditions as typed_condition_postprocess
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CAssignment,
@@ -79,8 +80,15 @@ def test_build_c_expr_for_indexed_ds_condition_operand_uses_stack_index():
         index_shift=1,
         memory_access_size=1,
     )
+    condition = ConditionIR(
+        "ugt",
+        operand,
+        IRValue(MemSpace.CONST, const=0, size=1),
+        width_bits=8,
+        producer_insn=0x4010,
+    )
 
-    expr = _build_c_expr_for_operand(project, operand, codegen)
+    expr = _build_c_expr_for_operand(project, operand, codegen, condition)
 
     assert isinstance(expr, CFunctionCall)
     assert expr.callee_target == "SEG_U8"
@@ -93,7 +101,46 @@ def test_build_c_expr_for_indexed_ds_condition_operand_uses_stack_index():
     assert isinstance(scaled_index, CBinaryOp)
     assert scaled_index.op == "Shl"
     assert scaled_index.lhs.variable.name == "local_2"
+    assert scaled_index.lhs.variable.size == 2
     assert scaled_index.rhs.value == 1
+
+
+def test_indexed_condition_resolves_register_index_at_producer(
+    monkeypatch,
+) -> None:
+    """Nested register indices retain the condition's producer binding address."""
+    project = _project()
+    codegen = _codegen([])
+    index_value = _const(7, codegen)
+    monkeypatch.setattr(
+        typed_condition_postprocess,
+        "_register_exprs_by_ins_addr_8616",
+        lambda _codegen, _project: {(0x4000, "si", 2): index_value},
+    )
+    operand = IRValue(
+        MemSpace.DS,
+        offset=0x2594,
+        size=1,
+        index=IRValue(MemSpace.REG, name="si", offset=24, size=2),
+        memory_access_size=1,
+    )
+    condition = ConditionIR(
+        "uge",
+        IRValue(MemSpace.REG, name="al", offset=0, size=1),
+        operand,
+        width_bits=8,
+        producer_insn=0x4003,
+    )
+
+    expr = _build_c_expr_for_operand(project, operand, codegen, condition)
+
+    assert isinstance(expr, CFunctionCall)
+    assert expr.callee_target == "SEG_U8"
+    offset = expr.args[1]
+    assert isinstance(offset, CBinaryOp)
+    assert offset.op == "Add"
+    assert offset.lhs.value == 0x2594
+    assert offset.rhs is index_value
 
 
 def test_build_c_condition_expr_preserves_signed_stack_operand_types():

@@ -62,6 +62,7 @@ class DecodedInstructionFactSurface8616(Protocol):
     """angr Capstone wrapper fields used by this recovery-metadata module."""
 
     mnemonic: str
+    address: int
     insn: _DecodedInstruction8616
 
 
@@ -116,10 +117,42 @@ def register_replacement_source_8616(
 ) -> CallsiteSource8616 | None:
     """Return an exact source for one complete register definition."""
     operands = tuple(instruction.insn.operands)
-    if len(operands) != 2 or _register_name_8616(instruction, operands[0]) != register:
+    if len(operands) != 2:
+        return None
+    destination_name = _register_name_8616(instruction, operands[0])
+    if destination_name is None:
         return None
     mnemonic = instruction.mnemonic.lower()
     rhs = operands[1]
+    if destination_name != register:
+        byte_views = {
+            "al": ("ax", 0),
+            "ah": ("ax", 8),
+            "bl": ("bx", 0),
+            "bh": ("bx", 8),
+            "cl": ("cx", 0),
+            "ch": ("cx", 8),
+            "dl": ("dx", 0),
+            "dh": ("dx", 8),
+        }
+        requested_view = byte_views.get(register)
+        rhs_name = _register_name_8616(instruction, rhs)
+        if (
+            requested_view is not None
+            and destination_name == requested_view[0]
+            and mnemonic in {"add", "and", "or", "sub", "xor"}
+            and rhs_name is not None
+        ):
+            return (
+                "register_binary_subview",
+                mnemonic,
+                destination_name,
+                rhs_name,
+                requested_view[1],
+                8,
+                instruction.address,
+            )
+        return None
     if mnemonic == "mov":
         if rhs.type == X86_OP_IMM:
             return ("imm", int(rhs.imm))

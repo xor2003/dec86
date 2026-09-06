@@ -19,6 +19,8 @@ from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
+from ..c_ast_utils import _iter_c_nodes_deep_8616
+
 __all__ = (
     "SharedTailCallOccurrence8616",
     "SharedTailCallOccurrenceKind8616",
@@ -42,7 +44,9 @@ class _ControlPathStep8616:
 class SharedTailCallOccurrenceKind8616(Enum):
     """Supported exact AST occurrences of one machine callsite."""
 
+    CONDITION = "condition"
     RETURNED = "returned"
+    RETURN_CARRIER = "return_carrier"
     STANDALONE = "standalone"
 
 
@@ -56,6 +60,7 @@ class SharedTailCallOccurrence8616:
     parent: structured_c.CStatements
     statement_index: int
     control_path: tuple[_ControlPathStep8616, ...]
+    destination_variable: object | None = None
 
 
 def _ifelse_arms_8616(
@@ -95,6 +100,39 @@ def _child_statement_arms_8616(
     return tuple(result)
 
 
+def _condition_calls_8616(
+    statement: structured_c.CStatement,
+) -> tuple[structured_c.CFunctionCall, ...]:
+    """Collect calls embedded in one third-party structured condition."""
+    expressions: list[structured_c.CExpression] = []
+    if isinstance(statement, structured_c.CIfElse):
+        pairs = statement.condition_and_nodes
+        if isinstance(pairs, (list, tuple)):
+            expressions.extend(
+                pair[0]
+                for pair in pairs
+                if isinstance(pair, tuple)
+                and len(pair) == 2
+                and isinstance(pair[0], structured_c.CExpression)
+            )
+    elif isinstance(
+        statement,
+        (
+            structured_c.CDoWhileLoop,
+            structured_c.CForLoop,
+            structured_c.CIfBreak,
+            structured_c.CWhileLoop,
+        ),
+    ) and isinstance(statement.condition, structured_c.CExpression):
+        expressions.append(statement.condition)
+    return tuple(
+        node
+        for expression in expressions
+        for node in _iter_c_nodes_deep_8616(expression)
+        if isinstance(node, structured_c.CFunctionCall)
+    )
+
+
 def collect_shared_tail_call_occurrences_8616(
     root: structured_c.CStatements,
 ) -> tuple[SharedTailCallOccurrence8616, ...]:
@@ -117,6 +155,17 @@ def collect_shared_tail_call_occurrences_8616(
                 continue
             if not isinstance(statement, structured_c.CStatement):
                 continue
+            occurrences.extend(
+                SharedTailCallOccurrence8616(
+                    SharedTailCallOccurrenceKind8616.CONDITION,
+                    call,
+                    statement,
+                    parent,
+                    index,
+                    control_path,
+                )
+                for call in _condition_calls_8616(statement)
+            )
             if isinstance(statement, structured_c.CReturn) and isinstance(
                 statement.retval,
                 structured_c.CFunctionCall,
@@ -129,6 +178,23 @@ def collect_shared_tail_call_occurrences_8616(
                         parent,
                         index,
                         control_path,
+                    )
+                )
+            elif (
+                isinstance(statement, structured_c.CAssignment)
+                and isinstance(statement.rhs, structured_c.CFunctionCall)
+                and isinstance(statement.lhs, structured_c.CVariable)
+                and isinstance(statement.lhs.name, str)
+            ):
+                occurrences.append(
+                    SharedTailCallOccurrence8616(
+                        SharedTailCallOccurrenceKind8616.RETURN_CARRIER,
+                        statement.rhs,
+                        statement,
+                        parent,
+                        index,
+                        control_path,
+                        statement.lhs.variable,
                     )
                 )
             elif isinstance(statement, structured_c.CExpressionStatement) and isinstance(
@@ -162,8 +228,11 @@ def standalone_follows_nested_clone_8616(
     nested: SharedTailCallOccurrence8616,
     standalone: SharedTailCallOccurrence8616,
 ) -> bool:
-    """Prove that one retained statement follows the branch owning a clone."""
-    if standalone.kind is not SharedTailCallOccurrenceKind8616.STANDALONE:
+    """Prove that one trailing call statement follows a nested occurrence."""
+    if standalone.kind not in (
+        SharedTailCallOccurrenceKind8616.RETURN_CARRIER,
+        SharedTailCallOccurrenceKind8616.STANDALONE,
+    ):
         return False
     nested_controls = tuple(step for step in nested.control_path if step.arm_kind != "statements")
     standalone_controls = tuple(step for step in standalone.control_path if step.arm_kind != "statements")

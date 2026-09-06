@@ -42,8 +42,7 @@ def _validation_delta() -> dict[str, object]:
     delta = {name: {"added": (), "removed": ()} for name in fields}
     delta["conditions"]["removed"] = ("condition-fingerprint",)
     delta["control_flow_effects"]["removed"] = (
-        "first-control-fingerprint",
-        "second-control-fingerprint",
+        "if:condition-fingerprint",
         "if:else",
     )
     return {
@@ -64,7 +63,8 @@ def test_identical_return_guard_validation_consumes_exact_delta() -> None:
 
     assert result.accepted
     assert result.consumed_condition_count == 1
-    assert result.consumed_control_effect_count == 3
+    assert result.consumed_control_effect_count == 2
+    assert result.residual_changed is False
     assert validation["changed"] is False
     assert validation["status"] == "stable"
     assert "delta" not in validation
@@ -73,8 +73,7 @@ def test_identical_return_guard_validation_consumes_exact_delta() -> None:
 def test_identical_return_guard_validation_consumes_minimal_else_delta() -> None:
     validation = _validation_delta()
     validation["delta"]["control_flow_effects"]["removed"] = (
-        "if-condition-fingerprint",
-        "if:else",
+        "if:condition-fingerprint",
     )
 
     result = consume_identical_return_guard_validation_delta_8616(
@@ -84,7 +83,8 @@ def test_identical_return_guard_validation_consumes_minimal_else_delta() -> None
 
     assert result.accepted
     assert result.consumed_condition_count == 1
-    assert result.consumed_control_effect_count == 2
+    assert result.consumed_control_effect_count == 1
+    assert result.residual_changed is False
     assert validation["changed"] is False
     assert "delta" not in validation
 
@@ -108,10 +108,10 @@ def test_identical_return_guard_validation_refuses_write_delta() -> None:
 def test_identical_return_guard_validation_refuses_unbounded_control_delta() -> None:
     validation = _validation_delta()
     validation["delta"]["control_flow_effects"]["removed"] = (
+        "if:condition-fingerprint",
         "first-control-fingerprint",
         "second-control-fingerprint",
         "third-control-fingerprint",
-        "fourth-control-fingerprint",
     )
 
     result = consume_identical_return_guard_validation_delta_8616(
@@ -129,7 +129,7 @@ def test_identical_return_guard_validation_refuses_unbounded_control_delta() -> 
 def test_identical_return_guard_validation_consumes_fallthrough_shape() -> None:
     validation = _validation_delta()
     validation["delta"]["control_flow_effects"]["removed"] = (
-        "single-control-fingerprint",
+        "if:condition-fingerprint",
     )
 
     result = consume_identical_return_guard_validation_delta_8616(
@@ -140,4 +140,62 @@ def test_identical_return_guard_validation_consumes_fallthrough_shape() -> None:
     assert result.accepted
     assert result.consumed_condition_count == 1
     assert result.consumed_control_effect_count == 1
+    assert result.residual_changed is False
     assert validation["changed"] is False
+
+
+def test_identical_return_guard_validation_preserves_balanced_condition_residual() -> None:
+    validation = _validation_delta()
+    delta = validation["delta"]
+    delta["conditions"]["added"] = ("guard-a", "guard-b")
+    delta["conditions"]["removed"] = (
+        "condition-fingerprint",
+        "decoded-a",
+        "decoded-b",
+    )
+    delta["control_flow_effects"]["added"] = (
+        "ifbreak:guard-a",
+        "ifbreak:guard-b",
+    )
+    delta["control_flow_effects"]["removed"] = (
+        "if:condition-fingerprint",
+        "ifbreak:decoded-a",
+        "ifbreak:decoded-b",
+    )
+
+    result = consume_identical_return_guard_validation_delta_8616(
+        _closed_result(),
+        validation,
+    )
+
+    assert result.accepted
+    assert result.residual_changed is True
+    assert validation["changed"] is True
+    assert delta["conditions"]["removed"] == ("decoded-a", "decoded-b")
+    assert delta["control_flow_effects"]["removed"] == (
+        "ifbreak:decoded-a",
+        "ifbreak:decoded-b",
+    )
+
+
+def test_identical_return_guard_validation_refuses_ambiguous_owned_condition() -> None:
+    validation = _validation_delta()
+    delta = validation["delta"]
+    delta["conditions"]["added"] = ("guard-a",)
+    delta["conditions"]["removed"] = ("condition-a", "condition-b")
+    delta["control_flow_effects"]["added"] = ("ifbreak:guard-a",)
+    delta["control_flow_effects"]["removed"] = (
+        "if:condition-a",
+        "if:condition-b",
+    )
+
+    result = consume_identical_return_guard_validation_delta_8616(
+        _closed_result(),
+        validation,
+    )
+
+    assert result.status is (
+        IdenticalReturnGuardValidationStatus8616.REFUSED_UNEXPECTED_EFFECT
+    )
+    assert validation["changed"] is True
+    assert delta["conditions"]["removed"] == ("condition-a", "condition-b")

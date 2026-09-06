@@ -77,6 +77,11 @@ class _RangeProjectSurface8616(Protocol):
 
     arch: _ArchSurface8616
     loader: _LoaderSurface8616
+    _inertia_range_direct_call_ranges_8616: tuple[tuple[int, int], ...]
+    _inertia_range_direct_calls_by_target_8616: dict[
+        int,
+        tuple[tuple[tuple[int, int], _Instruction8616], ...],
+    ]
 
 
 def _direct_call_target_8616(instruction: _Instruction8616) -> int | None:
@@ -87,6 +92,51 @@ def _direct_call_target_8616(instruction: _Instruction8616) -> int | None:
     if len(operands) != 1 or operands[0].type != X86_OP_IMM:
         return None
     return operands[0].imm
+
+
+def _range_direct_calls_by_target_8616(
+    project: object,
+    function_ranges: tuple[tuple[int, int], ...],
+) -> dict[int, tuple[tuple[tuple[int, int], _Instruction8616], ...]]:
+    """Index canonical direct calls after decoding an exact range set once."""
+    surface = cast(_RangeProjectSurface8616, project)
+    try:
+        cached_ranges = surface._inertia_range_direct_call_ranges_8616
+        cached_calls = surface._inertia_range_direct_calls_by_target_8616
+    except AttributeError:
+        cached_ranges = ()
+        cached_calls = {}
+    if cached_ranges == function_ranges:
+        return cached_calls
+
+    try:
+        disassembler = surface.arch.capstone
+        memory = surface.loader.memory
+    except AttributeError:
+        return {}
+    disassembler.detail = True
+    calls: dict[int, list[tuple[tuple[int, int], _Instruction8616]]] = {}
+    for start, end in function_ranges:
+        try:
+            instructions = tuple(
+                disassembler.disasm(bytes(memory.load(start, end - start)), start)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        caller_range = (start, end)
+        for instruction in instructions:
+            direct_target = _direct_call_target_8616(instruction)
+            if direct_target is None:
+                continue
+            target_addr = canonicalize_x86_16_padding_call_target_8616(
+                project,
+                direct_target,
+            )
+            calls.setdefault(target_addr, []).append((caller_range, instruction))
+    indexed = {target: tuple(items) for target, items in calls.items()}
+    surface._inertia_range_direct_call_ranges_8616 = function_ranges
+    surface._inertia_range_direct_calls_by_target_8616 = indexed
+    return indexed
 
 
 def collect_range_callsite_facts_8616(
@@ -152,31 +202,10 @@ def collect_range_callsite_facts_for_target_8616(
     function_ranges: tuple[tuple[int, int], ...],
 ) -> tuple[CalleeCallsiteFact8616, ...]:
     """Build exact caller facts after a bounded direct-target prefilter."""
-    surface = cast(_RangeProjectSurface8616, project)
-    try:
-        disassembler = surface.arch.capstone
-        memory = surface.loader.memory
-    except AttributeError:
-        return ()
-    disassembler.detail = True
-    matching_calls: list[tuple[tuple[int, int], _Instruction8616]] = []
-    for start, end in function_ranges:
-        try:
-            instructions = tuple(
-                disassembler.disasm(bytes(memory.load(start, end - start)), start)
-            )
-        except (KeyError, TypeError, ValueError):
-            continue
-        for instruction in instructions:
-            direct_target = _direct_call_target_8616(instruction)
-            if direct_target is None:
-                continue
-            canonical_target = canonicalize_x86_16_padding_call_target_8616(
-                project,
-                direct_target,
-            )
-            if canonical_target == target_addr:
-                matching_calls.append(((start, end), instruction))
+    matching_calls = _range_direct_calls_by_target_8616(
+        project,
+        function_ranges,
+    ).get(target_addr, ())
     if not matching_calls:
         return ()
 

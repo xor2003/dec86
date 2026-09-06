@@ -9,12 +9,23 @@ inspection.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Protocol, cast
+
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp
 
 from .ir.condition_ir import ConditionIR
 from .ir.core import IRBinaryValue, IRValue, MemSpace
+from .lowering.semantic_cast import CSemanticCast8616
 from .structuring.condition_materialization import materialize_condition_ir_expression_8616
 from .tail_validation_fingerprint import _expr_fingerprint
+
+
+class _IntegerTypeBoundary8616(Protocol):
+    """Third-party integer type metadata used by Validation."""
+
+    size: int | None
+    signed: bool | None
 
 
 def _typed_operand_fingerprint_8616(
@@ -37,8 +48,8 @@ def _typed_operand_fingerprint_8616(
     ):
         return f"global:{operand.offset:#x}"
     if isinstance(operand, IRValue) and operand.space is not MemSpace.CONST:
-        return _expr_fingerprint(expression, project)
-    return _expr_fingerprint(expression, project)
+        return str(_expr_fingerprint(expression, project))
+    return str(_expr_fingerprint(expression, project))
 
 
 def condition_ir_semantic_fingerprint_8616(
@@ -53,3 +64,60 @@ def condition_ir_semantic_fingerprint_8616(
     lhs = _typed_operand_fingerprint_8616(condition.lhs, expression.lhs, project)
     rhs = _typed_operand_fingerprint_8616(condition.rhs, expression.rhs, project)
     return f"{expression.op}({lhs},{rhs})"
+
+
+def condition_semantic_view_projection_fingerprint_8616(
+    condition: ConditionIR,
+    candidate: object,
+    *,
+    condition_fingerprint: Callable[[object], str],
+) -> str | None:
+    """Fingerprint a C predicate after proving its explicit casts match typed IR.
+
+    A same-width semantic cast is a typed view of unchanged machine bits.  It
+    may therefore be compared with the storage-domain ConditionIR fingerprint,
+    but only when its destination signedness agrees with the proven comparison.
+    """
+    if not isinstance(candidate, CBinaryOp):
+        return None
+    if not isinstance(candidate.lhs, CSemanticCast8616) and not isinstance(
+        candidate.rhs,
+        CSemanticCast8616,
+    ):
+        return None
+    if condition.op not in {
+        "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
+    }:
+        return None
+    required_signedness = (
+        condition.op.startswith("s")
+        if condition.op not in {"eq", "ne"}
+        else None
+    )
+    projected: list[str] = []
+    for operand, expression in (
+        (condition.lhs, candidate.lhs),
+        (condition.rhs, candidate.rhs),
+    ):
+        if not isinstance(expression, CSemanticCast8616):
+            projected.append(condition_fingerprint(expression))
+            continue
+        width_bits = int(operand.size) * 8
+        source = cast(_IntegerTypeBoundary8616, expression.src_type)
+        destination = cast(_IntegerTypeBoundary8616, expression.dst_type)
+        try:
+            cast_matches = (
+                width_bits > 0
+                and source.size == width_bits
+                and destination.size == width_bits
+                and (
+                    required_signedness is None
+                    or destination.signed is required_signedness
+                )
+            )
+        except AttributeError:
+            cast_matches = False
+        if not cast_matches:
+            return None
+        projected.append(condition_fingerprint(expression.expr))
+    return f"{candidate.op}({projected[0]},{projected[1]})"

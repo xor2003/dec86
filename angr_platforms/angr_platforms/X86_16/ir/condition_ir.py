@@ -34,6 +34,7 @@ __all__ = (
     "ConditionIR",
     "ConditionOp",
     "ConditionRegisterBindingIR",
+    "ConditionRegisterUpdateIR",
     "ConditionResult",
     "ConditionSource",
     "build_condition_from_cmp_8616",
@@ -155,11 +156,22 @@ def _harmonize_condition_pair_8616(lhs: Any, rhs: Any, width_bits: int) -> tuple
 
 
 @dataclass(frozen=True, slots=True)
+class ConditionRegisterUpdateIR:
+    """Describe one exact full-register update feeding a condition view."""
+
+    instruction_addr: int
+    target_register: str
+    op: str
+    rhs: IRValue | IRBinaryValue
+
+
+@dataclass(frozen=True, slots=True)
 class ConditionRegisterBindingIR:
     """Bind one register to an exact typed value at a condition producer."""
 
     register_name: str
     value: IRValue | IRBinaryValue
+    update: ConditionRegisterUpdateIR | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +266,13 @@ def build_condition_from_cmp_8616(
     CMP lhs, rhs
     JCC label  →  ConditionIR(op, lhs, rhs)
     """
-    op = JCC_TO_COND_8616.get(jcc.lower())
+    normalized_jcc = jcc.lower()
+    op = JCC_TO_COND_8616.get(normalized_jcc)
+    if producer_semantics and producer_semantics[0] == "dec_reg16":
+        if normalized_jcc == "jns":
+            op = "sge"
+        elif normalized_jcc == "js":
+            op = "slt"
     if op is None:
         return ConditionFailure(
             "unsupported_jcc",

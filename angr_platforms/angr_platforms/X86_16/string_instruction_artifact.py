@@ -8,16 +8,25 @@ from __future__ import annotations
 
 from collections.abc import Iterable, MutableMapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol, cast
 
 __all__ = (
     "StringInstructionArtifact",
+    "StringInstructionCoverage8616",
     "StringInstructionRecord",
     "StringInstructionRefusal",
     "apply_x86_16_string_instruction_artifact",
     "build_x86_16_string_instruction_artifact",
     "build_x86_16_string_instruction_artifact_from_linear_range",
 )
+
+
+class StringInstructionCoverage8616(StrEnum):
+    """Decoded instruction scope accounted for by a string intrinsic."""
+
+    PARTIAL_FUNCTION = "partial-function"
+    EXACT_FUNCTION = "exact-function"
 
 
 class _DecodedInstruction(Protocol):
@@ -129,10 +138,12 @@ class StringInstructionArtifact:
 
     records: tuple[StringInstructionRecord, ...] = ()
     refusals: tuple[StringInstructionRefusal, ...] = ()
+    coverage: StringInstructionCoverage8616 = StringInstructionCoverage8616.PARTIAL_FUNCTION
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the artifact for function metadata and diagnostics."""
         return {
+            "coverage": self.coverage.value,
             "records": [
                 {
                     "index": rec.index,
@@ -257,6 +268,7 @@ def _records_from_insns(insns: tuple[object, ...]) -> StringInstructionArtifact:
         )
 
     records: list[StringInstructionRecord] = []
+    exact_function_coverage = True
     direction_mode = "unknown"
     al_zero = False
     ax_zero = False
@@ -267,6 +279,18 @@ def _records_from_insns(insns: tuple[object, ...]) -> StringInstructionArtifact:
         repeat_kind, base = _normalize_string_mnemonic(decoded.mnemonic)
         info = _string_family(base)
         if info is None:
+            mnemonic = decoded.mnemonic.strip().lower()
+            operand_text = decoded.op_str.strip().lower()
+            destination = operand_text.split(",", maxsplit=1)[0].strip()
+            setup_registers = {"al", "ax", "eax", "cx", "ecx", "si", "esi", "di", "edi", "ds", "es"}
+            setup_instruction = (
+                mnemonic in {"mov", "xor"}
+                and destination in setup_registers
+                and "[" not in operand_text
+                and "]" not in operand_text
+            )
+            if mnemonic not in {"cld", "std", "ret", "retn"} and not setup_instruction:
+                exact_function_coverage = False
             continue
         try:
             instruction_addr = int(decoded.address)
@@ -307,7 +331,15 @@ def _records_from_insns(insns: tuple[object, ...]) -> StringInstructionArtifact:
                 "string instruction stream contains both forward and backward direction evidence",
             )
         )
-    return StringInstructionArtifact(records=tuple(records), refusals=tuple(refusals))
+    return StringInstructionArtifact(
+        records=tuple(records),
+        refusals=tuple(refusals),
+        coverage=(
+            StringInstructionCoverage8616.EXACT_FUNCTION
+            if exact_function_coverage
+            else StringInstructionCoverage8616.PARTIAL_FUNCTION
+        ),
+    )
 
 
 def build_x86_16_string_instruction_artifact(

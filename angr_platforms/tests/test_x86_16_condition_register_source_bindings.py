@@ -17,7 +17,7 @@ from angr_platforms.X86_16.callsite_register_provenance import (
     recover_register_source_before_instruction_8616,
 )
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionRegisterBindingIR
-from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 
 from inertia_decompiler.project_loading import _build_project_from_bytes
@@ -255,4 +255,70 @@ def test_non_self_test_has_no_binding_candidate() -> None:
     assert result.verdict is ConditionRegisterSourceBindingVerdict8616.NO_CANDIDATE
     assert result.conditions == (condition,)
     assert result.stats.normalized_fact_count == 0
+    assert result.stats.failure_count == 0
+
+
+def test_plain_loop_counter_binds_proven_immediate_input() -> None:
+    """Alias must expose the exact pre-decrement value consumed by LOOP."""
+    function = _function_from_bytes(bytes.fromhex("b9 c8 00 e2 fe c3"))
+    condition = ConditionIR(
+        op="ne",
+        lhs=IRValue(MemSpace.REG, name="cx", size=2),
+        rhs=IRValue(MemSpace.CONST, const=1, size=2),
+        width_bits=16,
+        source=("loop",),
+        src_insn=0x1003,
+        block_addr=0x1003,
+        producer_insn=0x1003,
+        taken_target=0x1003,
+        fallthrough_target=0x1005,
+        producer_semantics=("loop_counter_predecrement", "cx", 1),
+    )
+
+    result = bind_condition_register_sources_8616(function, (condition,))
+
+    assert result.verdict is ConditionRegisterSourceBindingVerdict8616.MATERIALIZED
+    assert result.conditions[0].register_bindings == (
+        ConditionRegisterBindingIR(
+            "cx",
+            IRValue(MemSpace.CONST, const=0xC8, size=2),
+        ),
+    )
+    assert result.stats.normalized_fact_count == 1
+    assert result.stats.classified_fact_count == result.stats.materialized_count == 1
+    assert result.stats.failure_count == 0
+
+
+def test_high_byte_condition_binds_same_block_word_update() -> None:
+    """Alias must retain a byte projection of an exact word-register update."""
+    function = _function_from_bytes(
+        bytes.fromhex("31 db bd 6c 01 01 eb 80 ff 40 72 f9 c3")
+    )
+    condition = ConditionIR(
+        op="ult",
+        lhs=IRValue(MemSpace.REG, name="bh", size=1),
+        rhs=IRValue(MemSpace.CONST, const=0x40, size=1),
+        width_bits=8,
+        source=("cmp", "jb"),
+        src_insn=0x100A,
+        block_addr=0x1000,
+        producer_insn=0x1007,
+        taken_target=0x1005,
+        fallthrough_target=0x100C,
+        producer_semantics=("cmp_reg_imm8", "bh", 0x40),
+    )
+
+    result = bind_condition_register_sources_8616(function, (condition,))
+
+    assert result.verdict is ConditionRegisterSourceBindingVerdict8616.MATERIALIZED
+    assert len(result.conditions[0].register_bindings) == 1
+    projection = result.conditions[0].register_bindings[0]
+    assert projection.register_name == "bh"
+    assert isinstance(projection.value, IRBinaryValue)
+    assert projection.value.op == "and"
+    assert isinstance(projection.value.lhs, IRBinaryValue)
+    assert projection.value.lhs.op == "shr"
+    assert isinstance(projection.value.lhs.lhs, IRBinaryValue)
+    assert projection.value.lhs.lhs.op == "add"
+    assert result.stats.classified_fact_count == result.stats.materialized_count == 1
     assert result.stats.failure_count == 0

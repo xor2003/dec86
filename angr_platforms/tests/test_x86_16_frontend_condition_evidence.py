@@ -120,6 +120,56 @@ def test_direct_word_test_full_lift_emits_exact_typed_condition(monkeypatch) -> 
     )
 
 
+@pytest.mark.parametrize(
+    ("machine_code", "register_name", "register_size", "width_bits", "fallthrough"),
+    (
+        ("e2fec3", "cx", 2, 16, 0x4002),
+        ("67e2fdc3", "ecx", 4, 32, 0x4003),
+    ),
+)
+def test_plain_loop_emits_exact_address_sized_counter_condition(
+    monkeypatch,
+    machine_code: str,
+    register_name: str,
+    register_size: int,
+    width_bits: int,
+    fallthrough: int,
+) -> None:
+    """LOOP must publish the exact CX or ECX architectural register view."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    arch = Arch86_16()
+    pyvex.lift(bytes.fromhex(machine_code), 0x4000, arch, opt_level=0)
+
+    [condition] = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "ne"
+    assert condition.lhs == IRValue(
+        MemSpace.REG,
+        name=register_name,
+        offset=arch.get_register_offset(register_name),
+        size=register_size,
+    )
+    assert condition.width_bits == width_bits
+    assert condition.rhs == IRValue(
+        MemSpace.CONST,
+        const=1,
+        size=register_size,
+    )
+    assert condition.producer_semantics == (
+        "loop_counter_predecrement",
+        register_name,
+        1,
+    )
+    assert condition.source == ("loop",)
+    assert condition.src_insn == 0x4000
+    assert condition.producer_insn == 0x4000
+    assert condition.taken_target == 0x4000
+    assert condition.fallthrough_target == fallthrough
+
+
 def test_inc_ax_before_jne_emits_exact_zero_boundary_condition(monkeypatch) -> None:
     """The simple frontend path must retain INC-produced branch evidence."""
     monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
@@ -191,6 +241,82 @@ def test_repeated_inc_dec_before_jne_uses_original_value_boundary(
     assert condition.producer_insn == 0x4001
     assert condition.src_insn == 0x4002
     assert condition.producer_semantics == producer_semantics
+
+
+@pytest.mark.parametrize(
+    ("machine_code", "expected_op"),
+    (
+        ("4e79fdc3", "sge"),
+        ("4e78fdc3", "slt"),
+    ),
+    ids=("dec-jns", "dec-js"),
+)
+def test_dec_sign_branch_uses_signed_predecrement_boundary(
+    monkeypatch,
+    machine_code: str,
+    expected_op: str,
+) -> None:
+    """DEC sign branches compare the pre-decrement register with one."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    arch = Arch86_16()
+    pyvex.lift(bytes.fromhex(machine_code), 0x4000, arch, opt_level=0)
+
+    [condition] = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == expected_op
+    assert condition.lhs == IRValue(
+        MemSpace.REG,
+        name="si",
+        offset=arch.get_register_offset("si"),
+        size=2,
+        expr=("cmp-reg",),
+    )
+    assert condition.rhs == IRValue(
+        MemSpace.CONST,
+        const=1,
+        size=2,
+        expr=("cmp-imm",),
+    )
+    assert condition.producer_semantics == ("dec_reg16", "si", 1)
+
+
+def test_register_left_indexed_byte_cmp_emits_explicit_unsigned_condition(
+    monkeypatch,
+) -> None:
+    """CMP AL, [SI+disp16] must not leave a VEX flag-temporary branch."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    arch = Arch86_16()
+    machine_code = bytes.fromhex("3a849425730190c3")
+    instruction = Instruction_ANY(bitstring.ConstBitStream(bytes=machine_code), arch, 0x4000)
+    assert instruction.simple_semantics == (
+        "cmp_reg_indexed_abs8",
+        "al",
+        ("si", 0x2594, 0x2594),
+    )
+
+    pyvex.lift(machine_code, 0x4000, arch, opt_level=0)
+
+    [condition] = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "uge"
+    assert condition.lhs == IRValue(
+        MemSpace.REG,
+        name="al",
+        offset=arch.get_register_offset("al"),
+        size=1,
+        expr=("cmp-reg",),
+    )
+    assert condition.producer_semantics == (
+        "cmp_reg_indexed_abs8",
+        "al",
+        ("si", 0x2594, 0x2594),
+    )
 
 
 def test_byte_register_copy_preserves_direct_load_condition_evidence(monkeypatch) -> None:

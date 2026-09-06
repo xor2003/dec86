@@ -80,7 +80,13 @@ _REGISTER_VALUE_FAMILIES_8616: dict[str, frozenset[str]] = {
 def register_value_family_8616(register: str) -> frozenset[str]:
     """Return all decoded register names sharing one 16-bit value."""
     normalized = register.lower()
-    return _REGISTER_VALUE_FAMILIES_8616.get(normalized, frozenset({normalized}))
+    direct = _REGISTER_VALUE_FAMILIES_8616.get(normalized)
+    if direct is not None:
+        return direct
+    for family in _REGISTER_VALUE_FAMILIES_8616.values():
+        if normalized in family:
+            return family
+    return frozenset({normalized})
 
 
 def _decoded_instruction_surface_8616(
@@ -153,7 +159,7 @@ def decoded_byte_return_extension_8616(
         return None
     if mnemonic == "cbw":
         return ByteReturnExtensionKind8616.SIGN_EXTEND_AL_TO_AX
-    if decoded_instruction_self_clears_register_8616(instruction, "ah"):
+    if mnemonic in {"sub", "xor"} and _same_decoded_register_pair_8616(instruction) == "ah":
         return ByteReturnExtensionKind8616.ZERO_EXTEND_AL_TO_AX
     return None
 

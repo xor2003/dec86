@@ -29,6 +29,7 @@ from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
 from ..structured_tags import copy_structured_tags_8616
 from .call_return_stack_bindings import bind_call_return_stack_assignment_8616
 from .segmented_lowering import _SegmentedAccess
+from .semantic_cast import CSemanticCast8616
 from .stack_c_ast_matching import _match_bp_stack_dereference_8616
 from .stack_variable_binding import (
     StackBaseBpBiasEvidence8616,
@@ -621,7 +622,10 @@ def _canonicalize_stack_cvar_expr(
 ) -> object:
     def _impl() -> object:
         nonlocal expr, active_expr_ids, analysis_context
-        expr = unwrap_c_casts(expr)
+        while isinstance(expr, structured_c.CTypeCast) and not isinstance(
+            expr, CSemanticCast8616
+        ):
+            expr = expr.expr
         if active_expr_ids is None:
             active_expr_ids = set()
         if analysis_context is None:
@@ -1961,9 +1965,9 @@ def _canonicalize_stack_cvar_expr(
             )
             if inner is not expr.expr:
                 active_expr_ids.discard(expr_id)
-                return structured_c.CTypeCast(
-                    None,
-                    expr.type,
+                return CSemanticCast8616(
+                    expr.src_type,
+                    expr.dst_type,
                     cast(Any, inner),
                     codegen=_structured_c_codegen_owner_8616(expr),
                     tags=copy_structured_tags_8616(expr.tags) or {},

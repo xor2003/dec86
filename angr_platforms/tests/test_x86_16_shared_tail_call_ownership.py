@@ -2,16 +2,22 @@ from types import SimpleNamespace
 
 import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
     CConstant,
     CExpressionStatement,
     CFunctionCall,
+    CIfBreak,
     CIfElse,
     CReturn,
     CStatements,
+    CVariable,
+    CWhileLoop,
 )
 from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.callsite_summary import CallsiteReturnUseKind8616, CallsiteSummary8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.structuring.shared_tail_call_ownership import (
     SharedTailCallOwnershipStats8616,
@@ -23,6 +29,7 @@ from angr_platforms.X86_16.structuring.shared_tail_call_ownership import (
 class _Codegen:
     def __init__(self) -> None:
         self._next_idx = 0
+        self.cstyle_null_cmp = False
         self.project = SimpleNamespace(arch=Arch86_16())
 
     def next_idx(self, _name: str) -> int:
@@ -77,7 +84,7 @@ def _project(*, shared_tail: bool) -> SimpleNamespace:
         transition_graph=graph,
     )
     functions = SimpleNamespace(function=lambda **_kwargs: function)
-    return SimpleNamespace(kb=SimpleNamespace(functions=functions))
+    return SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(functions=functions))
 
 
 def _codegen(
@@ -219,6 +226,55 @@ def test_shared_tail_ownership_removes_returned_clone_after_closed_cfg_proof() -
     assert tuple(codegen._inertia_callsite_summaries.values()) == (_summary(),)
 
 
+def test_shared_tail_ownership_removes_trailing_condition_return_carrier() -> None:
+    codegen = _Codegen()
+    call = CFunctionCall("clock", None, [], codegen=codegen)
+    call.tags = {"ins_addr": 0x1034}
+    carrier_call = CFunctionCall("sub_2000", None, [], codegen=codegen)
+    carrier_call.tags = {"ins_addr": 0x1034}
+    guard = CIfBreak(
+        CBinaryOp("CmpGT", call, CConstant(10, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements([guard], codegen=codegen),
+        codegen=codegen,
+    )
+    carrier = CAssignment(
+        CVariable(
+            SimRegisterVariable(0, 2, name="ax"),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        carrier_call,
+        codegen=codegen,
+    )
+    root = CStatements([loop, carrier], codegen=codegen)
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1034,
+        target_addr=0x2000,
+        return_addr=0x1039,
+        kind="near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register="ax",
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.CONDITION,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen._inertia_callsite_summaries = {id(call): summary, id(carrier_call): summary}
+    codegen._inertia_callsite_summary_inventory_8616 = {summary.callsite_addr: summary}
+
+    result = materialize_shared_tail_call_ownership_8616(_project(shared_tail=True), codegen)
+
+    assert result.status is SharedTailCallOwnershipStatus8616.MATERIALIZED
+    assert result.stats == SharedTailCallOwnershipStats8616(1, 1, 1, 1, 0)
+    assert root.statements == [loop]
+    assert codegen._inertia_callsite_summaries == {id(call): summary}
+
+
 def test_shared_tail_ownership_uses_owned_identity_before_tag_refresh() -> None:
     codegen, returned_body, retained_statement = _codegen(
         retained_after_branch=True,
@@ -330,4 +386,3 @@ def test_shared_tail_ownership_refuses_divergent_nested_call_arguments() -> None
     assert result.status is SharedTailCallOwnershipStatus8616.UNKNOWN_REFUSE
     assert result.stats == SharedTailCallOwnershipStats8616(1, 1, 0, 0, 1)
     assert len(clone_body.statements) == 1
-

@@ -107,7 +107,7 @@ def test_x86_16_c_runtime_header_keeps_raw_and_service_interrupt_declarations() 
     )
 
     assert "unsigned short bios_int16_keyboard(void);" in declarations
-    assert "unsigned short dos_int21(void);" in declarations
+    assert "unsigned short dos_int21();" in declarations
     assert "unsigned _bios_keybrd(unsigned keycmd);" in declarations
     assert "void print_dos_string(const char *s);" in declarations
 

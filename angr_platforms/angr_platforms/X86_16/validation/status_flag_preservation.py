@@ -16,10 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from ..ir.status_flag_lift_context import (
-    active_status_flag_lift_artifact_8616,
-    published_status_flag_lift_artifact_8616,
-)
+from ..ir.status_flag_lift_context import resolve_status_flag_lift_artifact_8616
 
 
 class _ArchBoundary8616(Protocol):
@@ -32,20 +29,6 @@ class _ProjectBoundary8616(Protocol):
     """Third-party project fields consumed by this evidence bridge."""
 
     arch: _ArchBoundary8616
-    kb: _KnowledgeBaseBoundary8616
-
-
-class _FunctionManagerBoundary8616(Protocol):
-    """Third-party function lookup used for finalized IR evidence."""
-
-    def function(self, *, addr: int, create: bool) -> object | None:
-        """Return one exact function without creating synthetic state."""
-
-
-class _KnowledgeBaseBoundary8616(Protocol):
-    """Third-party knowledge base exposing the function manager."""
-
-    functions: _FunctionManagerBoundary8616
 
 
 class _CFunctionBoundary8616(Protocol):
@@ -88,23 +71,13 @@ def packed_status_flag_preservation_evidence_8616(
     register_offset = flags_register[0]
     if not isinstance(register_offset, int):
         return None
-    artifact = active_status_flag_lift_artifact_8616(function_address)
-    active_artifact = artifact is not None
-    if artifact is None:
-        try:
-            function = project_boundary.kb.functions.function(
-                addr=function_address,
-                create=False,
-            )
-        except (AttributeError, KeyError, TypeError, ValueError):
-            function = None
-        if function is not None:
-            artifact = published_status_flag_lift_artifact_8616(function)
+    resolution = resolve_status_flag_lift_artifact_8616(project, function_address)
+    artifact = resolution.artifact if resolution is not None else None
     if os.environ.get("INERTIA_DEBUG_DEF_USE") == "1":
         logging.getLogger(__name__).warning(
             "packed-FLAGS evidence function=%#x source=%s sites=%d",
             function_address,
-            "active" if active_artifact else "published" if artifact is not None else "missing",
+            resolution.source.value if resolution is not None else "missing",
             0 if artifact is None else len(artifact.packed_preservation_addresses),
         )
     if artifact is None:

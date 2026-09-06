@@ -199,7 +199,8 @@ def test_x86_16_decompiler_postprocess_registry_order():
     assert pass_names.index("_attach_callsite_summaries_8616") < pass_names.index(
         "_materialize_callsite_stack_arguments_8616"
     )
-    assert pass_names.index("_classify_return_shape_8616") < pass_names.index("_prune_void_function_return_values_8616")
+    assert "_classify_return_shape_8616" in pass_names
+    assert "_prune_void_function_return_values_8616" not in pass_names
     assert pass_names.index("_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616") < pass_names.index(
         "_repair_switch_loop_exit_returns_from_evidence_final_8616"
     )
@@ -216,9 +217,9 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_apply_affine_compound_assignment_identity_final_8616"
     )
     assert pass_names.index("_apply_affine_compound_assignment_identity_final_8616") < pass_names.index(
-        "_replay_packed_flags_live_ins_after_cleanup_8616"
+        "_replay_lowering_projections_after_cleanup_8616"
     )
-    assert pass_names[-1] == "_replay_packed_flags_live_ins_after_cleanup_8616"
+    assert pass_names[-1] == "_replay_lowering_projections_after_cleanup_8616"
 
 
 def test_x86_16_decompiler_postprocess_registry_requires_rebuild_contract():

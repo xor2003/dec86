@@ -149,6 +149,11 @@ def test_canonicalizes_padding_alias_call_to_typed_summary_target() -> None:
     assert codegen._inertia_call_target_identity_stats_8616.materialized_count == 1
     assert codegen._inertia_call_target_identity_stats_8616.failure_count == 0
 
+    functions.canonical.name = "clock"
+    assert canonicalize_callsite_target_identities_8616(project, codegen) is True
+    assert call.callee_func is functions.canonical
+    assert call.callee_target == "clock"
+
 
 def test_call_target_identity_refuses_nonpadding_target_mismatch() -> None:
     codegen = _Codegen()

@@ -19,6 +19,8 @@ from enum import StrEnum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeChar, SimTypeInt, SimTypeShort
+from angr.sim_variable import SimRegisterVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..pipeline.errors import PipelineHardError
@@ -79,11 +81,49 @@ class _StaleSelectorCandidate8616:
     return_statement: structured_c.CReturn
 
 
+@dataclass(frozen=True, slots=True)
+class _SunkReturnedCallCandidate8616:
+    """One interrupt call sunk into a return past a tagged condition."""
+
+    ordered_container: structured_c.CStatements
+    return_container: structured_c.CStatements
+    insertion_index: int
+    return_index: int
+    call: structured_c.CFunctionCall
+    return_statement: structured_c.CReturn
+
+
 class _CodegenInterruptResultSurface8616(Protocol):
     """Owned interrupt artifacts attached to the dynamic codegen boundary."""
 
+    cfunc: _CFunctionAddressSurface8616 | None
+    project: _ProjectRegisterSurface8616
     _inertia_software_interrupt_input_artifact_8616: SoftwareInterruptInputArtifact8616
     _inertia_software_interrupt_result_stats_8616: SoftwareInterruptResultMaterializationStats8616
+
+
+class _TaggedStatementSurface8616(Protocol):
+    """Third-party structured statement tag field consumed by Structuring."""
+
+    tags: object
+
+
+class _ArchRegisterSurface8616(Protocol):
+    """Third-party architecture register table consumed by Structuring."""
+
+    registers: dict[str, tuple[int, int]]
+
+
+class _ProjectRegisterSurface8616(Protocol):
+    """Third-party project architecture field consumed by Structuring."""
+
+    arch: _ArchRegisterSurface8616
+
+
+class _CFunctionAddressSurface8616(Protocol):
+    """Third-party structured function address consumed by Structuring."""
+
+    addr: int | None
 
 
 def _leaf_statement_8616(statement: object) -> object | None:
@@ -130,6 +170,151 @@ def _returned_call_matches_8616(root: object, fact: SoftwareInterruptInputFact86
         and _callsite_addr_8616(node.retval) == fact.callsite_addr
         for node in _iter_c_nodes_deep_8616(root)
     )
+
+
+def _statement_addr_8616(statement: object) -> int | None:
+    """Read one exact instruction address from a structured statement."""
+    try:
+        raw_tags = cast(_TaggedStatementSurface8616, statement).tags
+    except AttributeError:
+        return None
+    tags = copy_structured_tags_8616(raw_tags)
+    if tags is None:
+        return None
+    addr = tags.get("ins_addr")
+    return addr if isinstance(addr, int) else None
+
+
+def _sunk_returned_call_candidates_8616(
+    root: object,
+    fact: SoftwareInterruptInputFact8616,
+) -> tuple[_SunkReturnedCallCandidate8616, ...]:
+    """Find exact calls whose structured return moved past a later condition."""
+    returned_calls: list[
+        tuple[structured_c.CStatements, int, structured_c.CReturn, structured_c.CFunctionCall]
+    ] = []
+    containers = _statement_containers_8616(root)
+    for container in containers:
+        statements = tuple(cast(Iterable[structured_c.CStatement], container.statements or ()))
+        for index, statement in enumerate(statements):
+            if not isinstance(statement, structured_c.CReturn) or statement.retval is None:
+                continue
+            matching_calls = tuple(
+                node
+                for node in (
+                    statement.retval,
+                    *_iter_c_nodes_deep_8616(statement.retval),
+                )
+                if isinstance(node, structured_c.CFunctionCall)
+                and _callsite_addr_8616(node) == fact.callsite_addr
+            )
+            if len(matching_calls) == 1:
+                returned_calls.append((container, index, statement, matching_calls[0]))
+    if len(returned_calls) != 1:
+        return ()
+    return_container, return_index, return_statement, call = returned_calls[0]
+    return_addr = _statement_addr_8616(return_statement)
+    if return_addr is None or return_addr <= fact.callsite_addr:
+        return ()
+
+    candidates: list[_SunkReturnedCallCandidate8616] = []
+    for container in containers:
+        statements = tuple(cast(Iterable[structured_c.CStatement], container.statements or ()))
+        return_owner_indexes = tuple(
+            index
+            for index, statement in enumerate(statements)
+            if statement is return_statement
+            or any(node is return_statement for node in _iter_c_nodes_deep_8616(statement))
+        )
+        if len(return_owner_indexes) != 1:
+            continue
+        return_owner_index = return_owner_indexes[0]
+        condition_indexes: list[int] = []
+        for index, statement in enumerate(statements[:return_owner_index]):
+            leaf = _leaf_statement_8616(statement)
+            if not isinstance(leaf, structured_c.CIfElse):
+                continue
+            condition_addr = _statement_addr_8616(leaf)
+            if (
+                condition_addr is not None
+                and fact.callsite_addr < condition_addr <= return_addr
+            ):
+                condition_indexes.append(index)
+        if not condition_indexes:
+            continue
+        candidates.append(
+            _SunkReturnedCallCandidate8616(
+                ordered_container=container,
+                return_container=return_container,
+                insertion_index=min(condition_indexes),
+                return_index=return_index,
+                call=call,
+                return_statement=return_statement,
+            )
+        )
+    return tuple(candidates)
+
+
+def _interrupt_result_variable_8616(
+    codegen: object,
+    fact: SoftwareInterruptInputFact8616,
+) -> structured_c.CVariable | None:
+    """Build the exact ABI result-register carrier for one interrupt fact."""
+    register_name = fact.result_register
+    if register_name is None:
+        return None
+    surface = cast(_CodegenInterruptResultSurface8616, codegen)
+    try:
+        register_offset, register_size = surface.project.arch.registers[register_name]
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    variable_types = {
+        1: SimTypeChar(False),
+        2: SimTypeShort(False),
+        4: SimTypeInt(False),
+    }
+    variable_type = variable_types.get(register_size)
+    if variable_type is None:
+        return None
+    cfunc = surface.cfunc
+    function_addr = cfunc.addr if cfunc is not None else None
+    variable = SimRegisterVariable(
+        register_offset,
+        register_size,
+        name=register_name,
+        region=function_addr if isinstance(function_addr, int) else None,
+        ident=f"{register_name}_{fact.callsite_addr:x}",
+    )
+    return structured_c.CVariable(variable, variable_type=variable_type, codegen=codegen)
+
+
+def _materialize_sunk_returned_call_8616(
+    candidate: _SunkReturnedCallCandidate8616,
+    result: structured_c.CVariable,
+    codegen: object,
+) -> None:
+    """Restore binary call order and return its explicit result carrier."""
+    assignment = structured_c.CAssignment(
+        result,
+        candidate.call,
+        tags=candidate.call.tags,
+        codegen=codegen,
+    )
+    ordered_statements = list(
+        cast(Iterable[structured_c.CStatement], candidate.ordered_container.statements or ())
+    )
+    ordered_statements.insert(candidate.insertion_index, assignment)
+    candidate.ordered_container.statements = ordered_statements
+
+    return_statements = list(
+        cast(Iterable[structured_c.CStatement], candidate.return_container.statements or ())
+    )
+    return_statements[candidate.return_index] = structured_c.CReturn(
+        result,
+        tags=candidate.return_statement.tags,
+        codegen=codegen,
+    )
+    candidate.return_container.statements = return_statements
 
 
 def _stale_selector_candidates_8616(
@@ -189,6 +374,47 @@ def _materialize_fact_8616(
     callbacks: TerminalCallResultReturnCallbacks8616,
 ) -> SoftwareInterruptResultMaterializationStats8616:
     """Materialize one exact terminal interrupt-result fact."""
+    sunk_candidates = _sunk_returned_call_candidates_8616(root, fact)
+    if sunk_candidates:
+        if len(sunk_candidates) != 1:
+            return SoftwareInterruptResultMaterializationStats8616(
+                status=SoftwareInterruptResultStatus8616.AMBIGUOUS_CANDIDATE,
+                raw_fact_count=1,
+                normalized_fact_count=len(sunk_candidates),
+                classified_fact_count=len(sunk_candidates),
+                failure_count=len(sunk_candidates),
+                callsite_addr=fact.callsite_addr,
+            )
+        path_status, path = prove_terminal_call_result_path_8616(
+            fact.callsite_addr,
+            callbacks,
+        )
+        result = _interrupt_result_variable_8616(codegen, fact)
+        if (
+            path_status is not TerminalCallResultReturnStatus8616.MATERIALIZED
+            or result is None
+        ):
+            return SoftwareInterruptResultMaterializationStats8616(
+                status=SoftwareInterruptResultStatus8616.CFG_PROOF_REFUSED,
+                raw_fact_count=1,
+                normalized_fact_count=1,
+                classified_fact_count=1,
+                failure_count=1,
+                callsite_addr=fact.callsite_addr,
+                path_block_addrs=path,
+                path_status=path_status,
+            )
+        _materialize_sunk_returned_call_8616(sunk_candidates[0], result, codegen)
+        return SoftwareInterruptResultMaterializationStats8616(
+            status=SoftwareInterruptResultStatus8616.MATERIALIZED,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=1,
+            materialized_count=1,
+            callsite_addr=fact.callsite_addr,
+            path_block_addrs=path,
+            path_status=path_status,
+        )
     if _returned_call_matches_8616(root, fact):
         return SoftwareInterruptResultMaterializationStats8616(
             status=SoftwareInterruptResultStatus8616.ALREADY_MATERIALIZED,

@@ -2782,6 +2782,7 @@ def test_void_return_value_prune_preserves_call_side_effect_and_control_flow():
         structured_c.CConstant(75, SimTypeShort(False), codegen=c_codegen),
         codegen=c_codegen,
     )
+    scalar_retval = scalar_ret.retval
     after = structured_c.CExpressionStatement(
         structured_c.CFunctionCall("After", None, [], codegen=c_codegen),
         codegen=c_codegen,
@@ -2811,6 +2812,8 @@ def test_void_return_value_prune_preserves_call_side_effect_and_control_flow():
     assert statements[0].expr is call
     assert isinstance(statements[1], structured_c.CReturn)
     assert statements[1].retval is None
+    assert statements[1] is not scalar_ret
+    assert scalar_ret.retval is scalar_retval
     assert isinstance(statements[2], structured_c.CReturn)
     assert statements[2].retval is None
     assert statements[3] is after

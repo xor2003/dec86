@@ -9,7 +9,25 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-__all__ = ["REG16_OFFSET_MAP", "REG32_OFFSET_MAP", "register_name_from_offset", "segment_space_for_base"]
+__all__ = [
+    "REG8_OFFSET_MAP",
+    "REG16_OFFSET_MAP",
+    "REG32_OFFSET_MAP",
+    "register_name_from_offset",
+    "segment_space_for_base",
+]
+
+
+REG8_OFFSET_MAP: dict[int, str] = {
+    0: "al",
+    1: "ah",
+    4: "cl",
+    5: "ch",
+    8: "dl",
+    9: "dh",
+    12: "bl",
+    13: "bh",
+}
 
 
 REG16_OFFSET_MAP: dict[int, str] = {
@@ -51,6 +69,8 @@ REG32_OFFSET_MAP: dict[int, str] = {
 def register_name_from_offset(offset: int, size: int = 2) -> str:
     """Return the width-correct register view for a VEX offset and byte size."""
     offset_value = int(offset)
+    if size == 1 and offset_value in REG8_OFFSET_MAP:
+        return REG8_OFFSET_MAP[offset_value]
     if size == 4 and offset_value in REG32_OFFSET_MAP:
         return REG32_OFFSET_MAP[offset_value]
     return REG16_OFFSET_MAP.get(offset_value, f"r{offset}")

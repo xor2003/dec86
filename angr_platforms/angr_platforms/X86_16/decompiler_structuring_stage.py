@@ -2977,7 +2977,10 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
     codegen._inertia_identical_return_guard_validation_result_8616 = (
         identical_return_validation
     )
-    if identical_return_validation.accepted:
+    if (
+        identical_return_validation.accepted
+        and not identical_return_validation.residual_changed
+    ):
         validation["verdict"] = build_x86_16_tail_validation_verdict(
             f"structuring:{spec_name}",
             validation,

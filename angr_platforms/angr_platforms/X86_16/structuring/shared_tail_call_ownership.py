@@ -13,14 +13,20 @@ rewrite cleanup, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_variable import SimRegisterVariable
 
 from ..c_ast_utils import _same_c_expression_8616
-from ..callsite_summary import CallsiteSummary8616, structured_callsite_addr_8616
+from ..caller_return_use_contracts import CallsiteReturnUseKind8616
+from ..callsite_summary import (
+    CallsiteSummary8616,
+    structured_callsite_addr_8616,
+)
 from ..pipeline.errors import PipelineHardError
 from .shared_tail_cfg_topology import (
     SharedTailCfgTopology8616,
@@ -91,6 +97,54 @@ class _CodegenSurface8616(Protocol):
     _inertia_shared_tail_call_ownership_result_8616: SharedTailCallOwnershipResult8616
 
 
+class _RegisterArchitecture8616(Protocol):
+    """Architecture register map consumed at the third-party project boundary."""
+
+    registers: Mapping[str, tuple[int, int]]
+
+
+class _RegisterProject8616(Protocol):
+    """Project architecture surface needed for physical carrier identity."""
+
+    arch: _RegisterArchitecture8616
+
+
+def _same_call_arguments_8616(
+    left: structured_c.CFunctionCall,
+    right: structured_c.CFunctionCall,
+) -> bool:
+    """Compare cloned call arguments without depending on rendered target names."""
+    left_args = tuple(left.args or ())
+    right_args = tuple(right.args or ())
+    return len(left_args) == len(right_args) and all(
+        _same_c_expression_8616(left_arg, right_arg)
+        for left_arg, right_arg in zip(left_args, right_args, strict=True)
+    )
+
+
+def _return_carrier_matches_8616(
+    project: object,
+    occurrence: SharedTailCallOccurrence8616,
+    summary: CallsiteSummary8616,
+) -> bool:
+    """Match a cloned return carrier by physical register identity and width."""
+    variable = occurrence.destination_variable
+    if not isinstance(variable, SimRegisterVariable) or not isinstance(
+        summary.return_register, str
+    ):
+        return False
+    try:
+        arch = cast(_RegisterProject8616, project).arch
+    except AttributeError:
+        return False
+    expected = arch.registers.get(summary.return_register.lower())
+    return (
+        expected is not None
+        and variable.reg == expected[0]
+        and variable.size == expected[1]
+    )
+
+
 def _owned_callsite_addr_8616(
     call: structured_c.CFunctionCall,
     summary_map: dict[int, CallsiteSummary8616],
@@ -154,16 +208,31 @@ def materialize_shared_tail_call_ownership_8616(
     raw_count = normalized_count = classified_count = materialized_count = failure_count = 0
     refusals: list[str] = []
     removals: list[SharedTailCallOccurrence8616] = []
+    retained_call_ids: set[int] = set()
     for callsite_addr, occurrences in sorted(occurrences_by_callsite.items()):
+        conditions = tuple(
+            item for item in occurrences if item.kind is SharedTailCallOccurrenceKind8616.CONDITION
+        )
         returned = tuple(
             item for item in occurrences if item.kind is SharedTailCallOccurrenceKind8616.RETURNED
+        )
+        return_carriers = tuple(
+            item
+            for item in occurrences
+            if item.kind is SharedTailCallOccurrenceKind8616.RETURN_CARRIER
         )
         standalone = tuple(
             item for item in occurrences if item.kind is SharedTailCallOccurrenceKind8616.STANDALONE
         )
         returned_clone_shape = bool(returned and standalone)
         nested_standalone_shape = not returned and len(standalone) > 1
-        if not returned_clone_shape and not nested_standalone_shape:
+        condition_carrier_shape = (
+            len(conditions) == 1
+            and len(return_carriers) == 1
+            and not returned
+            and not standalone
+        )
+        if not returned_clone_shape and not nested_standalone_shape and not condition_carrier_shape:
             continue
         raw_count += 1
         summary = inventory.get(callsite_addr)
@@ -178,7 +247,17 @@ def materialize_shared_tail_call_ownership_8616(
             continue
         retained: SharedTailCallOccurrence8616 | None
         clones: tuple[SharedTailCallOccurrence8616, ...]
-        if returned_clone_shape and len(standalone) == 1:
+        if condition_carrier_shape:
+            retained = conditions[0]
+            clones = return_carriers
+            ownership_proven = (
+                summary.return_used is True
+                and summary.return_use_kind is CallsiteReturnUseKind8616.CONDITION
+                and _return_carrier_matches_8616(project, return_carriers[0], summary)
+                and standalone_follows_nested_clone_8616(retained, return_carriers[0])
+                and _same_call_arguments_8616(retained.call, return_carriers[0].call)
+            )
+        elif returned_clone_shape and len(standalone) == 1:
             retained = standalone[0]
             clones = returned
             ownership_proven = all(
@@ -204,11 +283,12 @@ def materialize_shared_tail_call_ownership_8616(
             retained = None
             clones = ()
             ownership_proven = False
-        if not ownership_proven:
+        if not ownership_proven or retained is None:
             failure_count += 1
             refusals.append(f"callsite={callsite_addr:#x}:ast-ownership-conflict")
             continue
         classified_count += len(clones)
+        retained_call_ids.add(id(retained.call))
         removals.extend(clones)
 
     for occurrence in sorted(
@@ -224,7 +304,8 @@ def materialize_shared_tail_call_ownership_8616(
         ):
             raise PipelineHardError("classified shared-tail call clone lost its AST owner")
         del statements[occurrence.statement_index]
-        summary_map.pop(id(occurrence.call), None)
+        if id(occurrence.call) not in retained_call_ids:
+            summary_map.pop(id(occurrence.call), None)
         materialized_count += 1
 
     stats = SharedTailCallOwnershipStats8616(

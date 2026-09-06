@@ -2594,6 +2594,36 @@ def test_rewrite_decoded_jcc_conditions_handles_cycle_guard(monkeypatch):
     assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
 
 
+def test_rewrite_decoded_jcc_conditions_walks_deep_untagged_condition_linearly(monkeypatch):
+    import angr_platforms.X86_16.decompiler_postprocess_jcc as jcc_module
+
+    codegen = _codegen([])
+    cond = _const(1, codegen)
+    depth = 48
+    for _ in range(depth):
+        cond = CUnaryOp("Not", cond, codegen=codegen)
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    if_stmt.condition = cond
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    classify_calls = 0
+    original_classifier = jcc_module.classify_condition_call_effects_8616
+
+    def _counted_classifier(condition):
+        nonlocal classify_calls
+        classify_calls += 1
+        return original_classifier(condition)
+
+    monkeypatch.setattr(jcc_module, "classify_condition_call_effects_8616", _counted_classifier)
+
+    changed = _rewrite_decoded_jcc_conditions_8616(_project(), codegen)
+
+    assert changed is False
+    assert classify_calls <= depth * 4
+
+
 @pytest.mark.parametrize(
     ("mnemonic", "expected_op"),
     [

@@ -10,19 +10,23 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CReturn,
+    CUnaryOp,
     CVariable,
 )
 from angr.rustylib.ailment import VirtualVariableCategory
 from angr.sim_type import SimTypeLong, SimTypeShort
-from angr.sim_variable import SimMemoryVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import IRAddress, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.function_ssa_registry import FunctionSSAArtifactStage8616
 from angr_platforms.X86_16.ir.ssa import SSABlock
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
 from angr_platforms.X86_16.lowering.gp_register_state import (
+    gp_live_in_names_from_c_ast_8616,
     gp_live_in_names_from_ssa_8616,
     lower_architectural_gp_register_state_8616,
+    runtime_gp_expression_view_8616,
     runtime_gp_name_for_variable_8616,
 )
 from angr_platforms.X86_16.tail_validation_fingerprint import _expr_fingerprint
@@ -144,6 +148,104 @@ def test_gp_runtime_state_replaces_untagged_di_carrier() -> None:
     assert replacement.lhs.variable.name == "inertia_edi"
     assert replacement.rhs.value == 0xFFFF
     assert codegen._inertia_gp_register_state_lowering_stats_8616.failure_count == 0
+
+
+def test_gp_runtime_state_projects_addressed_bh_view_before_inner_bx_rewrite() -> None:
+    """Angr's pointer-shaped BH alias lowers as a value, not address arithmetic."""
+    arch = Arch86_16()
+    bx_offset, bx_size = arch.registers["bx"]
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_function_ssa_artifacts_8616={},
+        _inertia_function_ssa_stages_8616={},
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    bx = CVariable(
+        SimRegisterVariable(bx_offset, bx_size, ident="bx_live", region=0x1AF_CF),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    addressed_bh = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CUnaryOp("Reference", bx, codegen=codegen),
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1AF_CF,
+        statements=addressed_bh,
+        unified_local_vars={},
+    )
+
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    replacement = codegen.cfunc.statements
+    view = runtime_gp_expression_view_8616(replacement)
+    assert view is not None
+    assert view.register_name == "bh"
+
+
+def test_gp_runtime_state_projects_addressed_bh_after_inner_bx_rewrite() -> None:
+    """A replayed pointer-shaped BH alias recognizes the existing runtime BX view."""
+    artifact = _gp_live_in_artifact("bx")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        _inertia_function_ssa_artifacts_8616={artifact.function_addr: artifact},
+        _inertia_function_ssa_stages_8616={
+            artifact.function_addr: FunctionSSAArtifactStage8616.IR,
+        },
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    runtime_ebx = CVariable(
+        SimMemoryVariable(
+            0x1000C,
+            4,
+            name="inertia_ebx",
+            category="inertia_gp_register_state",
+        ),
+        variable_type=SimTypeLong(False),
+        codegen=codegen,
+    )
+    runtime_bx = CBinaryOp(
+        "And",
+        runtime_ebx,
+        CConstant(0xFFFF, SimTypeLong(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=artifact.function_addr,
+        statements=CUnaryOp(
+            "Dereference",
+            CBinaryOp(
+                "Add",
+                CUnaryOp("Reference", runtime_bx, codegen=codegen),
+                CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        unified_local_vars={},
+    )
+
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    view = runtime_gp_expression_view_8616(codegen.cfunc.statements)
+    assert view is not None
+    assert view.register_name == "bh"
 
 
 def test_gp_runtime_state_projects_al_from_coherent_ax_parent() -> None:
@@ -347,3 +449,66 @@ def test_gp_runtime_state_projects_entry_sp_from_coherent_esp_lane() -> None:
     assert codegen._inertia_global_declaration_specs_8616 == (
         ("unsigned long", "inertia_esp", None),
     )
+
+
+def test_gp_runtime_state_materializes_unassigned_ax_carrier() -> None:
+    """An unassigned SSA AX carrier is an architectural live-in, not a C local."""
+    arch = Arch86_16()
+    ax_offset, ax_size = arch.registers["ax"]
+    ax = IRValue(MemSpace.REG, name="ax", offset=ax_offset, size=ax_size)
+    artifact = SSAFunctionArtifact(
+        function_addr=0x1AF_CF,
+        blocks=(
+            SSABlock(
+                addr=0x1AF_CF,
+                instrs=(
+                    IRInstr(
+                        "MOV",
+                        ax,
+                        (IRValue(MemSpace.CONST, const=0x200, size=ax_size),),
+                        ax_size,
+                        0x1B0_76,
+                    ),
+                ),
+                bindings=(),
+            ),
+        ),
+        predecessor_map={0x1AF_CF: ()},
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_function_ssa_artifacts_8616={},
+        _inertia_function_ssa_stages_8616={},
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    carrier = CVariable(
+        SimRegisterVariable(
+            ax_offset,
+            ax_size,
+            ident="ir_37",
+            region=artifact.function_addr,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=artifact.function_addr,
+        statements=CReturn(carrier, codegen=codegen),
+        unified_local_vars={},
+    )
+    assert gp_live_in_names_from_ssa_8616(artifact) == frozenset()
+    assert gp_live_in_names_from_c_ast_8616(codegen.cfunc.statements, project) == frozenset(
+        {"eax"}
+    )
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    replacement = codegen.cfunc.statements.retval
+    assert isinstance(replacement, CBinaryOp)
+    assert replacement.op == "And"
+    assert isinstance(replacement.lhs, CVariable)
+    assert replacement.lhs.variable.name == "inertia_eax"
+    assert replacement.rhs.value == 0xFFFF

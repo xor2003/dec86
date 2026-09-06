@@ -261,9 +261,11 @@ def prove_terminal_call_path_8616(
             first_block = False
 
         saw_jump = False
+        saw_external_conditional_jump = False
         saw_return = False
         return_instruction_addr: int | None = None
         jump_target: int | None = None
+        conditional_fallthrough: int | None = None
         for index, insn in enumerate(insns[scan_start:], start=scan_start):
             mnemonic = str(_dynamic_attr_8616(insn, "mnemonic", "")).lower()
             if mnemonic in {"ret", "retf", "iret"}:
@@ -296,6 +298,38 @@ def prove_terminal_call_path_8616(
                     )
                 saw_jump = True
                 continue
+            if mnemonic.startswith("j") and mnemonic not in {"jmp", "ljmp"}:
+                if index != len(insns) - 1:
+                    return TerminalCallPathResult8616(
+                        TerminalCallPathStatus8616.UNSAFE_POST_CALL_EFFECT,
+                        tuple(path),
+                    )
+                try:
+                    jump_target = callbacks.branch_target_imm(insn)
+                except Exception:
+                    return TerminalCallPathResult8616(
+                        TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS,
+                        tuple(path),
+                    )
+                instruction_addr = _dynamic_attr_8616(insn, "address", None)
+                instruction_size = _dynamic_attr_8616(insn, "size", None)
+                if (
+                    jump_target is None
+                    or not isinstance(instruction_addr, int)
+                    or not isinstance(instruction_size, int)
+                    or instruction_size <= 0
+                    or any(
+                        block_addr <= jump_target < block_addr + block_size
+                        for block_addr, block_size in block_ranges
+                    )
+                ):
+                    return TerminalCallPathResult8616(
+                        TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS,
+                        tuple(path),
+                    )
+                conditional_fallthrough = instruction_addr + instruction_size
+                saw_external_conditional_jump = True
+                continue
             if _stack_adjust_8616(insn) or _frame_teardown_8616(insn):
                 continue
             return TerminalCallPathResult8616(TerminalCallPathStatus8616.UNSAFE_POST_CALL_EFFECT, tuple(path))
@@ -323,6 +357,14 @@ def prove_terminal_call_path_8616(
                 else TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS
             )
             return TerminalCallPathResult8616(status, tuple(path))
+        if (
+            saw_external_conditional_jump
+            and successors[0] != conditional_fallthrough
+        ):
+            return TerminalCallPathResult8616(
+                TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS,
+                tuple(path),
+            )
         if saw_jump and jump_target != successors[0]:
             return TerminalCallPathResult8616(TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS, tuple(path))
         current_addr = successors[0]

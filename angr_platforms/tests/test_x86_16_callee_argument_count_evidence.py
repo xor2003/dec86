@@ -353,3 +353,69 @@ def test_range_census_builds_boundaries_only_for_matching_callers(monkeypatch) -
 
     assert observed_ranges == [((0x100, 0x120),)]
     assert tuple(fact.callsite_addr for fact in facts) == (0x110,)
+
+
+def test_range_census_decodes_exact_ranges_once_across_callee_queries(monkeypatch) -> None:
+    calls_by_addr = {
+        0x100: SimpleNamespace(address=0x110, mnemonic="call", operands=()),
+        0x300: SimpleNamespace(address=0x310, mnemonic="call", operands=()),
+    }
+    decoded_ranges: list[int] = []
+
+    def disasm(_code, address):
+        decoded_ranges.append(address)
+        return (calls_by_addr[address],)
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(capstone=SimpleNamespace(detail=False, disasm=disasm)),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _addr, size: bytes(size))),
+    )
+    callers = {
+        0x100: ExactFunctionRangeBoundary8616(
+            project=project,
+            addr=0x100,
+            size=0x20,
+            block_addrs_set=frozenset({0x100}),
+            reachable_instruction_addrs=frozenset({0x110}),
+            successor_edges=(),
+        ),
+        0x300: ExactFunctionRangeBoundary8616(
+            project=project,
+            addr=0x300,
+            size=0x20,
+            block_addrs_set=frozenset({0x300}),
+            reachable_instruction_addrs=frozenset({0x310}),
+            successor_edges=(),
+        ),
+    }
+    monkeypatch.setattr(
+        range_module,
+        "exact_function_range_inventory_8616",
+        lambda _project, ranges: ExactFunctionRangeInventory8616(
+            ranges,
+            tuple(callers[start] for start, _end in ranges),
+        ),
+    )
+    monkeypatch.setattr(
+        range_module,
+        "_direct_call_target_8616",
+        lambda instruction: 0x200 if instruction.address == 0x110 else 0x400,
+    )
+    monkeypatch.setattr(
+        range_module,
+        "canonicalize_x86_16_padding_call_target_8616",
+        lambda _project, target: target,
+    )
+    monkeypatch.setattr(
+        range_module,
+        "summarize_x86_16_callsite",
+        lambda _function, addr: _summary(addr, 0x200 if addr == 0x110 else 0x400, 1),
+    )
+    ranges = ((0x100, 0x120), (0x300, 0x320))
+
+    first = range_module.collect_range_callsite_facts_for_target_8616(project, 0x200, ranges)
+    second = range_module.collect_range_callsite_facts_for_target_8616(project, 0x400, ranges)
+
+    assert decoded_ranges == [0x100, 0x300]
+    assert tuple(fact.callsite_addr for fact in first) == (0x110,)
+    assert tuple(fact.callsite_addr for fact in second) == (0x310,)

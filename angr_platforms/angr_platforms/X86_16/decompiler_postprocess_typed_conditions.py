@@ -268,7 +268,9 @@ def _build_indexed_segmented_operand_expr_8616(
     project: object,
     operand: IRValue,
     codegen: object,
+    cond: ConditionIR | None = None,
 ) -> CFunctionCall | None:
+    """Build indexed segmented memory while preserving condition bind context."""
     if operand.index is None:
         return None
     segment = _build_reg_var(project, "ds", codegen, size=2)
@@ -278,7 +280,16 @@ def _build_indexed_segmented_operand_expr_8616(
         operand,
         segment,
         codegen,
-        lambda value: cast(Any, _build_c_expr_for_operand(project, value, codegen)),
+        lambda value: cast(
+            Any,
+            _build_c_expr_for_operand(
+                project,
+                value,
+                codegen,
+                cond,
+                apply_condition_value_view=False,
+            ),
+        ),
         condition_segment_access_tags_8616,
     )
 
@@ -331,16 +342,33 @@ def _build_c_expr_for_operand(
     operand: object,
     codegen: object,
     cond: ConditionIR | None = None,
+    *,
+    apply_condition_value_view: bool = True,
 ) -> object | None:
+    """Lower typed condition IR, keeping address indices at their proven width."""
+
     def _impl() -> object | None:
         """Convert a ConditionIR operand (reg name string or int) to a C AST node."""
         if isinstance(operand, IRBinaryValue):
-            lhs = _build_c_expr_for_operand(project, operand.lhs, codegen, cond)
-            rhs = _build_c_expr_for_operand(project, operand.rhs, codegen, cond)
+            lhs = _build_c_expr_for_operand(
+                project,
+                operand.lhs,
+                codegen,
+                cond,
+                apply_condition_value_view=apply_condition_value_view,
+            )
+            rhs = _build_c_expr_for_operand(
+                project,
+                operand.rhs,
+                codegen,
+                cond,
+                apply_condition_value_view=apply_condition_value_view,
+            )
             structured_op = {
                 "add": "Add",
                 "and": "And",
                 "or": "Or",
+                "shr": "Shr",
                 "sub": "Sub",
                 "xor": "Xor",
             }.get(operand.op)
@@ -364,19 +392,27 @@ def _build_c_expr_for_operand(
                         max(1, int(operand.size or 2)),
                     )
                     if expr is not None:
-                        return _clone_stack_expr_with_condition_signedness_8616(expr, cond, codegen)
+                        if apply_condition_value_view:
+                            return _clone_stack_expr_with_condition_signedness_8616(expr, cond, codegen)
+                        return expr
                 return _build_reg_var(project, operand.name, codegen, size=max(1, int(operand.size or 2)))
             if operand.space in {MemSpace.DS, MemSpace.ES}:
-                indexed_expr = _build_indexed_segmented_operand_expr_8616(project, operand, codegen)
+                indexed_expr = _build_indexed_segmented_operand_expr_8616(
+                    project,
+                    operand,
+                    codegen,
+                    cond,
+                )
                 if indexed_expr is not None:
                     return cast(object, indexed_expr)
                 return _build_segmented_operand_expr_8616(project, operand, codegen)
             if operand.space == MemSpace.SS:
+                condition_view = cond if apply_condition_value_view else None
                 stack_expr = _build_stack_operand_expr_8616(
                     operand,
                     codegen,
-                    signed=bool(cond is not None and cond.is_signed),
-                    cond=cond,
+                    signed=bool(condition_view is not None and condition_view.is_signed),
+                    cond=condition_view,
                 )
                 return stack_expr if stack_expr is not None else _build_segmented_operand_expr_8616(project, operand, codegen)
             return None

@@ -926,9 +926,15 @@ or output filtering.
 | 9c | Preserve validated callee pointer evidence across exact-function project views | `2026-09-02 12:43 +02:00` | `2026-09-02 13:01 +02:00` | about 18m focused; test waits included | complete | The existing ABI seeding service rebases immutable pointer evidence, detects conflicts, and makes HeapSort's two `Swaps` arguments typed pointers. Focused source-assisted and sidecar-free validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. |
 | 9d | Keep Swaps call-frame and pointer-swap projections coherent through final regeneration | before `2026-09-02 14:02 +02:00`; exact start lost at compaction | `2026-09-02 14:13 +02:00` | exact subtotal unavailable after compaction | complete | Typed return-frame ownership, machine-BP validation coordinates, and the unique exact swap projection now survive their downstream consumers. Live Swaps has exactly three object-copy assignments, the counter effect, clean Tail Validation, and strict C syntax; focused Ruff, MyPy, `quality-dev`, and regression gates pass. |
 | 9e | Keep typed C-function stack coordinates coherent across final validation | before `2026-09-02 15:06 +02:00`; exact start lost at compaction | `2026-09-02 16:08 +02:00` | 45-60m focused after the first checkpoint; broad gate wall separate | complete | The Types/Lowering owner accepts only the canonical near-frame entry-SP-to-BP delta and may project unregistered negative locals, while positive slots remain under Alias/type ownership. Live uncached DrawBar passes; 101 focused tests, `quality-dev` with 1,924 tests, and the mandatory pipeline are green. `scalar_types_io`, including `add_long`, recompiles and exits `255`. |
-| 9f | Refresh the complete failure inventory and remove superseded fixtures | `2026-09-06 15:14 +02:00` | - | 41m first census/checkpoint; waits included | in progress | The first audit provides a 24-failure triage inventory but is not an acceptance baseline because source changed during the run. The entry-SP/machine-BP overlap fixture is corrected, and Beep's stale one-line-return assertion now accepts the validation-clean equivalent braced early return while retaining its call/order checks; both focused nodes pass. Two 2026-09-06 full-audit retries were stopped after their source fingerprints changed mid-run. Rerun the complete collection from a stable tree, then classify every remaining node by shared earliest owner before implementation. |
+| 9f | Refresh the complete failure inventory and remove superseded fixtures | `2026-09-06 15:14 +02:00` | - | 41m first census/checkpoint plus 25-35m current focused triage; failed-set and pipeline waits separate | in progress | The complete 10,208-test run reached 10,016 passed / 22 failed / 170 skipped in 1,233.30s, but remains non-authoritative because source changed. A later source-stable retained-failure run reached 14 failed / 48 passed / 1 skipped in 386.32s; this is a focused checkpoint, not a replacement full-suite count. Step 9m removed QuickSort's two typed semantic-view predicate mismatches, but its tests remain blocked by separate structuring-snapshot and def-use failures. Step 9f still requires a source-stable complete collection and zero failures. |
 | 9g | Close sidecar-free CMP32 wide argument owner materialization | before `2026-09-06 16:33 +02:00`; first retained diagnostic checkpoint | `2026-09-06 16:50 +02:00` | 25-35m focused; repeated executable waits excluded | complete | Types/Lowering now consumes body-proven four-byte argument starts while building the positive-BP interface, before stable stack projection. Already-correct wide types also enlarge their physical stack owner. The storage-width regression failed before the fix; 130 changed-surface tests, the 1,926-test `quality-dev` lane, the mandatory seven-program MS C pipeline, and all four sidecar-free CMP32 Tail Validation regressions pass. |
 | 9h | Close RunMenu JCC-owned dword access provenance | before `2026-09-06 18:10 +02:00`; exact first diagnostic lost at compaction | `2026-09-06 18:26 +02:00` | exact subtotal unavailable after compaction; final 20m retained; 6m29s changed-file test wall separate | complete | Types/Lowering first uses exact instruction tags, then consults an exact tagged VEX block only when the segment contract identifies one unique matching access instruction. Ambiguous or incomplete facts still refuse. Both RunMenu variants validate, strict portable-flat C compilation succeeds, and scalar `clPause` high/low projections replace invalid subscripting. The focused 15 policy tests, three dword regressions, Ruff `--fix`, MyPy, and the type/doc ratchet pass. The broader ownership-selected run was 228 passed and 14 failed in concurrently modified non-RunMenu SORTD families; Step 9f therefore remains open. |
+| 9i | Keep indexed-condition addresses independent from compared-value width | `2026-09-06 18:35 +02:00` | `2026-09-06 19:05 +02:00` | 9m focused implementation plus 1m27s initial and 1m05s final live-test wall | complete | Structuring's compatibility consumer retains the exact condition producer binding for register-index resolution but no longer applies an 8-bit comparison view to a proven 16-bit address index. The fail-first unit and 402-test initial surface pass. After 9j removed the independent duplicate-call failure, sidecar-free BubbleSort, ExchangeSort, and PercolateDown all emit full-word indexes, pass Tail Validation, preserve required calls exactly once, and compile under strict portable-flat C. |
+| 9j | Count exact attached callsite identities before recovering missing calls | diagnosis began before `2026-09-06 19:01 +02:00`; exact continuation start not retained | `2026-09-06 19:13 +02:00` | 25-35m focused across continuation; gate waits separate | complete | Types/Lowering owns exact live-callsite presence; Structuring attaches and splits those identities before missing-target recovery and reattaches only after a genuine insertion. Rewrite retains compatibility fallback only. Live and stale-node regressions pass; 305 focused tests, the final 503-test changed-file gate, all three affected SORTD functions, and strict C syntax are green. The two independent shared-tree pipeline blockers exposed here are closed by the corrected void-return ownership assertion and Step 9k; the mandatory pipeline is green again. |
+| 9k | Inventory unresolved indirect calls before callsite summarization | diagnosis began before `2026-09-06 19:16 +02:00`; exact start lost at compaction | `2026-09-06 19:44 +02:00` | 25-35m focused; two pipeline waits recorded separately | complete | Frontend owns one deterministic decoded function-instruction inventory and exposes every exact near/far call address, including unresolved indirect calls omitted by angr's resolved callsite set. The existing Recovery Metadata summarizer records `target_source=("bp", 4)` and Types/Lowering materializes the function-pointer parameter. Generic inventory, bridge, and direct-recovery-refusal tests are enrolled in the curated lane; live `apply_twice` validates and emits a callable typed parameter; all four `function_pointers` functions recompile and execute with exit `255`; the mandatory 3/3 pipeline passes with 1,940 pytest tests and all seven MS C construct groups. |
+| 9l | Preserve signed semantic views and own shared-tail returned-call clones | after `2026-09-06 20:44 +02:00`; exact start not retained | `2026-09-06 21:56 +02:00` | 45-60m focused; gate waits separate | complete | Types/Lowering preserves `CSemanticCast8616` through stack canonicalization and canonicalizes exact call targets from typed KB identity; Tail Validation fingerprints semantic source/destination width and signedness; Structuring removes a returned-call clone only from the same exact callsite, physical return register, argument ASTs, and proven shared CFG tail. Named and sidecar-free Sleep regressions, divergent-argument refusal, 181 related tests, focused Ruff/MyPy, startup architecture and ownership checks, the 1,944-test curated lane, and all seven configured MS C round trips pass. The prior 17-failed / 5-passed checkpoint predates this slice and must not be reused as a current count. |
+| 9m | Validate exact semantic casts as typed comparison views | `2026-09-06 22:06 +02:00` | `2026-09-06 22:24 +02:00` | 18m focused; 1m35s executable wait separate | complete | Validation projects an explicit `CSemanticCast8616` to its storage fingerprint only when source width, destination width, and ConditionIR-required signedness match exactly. Wrong signedness, widening, unknown width, and untyped casts refuse. QuickSort's two `branch-condition:predicate-mismatch` failures disappear with byte-identical generated C; its independent structuring-snapshot and def-use failures remain visible. Ruff `--fix`, strict MyPy, 131 adjacent tests, and startup architecture/context/ownership gates pass. |
+| 9n | Compose identical-return and JCC Structuring validation proofs | `2026-09-06 22:36 +02:00` | - | about 28m focused; executable waits separate | in progress | Tail Validation consumes only the exact condition/control-flow observations owned by one closed identical-return collapse and leaves a balanced residual for the existing JCC validator. Unit, type, lint, architecture, and live QuickSort revalidation on the current tree are required before this row closes. |
 | 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus completed 9c/9d/9e slices; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
@@ -1041,6 +1047,42 @@ Definition of failure:
   validation verdict, recompilation result, type, documentation, lint, or
   deterministic output
 
+#### Step 9f acceptance contract
+
+Reason: curated and ownership-selected gates can stay green while the complete
+pytest collection retains stale fixtures or exposes independent COD, F14, and
+SORTD semantic regressions. Concurrent source edits also make raw pass/fail
+counts untrustworthy unless the source fingerprint is unchanged for the whole
+run.
+
+Definition of done:
+
+- one complete `pytest -n 7` collection starts and ends with the same source
+  fingerprint and records exact pass, fail, skip, duration, and slow-test data
+- every reproduced failure is classified by its earliest authoritative owner;
+  semantic defects receive fail-first focused coverage before implementation
+- a fixture is removed or relaxed only when its old assertion is superseded by
+  a typed ownership contract and current output remains validation-clean,
+  recompilable, behaviorally equivalent, and at least as strict about calls,
+  argument classes, memory effects, returns, and CFG
+- the complete stable collection has zero failures, while the mandatory MS C
+  compile/decompile/recompile/execute pipeline and changed-file Ruff, MyPy,
+  type, documentation, architecture, and ownership gates pass
+- slow-test evidence and remaining independent root families are retained in
+  this plan so the next checkpoint can be reproduced without stale estimates
+
+Definition of failure:
+
+- accept a run whose source fingerprint changed, infer a complete-suite result
+  from a subset, or hide missing, duplicate, crashed, or timed-out nodes
+- delete or weaken a test merely because it is slow or red, or replace a
+  semantic assertion with cosmetic output matching
+- repair Alias, type, condition, memory, call, or CFG semantics in Rewrite,
+  postprocess, CLI, a corpus-specific address/name rule, or rendered-text logic
+- claim completion while any reproduced full-suite failure, Tail Validation
+  delta, strict recompilation error, behavior mismatch, type/doc/lint error, or
+  non-deterministic output remains
+
 #### Step 9h acceptance contract
 
 Reason: JCC-owned C nodes carried the branch instruction in `ins_addr` while
@@ -1067,6 +1109,208 @@ Definition of failure:
 - emit scalar subscripting, lose RunMenu's Escape path or call effects, or fail
   Tail Validation or strict C recompilation
 - repair the symptom in Structuring, Rewrite, or CLI
+
+#### Step 9i acceptance contract
+
+Reason: an indexed byte load has two independent widths: the loaded value is
+eight bits, while its x86 effective-address index remains the proven 16-bit
+value. Passing the comparison width into nested address materialization changed
+values 128 through 65535 into negative or truncated C subscripts. The frontend
+already preserves both widths in typed IR; the compatibility Structuring
+consumer must keep the producer binding without conflating those roles.
+
+Definition of done:
+
+- a fail-first typed-condition regression proves that an eight-bit comparison
+  retains its two-byte stack index while still resolving register indices at
+  the exact condition producer
+- BubbleSort, ExchangeSort, and PercolateDown emit full-word array indices with
+  no signed-byte cast or `-Wchar-subscripts` failure
+- all three functions report `validation=passed`, preserve each required call
+  exactly once, and compile under strict portable-flat C
+- Ruff `check --fix`, MyPy, type/doc, architecture, ownership, and the focused
+  changed-surface tests pass
+
+Definition of failure:
+
+- the load width or JCC signedness narrows, signs, or truncates its address index
+- producer binding is discarded, guessed from rendered C, or recovered from a
+  corpus-specific address/name pattern
+- the symptom is hidden with a warning suppression, cast-only cleanup, Rewrite,
+  CLI, or changed test expectation
+- any call, argument class, memory effect, branch, validation verdict, strict C
+  gate, type, documentation, or lint check regresses
+
+#### Step 9j acceptance contract
+
+Reason: exact-function decompilation can render a callee with a rebased numeric
+name while the frontend inventory retains its original callsite and target
+addresses. Name-based presence accounting then treated an already represented
+binary call as absent and inserted a duplicate after the structured condition.
+
+Definition of done:
+
+- live structured nodes bound to an exact typed summary satisfy that callsite's
+  inventory entry regardless of their rendered callee name
+- stale node-to-summary bindings cannot hide a genuinely missing inventory entry
+- Structuring attaches and splits exact identities before recovery and reattaches
+  summaries after a genuine insertion; Rewrite performs no normal-path recovery
+- BubbleSort, ExchangeSort, and PercolateDown each retain the required call pair
+  exactly once, report `validation=passed`, and compile as strict portable-flat C
+- Ruff `check --fix`, MyPy, type/doc, architecture, ownership, and the focused
+  changed-surface tests pass
+
+Definition of failure:
+
+- presence is inferred from rendered callee text, source order, or a corpus name
+  instead of exact typed callsite identity
+- a detached summary suppresses recovery, or an attached rebased call is inserted
+  a second time
+- semantic call recovery is moved into Rewrite, postprocess cleanup, or CLI
+- any required call, argument class, memory effect, branch, validation verdict,
+  strict C gate, type, documentation, or lint check regresses
+
+#### Step 9k acceptance contract
+
+Reason: angr's recovered `get_call_sites()` set retained the resolved stack-probe
+call in `apply_twice` but omitted both unresolved `call [bp+4]` instructions.
+The existing Recovery Metadata summarizer could classify that exact indirect
+target source, but it was never invoked for either instruction. Types/Lowering
+therefore received zero function-pointer facts and rendered `fn` as a scalar.
+
+Definition of done:
+
+- Frontend exposes one deterministic, address-ordered decoded instruction
+  inventory for a recovered function and derives all exact near/far callsite
+  addresses from it, including unresolved indirect calls
+- callsite summary combines decoded call addresses with resolved CFG calls and
+  external tail calls without inventing an indirect target
+- unresolved indirect summaries bypass the legacy missing-direct-call recovery
+  shim and reach the existing typed function-pointer parameter owner
+- live `apply_twice` emits a callable typed parameter, calls it twice with the
+  proven argument, reports `validation=passed`, and has a clean whole tail
+- the complete `function_pointers` construct recompiles and executes with exit
+  `255`; Ruff `check --fix`, MyPy, type/doc, architecture, ownership, focused
+  tests, and the mandatory pipeline pass
+
+Definition of failure:
+
+- an unresolved indirect call is omitted, assigned a guessed direct target, or
+  recovered from rendered C, source order, names, or corpus-specific addresses
+- Frontend, Recovery Metadata, and Types/Lowering keep competing instruction or
+  callsite inventories instead of consuming one authoritative decoded owner
+- Rewrite, postprocess cleanup, or CLI invents function-pointer semantics
+- any call count, argument class, memory effect, CFG edge, validation verdict,
+  strict C gate, runtime exit, type, documentation, or lint check regresses
+
+#### Step 9l acceptance contract
+
+Reason: stack C-variable canonicalization stripped every cast before it could
+distinguish an owned signed semantic view from a cosmetic code-generation cast.
+This changed Sleep's signed comparison while the old Tail Validation
+fingerprint erased the same distinction. Independently, a structured condition
+and its trailing return carrier could contain clones of one exact callsite with
+different display names, so rendered target equality blocked the existing
+shared-tail ownership proof. These concerns belong to Types/Lowering, Tail
+Validation, and Structuring respectively; Rewrite and CLI must not repair them.
+
+Definition of done:
+
+- stack canonicalization preserves `CSemanticCast8616`, including its exact
+  source and destination types, while ordinary cosmetic casts remain removable
+- Tail Validation produces distinct fingerprints for signed, unsigned, and
+  absent semantic views but retains existing cosmetic-cast normalization
+- shared-tail ownership requires one exact machine callsite, matching argument
+  ASTs, the exact physical return-register destination, and proven structured
+  ancestry plus CFG topology; divergent arguments and ambiguous ownership refuse
+- exact typed call targets converge on the authoritative project function and
+  metadata name even when an AST clone starts with a stale numeric display name
+- named and sidecar-free Sleep pass Tail Validation with one required call;
+  focused Ruff `check --fix`, MyPy, type/doc, architecture, ownership, related
+  tests, and the mandatory MS C pipeline pass
+
+Definition of failure:
+
+- signedness or width is erased as cosmetic in lowering or in validation, or a
+  semantic cast is reconstructed as an untyped ordinary cast
+- a call is removed using rendered callee names, source/COD text, address/name
+  allowlists, argument count alone, or without exact physical-register and CFG
+  ancestry evidence
+- divergent arguments, ambiguous callsites, or an unknown return carrier are
+  accepted instead of refusing to change the tree
+- semantic recovery moves into Rewrite, postprocess cleanup, or CLI, or any
+  required call, argument class, memory effect, branch, return, validation
+  verdict, strict recompilation result, type, documentation, or lint check
+  regresses
+
+#### Step 9m acceptance contract
+
+Reason: Step 9l correctly made semantic casts visible to Tail Validation, but
+the final C can express the same typed value either as a signed declaration or
+as an explicit same-width signed view over identical storage. The storage-domain
+ConditionIR fingerprint represented the first form, so QuickSort's correct
+explicit views were rejected. This equivalence belongs to Validation; changing
+the structured loop or deleting casts would erase proven semantics.
+
+Definition of done:
+
+- Validation projects only `CSemanticCast8616` operands whose source and
+  destination widths equal the corresponding ConditionIR operand width
+- signed and unsigned relational casts agree with the exact ConditionIR
+  comparison family; equality casts remain value-preserving only at equal width
+- wrong-signedness, width-changing, unknown-width, and non-semantic casts remain
+  distinct and are rejected when their full fingerprints do not match
+- the real QuickSort run no longer reports either typed semantic-view
+  `branch-condition:predicate-mismatch`, and its generated C hash is unchanged
+- focused Ruff `check --fix`, strict MyPy, adjacent validation tests, and startup
+  architecture, context, and ownership gates pass
+
+Definition of failure:
+
+- Validation strips semantic casts globally, accepts a cast from spelling alone,
+  or ignores ConditionIR width or signedness
+- Structuring, Rewrite, postprocess, or CLI changes the correct loop merely to
+  satisfy a fingerprint comparison
+- the two predicate mismatches remain, generated C changes without stronger
+  semantics, a refusal case passes, or a focused quality gate regresses
+- the remaining structuring-snapshot or def-use failures are hidden or reported
+  as fixed instead of retained as the next independent blockers
+
+#### Step 9n acceptance contract
+
+Reason: one Structuring pass can make several independently proved semantic
+transformations. QuickSort simultaneously replaced two decoded JCC predicates
+with typed loop guards and removed one opaque guard whose true and false arms
+returned the same expression. The identical-return validator treated the whole
+combined delta as its own, so its proof could not compose with the existing JCC
+proof even though both transformations were independently closed.
+
+Definition of done:
+
+- Validation consumes exactly one removed condition with its exact `if:`
+  control-flow observation only when Structuring recorded one closed,
+  fully-accounted identical-return materialization
+- an `else` observation is consumed only for the proved else-return shape;
+  fallthrough-return materializations do not claim it
+- a residual delta is retained only when added and removed condition and
+  control-flow channels remain balanced and nonempty for the next validator
+- ambiguous matching conditions, semantic failures, malformed deltas, and any
+  write, call, or return-channel change refuse without mutating the delta
+- the current-tree focused unit tests, strict MyPy, Ruff `check --fix`, and
+  architecture checks pass, and live QuickSort no longer fails at the original
+  aggregate Structuring snapshot
+
+Definition of failure:
+
+- Validation accepts a condition by partial text matching, consumes an
+  unproved observation, or hides an unbalanced residual
+- the identical-return proof claims a write, call, return, or semantic-failure
+  channel, or mutates a refused delta
+- Structuring, Rewrite, postprocess, or CLI reconstructs or deletes semantics
+  merely to make validation pass
+- the original aggregate mismatch remains, any required loop guard/call/return
+  regresses, or any focused type, documentation, lint, architecture, or test
+  gate fails
 
 ### Estimate History
 
@@ -1108,6 +1352,11 @@ Definition of failure:
 | `2026-09-02 13:01 +02:00` | 80-115h | unchanged pending exact audit | The refreshed exact collection establishes a 10,132 collected / 9,931 passed / 31 failed / 170 skipped baseline in 1,314.23s. Three infrastructure defects and four stale semantic-shape assertions are closed. HeapSort's remaining pointer-argument defect is then closed generically by transporting validated callee evidence across project views; focused validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. About 23 failures are projected, not confirmed, until the next exact audit. |
 | `2026-09-02 16:08 +02:00` | 80-115h | unchanged pending exact audit | The exact full audit remains 10,137 collected / 9,944 passed / 23 failed / 170 skipped in 852.88s; the exact last-failed rerun remains 19 failed / 3 passed in 221.20s. Architecture enrollment, one stale fixture, four cosmetic assertions, and DrawBar's function-wide coordinate drift are closed. The final local-only coordinate rule passes an uncached DrawBar gate, 101 focused tests, `quality-dev` with 1,924 tests, and the mandatory pipeline; `scalar_types_io` recompiles and exits `255`. About 13 failures are projected, not confirmed, until the next exact audit. |
 | `2026-09-06 18:26 +02:00` | 80-115h | unchanged pending stable exact audit | RunMenu's JCC-owned dword-access provenance closes at Types/Lowering with strict recompilation, Tail Validation, refusal coverage, Ruff, MyPy, and type/doc checks green. The shared-tree ownership-selected run passed both RunMenu variants but found 14 failures in other concurrently modified SORTD families, so Step 9f and the weighted estimate remain open. |
+| `2026-09-06 18:44 +02:00` | 80-115h | unchanged pending stable exact audit | Indexed byte-condition materialization now preserves its proven 16-bit address index and the changed-surface gate passes 402 tests. Three real SORTD bodies lose the invalid signed-byte subscripts, but their acceptance remains blocked by the separately exposed duplicate-final-callsite Tail Validation family; no weighted milestone closes. |
+| `2026-09-06 19:13 +02:00` | 80-115h | unchanged pending stable exact audit | Exact attached callsite identities now prevent rebased callee names from creating duplicate recovered calls. BubbleSort, ExchangeSort, and PercolateDown pass Tail Validation and strict C syntax; 305 focused tests and the 458-test changed-file gate pass. The shared-tree pipeline remains red on an independent function-pointer argument type loss and a concurrent void-return registry/test mismatch, so Step 9f and the weighted estimate stay open. |
+| `2026-09-06 19:44 +02:00` | 80-115h | unchanged pending stable exact audit | Frontend decoded-call inventory now includes unresolved indirect calls, allowing the existing typed summary and function-pointer lowering to recover `apply_twice` without a Rewrite or CLI repair. The generic regression is enrolled in the curated lane; the corrected void-return ownership assertion and this fix restore the mandatory pipeline with 1,940 pytest tests and all seven compile/decompile/recompile/execute constructs passing. Step 9f still requires a stable complete 10k-test audit, so weighted progress and forecast do not change. |
+| `2026-09-06 20:44 +02:00` | 80-115h | unchanged pending stable complete audit | A source-stable rerun confirms all 22 provisional failures. Five shared-contract nodes close at Semantics, analysis, Types/Lowering, and architecture ownership; the stable failed-node checkpoint improves to 17 failed / 5 passed in 204.09s. The 124-test focused surface, changed-file Ruff/MyPy/type ratchet, architecture check, 1,940-test curated lane, and all seven MS C round trips pass. Global `quality-fast` remains blocked by pre-existing shared-tree MyPy errors outside this checkpoint, and Step 9f remains open until a source-stable complete collection reaches zero failures. |
+| `2026-09-06 21:56 +02:00` | 80-115h | unchanged pending stable complete audit | Step 9l closes Sleep's signed semantic-view loss and duplicate returned-call clone at their owning layers. The 181-test related surface, focused Ruff/MyPy, architecture and ownership gates, 1,944 curated tests, and all seven configured MS C round trips pass. The global quality aggregate still reports shared-tree MyPy debt outside this slice; the prior 17/5 checkpoint is stale, and Step 9f remains open for a source-stable complete collection. |
 
 Current expected finish for the complete plan is **80-115 focused engineering
 hours**, approximately **2.0-3.8 working weeks** at 30-40 focused hours per

@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.string_instruction_artifact import (
+    StringInstructionCoverage8616,
     apply_x86_16_string_instruction_artifact,
     build_x86_16_string_instruction_artifact,
 )
@@ -55,6 +56,29 @@ def test_string_instruction_artifact_captures_rep_movsb():
     assert record.destination_segment == "es"
     assert record.instruction_addr == 0x1001
     assert artifact.refusals == ()
+    assert artifact.coverage is StringInstructionCoverage8616.EXACT_FUNCTION
+
+
+def test_string_instruction_artifact_marks_mixed_effect_function_partial():
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = _project_with_blocks(
+        {
+            0x1000: _FakeBlock(
+                (
+                    _FakeInsn("call", "0x2000"),
+                    _FakeInsn("rep stosd"),
+                    _FakeInsn("out", "dx, al"),
+                    _FakeInsn("ret"),
+                )
+            )
+        },
+        function,
+    )
+
+    artifact = build_x86_16_string_instruction_artifact(project, function)
+
+    assert tuple(item.family for item in artifact.records) == ("stos",)
+    assert artifact.coverage is StringInstructionCoverage8616.PARTIAL_FUNCTION
 
 
 def test_string_instruction_artifact_captures_repne_scasb_zero_seed():

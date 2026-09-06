@@ -64,10 +64,31 @@ def test_vex_import_preserves_byte_register_put_width() -> None:
         if instruction.op == "MOV"
         and instruction.dst is not None
         and instruction.dst.space is MemSpace.REG
-        and instruction.dst.name in {"ax", "bx"}
+        and instruction.dst.name in {"al", "bl"}
     )
 
     assert tuple((move.dst.name, move.dst.size, move.size) for move in byte_moves) == (
-        ("ax", 2, 1),
-        ("bx", 2, 1),
+        ("al", 1, 1),
+        ("bl", 1, 1),
     )
+
+
+def test_vex_import_preserves_high_byte_register_identity() -> None:
+    project = decompile._build_project_from_bytes(
+        bytes.fromhex("b448c3"),
+        base_addr=0x1000,
+        entry_point=0x1000,
+    )
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    ah_write = next(
+        instruction
+        for instruction in artifact.blocks[0].instrs
+        if instruction.op == "MOV"
+        and instruction.dst is not None
+        and instruction.dst.space is MemSpace.REG
+        and instruction.dst.name == "ah"
+    )
+
+    assert (ah_write.dst.size, ah_write.size) == (1, 1)

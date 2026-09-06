@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Protocol, cast
 
@@ -35,6 +35,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
+from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
 from ..c_ast_utils import (
@@ -43,8 +44,9 @@ from ..c_ast_utils import (
     _replace_c_children_8616,
     _same_c_expression_8616,
 )
-from ..ir.condition_ir import ConditionIR
-from ..ir.core import IRValue, MemSpace
+from ..ir.condition_ir import ConditionIR, ConditionRegisterUpdateIR
+from ..ir.core import IRBinaryValue, IRValue, MemSpace
+from .condition_lowering import lower_ir_value_to_c_expr_8616
 from .loop_condition_ownership import (
     CompositeLoopExitOwnershipStatus8616,
     classify_composite_loop_exit_ownership_8616,
@@ -88,10 +90,32 @@ class _CodegenFunctionBoundary8616(Protocol):
     addr: int
 
 
+class _ArchBoundary8616(Protocol):
+    """Dynamic angr architecture register surface used at the boundary."""
+
+    registers: Mapping[str, tuple[int, int]]
+
+
+class _ProjectBoundary8616(Protocol):
+    """Dynamic angr project architecture surface used at the boundary."""
+
+    arch: _ArchBoundary8616
+
+
 class _CodegenBoundary8616(Protocol):
     """Dynamic angr codegen surface used for register ownership."""
 
     cfunc: _CodegenFunctionBoundary8616 | None
+    project: _ProjectBoundary8616
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisterUpdateMaterialization8616:
+    """Internal result of one typed loop-register update materialization."""
+
+    changed: bool = False
+    target: CVariable | None = None
+    update: ConditionRegisterUpdateIR | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +266,223 @@ def _materialize_plain_loop_counter_update_8616(
 
     _replace_c_children_8616(body, _replace_proven_register_carrier)
     return int(replacement_count > 0)
+
+
+def _replace_update_expression_with_target_8616(
+    value: IRValue | IRBinaryValue,
+    update: ConditionRegisterUpdateIR,
+) -> IRValue | IRBinaryValue:
+    """Replace the exact post-update value with its now-materialized target."""
+    target = IRValue(MemSpace.REG, name=update.target_register, size=2)
+    updated = IRBinaryValue(update.op, target, update.rhs, size=2)
+    if value == updated:
+        return target
+    if not isinstance(value, IRBinaryValue):
+        return value
+    return replace(
+        value,
+        lhs=_replace_update_expression_with_target_8616(value.lhs, update),
+        rhs=_replace_update_expression_with_target_8616(value.rhs, update),
+    )
+
+
+def _condition_after_materialized_register_update_8616(
+    condition: ConditionIR,
+    update: ConditionRegisterUpdateIR,
+) -> ConditionIR:
+    """Project a condition from the current register after inserting its update."""
+    bindings = tuple(
+        replace(
+            binding,
+            value=_replace_update_expression_with_target_8616(binding.value, update),
+        )
+        if binding.update == update
+        else binding
+        for binding in condition.register_bindings
+    )
+    return replace(condition, register_bindings=bindings)
+
+
+def _bind_register_identity_to_loop_carrier_8616(
+    root: object,
+    source: SimRegisterVariable,
+    target: CVariable,
+) -> int:
+    """Bind every exact use of one SSA register identity to its loop carrier."""
+    if not isinstance(target.variable, SimRegisterVariable):
+        return 0
+    source_identity = (source.reg, source.size, source.ident, source.region)
+    replacements = 0
+
+    def _replace_source(node: object) -> object:
+        """Replace only the register identity that the proven update consumes."""
+        nonlocal replacements
+        if not isinstance(node, CVariable) or not isinstance(node.variable, SimRegisterVariable):
+            return node
+        variable = node.variable
+        if (variable.reg, variable.size, variable.ident, variable.region) != source_identity:
+            return node
+        replacement = cast(CVariable, _clone_c_ast_tree_8616(node))
+        replacement.variable = target.variable
+        replacement.unified_variable = target.variable
+        replacements += 1
+        return replacement
+
+    _replace_c_children_8616(root, _replace_source)
+    return replacements
+
+
+def _materialize_bound_loop_register_update_8616(
+    root: object,
+    loop: _LoopBoundary8616,
+    condition: ConditionIR,
+    codegen: object,
+) -> _RegisterUpdateMaterialization8616:
+    """Restore one Alias-proven full-register update at a structured loop tail."""
+    updates = tuple(
+        binding.update
+        for binding in condition.register_bindings
+        if binding.update is not None
+    )
+    if len(updates) != 1 or not isinstance(loop.body, CStatements):
+        return _RegisterUpdateMaterialization8616()
+    update = updates[0]
+    try:
+        project = cast(_CodegenBoundary8616, codegen).project
+        arch = project.arch
+        target_offset, target_size = arch.registers[update.target_register]
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return _RegisterUpdateMaterialization8616()
+    target_offset = int(target_offset)
+    target_size = int(target_size)
+    body_ids = {id(node) for node in _iter_c_nodes_deep_8616(loop.body)}
+    initializers: list[tuple[int, CAssignment]] = []
+    for node in _iter_c_nodes_deep_8616(root):
+        if id(node) in body_ids or not isinstance(node, CAssignment):
+            continue
+        if not isinstance(node.lhs, CVariable) or not isinstance(node.lhs.variable, SimRegisterVariable):
+            continue
+        tags = _expression_tags_8616(node)
+        ins_addr = tags.get("ins_addr")
+        variable = node.lhs.variable
+        if (
+            isinstance(ins_addr, int)
+            and ins_addr < update.instruction_addr
+            and variable.reg == target_offset
+            and variable.size == target_size
+        ):
+            initializers.append((ins_addr, node))
+    if not initializers:
+        return _RegisterUpdateMaterialization8616()
+    latest_addr = max(address for address, _assignment in initializers)
+    latest = tuple(
+        assignment for address, assignment in initializers if address == latest_addr
+    )
+    if len(latest) != 1:
+        return _RegisterUpdateMaterialization8616()
+    initializer = latest[0]
+    initializer_variable = cast(SimRegisterVariable, initializer.lhs.variable)
+    try:
+        cfunc = cast(_CodegenBoundary8616, codegen).cfunc
+    except AttributeError:
+        cfunc = None
+    function_region = cfunc.addr if cfunc is not None else None
+    region = (
+        initializer_variable.region
+        if isinstance(initializer_variable.region, int)
+        else function_region
+    )
+    shared = SimRegisterVariable(
+        target_offset,
+        target_size,
+        ident=f"inertia-register-{update.target_register}",
+        region=region if isinstance(region, int) else None,
+        name=update.target_register,
+    )
+    initializer.lhs.variable = shared
+    initializer.lhs.unified_variable = shared
+    target = cast(CVariable, _clone_c_ast_tree_8616(initializer.lhs))
+    _bind_register_identity_to_loop_carrier_8616(root, initializer_variable, target)
+    if (
+        isinstance(initializer.rhs, CBinaryOp)
+        and initializer.rhs.op == "Xor"
+        and _same_c_expression_8616(initializer.rhs.lhs, initializer.rhs.rhs)
+    ):
+        initializer.rhs = CConstant(
+            0,
+            initializer.rhs.type or SimTypeShort(False),
+            codegen=codegen,
+        )
+    rhs = lower_ir_value_to_c_expr_8616(
+        update.rhs,
+        project,
+        codegen,
+        resolve_register_name=True,
+    )
+    if not isinstance(rhs, CExpression):
+        return _RegisterUpdateMaterialization8616()
+    op = {
+        "add": "Add",
+        "and": "And",
+        "or": "Or",
+        "sub": "Sub",
+        "xor": "Xor",
+    }.get(update.op)
+    if op is None:
+        return _RegisterUpdateMaterialization8616()
+    marker = "inertia_typed_loop_register_update_8616"
+    for statement in loop.body.statements or ():
+        if not isinstance(statement, CAssignment):
+            continue
+        tags = _expression_tags_8616(statement)
+        if tags.get(marker) == update.instruction_addr:
+            return _RegisterUpdateMaterialization8616(
+                target=cast(CVariable, statement.lhs),
+                update=update,
+            )
+    update_assignment = CAssignment(
+        cast(CVariable, _clone_c_ast_tree_8616(target)),
+        CBinaryOp(
+            op,
+            cast(CVariable, _clone_c_ast_tree_8616(target)),
+            rhs,
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={
+            "ins_addr": update.instruction_addr,
+            "vex_block_addr": condition.block_addr,
+            marker: update.instruction_addr,
+        },
+    )
+    loop.body.statements = [*(loop.body.statements or ()), update_assignment]
+    return _RegisterUpdateMaterialization8616(True, target, update)
+
+
+def _bind_materialized_update_target_8616(
+    expression: CExpression,
+    target: CVariable,
+) -> int:
+    """Bind full-register leaves in a lowered condition to the loop carrier."""
+    if not isinstance(target.variable, SimRegisterVariable):
+        return 0
+    replacements = 0
+
+    def _replace_target(node: object) -> object:
+        """Replace one exact physical-register view with the shared carrier."""
+        nonlocal replacements
+        if not isinstance(node, CVariable) or not isinstance(node.variable, SimRegisterVariable):
+            return node
+        if (
+            node.variable.reg != target.variable.reg
+            or node.variable.size != target.variable.size
+        ):
+            return node
+        replacements += 1
+        return _clone_c_ast_tree_8616(target)
+
+    _replace_c_children_8616(expression, _replace_target)
+    return replacements
 
 
 def _bind_existing_loop_condition_register_8616(
@@ -601,9 +842,29 @@ def materialize_typed_loop_continuation_conditions_8616(
             fallthrough_count += 1
         counter_update_count += _materialize_plain_loop_counter_update_8616(loop.body, condition, codegen)
         _bind_existing_loop_condition_register_8616(current, loop.body, condition)
-        replacement = lower_condition(condition)
+        update_materialization = _materialize_bound_loop_register_update_8616(
+            root,
+            loop,
+            condition,
+            codegen,
+        )
+        counter_update_count += int(update_materialization.changed)
+        lowering_condition = (
+            _condition_after_materialized_register_update_8616(
+                condition,
+                update_materialization.update,
+            )
+            if update_materialization.update is not None
+            else condition
+        )
+        replacement = lower_condition(lowering_condition)
         if replacement is None:
             continue
+        if update_materialization.target is not None:
+            _bind_materialized_update_target_8616(
+                replacement,
+                update_materialization.target,
+            )
         if edge is LoopContinuationEdge8616.FALLTHROUGH:
             replacement = _invert_condition_8616(replacement, codegen)
         pretest_consumed = composite_ownership.owned_pretest_guard is not None

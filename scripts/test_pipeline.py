@@ -47,6 +47,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_cli_regeneration.py",
     "angr_platforms/tests/test_x86_16_alias_register_mvp.py",
     "angr_platforms/tests/test_x86_16_callsite_replay_safety.py",
+    "angr_platforms/tests/test_x86_16_function_callsite_inventory.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py",
     "angr_platforms/tests/test_x86_16_protected_call_arguments.py",
     "angr_platforms/tests/test_x86_16_condition_lowering.py",

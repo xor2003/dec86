@@ -33,6 +33,7 @@ from .callsite_summary import (
     CallsiteArgumentClass8616,
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
+    callsite_summary_inventory_8616,
     callsite_target_name_for_project_8616,
     structured_callsite_addr_8616,
 )
@@ -967,13 +968,19 @@ def build_required_call_validation_surface_8616(
         raw_summaries = cast(_CodegenCallsiteSurface8616, codegen)._inertia_callsite_summaries
     except AttributeError:
         raw_summaries = None
-    if not isinstance(raw_summaries, Mapping):
-        return RequiredCallValidationSurface8616(0, ())
-    typed_items = tuple(
+    summary_mapping = raw_summaries if isinstance(raw_summaries, Mapping) else {}
+    attached_items = tuple(
         (key, summary)
-        for key, summary in raw_summaries.items()
+        for key, summary in summary_mapping.items()
         if isinstance(key, int) and isinstance(summary, CallsiteSummary8616)
     )
+    attached_callsites = frozenset(summary.callsite_addr for _, summary in attached_items)
+    inventory_items = tuple(
+        (callsite_addr, summary)
+        for callsite_addr, summary in callsite_summary_inventory_8616(codegen).items()
+        if callsite_addr not in attached_callsites
+    )
+    typed_items = (*attached_items, *inventory_items)
     required_candidates = tuple(
         (key, summary)
         for key, summary in typed_items

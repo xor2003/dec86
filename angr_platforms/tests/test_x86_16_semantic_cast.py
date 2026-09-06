@@ -15,6 +15,9 @@ from angr_platforms.X86_16.lowering.semantic_cast import (
     RequiredAssignmentCastReconcileStatus8616,
     reconcile_required_assignment_cast_8616,
 )
+from angr_platforms.X86_16.lowering.stack_lowering import (
+    _canonicalize_stack_cvar_expr,
+)
 from archinfo import ArchX86
 
 
@@ -60,6 +63,28 @@ def test_semantic_cast_remains_traversable_as_structured_c() -> None:
     )
 
     assert tuple(_iter_c_nodes_deep_8616(expression)) == (expression, call)
+
+
+def test_stack_canonicalization_preserves_semantic_cast() -> None:
+    codegen = _codegen()
+    call = structured_c.CFunctionCall("clock", None, [], codegen=codegen)
+    expression = CSemanticCast8616(
+        SimTypeShort(False),
+        SimTypeShort(True),
+        call,
+        codegen=codegen,
+    )
+
+    canonical = _canonicalize_stack_cvar_expr(
+        expression,
+        codegen,
+        unwrap_c_casts=lambda node: node.expr
+        if isinstance(node, structured_c.CTypeCast)
+        else node,
+        resolve_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+    )
+
+    assert canonical is expression
 
 
 def test_reconciles_required_cast_onto_unique_stale_assignment() -> None:

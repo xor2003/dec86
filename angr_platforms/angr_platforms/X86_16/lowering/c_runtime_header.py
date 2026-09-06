@@ -127,6 +127,8 @@ def interrupt_helper_declarations_8616(
                 f"{return_type} {handler.INT_NAME}(unsigned short ax, "
                 "unsigned short cx, unsigned short dx);"
             )
+        elif call.vector == 0x21:
+            declaration = f"{return_type} {handler.INT_NAME}();"
         else:
             declaration = f"{return_type} {handler.INT_NAME}(void);"
         if declaration not in seen:
