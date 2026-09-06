@@ -156,12 +156,14 @@ end-to-end percentage is claimed because the fill run also populated discovery
 and program-evidence caches.
 
 Cache-focused and indexed-Alias integration tests pass, and
-`architecture-check-fast` passes. The latest broad pipeline reached 1,911
-passing tests but failed three stack-argument recovery tests; all three failures
-reproduce on a clean checkout of the committed baseline, outside this cache
-change. Final broad acceptance remains pending; an earlier broad run was
-blocked by unrelated in-flight GP stack-restore materialization work and two
-inconsistent external MS C construct subprocess results.
+`architecture-check-fast` passes. An isolated run at committed HEAD
+`a7be59572` passed all 1,951 focused pytest cases in 159.22 seconds and all
+seven MS C 6 tiny compile/decompile/recompile/execute construct families. The
+Ultra QuickC lane still failed two of four required fixtures: `WHSUM` changed
+Structuring control-flow evidence and omitted the `sub_105e6` declaration;
+`ARGS` retained a pointer/value parameter-class mismatch and one unbound
+`instruction_bp_stack_access` fact. These are semantic acceptance failures,
+not cache-test failures, so final broad acceptance remains pending.
 
 Rejected experiments:
 
@@ -189,10 +191,11 @@ design that addresses their recorded failure mode.
 
 ### 1. Close Function IR/SSA Cache Acceptance
 
-Reason: implementation, focused correctness tests, and the first controlled
-A/B are complete, but the benchmark protocol and broad external gate must be
-rerun after unrelated shared-worktree blockers clear. Removing this gate would
-turn a measured development result into an unsupported production claim.
+Reason: implementation, focused correctness tests, and the controlled
+cold/hit benchmark are complete, but the broad external gate is not. The two
+remaining Ultra QuickC semantic failures must close on a stable committed HEAD;
+removing this gate would turn a measured development result into an unsupported
+production claim.
 
 Definition of Done:
 
