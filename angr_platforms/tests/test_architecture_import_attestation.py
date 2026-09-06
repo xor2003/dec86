@@ -144,3 +144,52 @@ def test_checker_change_invalidates_every_cached_file(
 
     assert not changed_checker.violations
     assert len(checked) == 3
+
+
+def test_startup_verdict_round_trip_retains_violations(tmp_path: Path) -> None:
+    """A cached startup failure remains a structured failing verdict."""
+    cache = tmp_path / "startup.json"
+    violation = attestation.ArchitectureViolation(
+        path="bad.py",
+        rule="wrong-layer",
+        detail="semantic recovery crossed the rewrite boundary",
+    )
+
+    attestation.store_startup_architecture_verdict(cache, "source-v1", (violation,))
+
+    assert attestation.load_startup_architecture_verdict(cache, "source-v1") == (violation,)
+    assert attestation.load_startup_architecture_verdict(cache, "source-v2") is None
+
+
+def test_startup_verdict_rejects_malformed_violation(tmp_path: Path) -> None:
+    """Malformed cache data falls back to direct checking."""
+    cache = tmp_path / "startup.json"
+    cache.write_text(
+        '{"schema": 1, "fingerprint": "source-v1", "violations": [{}]}',
+        encoding="utf-8",
+    )
+
+    assert attestation.load_startup_architecture_verdict(cache, "source-v1") is None
+
+
+def test_startup_fingerprint_tracks_all_owned_source_surfaces(tmp_path: Path) -> None:
+    """Root, CLI package, and entrypoint edits invalidate startup verdicts."""
+    root = tmp_path / "angr_platforms" / "angr_platforms" / "X86_16"
+    cli_root = tmp_path / "inertia_decompiler"
+    root.mkdir(parents=True)
+    cli_root.mkdir()
+    root_source = root / "lowering.py"
+    cli_source = cli_root / "cli.py"
+    entrypoint = tmp_path / "decompile.py"
+    for path in (root_source, cli_source, entrypoint):
+        path.write_text("VALUE = 1\n", encoding="utf-8")
+    initial = attestation.architecture_startup_source_fingerprint(root, tmp_path)
+
+    root_source.write_text("VALUE = 2\n", encoding="utf-8")
+    after_root = attestation.architecture_startup_source_fingerprint(root, tmp_path)
+    cli_source.write_text("VALUE = 2\n", encoding="utf-8")
+    after_cli = attestation.architecture_startup_source_fingerprint(root, tmp_path)
+    entrypoint.write_text("VALUE = 2\n", encoding="utf-8")
+    after_entrypoint = attestation.architecture_startup_source_fingerprint(root, tmp_path)
+
+    assert len({initial, after_root, after_cli, after_entrypoint}) == 4

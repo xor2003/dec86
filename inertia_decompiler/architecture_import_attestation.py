@@ -20,11 +20,15 @@ __all__ = [
     "RuntimeImportGuardEvaluation",
     "architecture_guard_cache_is_clean",
     "architecture_guard_checker_fingerprint",
+    "architecture_startup_source_fingerprint",
     "evaluate_runtime_import_snapshot",
+    "load_startup_architecture_verdict",
     "store_architecture_guard_cache",
+    "store_startup_architecture_verdict",
 ]
 
 ARCHITECTURE_GUARD_CACHE_SCHEMA: int = 2
+STARTUP_ARCHITECTURE_CACHE_SCHEMA: int = 1
 
 
 class _RuntimeImportGuardRule(Enum):
@@ -108,6 +112,27 @@ def architecture_guard_checker_fingerprint(runtime_guard_path: Path) -> str:
     return digest.hexdigest()
 
 
+def architecture_startup_source_fingerprint(root: Path, repo_root: Path) -> str:
+    """Hash every source that can change default startup-check conclusions."""
+    paths = {
+        *root.rglob("*.py"),
+        *(repo_root / "inertia_decompiler").rglob("*.py"),
+        repo_root / "decompile.py",
+        Path(architecture_check.__file__).resolve(),
+    }
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            data = b"<missing>"
+        digest.update(str(path.resolve()).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(data)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def _decode_cached_violation(value: object) -> ArchitectureViolation | None:
     """Decode one structured violation from the untrusted JSON cache boundary."""
     if not isinstance(value, dict):
@@ -118,6 +143,53 @@ def _decode_cached_violation(value: object) -> ArchitectureViolation | None:
     if not isinstance(path, str) or not isinstance(rule, str) or not isinstance(detail, str):
         return None
     return ArchitectureViolation(path=path, rule=rule, detail=detail)
+
+
+def load_startup_architecture_verdict(
+    cache_path: Path,
+    fingerprint: str,
+) -> tuple[ArchitectureViolation, ...] | None:
+    """Load one exact startup verdict, returning ``None`` on stale evidence."""
+    try:
+        payload: object = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != STARTUP_ARCHITECTURE_CACHE_SCHEMA:
+        return None
+    if payload.get("fingerprint") != fingerprint or not isinstance(payload.get("violations"), list):
+        return None
+    violations = tuple(_decode_cached_violation(value) for value in payload["violations"])
+    return None if any(value is None for value in violations) else tuple(
+        value for value in violations if value is not None
+    )
+
+
+def store_startup_architecture_verdict(
+    cache_path: Path,
+    fingerprint: str,
+    violations: tuple[ArchitectureViolation, ...],
+) -> None:
+    """Atomically persist one complete content-addressed startup verdict."""
+    temporary = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(
+            json.dumps(
+                {
+                    "schema": STARTUP_ARCHITECTURE_CACHE_SCHEMA,
+                    "fingerprint": fingerprint,
+                    "violations": [
+                        {"path": item.path, "rule": item.rule, "detail": item.detail}
+                        for item in violations
+                    ],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        temporary.replace(cache_path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
 
 
 def _load_runtime_import_attestations(
