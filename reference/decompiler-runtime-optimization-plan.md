@@ -436,6 +436,17 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   and passed both validation gates. Worker count is execution-only cache
   context; automatic parallelism remains disabled pending a clean A/B. The
   changed surface passes 71 mapped tests.
+- Function IR/SSA source invalidation now follows a versioned positive owner
+  manifest instead of hashing nearly every root x86-16 module. The source
+  surface fell from 260 files to 126 while adding the previously omitted IR
+  frame-analysis modules and top-level pyvex compatibility owner. Callsite,
+  Lowering, Structuring, and Rewrite edits no longer invalidate all 21 SORTD
+  function artifacts. After the one-time schema rebuild, a source-stable live
+  `sub_109e8` run that bypassed final-C reuse took 11.86 seconds versus 24.85
+  seconds for the cold rebuild. Both runs emitted the accepted C hash
+  `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`;
+  function and whole-tail validation pass. Scope tests enforce required IR,
+  Frontend, Analysis, and Semantics owners plus downstream exclusions.
 - The mandatory runtime architecture guard no longer imports pytest while it
   loads the AST-only source index. Pytest's runtime types are now imported only
   when test-inventory collection asks for concrete parametrized addresses. Five

@@ -16,7 +16,7 @@ from .cache import _cache_runtime_environment, _cache_source_digest
 from .cache_runtime_contract import cache_runtime_contract_8616
 from .cache_source_manifest import FUNCTION_IR_SSA_CACHE_SOURCE_FILES
 
-_FUNCTION_IR_SSA_CACHE_SCHEMA_8616: int = 1
+_FUNCTION_IR_SSA_CACHE_SCHEMA_8616: int = 2
 
 
 class _MemorySurface8616(Protocol):

@@ -2032,6 +2032,7 @@ _PROMOTED_TYPED_FILES = (
     "inertia_decompiler/cache_lock.py",
     "inertia_decompiler/cache_runtime_contract.py",
     "inertia_decompiler/cache_source_manifest.py",
+    "inertia_decompiler/function_ir_ssa_source_scope.py",
     "inertia_decompiler/direct_request_cache.py",
     "inertia_decompiler/direct_request_fast_path.py",
     "inertia_decompiler/direct_request_identity.py",

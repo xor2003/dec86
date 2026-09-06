@@ -12,6 +12,10 @@ from __future__ import annotations
 from enum import StrEnum
 from pathlib import Path
 
+from .function_ir_ssa_source_scope import (
+    function_ir_ssa_cache_source_files_8616,
+)
+
 _ROOT = Path(__file__).resolve().parents[1]
 
 _DISCOVERY_INERTIA_NAMES_8616 = frozenset(
@@ -126,17 +130,6 @@ _PROGRAM_CALLSITE_ALIAS_NAMES_8616 = (
     "register_reaching_source.py",
 )
 
-_FUNCTION_IR_SSA_INERTIA_NAMES_8616 = (
-    "cache.py",
-    "cache_io.py",
-    "cache_lock.py",
-    "cache_runtime_contract.py",
-    "cache_source_manifest.py",
-    "function_ir_ssa_cache.py",
-    "function_ir_ssa_cache_codec.py",
-    "function_ir_ssa_cache_identity.py",
-)
-
 _DIRECT_GLOBAL_OBJECT_INERTIA_NAMES_8616 = (
     "direct_global_object_cache.py",
     "direct_global_object_context.py",
@@ -210,28 +203,8 @@ FUNCTION_DISCOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
 )
 
 
-def _function_ir_ssa_cache_source_files_8616() -> tuple[Path, ...]:
-    """Return exact frontend, IR, and cache implementation owners."""
-    inertia_root = _ROOT / "inertia_decompiler"
-    x86_root = _ROOT / "angr_platforms" / "angr_platforms" / "X86_16"
-    discovered = {
-        inertia_root / name
-        for name in _FUNCTION_IR_SSA_INERTIA_NAMES_8616
-    }
-    discovered.update(
-        path
-        for path in x86_root.glob("*.py")
-        if not path.name.startswith(
-            _DISCOVERY_X86_16_ROOT_EXCLUDED_PREFIXES_8616
-        )
-    )
-    discovered.update((x86_root / "ir").rglob("*.py"))
-    discovered.update((x86_root / "semantics").rglob("*.py"))
-    return tuple(sorted(path for path in discovered if path.is_file()))
-
-
 FUNCTION_IR_SSA_CACHE_SOURCE_FILES: tuple[Path, ...] = (
-    _function_ir_ssa_cache_source_files_8616()
+    function_ir_ssa_cache_source_files_8616(_ROOT)
 )
 
 

@@ -55,6 +55,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_status_outputs.py \
 	inertia_decompiler/cache.py \
 	inertia_decompiler/cache_source_manifest.py \
+	inertia_decompiler/function_ir_ssa_source_scope.py \
 	inertia_decompiler/decompile_file_summary.py \
 	inertia_decompiler/indexed_alias_program_context.py \
 	inertia_decompiler/indexed_alias_program_parallel.py \
@@ -1147,6 +1148,7 @@ QA_TYPED_FILES := \
 	inertia_decompiler/cache_lock.py \
 	inertia_decompiler/cache_runtime_contract.py \
 	inertia_decompiler/cache_source_manifest.py \
+	inertia_decompiler/function_ir_ssa_source_scope.py \
 	inertia_decompiler/program_callsite_cache.py \
 	inertia_decompiler/direct_request_cache.py \
 	inertia_decompiler/direct_request_fast_path.py \
@@ -2128,6 +2130,7 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/cache_lock.py \
 	inertia_decompiler/cache_runtime_contract.py \
 	inertia_decompiler/cache_source_manifest.py \
+	inertia_decompiler/function_ir_ssa_source_scope.py \
 	inertia_decompiler/program_callsite_cache.py \
 	inertia_decompiler/direct_request_cache.py \
 	inertia_decompiler/direct_request_fast_path.py \
@@ -2281,6 +2284,7 @@ QA_RUFF_TARGETS := \
 	decompile.py \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_cache_lock.py \
+	angr_platforms/tests/test_function_ir_ssa_source_scope.py \
 	angr_platforms/tests/test_program_callsite_cache.py \
 	angr_platforms/tests/test_x86_16_gp_register_state.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
@@ -2654,6 +2658,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_clinic_semantic_stages.py
 
 QA_PYTEST_TARGETS := \
+	angr_platforms/tests/test_function_ir_ssa_source_scope.py \
 	angr_platforms/tests/test_program_callsite_cache.py \
 	angr_platforms/tests/test_x86_16_clinic_semantic_stages.py \
 	angr_platforms/tests/test_x86_16_gp_register_state.py \
