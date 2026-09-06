@@ -867,6 +867,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_codegen_access_provenance.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_access_policy.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_global_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py \
@@ -1847,6 +1848,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_word_projection.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_codegen_access_provenance.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_access_policy.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_global_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py \

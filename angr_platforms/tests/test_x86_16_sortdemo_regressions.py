@@ -1370,7 +1370,7 @@ def test_sortdemo_runmenu_typed_switch_artifacts_are_safe_and_materialized():
     )
     combined = _combined_output(result)
 
-    assert result.returncode in {0, 4}, combined
+    assert result.returncode == 0, combined
     pre_codegen_payloads = _typed_switch_pre_codegen_seqnode_payloads(combined)
     assert pre_codegen_payloads, combined
     pre_codegen_payload = pre_codegen_payloads[-1]
@@ -1417,8 +1417,8 @@ def test_sortdemo_runmenu_typed_switch_artifacts_are_safe_and_materialized():
     assert payload["attempted_count"] == payload["safe_count"] + payload["refused_count"]
     assert payload["attempted_count"] == 0
     assert payload["status"] == "no_candidates"
-    if result.returncode == 4:
-        assert "Source-backed quality blocker is terminal" in combined
+    assert "clPause[" not in result.stdout
+    assert "clPause >> 16" in result.stdout and "clPause & 0xffff" in result.stdout
     replacement_payloads = _typed_switch_seqnode_replacement_payloads(combined)
     assert replacement_payloads, combined
     replacement_payload = replacement_payloads[-1]
@@ -1436,7 +1436,7 @@ def test_sortdemo_runmenu_typed_switch_artifacts_are_safe_and_materialized():
         + replacement_payload["runtime_helper_segment_carrier_refused_count"]
         == replacement_payload["runtime_helper_segment_carrier_candidate_count"]
     )
-    assert replacement_payload["runtime_helper_sp_offset_ss_proof_count"] > 0
+    assert replacement_payload["runtime_helper_segment_carrier_refused_count"] == 0
     assert (
         replacement_payload["runtime_helper_sp_segment_proof_count"]
         == replacement_payload["runtime_helper_sp_offset_ss_proof_count"]

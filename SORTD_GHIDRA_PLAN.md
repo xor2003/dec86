@@ -928,6 +928,7 @@ or output filtering.
 | 9e | Keep typed C-function stack coordinates coherent across final validation | before `2026-09-02 15:06 +02:00`; exact start lost at compaction | `2026-09-02 16:08 +02:00` | 45-60m focused after the first checkpoint; broad gate wall separate | complete | The Types/Lowering owner accepts only the canonical near-frame entry-SP-to-BP delta and may project unregistered negative locals, while positive slots remain under Alias/type ownership. Live uncached DrawBar passes; 101 focused tests, `quality-dev` with 1,924 tests, and the mandatory pipeline are green. `scalar_types_io`, including `add_long`, recompiles and exits `255`. |
 | 9f | Refresh the complete failure inventory and remove superseded fixtures | `2026-09-06 15:14 +02:00` | - | 41m first census/checkpoint; waits included | in progress | The first audit provides a 24-failure triage inventory but is not an acceptance baseline because source changed during the run. The entry-SP/machine-BP overlap fixture is corrected, and Beep's stale one-line-return assertion now accepts the validation-clean equivalent braced early return while retaining its call/order checks; both focused nodes pass. Two 2026-09-06 full-audit retries were stopped after their source fingerprints changed mid-run. Rerun the complete collection from a stable tree, then classify every remaining node by shared earliest owner before implementation. |
 | 9g | Close sidecar-free CMP32 wide argument owner materialization | before `2026-09-06 16:33 +02:00`; first retained diagnostic checkpoint | `2026-09-06 16:50 +02:00` | 25-35m focused; repeated executable waits excluded | complete | Types/Lowering now consumes body-proven four-byte argument starts while building the positive-BP interface, before stable stack projection. Already-correct wide types also enlarge their physical stack owner. The storage-width regression failed before the fix; 130 changed-surface tests, the 1,926-test `quality-dev` lane, the mandatory seven-program MS C pipeline, and all four sidecar-free CMP32 Tail Validation regressions pass. |
+| 9h | Close RunMenu JCC-owned dword access provenance | before `2026-09-06 18:10 +02:00`; exact first diagnostic lost at compaction | `2026-09-06 18:26 +02:00` | exact subtotal unavailable after compaction; final 20m retained; 6m29s changed-file test wall separate | complete | Types/Lowering first uses exact instruction tags, then consults an exact tagged VEX block only when the segment contract identifies one unique matching access instruction. Ambiguous or incomplete facts still refuse. Both RunMenu variants validate, strict portable-flat C compilation succeeds, and scalar `clPause` high/low projections replace invalid subscripting. The focused 15 policy tests, three dword regressions, Ruff `--fix`, MyPy, and the type/doc ratchet pass. The broader ownership-selected run was 228 passed and 14 failed in concurrently modified non-RunMenu SORTD families; Step 9f therefore remains open. |
 | 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus completed 9c/9d/9e slices; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
@@ -1040,6 +1041,33 @@ Definition of failure:
   validation verdict, recompilation result, type, documentation, lint, or
   deterministic output
 
+#### Step 9h acceptance contract
+
+Reason: JCC-owned C nodes carried the branch instruction in `ins_addr` while
+the compared dword access remained attached to the exact CMP VEX block. The
+segment policy therefore refused otherwise proven entry-DS bytes, and the
+downstream scalar subword projection emitted invalid `clPause[...]` syntax.
+Resolving dynamic codegen ownership against the existing typed segment
+contract belongs in Types/Lowering, not Structuring, Rewrite, or CLI.
+
+Definition of done:
+
+- direct and typed-switch RunMenu decompilation both report
+  `validation=passed`, and strict portable-flat C recompilation returns zero
+- output contains scalar `clPause >> 16` and `clPause & 0xffff` projections and
+  no `clPause[` subscript
+- the policy's unique and ambiguous block-local cases are covered
+- Ruff `check --fix`, MyPy, and the type/doc ratchet pass for touched production
+  code
+
+Definition of failure:
+
+- infer an access from block proximity without one unique machine instruction
+  and complete matching segment facts, or accept competing matching instructions
+- emit scalar subscripting, lose RunMenu's Escape path or call effects, or fail
+  Tail Validation or strict C recompilation
+- repair the symptom in Structuring, Rewrite, or CLI
+
 ### Estimate History
 
 | Checkpoint | Remaining focused estimate | Change | Evidence |
@@ -1079,6 +1107,7 @@ Definition of failure:
 | `2026-09-02 11:53 +02:00` | 80-115h | unchanged pending exact audit | The larger DOS `loadprog` body closes in 35-45 focused minutes. A typed four-byte stack owner now supplies exact validation subviews, and Structuring refuses a multi-predecessor linear return scan before recovering each exact-tagged terminal value from its own CFG predecessor. Generic failing-before tests, 261 related checks, direct Ruff/MyPy, live COD validation, portable recompilation, and `quality-dev` pass. The weighted total and forecast remain unchanged until the exact full collection refreshes the remaining independent failure families. |
 | `2026-09-02 13:01 +02:00` | 80-115h | unchanged pending exact audit | The refreshed exact collection establishes a 10,132 collected / 9,931 passed / 31 failed / 170 skipped baseline in 1,314.23s. Three infrastructure defects and four stale semantic-shape assertions are closed. HeapSort's remaining pointer-argument defect is then closed generically by transporting validated callee evidence across project views; focused validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. About 23 failures are projected, not confirmed, until the next exact audit. |
 | `2026-09-02 16:08 +02:00` | 80-115h | unchanged pending exact audit | The exact full audit remains 10,137 collected / 9,944 passed / 23 failed / 170 skipped in 852.88s; the exact last-failed rerun remains 19 failed / 3 passed in 221.20s. Architecture enrollment, one stale fixture, four cosmetic assertions, and DrawBar's function-wide coordinate drift are closed. The final local-only coordinate rule passes an uncached DrawBar gate, 101 focused tests, `quality-dev` with 1,924 tests, and the mandatory pipeline; `scalar_types_io` recompiles and exits `255`. About 13 failures are projected, not confirmed, until the next exact audit. |
+| `2026-09-06 18:26 +02:00` | 80-115h | unchanged pending stable exact audit | RunMenu's JCC-owned dword-access provenance closes at Types/Lowering with strict recompilation, Tail Validation, refusal coverage, Ruff, MyPy, and type/doc checks green. The shared-tree ownership-selected run passed both RunMenu variants but found 14 failures in other concurrently modified SORTD families, so Step 9f and the weighted estimate remain open. |
 
 Current expected finish for the complete plan is **80-115 focused engineering
 hours**, approximately **2.0-3.8 working weeks** at 30-40 focused hours per

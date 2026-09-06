@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from angr.analyses.decompiler.structured_codegen.c import CConstant
+from angr.sim_type import SimTypeShort
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.ir.segment_contract import (
     SegmentAccessFact,
@@ -10,8 +13,26 @@ from angr_platforms.X86_16.ir.segment_contract import (
 from angr_platforms.X86_16.lowering.segment_access_policy import (
     SegmentAccessLoweringDecision8616,
     SegmentAccessLoweringResult8616,
+    classify_codegen_segment_access_8616,
     classify_local_segment_access_8616,
 )
+
+
+class _Codegen:
+    def __init__(self, contract: SegmentFunctionContract) -> None:
+        self._idx = 0
+        self.project = type("Project", (), {"arch": Arch86_16()})()
+        self._inertia_segment_function_contract = contract
+
+    def next_idx(self, _name: str) -> int:
+        self._idx += 1
+        return self._idx
+
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _byte_fact(
@@ -21,9 +42,10 @@ def _byte_fact(
     kind: SegmentAccessKind = SegmentAccessKind.READ,
     source: str | None = "ds",
     verdict: SegmentFactVerdict = SegmentFactVerdict.PROVEN,
+    block_addr: int = 0x1000,
 ) -> SegmentAccessFact:
     return SegmentAccessFact(
-        block_addr=0x1000,
+        block_addr=block_addr,
         instruction_addr=instruction_addr,
         kind=kind,
         address=IRAddress(
@@ -126,3 +148,59 @@ def test_segment_access_policy_selects_read_from_rmw_byte_fragments() -> None:
     assert write.decision is SegmentAccessLoweringDecision8616.ENTRY_DS_OBJECT
     assert {fact.kind for fact in read.facts} == {SegmentAccessKind.READ}
     assert {fact.kind for fact in write.facts} == {SegmentAccessKind.WRITE}
+
+
+def test_codegen_policy_uses_unique_access_in_jcc_owned_block() -> None:
+    contract = SegmentFunctionContract(
+        function_addr=0x1000,
+        accesses=(_byte_fact(0x132), _byte_fact(0x133)),
+    )
+    codegen = _Codegen(contract)
+    branch_owned = CConstant(
+        0,
+        SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1015, "vex_block_addr": 0x1000},
+    )
+
+    result = classify_codegen_segment_access_8616(
+        codegen,
+        branch_owned,
+        access_kind=SegmentAccessKind.READ,
+        segment_register="ds",
+        offset=0x132,
+        width=2,
+    )
+
+    assert result.decision is SegmentAccessLoweringDecision8616.ENTRY_DS_OBJECT
+    assert {fact.instruction_addr for fact in result.facts} == {0x1010}
+
+
+def test_codegen_policy_refuses_ambiguous_accesses_in_jcc_owned_block() -> None:
+    contract = SegmentFunctionContract(
+        function_addr=0x1000,
+        accesses=(
+            _byte_fact(0x132),
+            _byte_fact(0x133),
+            _byte_fact(0x132, instruction_addr=0x1012),
+            _byte_fact(0x133, instruction_addr=0x1012),
+        ),
+    )
+    codegen = _Codegen(contract)
+    branch_owned = CConstant(
+        0,
+        SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1015, "vex_block_addr": 0x1000},
+    )
+
+    result = classify_codegen_segment_access_8616(
+        codegen,
+        branch_owned,
+        access_kind=SegmentAccessKind.READ,
+        segment_register="ds",
+        offset=0x132,
+        width=2,
+    )
+
+    assert result.decision is SegmentAccessLoweringDecision8616.UNKNOWN_REFUSE

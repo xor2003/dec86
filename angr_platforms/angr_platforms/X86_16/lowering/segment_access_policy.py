@@ -18,9 +18,8 @@ import logging
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
-from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..ir.segment_contract import (
     SegmentAccessFact,
     SegmentAccessKind,
@@ -28,10 +27,13 @@ from ..ir.segment_contract import (
     SegmentFunctionContract,
     SegmentInstructionStateFact,
 )
-from ..structured_tags import copy_structured_tags_8616
 from .segment_access_coverage import (
     segment_access_matches_query_8616,
     select_contiguous_segment_access_facts_8616,
+)
+from .segment_codegen_access_provenance import (
+    instruction_addrs_from_node_8616,
+    unique_access_instruction_in_tagged_blocks_8616,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -221,36 +223,6 @@ def classify_local_segment_address_8616(
     )
 
 
-def instruction_addrs_from_node_8616(node: object) -> frozenset[int]:
-    """Collect exact instruction provenance from a dynamic angr C subtree."""
-    def _collect_owner_tags_8616(owner: object, addresses: set[int]) -> None:
-        """Collect exact tags from one dynamic AST or wrapped dirty owner."""
-        dynamic_owner = cast(Any, owner)
-        try:
-            tags = copy_structured_tags_8616(dynamic_owner.tags)
-        except AttributeError:
-            return
-        if tags is None:
-            return
-        for key in ("ins_addr", "inertia_relocated_from_ins_addr"):
-            value = tags.get(key)
-            if isinstance(value, int):
-                addresses.add(value)
-        source_addrs = tags.get("inertia_source_instruction_addrs", ())
-        if isinstance(source_addrs, tuple):
-            addresses.update(value for value in source_addrs if isinstance(value, int))
-
-    addresses: set[int] = set()
-    for candidate in _iter_c_nodes_deep_8616(node):
-        _collect_owner_tags_8616(candidate, addresses)
-        try:
-            dirty_payload = cast(Any, candidate).dirty
-        except AttributeError:
-            continue
-        _collect_owner_tags_8616(dirty_payload, addresses)
-    return frozenset(addresses)
-
-
 def classify_codegen_segment_access_8616(
     codegen: object,
     node: object,
@@ -269,9 +241,33 @@ def classify_codegen_segment_access_8616(
         return _unknown_result_8616(contract_available=False)
     if not isinstance(contract, SegmentFunctionContract):
         return _unknown_result_8616(contract_available=False)
+    node_instruction_addrs = instruction_addrs | instruction_addrs_from_node_8616(node)
+    result = classify_local_segment_access_8616(
+        contract,
+        instruction_addrs=node_instruction_addrs,
+        access_kind=access_kind,
+        segment_register=segment_register,
+        offset=offset,
+        width=width,
+    )
+    if result.decision is not SegmentAccessLoweringDecision8616.UNKNOWN_REFUSE:
+        return result
+    register = _normalized_segment_register_8616(segment_register)
+    if register is None:
+        return result
+    block_instruction_addrs = unique_access_instruction_in_tagged_blocks_8616(
+        contract,
+        node,
+        access_kind=access_kind,
+        segment_register=register,
+        offset=offset,
+        width=width,
+    )
+    if not block_instruction_addrs:
+        return result
     return classify_local_segment_access_8616(
         contract,
-        instruction_addrs=instruction_addrs | instruction_addrs_from_node_8616(node),
+        instruction_addrs=block_instruction_addrs,
         access_kind=access_kind,
         segment_register=segment_register,
         offset=offset,
