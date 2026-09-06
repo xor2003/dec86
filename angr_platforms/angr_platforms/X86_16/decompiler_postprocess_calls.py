@@ -195,6 +195,7 @@ __all__ = [
     "_bind_call_target_identity_consumer_8616",
     "_bind_callee_pointer_argument_classifier_8616",
     "_bind_fixed_stack_probe_frame_lowerer_8616",
+    "_bind_call_return_frame_argument_lowerer_8616",
     "_bind_function_result_observation_provider_8616",
     "_bind_segment_address_provenance_attacher_8616",
     "_bind_segment_push_source_lowerer_8616",
@@ -299,6 +300,14 @@ class CallsiteArgumentReplayConsumer8616(Protocol):
         ...
 
 
+class CallReturnFrameArgumentLowerer8616(Protocol):
+    """Types/Lowering service consuming exact CALL-frame argument projections."""
+
+    def __call__(self, project: object, codegen: object) -> bool:
+        """Consume only Semantics-proven machine return-frame arguments."""
+        ...
+
+
 class CalleePointerArgumentClassifier8616(Protocol):
     """Types/Lowering service for one binary-proven pointer argument class."""
 
@@ -337,6 +346,7 @@ class _CallsiteMaterializationControlCarrier8616(Protocol):
     _inertia_segment_address_provenance_attacher_8616: SegmentAddressProvenanceAttacher8616
     _inertia_segment_push_source_lowerer_8616: SegmentPushSourceLowerer8616
     _inertia_fixed_stack_probe_frame_lowerer_8616: FixedStackProbeFrameLowerer8616
+    _inertia_call_return_frame_argument_lowerer_8616: CallReturnFrameArgumentLowerer8616
     _inertia_function_result_observation_provider_8616: FunctionResultObservationProvider8616
 
 
@@ -479,6 +489,32 @@ def _bind_fixed_stack_probe_frame_lowerer_8616(
     """Bind the Types/Lowering fixed stack-probe consumer."""
     carrier = cast(_CallsiteMaterializationControlCarrier8616, codegen)
     carrier._inertia_fixed_stack_probe_frame_lowerer_8616 = lowerer
+
+
+def _bind_call_return_frame_argument_lowerer_8616(
+    codegen: StructuredCodegenValue,
+    lowerer: CallReturnFrameArgumentLowerer8616,
+) -> None:
+    """Bind the Types/Lowering CALL-frame argument consumer."""
+    carrier = cast(_CallsiteMaterializationControlCarrier8616, codegen)
+    carrier._inertia_call_return_frame_argument_lowerer_8616 = lowerer
+
+
+def _replay_call_return_frame_argument_lowerer_8616(
+    project: object,
+    codegen: StructuredCodegenValue,
+) -> bool:
+    """Replay the bound CALL-frame consumer after summaries and tags converge."""
+    try:
+        lowerer = cast(
+            _CallsiteMaterializationControlCarrier8616,
+            codegen,
+        )._inertia_call_return_frame_argument_lowerer_8616
+    except AttributeError as ex:
+        raise PipelineHardError(
+            "CALL-frame argument lowering is not bound at the Structuring boundary"
+        ) from ex
+    return bool(lowerer(project, codegen))
 
 
 def _bind_function_result_observation_provider_8616(
@@ -16978,6 +17014,13 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 summarized_call,
                 summary_map[id(summarized_call)],
             )
+        # Regenerated third-party C nodes acquire their final exact projection
+        # tags only after callsite summaries have been attached. Replay the
+        # Lowering-owned consumer at that boundary; it owns all proof and
+        # refuses non-frame or ambiguous producer ancestry.
+        codegen._inertia_callsite_summaries = summary_map
+        if _replay_call_return_frame_argument_lowerer_8616(project, codegen):
+            changed = True
         if prune_materialized_call_push_stack_assignments_8616(
             project,
             codegen,

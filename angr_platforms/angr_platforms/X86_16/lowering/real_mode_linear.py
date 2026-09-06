@@ -11745,22 +11745,6 @@ def prune_call_return_frame_stack_assignments_8616(
         function,
         return_addr_by_callsite,
     )
-    if debug_return_frame:
-        log.warning("[call-return-frame] exact=%r", exact_result)
-        for debug_node in _iter_c_nodes_deep_8616(root):
-            if not isinstance(debug_node, structured_c.CAssignment):
-                continue
-            debug_lhs = debug_node.lhs
-            if (
-                isinstance(debug_lhs, structured_c.CVariable)
-                and isinstance(debug_lhs.variable, SimStackVariable)
-            ):
-                log.warning(
-                    "[call-return-frame] stack-assignment tags=%r rhs_type=%s rhs_tags=%r",
-                    debug_node.tags,
-                    type(debug_node.rhs).__name__,
-                    getattr(debug_node.rhs, "tags", None),
-                )
     raw_count = exact_result.raw_fact_count
     normalized_count = exact_result.normalized_fact_count
     classified_count = exact_result.classified_fact_count

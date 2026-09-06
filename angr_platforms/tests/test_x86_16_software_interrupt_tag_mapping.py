@@ -1,9 +1,18 @@
 """Regression tests for software-interrupt callsite tag boundaries."""
 
+from types import SimpleNamespace
+
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.rustylib.ailment import Tags
+from angr_platforms.X86_16.interrupt_contract import (
+    DOS_SERVICE_BASE_ADDR,
+    interrupt_core_addr_8616,
+)
 from angr_platforms.X86_16.lowering.software_interrupt_calls import (
     _callsite_addr_8616 as lowering_callsite_addr_8616,
+)
+from angr_platforms.X86_16.lowering.software_interrupt_calls import (
+    materialize_software_interrupt_service_targets_8616,
 )
 from angr_platforms.X86_16.structuring.software_interrupt_returns import (
     _callsite_addr_8616 as structuring_callsite_addr_8616,
@@ -36,3 +45,38 @@ def test_software_interrupt_callsite_accepts_current_angr_tags() -> None:
     assert lowering_callsite_addr_8616(call) == 0x1020
     assert structuring_callsite_addr_8616(call) == 0x1020
     assert validation_callsite_addr_8616(call) == 0x1020
+
+
+def test_software_interrupt_targets_follow_exact_tags_not_ast_order() -> None:
+    """Service identity remains attached when structuring reverses call order."""
+    codegen = _Codegen()
+    exit_call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags=Tags({"ins_addr": 0x1030}),
+        codegen=codegen,
+    )
+    print_call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags=Tags({"ins_addr": 0x1020}),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([exit_call, print_call], codegen=codegen)
+    targets = {
+        0x1020: DOS_SERVICE_BASE_ADDR + 0x09,
+        0x1030: DOS_SERVICE_BASE_ADDR + 0x4C,
+    }
+    function = SimpleNamespace(get_call_target=targets.get)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen.project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda *, addr: function if addr == 0x1000 else None)
+        )
+    )
+
+    assert materialize_software_interrupt_service_targets_8616(codegen)
+    assert exit_call.callee_target == DOS_SERVICE_BASE_ADDR + 0x4C
+    assert print_call.callee_target == DOS_SERVICE_BASE_ADDR + 0x09

@@ -7,7 +7,15 @@ from angr_platforms.X86_16.lowering.far_pointer_segmented_load_evidence import (
     FarPointerStackValueSource8616,
     recover_far_pointer_segmented_loads_8616,
 )
-from capstone.x86_const import X86_INS_LES, X86_INS_MOV, X86_OP_MEM, X86_OP_REG
+from capstone.x86_const import (
+    X86_INS_ADD,
+    X86_INS_LES,
+    X86_INS_MOV,
+    X86_INS_SUB,
+    X86_OP_IMM,
+    X86_OP_MEM,
+    X86_OP_REG,
+)
 
 _AX = 1
 _BP = 2
@@ -50,6 +58,10 @@ def _reg(register: int) -> _Operand:
     return _Operand(X86_OP_REG, register=register, size=2)
 
 
+def _imm(value: int) -> _Operand:
+    return _Operand(X86_OP_IMM, size=2, immediate=value)
+
+
 def _mem(*, base: int, displacement: int, size: int, segment: int | None = None) -> _Operand:
     return _Operand(
         X86_OP_MEM,
@@ -71,6 +83,27 @@ def _overlay_load_sequence(*, overlap_segment_destination: bool = False) -> tupl
         (
             _Instruction(None, X86_INS_LES, 0x1016, (_reg(_BX), _mem(base=_BP, displacement=-8, size=4))),
             _Instruction(None, X86_INS_MOV, 0x1018, (_reg(_DX), _mem(base=_BX, displacement=24, size=2, segment=_ES))),
+        )
+    )
+    return tuple(instructions)
+
+
+def _constant_offset_load_sequence(*, overwrite_offset: bool = False) -> tuple[_Instruction, ...]:
+    instructions = [
+        _Instruction(None, X86_INS_SUB, 0x1000, (_reg(_AX), _reg(_AX))),
+        _Instruction(None, X86_INS_ADD, 0x1002, (_reg(_AX), _imm(36))),
+        _Instruction(None, X86_INS_MOV, 0x1005, (_mem(base=_BP, displacement=-4, size=2), _reg(_AX))),
+        _Instruction(None, X86_INS_MOV, 0x1008, (_reg(_DX), _mem(base=_BP, displacement=4, size=2))),
+        _Instruction(None, X86_INS_MOV, 0x100B, (_mem(base=_BP, displacement=-2, size=2), _reg(_DX))),
+    ]
+    if overwrite_offset:
+        instructions.append(
+            _Instruction(None, X86_INS_MOV, 0x100E, (_mem(base=_BP, displacement=-4, size=2), _reg(_DX)))
+        )
+    instructions.extend(
+        (
+            _Instruction(None, X86_INS_LES, 0x1011, (_reg(_BX), _mem(base=_BP, displacement=-4, size=4))),
+            _Instruction(None, X86_INS_MOV, 0x1014, (_reg(_DX), _mem(base=_BX, displacement=0, size=2, segment=_ES))),
         )
     )
     return tuple(instructions)
@@ -98,3 +131,27 @@ def test_far_pointer_load_refuses_overwritten_segment_source_identity() -> None:
 
     assert len(evidence) == 1
     assert evidence[0].pointer_source.segment_value_source is None
+
+
+def test_far_pointer_load_retains_exact_constant_offset() -> None:
+    """Carry a same-block constant into the typed far-pointer stack pair."""
+    evidence = recover_far_pointer_segmented_loads_8616(
+        _constant_offset_load_sequence(),
+        register_name=_register_name,
+        segment_name=_register_name,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].pointer_source.offset_constant == 36
+
+
+def test_far_pointer_load_invalidates_overwritten_constant_offset() -> None:
+    """Refuse a constant after any overlapping stack write replaces it."""
+    evidence = recover_far_pointer_segmented_loads_8616(
+        _constant_offset_load_sequence(overwrite_offset=True),
+        register_name=_register_name,
+        segment_name=_register_name,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].pointer_source.offset_constant is None

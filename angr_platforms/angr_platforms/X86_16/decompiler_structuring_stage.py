@@ -1745,6 +1745,13 @@ def _bind_structuring_callsite_consumers_8616(codegen: AngrCodegenSurface) -> No
         codegen,
         lambda codegen: lower_fixed_stack_probe_callsite_artifacts_8616(codegen.project, codegen),
     )
+    _calls._bind_call_return_frame_argument_lowerer_8616(
+        codegen,
+        lambda project, codegen: prune_exact_call_return_frame_arguments_8616(
+            project,
+            codegen,
+        ).changed,
+    )
     _calls._bind_function_result_observation_provider_8616(
         codegen,
         proven_function_result_observation_8616,

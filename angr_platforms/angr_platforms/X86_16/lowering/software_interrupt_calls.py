@@ -21,6 +21,11 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
 from ..codegen_metadata import get_codegen_side_metadata
+from ..interrupt_contract import (
+    DOS_SERVICE_BASE_ADDR,
+    INTERRUPT_SERVICE_BASE_ADDR,
+    interrupt_vector_from_core_addr_8616,
+)
 from ..ir.core import IRBinaryValue, IRFunctionArtifact, IRValue, MemSpace
 from ..pipeline.errors import PipelineHardError
 from ..semantics.software_interrupt_inputs import (
@@ -35,7 +40,9 @@ from .gp_register_state import runtime_gp_expression_view_8616
 
 __all__ = [
     "SoftwareInterruptMaterializationStats8616",
+    "SoftwareInterruptTargetMaterializationStats8616",
     "materialize_software_interrupt_calls_8616",
+    "materialize_software_interrupt_service_targets_8616",
     "select_software_interrupt_call_8616",
 ]
 
@@ -43,6 +50,17 @@ __all__ = [
 @dataclass(slots=True)
 class SoftwareInterruptMaterializationStats8616:
     """Closed evidence counters for interrupt call argument lowering."""
+
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
+
+
+@dataclass(slots=True)
+class SoftwareInterruptTargetMaterializationStats8616:
+    """Closed evidence counters for exact interrupt service targets."""
 
     raw_fact_count: int = 0
     normalized_fact_count: int = 0
@@ -69,6 +87,27 @@ class _ProjectSurface8616(Protocol):
     """Project fields needed to lower exact register inputs."""
 
     arch: _ArchSurface8616
+    kb: _KnowledgeBaseSurface8616
+
+
+class _FunctionCallTargetSurface8616(Protocol):
+    """Third-party function callsite mapping consumed by Lowering."""
+
+    def get_call_target(self, callsite_addr: int) -> int | None:
+        """Return the target assigned to one exact machine callsite."""
+
+
+class _FunctionManagerSurface8616(Protocol):
+    """Third-party function manager lookup consumed by Lowering."""
+
+    def function(self, *, addr: int) -> _FunctionCallTargetSurface8616 | None:
+        """Return the function at one exact address."""
+
+
+class _KnowledgeBaseSurface8616(Protocol):
+    """Third-party knowledge-base function surface consumed by Lowering."""
+
+    functions: _FunctionManagerSurface8616
 
 
 class _CodegenSurface8616(Protocol):
@@ -105,6 +144,74 @@ def _callsite_addr_8616(call: structured_c.CFunctionCall) -> int | None:
         return None
     value = owned_tags.get("ins_addr")
     return value if isinstance(value, int) else None
+
+
+def _raw_interrupt_vector_8616(call: structured_c.CFunctionCall) -> int | None:
+    """Decode the raw lifted interrupt vector from one structured call."""
+    target = cast(_TaggedCallSurface8616, call).callee_target
+    if isinstance(target, structured_c.CConstant):
+        target = target.value
+    return interrupt_vector_from_core_addr_8616(target) if isinstance(target, int) else None
+
+
+def _service_target_matches_vector_8616(target_addr: int, vector: int) -> bool:
+    """Validate a service target against its raw interrupt vector."""
+    if vector == 0x21:
+        selector = target_addr - int(DOS_SERVICE_BASE_ADDR)
+        return bool(0 <= selector <= 0xFF)
+    return bool(target_addr == int(INTERRUPT_SERVICE_BASE_ADDR) + vector)
+
+
+def materialize_software_interrupt_service_targets_8616(
+    codegen: object,
+) -> bool:
+    """Project exact frontend callsite service identities into structured C."""
+    surface = cast(_CodegenSurface8616, codegen)
+    stats = SoftwareInterruptTargetMaterializationStats8616()
+    try:
+        root = surface.cfunc.statements
+        function_addr = surface.cfunc.addr
+        function_manager = surface.project.kb.functions
+        function = function_manager.function(addr=function_addr)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        get_codegen_side_metadata(codegen)["software_interrupt_target_materialization_8616"] = stats
+        return False
+    if function is None:
+        get_codegen_side_metadata(codegen)["software_interrupt_target_materialization_8616"] = stats
+        return False
+    changed = False
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, structured_c.CFunctionCall):
+            continue
+        vector = _raw_interrupt_vector_8616(node)
+        if vector is None:
+            continue
+        stats.raw_fact_count += 1
+        callsite_addr = _callsite_addr_8616(node)
+        if callsite_addr is None:
+            continue
+        stats.normalized_fact_count += 1
+        try:
+            target_addr = function.get_call_target(callsite_addr)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        if not isinstance(target_addr, int) or not _service_target_matches_vector_8616(
+            target_addr,
+            vector,
+        ):
+            continue
+        stats.classified_fact_count += 1
+        cast(_TaggedCallSurface8616, node).callee_target = target_addr
+        stats.materialized_count += 1
+        changed = True
+    get_codegen_side_metadata(codegen)["software_interrupt_target_materialization_8616"] = stats
+    if stats.classified_fact_count != stats.materialized_count:
+        stats.failure_count = stats.classified_fact_count - stats.materialized_count
+        raise PipelineHardError(
+            "classified software interrupt service targets were not materialized",
+            layer="lowering",
+        )
+    return changed
 
 
 def _stack_variable_8616(node: object) -> SimStackVariable | None:
@@ -258,7 +365,7 @@ def _call_targets_fact_8616(
     """Return whether a call retains the exact typed interrupt core target."""
     target = cast(_TaggedCallSurface8616, call).callee_target
     if isinstance(target, int):
-        return target == fact.target_addr
+        return bool(target == fact.target_addr)
     return (
         isinstance(target, structured_c.CConstant)
         and isinstance(target.value, int)
@@ -324,6 +431,7 @@ def materialize_software_interrupt_calls_8616(codegen: object) -> bool:
         root = surface.cfunc.statements
     except AttributeError:
         return False
+    target_changed = materialize_software_interrupt_service_targets_8616(codegen)
     artifact = build_software_interrupt_input_artifact_8616(ir_artifact)
     surface._inertia_software_interrupt_input_artifact_8616 = artifact
     stats = SoftwareInterruptMaterializationStats8616(
@@ -347,4 +455,4 @@ def materialize_software_interrupt_calls_8616(codegen: object) -> bool:
             "classified software interrupt inputs were not materialized",
             layer="lowering",
         )
-    return changed
+    return changed or target_changed
