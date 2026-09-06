@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pytest import MonkeyPatch
 
-from scripts import build_mypyc
+from scripts import build_mypyc, mypyc_build_cache
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -173,6 +173,106 @@ def test_build_mypyc_refuses_nested_artifact_symlink_outside_cache(
     else:
         raise AssertionError("nested external artifact symlink unexpectedly followed")
     assert external_artifact.read_bytes() == b"external"
+
+
+def test_mypyc_import_smoke_identity_tracks_exact_inputs(tmp_path: Path) -> None:
+    """Invalidate smoke evidence for same-size source, artifact, or cohort changes."""
+    source_root = tmp_path / "source"
+    artifact_root = tmp_path / "artifacts"
+    source_root.mkdir()
+    artifact_root.mkdir()
+    source = source_root / "module.py"
+    copied_source = artifact_root / "example" / "module.py"
+    artifact = artifact_root / f"module{EXTENSION_SUFFIXES[0]}"
+    control = tmp_path / "control.py"
+    source.write_text("x=1\n", encoding="utf-8")
+    copied_source.parent.mkdir()
+    copied_source.write_text("x=1\n", encoding="utf-8")
+    artifact.write_bytes(b"native-a")
+    control.write_text("schema=1\n", encoding="utf-8")
+
+    def identity(*, modules: tuple[str, ...] = ("example.module",)) -> str:
+        return mypyc_build_cache.build_mypyc_import_smoke_identity(
+            modules=modules,
+            package_sources={"example": source_root},
+            artifact_root=artifact_root,
+            control_inputs=(control,),
+            schema="test-schema",
+        )
+
+    original = identity()
+    source.write_text("x=2\n", encoding="utf-8")
+    source_changed = identity()
+    artifact.write_bytes(b"native-b")
+
+    assert source_changed != original
+    artifact_changed = identity()
+    assert artifact_changed != source_changed
+    copied_source.write_text("x=2\n", encoding="utf-8")
+    assert identity() != artifact_changed
+    assert identity(modules=("example.other",)) != identity()
+
+
+def test_mypyc_import_smoke_attestation_is_exact_and_fail_closed(tmp_path: Path) -> None:
+    """Accept only an atomically published exact ASCII identity."""
+    path = tmp_path / "import-smoke.sha256"
+    mypyc_build_cache.write_import_smoke_attestation(path, "expected")
+    assert mypyc_build_cache.import_smoke_attestation_matches(path, "expected")
+
+    path.write_bytes(b"\xff")
+    assert not mypyc_build_cache.import_smoke_attestation_matches(path, "expected")
+    assert not mypyc_build_cache.import_smoke_attestation_matches(tmp_path / "missing", "expected")
+
+
+def test_mypyc_package_sync_removes_stale_source_but_preserves_native(tmp_path: Path) -> None:
+    """Mirror copied package files without deleting native extension artifacts."""
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "lib"
+    source_root.mkdir()
+    (source_root / "current.py").write_text("value = 1\n", encoding="utf-8")
+    output_package = output_root / "example"
+    output_package.mkdir(parents=True)
+    stale = output_package / "stale.py"
+    native = output_package / f"current{EXTENSION_SUFFIXES[0]}"
+    stale.write_text("stale = True\n", encoding="utf-8")
+    native.write_bytes(b"native")
+
+    mypyc_build_cache.sync_isolated_package_sources(
+        output_root=output_root,
+        package_sources={"example": source_root},
+    )
+
+    assert (output_package / "current.py").read_text(encoding="utf-8") == "value = 1\n"
+    assert not stale.exists()
+    assert native.read_bytes() == b"native"
+
+
+def test_build_mypyc_skips_only_attested_warm_import_smoke(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Avoid package sync and import only when exact warm evidence matches."""
+    source = tmp_path / "sample.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    state = build_mypyc.ModuleState("example.sample", source, tmp_path / "sample.stamp")
+    observed: list[str] = []
+
+    monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(build_mypyc, "TARGET_MODULES", ["example.sample"])
+    monkeypatch.setattr(build_mypyc, "_ensure_build_layout", lambda modules: None)
+    monkeypatch.setattr(build_mypyc, "_collect_module_states", lambda modules: [state])
+    monkeypatch.setattr(build_mypyc, "_build_stale", lambda states, inplace=False: [])
+    monkeypatch.setattr(build_mypyc, "_import_smoke_identity", lambda modules: "identity")
+    monkeypatch.setattr(build_mypyc, "import_smoke_attestation_matches", lambda path, identity: True)
+    monkeypatch.setattr(build_mypyc, "_prepare_isolated_package", lambda: observed.append("sync"))
+    monkeypatch.setattr(build_mypyc, "_publish_import_smoke", lambda states: observed.append("smoke") or 0)
+
+    assert build_mypyc.main([]) == 0
+    assert observed == []
+
+    monkeypatch.setattr(build_mypyc, "import_smoke_attestation_matches", lambda path, identity: False)
+    assert build_mypyc.main([]) == 0
+    assert observed == ["sync", "smoke"]
 
 
 def test_make_parallel_defaults_share_cpu_budget() -> None:

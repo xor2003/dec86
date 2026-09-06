@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import importlib.machinery
 import os
-import shutil
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -20,7 +19,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.mypyc_build_cache import MypycBuildCacheLayout, reconcile_mypyc_build_cache  # noqa: E402
+from scripts.mypyc_build_cache import (  # noqa: E402
+    MypycBuildCacheLayout,
+    build_mypyc_import_smoke_identity,
+    import_smoke_attestation_matches,
+    reconcile_mypyc_build_cache,
+    run_compiled_import_smoke,
+    sync_isolated_package_sources,
+    write_import_smoke_attestation,
+)
 
 TARGET_MODULES: list[str] = [
     "angr_platforms.X86_16.lowering.callsite_prototype_declarations",
@@ -68,6 +75,8 @@ MYPYC_LIB_DIR: Path = MYPYC_CACHE_DIR / "lib"
 MYPYC_TEMP_DIR: Path = MYPYC_CACHE_DIR / "temp"
 MYPYC_CGEN_DIR: Path = MYPYC_CACHE_DIR / "cgen"
 MYPYC_BUILD_SCHEMA: str = "4-incremental-module-cohort"
+MYPYC_IMPORT_SMOKE_SCHEMA: str = "1-exact-source-artifact-cohort"
+MYPYC_IMPORT_SMOKE_ATTESTATION: Path = MYPYC_CACHE_DIR / "import-smoke.sha256"
 
 
 @dataclass(frozen=True)
@@ -197,75 +206,54 @@ def _refresh_markers(module_states: list[ModuleState]) -> None:
 
 def _compiled_import_smoke(module_states: list[ModuleState]) -> int:
     """Import every compiled host from the isolated output directory."""
-    import subprocess
+    result: int = run_compiled_import_smoke(
+        modules=(module_state.module for module_state in module_states),
+        lib_path=(REPO_ROOT / MYPYC_LIB_DIR).resolve(),
+        source_path=REPO_ROOT.resolve(),
+        python_executable=Path(sys.executable),
+    )
+    return result
 
-    lib_path = str((REPO_ROOT / MYPYC_LIB_DIR).resolve())
-    source_path = str(REPO_ROOT.resolve())
-    module_names = repr(tuple(module_state.module for module_state in module_states))
-    extension_suffixes = repr(tuple(importlib.machinery.EXTENSION_SUFFIXES))
-    script = "\n".join(
-        (
-            "import importlib",
-            "import os",
-            f"names = {module_names}",
-            f"lib = os.path.realpath({lib_path!r})",
-            f"extension_suffixes = {extension_suffixes}",
-            "paths = []",
-            "for name in names:",
-            "    module = importlib.import_module(name)",
-            "    module_file = module.__file__",
-            "    path = '' if module_file is None else os.path.realpath(module_file)",
-            "    paths.append((name, path))",
-            "bad_location = [(name, path) for name, path in paths if os.path.commonpath((lib, path)) != lib]",
-            "bad_native = [(name, path) for name, path in paths if not path.endswith(extension_suffixes)]",
-            "print(paths)",
-            "raise SystemExit(1 if bad_location or bad_native else 0)",
-        )
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=REPO_ROOT.parent,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join((lib_path, source_path))},
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode:
-        print(result.stdout, end="")
-        print(result.stderr, end="", file=sys.stderr)
-        print("mypyc: compiled import smoke failed")
-        return result.returncode
-    print(f"mypyc: compiled import smoke passed for {len(module_states)} modules")
-    return 0
+
+def _isolated_package_sources() -> dict[str, Path]:
+    """Return source package roots copied beside isolated native artifacts."""
+    return {
+        "inertia_decompiler": REPO_ROOT / "inertia_decompiler",
+        "angr_platforms": REPO_ROOT / "angr_platforms" / "angr_platforms",
+    }
 
 
 def _prepare_isolated_package() -> None:
     """Make the isolated output a regular importable package tree."""
-    # Extra --module entries may live in the angr-platform package.  Copy the
-    # source package beside its native artifacts so the smoke import resolves
-    # every requested module from the isolated output tree.
-    package_sources = {
-        "inertia_decompiler": REPO_ROOT / "inertia_decompiler",
-        "angr_platforms": REPO_ROOT / "angr_platforms" / "angr_platforms",
-    }
-    for package_name, source_dir in package_sources.items():
-        package_dir = REPO_ROOT / MYPYC_LIB_DIR / package_name
-        shutil.copytree(
-            source_dir,
-            package_dir,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns(
-                ".cache",
-                ".pytest_cache",
-                "__pycache__",
-                "*.egg-info",
-                "*.pyc",
-                "*.so",
-                "*.so.*",
-                "*.c",
-                "*.pyx",
-            ),
-        )
+    sync_isolated_package_sources(
+        output_root=REPO_ROOT / MYPYC_LIB_DIR,
+        package_sources=_isolated_package_sources(),
+    )
+
+
+def _import_smoke_identity(modules: Iterable[str]) -> str:
+    """Return the exact current identity guarded by the native import smoke."""
+    identity: str = build_mypyc_import_smoke_identity(
+        modules=modules,
+        package_sources=_isolated_package_sources(),
+        artifact_root=REPO_ROOT / MYPYC_LIB_DIR,
+        control_inputs=(
+            REPO_ROOT / "pyproject.toml",
+            Path(__file__).resolve(),
+            REPO_ROOT / "scripts" / "mypyc_build_cache.py",
+        ),
+        schema=MYPYC_IMPORT_SMOKE_SCHEMA,
+    )
+    return identity
+
+
+def _publish_import_smoke(module_states: list[ModuleState]) -> int:
+    """Run the native import smoke and attest its exact successful inputs."""
+    result = _compiled_import_smoke(module_states)
+    if result == 0:
+        identity = _import_smoke_identity(state.module for state in module_states)
+        write_import_smoke_attestation(REPO_ROOT / MYPYC_IMPORT_SMOKE_ATTESTATION, identity)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -280,13 +268,18 @@ def main(argv: list[str] | None = None) -> int:
 
         if not parsed.inplace:
             _ensure_build_layout(modules)
-            _prepare_isolated_package()
         module_states = _collect_module_states(modules)
         stale_module_states = _build_stale(module_states, inplace=parsed.inplace)
         if not stale_module_states:
             print("mypyc: up-to-date; skipping build")
             if not parsed.inplace:
-                return _compiled_import_smoke(module_states)
+                identity = _import_smoke_identity(modules)
+                attestation = REPO_ROOT / MYPYC_IMPORT_SMOKE_ATTESTATION
+                if import_smoke_attestation_matches(attestation, identity):
+                    print("mypyc: import smoke attestation matched; skipping import")
+                    return 0
+                _prepare_isolated_package()
+                return _publish_import_smoke(module_states)
             return 0
 
         from mypyc.build import mypycify
@@ -338,7 +331,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     _refresh_markers(stale_module_states)
     if not parsed.inplace:
-        return _compiled_import_smoke(module_states)
+        _prepare_isolated_package()
+        return _publish_import_smoke(module_states)
     return 0
 
 

@@ -485,6 +485,17 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   function-count, and validation failures. Twenty-eight focused tests, Ruff,
   strict mypy, type ratchet, startup architecture, context, and ownership gates
   pass; no semantic decompiler acceptance is claimed from the failing snapshot.
+- The no-change mypyc development gate now reuses a successful import-smoke
+  attestation only when exact package-source copies, native artifacts, module
+  cohort, Python ABI, schema, and controlling files remain unchanged. Changed,
+  missing, malformed, or concurrently mutated evidence runs package mirroring
+  and the full 39-module import smoke; package mirroring removes stale copied
+  Python files while preserving native extensions. The prior steady gate took
+  16.75 seconds and 208,472 KiB RSS, including 14.12 seconds for import smoke
+  and 1.53 seconds for unconditional source copying. Three fresh attested
+  processes now take 0.55-0.60 seconds (0.57 median) and about 27 MiB RSS, a
+  96.6% median wall reduction. Thirty-two focused tests, Ruff, and strict mypy
+  pass; no native build or first changed-input smoke is skipped.
 - Pytest target validation now builds only selector and skip/xfail structure;
   assertion, subprocess, and evidence facts are memoized on first inventory
   access. The 74-file profiled index path fell from 2.208 to 1.244 seconds

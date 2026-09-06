@@ -7,13 +7,24 @@ only native artifacts that can participate in project imports.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.machinery
 import os
 import shutil
-from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+import subprocess
+import sys
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
+
+
+class _DigestWriter(Protocol):
+    """Minimal hashlib writer contract used by identity assembly."""
+
+    def update(self, data: bytes, /) -> None:
+        """Consume bytes into the digest state."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +89,190 @@ def disable_importable_project_extensions(repo_root: Path) -> Iterator[None]:
         if conflicts:
             paths = ", ".join(str(path) for path in sorted(conflicts))
             raise FileExistsError(f"cannot restore parked Python extensions: {paths}")
+
+
+def sync_isolated_package_sources(
+    *,
+    output_root: Path,
+    package_sources: Mapping[str, Path],
+) -> None:
+    """Copy source packages beside isolated native artifacts for smoke imports."""
+    for package_name, source_dir in package_sources.items():
+        package_output = output_root / package_name
+        expected = {
+            path.relative_to(source_dir)
+            for path in source_dir.rglob("*")
+            if path.is_file() and _is_copied_package_file(path, source_dir)
+        }
+        if package_output.is_dir():
+            extension_suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+            for path in sorted(package_output.rglob("*"), reverse=True):
+                if path.is_file() and path.relative_to(package_output) not in expected:
+                    if not path.name.endswith(extension_suffixes):
+                        path.unlink()
+                elif path.is_dir():
+                    with suppress(OSError):
+                        path.rmdir()
+        shutil.copytree(
+            source_dir,
+            package_output,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                ".cache",
+                ".pytest_cache",
+                "__pycache__",
+                "*.egg-info",
+                "*.pyc",
+                "*.so",
+                "*.so.*",
+                "*.c",
+                "*.pyx",
+            ),
+        )
+
+
+def _is_copied_package_file(path: Path, source_root: Path) -> bool:
+    """Return whether package synchronization includes one source path."""
+    relative = path.relative_to(source_root)
+    if any(part in {".cache", ".pytest_cache", "__pycache__"} or part.endswith(".egg-info") for part in relative.parts):
+        return False
+    name = path.name
+    return not (
+        name.endswith((".pyc", ".so", ".c", ".pyx"))
+        or ".so." in name
+    )
+
+
+def _content_digest(path: Path) -> bytes:
+    """Hash one file without accepting a concurrent in-place mutation."""
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    after = path.stat()
+    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    if before_identity != after_identity:
+        raise OSError(f"mypyc import input changed while hashing: {path}")
+    return digest.digest()
+
+
+def _update_identity_file(digest: _DigestWriter, *, label: str, path: Path) -> None:
+    """Add one path and its exact content digest to an import identity."""
+    encoded_label = label.encode("utf-8")
+    digest.update(len(encoded_label).to_bytes(8, "big"))
+    digest.update(encoded_label)
+    digest.update(_content_digest(path))
+
+
+def build_mypyc_import_smoke_identity(
+    *,
+    modules: Iterable[str],
+    package_sources: Mapping[str, Path],
+    artifact_root: Path,
+    control_inputs: Iterable[Path],
+    schema: str,
+) -> str:
+    """Return an exact identity for a successful isolated import smoke result."""
+    digest = hashlib.sha256()
+    for field in (schema, sys.implementation.cache_tag, sys.version, *sorted(set(modules))):
+        encoded = field.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    for package_name, source_root in sorted(package_sources.items()):
+        for path in sorted(candidate for candidate in source_root.rglob("*") if candidate.is_file()):
+            if _is_copied_package_file(path, source_root):
+                _update_identity_file(
+                    digest,
+                    label=f"source:{package_name}/{path.relative_to(source_root).as_posix()}",
+                    path=path,
+                )
+        copied_root = artifact_root / package_name
+        if copied_root.is_dir():
+            for path in sorted(candidate for candidate in copied_root.rglob("*") if candidate.is_file()):
+                if _is_copied_package_file(path, copied_root):
+                    _update_identity_file(
+                        digest,
+                        label=f"copy:{package_name}/{path.relative_to(copied_root).as_posix()}",
+                        path=path,
+                    )
+    extension_suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    for path in sorted(candidate for candidate in artifact_root.rglob("*") if candidate.is_file()):
+        if path.name.endswith(extension_suffixes):
+            _update_identity_file(
+                digest,
+                label=f"artifact:{path.relative_to(artifact_root).as_posix()}",
+                path=path,
+            )
+    for path in sorted(set(control_inputs)):
+        _update_identity_file(digest, label=f"control:{path.name}", path=path)
+    return digest.hexdigest()
+
+
+def import_smoke_attestation_matches(path: Path, identity: str) -> bool:
+    """Return whether a readable attestation exactly matches current inputs."""
+    try:
+        return path.read_text(encoding="ascii").strip() == identity
+    except (OSError, UnicodeError):
+        return False
+
+
+def write_import_smoke_attestation(path: Path, identity: str) -> None:
+    """Atomically publish a successful import-smoke identity."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(f"{identity}\n", encoding="ascii")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def run_compiled_import_smoke(
+    *,
+    modules: Iterable[str],
+    lib_path: Path,
+    source_path: Path,
+    python_executable: Path,
+) -> int:
+    """Import every requested native host from one isolated package tree."""
+    module_names = tuple(modules)
+    extension_suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    script = "\n".join(
+        (
+            "import importlib",
+            "import os",
+            f"names = {module_names!r}",
+            f"lib = os.path.realpath({str(lib_path)!r})",
+            f"extension_suffixes = {extension_suffixes!r}",
+            "paths = []",
+            "for name in names:",
+            "    module = importlib.import_module(name)",
+            "    module_file = module.__file__",
+            "    path = '' if module_file is None else os.path.realpath(module_file)",
+            "    paths.append((name, path))",
+            "bad_location = [(name, path) for name, path in paths if os.path.commonpath((lib, path)) != lib]",
+            "bad_native = [(name, path) for name, path in paths if not path.endswith(extension_suffixes)]",
+            "print(paths)",
+            "raise SystemExit(1 if bad_location or bad_native else 0)",
+        )
+    )
+    result = subprocess.run(
+        [str(python_executable), "-c", script],
+        cwd=source_path.parent,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(lib_path), str(source_path)))},
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode:
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        print("mypyc: compiled import smoke failed")
+        return result.returncode
+    print(f"mypyc: compiled import smoke passed for {len(module_names)} modules")
+    return 0
 
 
 def _read_lines(path: Path) -> tuple[str, ...]:
