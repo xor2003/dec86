@@ -21,6 +21,7 @@ from ..ir.segment_state_transfer import SEGMENT_REGISTERS, SegmentRestoreSource
 from .segment_stack_fragments import (
     SegmentStackByteOrigin8616,
     SegmentStackFragments8616,
+    complete_stack_constant_8616,
     complete_stack_register_restore_8616,
     computed_stack_register_fragments_8616,
     register_value_fragments_8616,
@@ -68,6 +69,7 @@ class SegmentStackRestoreFact8616:
     saved_register: str | None
     stack_offsets: tuple[int, ...]
     verdict: SegmentStackRestoreVerdict8616
+    constant_value: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -79,6 +81,7 @@ class SegmentStackRestoreFact8616:
             "saved_register": self.saved_register,
             "stack_offsets": list(self.stack_offsets),
             "verdict": self.verdict.value,
+            "constant_value": self.constant_value,
         }
 
 
@@ -246,6 +249,22 @@ def _transfer_block(
                         stack_offsets, SegmentStackRestoreVerdict8616.PROVEN,
                     )
                 )
+            elif tracked_registers == SEGMENT_REGISTERS and (
+                constant := complete_stack_constant_8616(fragments)
+            ) is not None:
+                constant_value, saved_addr, stack_offsets = constant
+                facts.append(
+                    SegmentStackRestoreFact8616(
+                        block_addr,
+                        instruction.addr,
+                        dst.name,
+                        saved_addr,
+                        None,
+                        stack_offsets,
+                        SegmentStackRestoreVerdict8616.PROVEN,
+                        constant_value,
+                    )
+                )
             elif isinstance(source, IRValue) and source.space is MemSpace.TMP and source.name is not None:
                 facts.append(
                     SegmentStackRestoreFact8616(
@@ -342,7 +361,7 @@ def build_x86_16_segment_stack_restore_artifact(artifact: IRFunctionArtifact) ->
             "raw_fact_count": len(facts),
             "normalized_fact_count": len(facts),
             "classified_fact_count": len(proven),
-            "materialized_count": len(restore_sources),
+            "materialized_count": len(proven),
             "failure_count": len(facts) - len(proven),
             "cross_block_restore_count": sum(
                 fact.saved_instruction_addr is not None

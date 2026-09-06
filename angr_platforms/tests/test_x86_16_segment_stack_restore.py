@@ -190,6 +190,30 @@ def test_real_vex_push_pop_restores_ax_through_exact_stack_bytes() -> None:
     assert fact.stack_offsets == (-2, -1)
 
 
+def test_real_vex_push_immediate_transfers_exact_constant_to_ds() -> None:
+    """Alias preserves both immediate bytes across a PUSH/POP segment transfer."""
+    artifact = _lift_function(bytes.fromhex("68 4e 28 1f c3"))
+
+    restoration = build_x86_16_segment_stack_restore_artifact(artifact)
+
+    assert restoration.summary == {
+        "raw_fact_count": 1,
+        "normalized_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+        "cross_block_restore_count": 0,
+    }
+    fact = restoration.facts[0]
+    assert fact.verdict is SegmentStackRestoreVerdict8616.PROVEN
+    assert fact.saved_instruction_addr == 0x1000
+    assert fact.saved_register is None
+    assert fact.restore_register == "ds"
+    assert fact.stack_offsets == (-2, -1)
+    assert fact.constant_value == 0x284E
+    assert restoration.restore_sources == ()
+
+
 def test_unknown_ss_alias_invalidates_saved_stack_identity() -> None:
     stack_bytes = {
         -2: SegmentStackByteOrigin8616("ds", 0x2000, 0, 0, -2),

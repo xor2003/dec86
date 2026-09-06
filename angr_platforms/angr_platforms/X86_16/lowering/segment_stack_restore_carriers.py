@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeShort
 
 from ..alias.segment_stack_restore import (
     SegmentStackRestoreArtifact8616,
@@ -35,10 +36,16 @@ __all__ = [
 class _SegmentStackRestoreCodegen8616(Protocol):
     """Owned fields consumed and published at the dynamic codegen boundary."""
 
-    cfunc: object
+    cfunc: _SegmentStackRestoreCFunction8616
     _inertia_segment_stack_restore_artifact: SegmentStackRestoreArtifact8616
     _inertia_segment_stack_restore_carrier_pairs_8616: frozenset[tuple[int, int, str]]
     _inertia_segment_stack_restore_carrier_stats_8616: SegmentStackRestoreCarrierStats8616
+
+
+class _SegmentStackRestoreCFunction8616(Protocol):
+    """Owned C-function surface needed by the carrier consumer."""
+
+    statements: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +59,7 @@ class SegmentStackRestoreCarrierStats8616:
     already_materialized_count: int
     failure_count: int
     removed_assignment_count: int
+    replaced_assignment_count: int = 0
 
     @property
     def closed(self) -> bool:
@@ -102,8 +110,13 @@ def prune_proven_segment_stack_restore_carriers_8616(project: object, codegen: o
         for fact in artifact.facts
         if (key := _fact_key_8616(fact)) is not None
     }
-    prior_pairs = getattr(boundary, "_inertia_segment_stack_restore_carrier_pairs_8616", frozenset())
-    completed_pairs = set(prior_pairs if isinstance(prior_pairs, frozenset) else ())
+    prior_pairs: object = getattr(
+        boundary, "_inertia_segment_stack_restore_carrier_pairs_8616", frozenset()
+    )
+    typed_prior_pairs: frozenset[tuple[int, int, str]] = (
+        prior_pairs if isinstance(prior_pairs, frozenset) else frozenset()
+    )
+    completed_pairs = set(typed_prior_pairs)
     pending_pairs = {key: fact for key, fact in facts_by_key.items() if key not in completed_pairs}
     address_roles: dict[int, set[tuple[tuple[int, int, str], str]]] = {}
     for key, fact in pending_pairs.items():
@@ -113,15 +126,37 @@ def prune_proven_segment_stack_restore_carriers_8616(project: object, codegen: o
 
     observed_roles: dict[tuple[int, int, str], set[str]] = {}
     removed_assignment_count = 0
+    replaced_assignment_count = 0
 
     def rewrite_statement_list(statements: list[object]) -> None:
         """Remove matching assignments recursively while retaining all others."""
-        nonlocal removed_assignment_count
+        nonlocal removed_assignment_count, replaced_assignment_count
         kept: list[object] = []
         for statement in statements:
             instruction_addr = _statement_instruction_addr_8616(statement)
-            roles = address_roles.get(instruction_addr, ())
+            roles = address_roles.get(instruction_addr, ()) if instruction_addr is not None else ()
             if isinstance(statement, structured_c.CAssignment) and roles:
+                constant_restores = tuple(
+                    (key, pending_pairs[key])
+                    for key, role in roles
+                    if role == "restore" and pending_pairs[key].constant_value is not None
+                )
+                if len(constant_restores) == 1:
+                    key, fact = constant_restores[0]
+                    replacement = structured_c.CAssignment(
+                        statement.lhs,
+                        structured_c.CConstant(
+                            fact.constant_value,
+                            SimTypeShort(False),
+                            codegen=codegen,
+                        ),
+                        codegen=codegen,
+                        tags=copy_structured_tags_8616(getattr(statement, "tags", None)),
+                    )
+                    kept.append(replacement)
+                    observed_roles.setdefault(key, set()).add("restore")
+                    replaced_assignment_count += 1
+                    continue
                 for key, role in roles:
                     observed_roles.setdefault(key, set()).add(role)
                 removed_assignment_count += 1
@@ -153,9 +188,10 @@ def prune_proven_segment_stack_restore_carriers_8616(project: object, codegen: o
         normalized_fact_count=len(facts_by_key),
         classified_fact_count=len(facts_by_key),
         materialized_count=len(materialized_pairs),
-        already_materialized_count=len(set(facts_by_key) & set(prior_pairs)),
+        already_materialized_count=len(set(facts_by_key) & set(typed_prior_pairs)),
         failure_count=0,
         removed_assignment_count=removed_assignment_count,
+        replaced_assignment_count=replaced_assignment_count,
     )
     boundary._inertia_segment_stack_restore_carrier_stats_8616 = stats
-    return removed_assignment_count > 0
+    return removed_assignment_count > 0 or replaced_assignment_count > 0

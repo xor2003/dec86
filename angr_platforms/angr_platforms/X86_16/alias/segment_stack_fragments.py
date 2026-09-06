@@ -18,6 +18,7 @@ __all__ = [
     "SegmentStackByteOrigin8616",
     "SegmentStackFragments8616",
     "complete_segment_restore_8616",
+    "complete_stack_constant_8616",
     "complete_stack_register_restore_8616",
     "computed_segment_fragments_8616",
     "computed_stack_register_fragments_8616",
@@ -30,13 +31,14 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class SegmentStackByteOrigin8616:
-    """One byte of a segment read as it moves through stack storage."""
+    """One exact source byte as it moves through stack storage."""
 
-    saved_register: str
+    saved_register: str | None
     saved_instruction_addr: int
     origin_byte: int
     value_byte: int
     stack_offset: int | None = None
+    constant_byte: int | None = None
 
 
 type SegmentStackFragments8616 = frozenset[SegmentStackByteOrigin8616]
@@ -71,7 +73,18 @@ def register_value_fragments_8616(
     """Read exact byte provenance for one tracked 16-bit register value."""
     if not isinstance(value, IRValue):
         return frozenset()
-    if value.space is MemSpace.REG and value.name in tracked_registers and value.size in {1, 2}:
+    if value.space is MemSpace.CONST and value.const is not None and value.size in {1, 2}:
+        fragments = frozenset(
+            SegmentStackByteOrigin8616(
+                None,
+                instruction_addr,
+                byte,
+                byte,
+                constant_byte=(value.const >> (byte * 8)) & 0xFF,
+            )
+            for byte in range(value.size)
+        )
+    elif value.space is MemSpace.REG and value.name in tracked_registers and value.size in {1, 2}:
         fragments = frozenset(
             SegmentStackByteOrigin8616(value.name, instruction_addr, byte, byte)
             for byte in range(2)
@@ -132,8 +145,8 @@ def _stack_offset(address: IRAddress, sp_delta: int | None) -> int | None:
     # byte offsets remain relative to the current SP. Do not count a folded,
     # entry-relative negative displacement twice.
     if address.offset < 0:
-        return address.offset
-    return sp_delta + address.offset
+        return int(address.offset)
+    return sp_delta + int(address.offset)
 
 
 def stack_load_fragments_8616(
@@ -262,4 +275,39 @@ def complete_stack_register_restore_8616(
         or stack_offsets[1] - stack_offsets[0] != 1
     ):
         return None
-    return next(iter(registers)), next(iter(save_sites)), tuple(stack_offsets)
+    saved_register = next(iter(registers))
+    if not isinstance(saved_register, str):
+        return None
+    return saved_register, next(iter(save_sites)), tuple(stack_offsets)
+
+
+def complete_stack_constant_8616(
+    fragments: SegmentStackFragments8616,
+) -> tuple[int, int, tuple[int, ...]] | None:
+    """Return one exact 16-bit constant reconstructed from adjacent stack bytes."""
+    if len(fragments) != 2:
+        return None
+    save_sites = {fragment.saved_instruction_addr for fragment in fragments}
+    value_bytes = {fragment.value_byte for fragment in fragments}
+    stack_offsets = sorted(
+        fragment.stack_offset
+        for fragment in fragments
+        if fragment.stack_offset is not None
+    )
+    if (
+        len(save_sites) != 1
+        or value_bytes != {0, 1}
+        or any(fragment.saved_register is not None for fragment in fragments)
+        or any(fragment.constant_byte is None for fragment in fragments)
+        or len(stack_offsets) != 2
+        or stack_offsets[1] - stack_offsets[0] != 1
+    ):
+        return None
+    bytes_by_position = {
+        fragment.value_byte: fragment.constant_byte
+        for fragment in fragments
+    }
+    low = bytes_by_position[0]
+    high = bytes_by_position[1]
+    assert low is not None and high is not None
+    return low | (high << 8), next(iter(save_sites)), tuple(stack_offsets)

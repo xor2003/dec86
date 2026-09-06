@@ -87,3 +87,44 @@ def test_unknown_segment_restore_keeps_every_assignment() -> None:
 
     assert prune_proven_segment_stack_restore_carriers_8616(object(), codegen) is False
     assert codegen.cfunc.statements.statements == [restore]
+
+
+def test_proven_constant_segment_transfer_replaces_restore_and_removes_push() -> None:
+    """A proven stack constant becomes one direct segment-register assignment."""
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    save_low = _assignment(codegen, 0x1000)
+    save_high = _assignment(codegen, 0x1000)
+    restore = _assignment(codegen, 0x1003)
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements([save_low, save_high, restore], codegen=codegen)
+    )
+    codegen._inertia_segment_stack_restore_artifact = SegmentStackRestoreArtifact8616(
+        facts=(
+            SegmentStackRestoreFact8616(
+                block_addr=0x1000,
+                restore_instruction_addr=0x1003,
+                restore_register="ds",
+                saved_instruction_addr=0x1000,
+                saved_register=None,
+                stack_offsets=(-2, -1),
+                verdict=SegmentStackRestoreVerdict8616.PROVEN,
+                constant_value=0x284E,
+            ),
+        ),
+    )
+
+    assert prune_proven_segment_stack_restore_carriers_8616(object(), codegen) is True
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 1
+    assert statements[0].lhs is restore.lhs
+    assert statements[0].rhs.value == 0x284E
+    stats = codegen._inertia_segment_stack_restore_carrier_stats_8616
+    assert stats.removed_assignment_count == 2
+    assert stats.replaced_assignment_count == 1
+    assert stats.closed
