@@ -106,17 +106,22 @@ def test_prefork_pool_rejects_start_after_thread_creation() -> None:
 def test_prefork_framing_retries_partial_pipe_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Large typed payloads must not be truncated by a partial POSIX write."""
+    """Partial writes must retain one frame buffer without suffix copies."""
     read_fd, write_fd = os.pipe()
     real_write = os.write
+    write_buffers: list[bytes | memoryview] = []
 
-    def _partial_write(fd: int, data: bytes) -> int:
+    def _partial_write(fd: int, data: bytes | memoryview) -> int:
+        write_buffers.append(data)
         return real_write(fd, data[: max(1, min(3, len(data)))])
 
     monkeypatch.setattr(prefork_job_pool.os, "write", _partial_write)
     try:
         prefork_job_pool._write_framed_pickle(write_fd, {"payload": "x" * 64})
         assert prefork_job_pool._read_framed_pickle(read_fd) == {"payload": "x" * 64}
+        assert write_buffers
+        assert all(isinstance(data, memoryview) for data in write_buffers)
+        assert len({id(data.obj) for data in write_buffers if isinstance(data, memoryview)}) == 1
     finally:
         os.close(read_fd)
         os.close(write_fd)

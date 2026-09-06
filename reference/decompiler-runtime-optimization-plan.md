@@ -416,21 +416,26 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`.
   Function and whole-tail validation pass, and 45 focused cache tests preserve
   semantic-environment invalidation.
-- Function IR/SSA persistence no longer computes a second whole-artifact JSON
-  projection digest from the same pickle payload. Exact payload hashing,
-  restricted owned-class unpickling, function identity, and IR/SSA coherence
-  checks remain mandatory. Persistence now stores only raw IR and rebuilds the
-  deterministic IR-stage SSA projection on hydration; the SSA builder belongs
-  to the cache's source identity, so implementation changes still invalidate
-  the artifact. The previous cold profile attributed 5.282 of 13.174
-  record-encoding seconds to the duplicate projection traversal. On the same
-  representative function, the raw payload fell from 962,320 to 463,100 bytes
-  (52%) and current record construction measured 0.114 seconds median. The
-  comparable forced 20-function path fell from 36.39 to 28.04 seconds wall and
-  from about 22 to 14 seconds before decompilation; a second forced Alias
-  rebuild hydrated IR, reconstructed SSA, and finished in 18.92 seconds.
-  Every run emitted byte-identical C at the accepted hash and passed function
-  plus whole-tail validation.
+- Function IR/SSA persistence no longer computes a duplicate JSON projection
+  digest and now stores only raw IR, rebuilding deterministic IR-stage SSA on
+  hydration while retaining payload, ownership, identity, coherence, and source
+  checks. A representative payload fell from 962,320 to 463,100 bytes (52%);
+  the forced 20-function path fell from 36.39 to 28.04 seconds wall and from
+  about 22 to 14 seconds before decompilation. A cold profile then attributed
+  24.406 seconds to 21 raw IR builds and 22.209 to lifting, versus 1.405 for all
+  20 record writes, confirming lifting as the remaining owner. Prefork framing
+  also copied every remaining byte suffix after each partial write: a 4 MiB/8
+  KiB synthetic partial-write probe fell from 0.253 to 0.00058 seconds with one
+  `memoryview`; normal blocking-pipe throughput was flat, so this is a safeguard
+  rather than a wall-time claim. Workers now return raw IR only and rebuild SSA
+  on the parent; the largest SORTD Alias result was 1,246 bytes versus 422,404
+  bytes of IR and 534,393 bytes of redundant SSA. The representative artifact
+  is 52% smaller and serialize/load plus rebuild measured 0.689 versus 0.715
+  seconds. A load-contaminated cold three-worker run finished in 32.59 seconds,
+  emitted accepted C at `caaf606face2a9c0c041768d6bd1b6fc8a5216809f219795ebed1e7cfea02a00`,
+  and passed both validation gates. Worker count is execution-only cache
+  context; automatic parallelism remains disabled pending a clean A/B. The
+  changed surface passes 71 mapped tests.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -443,7 +448,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
 | P1 | Structuring validation priming measured 1.49 seconds in the current instrumented live run | Large functions still pay repeated semantic consumer work | All three direct-stack replays and all three segment/global replays were productive on `sub_109e8`; the next skip needs a narrower authoritative mutation impact, not call-order memoization |
-| P1 | Cold indexed Alias/Widening context construction still spends about 14 seconds before decompilation on a forced current rebuild | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Duplicate execution-environment cache families, redundant projection hashing, and persisted SSA duplication are removed; typed IR import, SSA construction, raw-IR pickle encoding, and Alias/Widening remain |
+| P1 | Cold indexed Alias/Widening context construction still spends about 14 seconds before decompilation on a forced current rebuild | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Duplicate cache families, projection hashing, persisted/transported SSA duplication, and quadratic pipe suffix copying are removed; typed IR import, SSA construction, and Alias/Widening remain |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |

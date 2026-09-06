@@ -52,9 +52,10 @@ def _write_framed_pickle(fd: int, payload: object) -> None:
     """Write one length-prefixed pickle payload to an owned pipe."""
     data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
     framed_data = len(data).to_bytes(8, "little") + data
+    framed_view = memoryview(framed_data)
     written = 0
     while written < len(framed_data):
-        chunk_size = os.write(fd, framed_data[written:])
+        chunk_size = os.write(fd, framed_view[written:])
         if chunk_size <= 0:
             raise OSError("prefork pipe write made no progress")
         written += chunk_size

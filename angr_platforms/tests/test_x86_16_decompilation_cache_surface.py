@@ -247,6 +247,7 @@ def test_function_cache_key_ignores_non_semantic_runtime_environment(monkeypatch
     monkeypatch.setenv("INERTIA_CORE_CPROFILE_PATH", str(tmp_path / "first.prof"))
     monkeypatch.setenv("INERTIA_DECOMPILE_VENV", "0")
     monkeypatch.setenv("INERTIA_DISABLE_TIMING", "0")
+    monkeypatch.setenv("INERTIA_INDEXED_ALIAS_WORKERS", "1")
     first_key = cache_module._function_decompilation_cache_key(**key_args)
     monkeypatch.setenv("INERTIA_SERIAL_CLEAN_WORKER_RESULT", str(tmp_path / "second.json"))
     monkeypatch.setenv("INERTIA_ARCH_GUARD_VERIFIED_PARENT_PID", "200")
@@ -256,6 +257,7 @@ def test_function_cache_key_ignores_non_semantic_runtime_environment(monkeypatch
     monkeypatch.setenv("INERTIA_CORE_CPROFILE_PATH", str(tmp_path / "second.prof"))
     monkeypatch.setenv("INERTIA_DECOMPILE_VENV", "1")
     monkeypatch.setenv("INERTIA_DISABLE_TIMING", "1")
+    monkeypatch.setenv("INERTIA_INDEXED_ALIAS_WORKERS", "3")
     second_key = cache_module._function_decompilation_cache_key(**key_args)
 
     assert first_key is not None

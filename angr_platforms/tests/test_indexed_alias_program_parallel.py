@@ -169,21 +169,32 @@ def test_bounded_workers_fall_back_when_job_set_is_incomplete(monkeypatch) -> No
     assert fallback_calls == [(0x1000, 0x2000)]
 
 
-def test_parent_republishes_worker_ir_and_ssa() -> None:
+def test_parent_republishes_worker_ir_and_ssa(monkeypatch) -> None:
     project = SimpleNamespace()
     function_addr = 0x1000
     function_evidence = object.__new__(IndexedAliasFunctionEvidence8616)
     raw_ir = IRFunctionArtifact(function_addr, ())
     raw_ssa = SSAFunctionArtifact(function_addr, ())
+    rebuilt: list[IRFunctionArtifact] = []
+
+    def _build_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifact:
+        rebuilt.append(artifact)
+        return raw_ssa
+
+    monkeypatch.setattr(
+        indexed_alias_program_parallel,
+        "build_x86_16_function_ssa",
+        _build_ssa,
+    )
     bundle = indexed_alias_program_parallel._IndexedAliasFunctionBundle8616(
         function_evidence,
         raw_ir,
-        raw_ssa,
     )
 
     indexed_alias_program_parallel._publish_parent_artifacts_8616(project, bundle)
 
     assert registered_function_ir_artifact_8616(project, function_addr).artifact is raw_ir
     registered_ssa = registered_function_ssa_artifact_8616(project, function_addr)
+    assert rebuilt == [raw_ir]
     assert registered_ssa.artifact is raw_ssa
     assert registered_ssa.stage is FunctionSSAArtifactStage8616.IR

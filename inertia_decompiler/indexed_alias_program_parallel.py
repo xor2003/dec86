@@ -2,11 +2,11 @@
 
 Layer: CLI/fallback/reporting orchestration.
 Responsibility: schedule exact per-function IR/Alias work in isolated POSIX
-workers, then republish the returned typed IR/SSA artifacts on the parent
-project before assembling the authoritative Alias program census. Execution is
-serial unless ``INERTIA_INDEXED_ALIAS_WORKERS`` explicitly enables N-1
-concurrency capped at three workers for a 2 GiB budget. This module does not
-classify Alias facts or infer semantic evidence.
+workers, then republish returned raw IR and rebuild its deterministic IR-stage
+SSA projection on the parent before assembling the authoritative Alias program
+census. Execution is serial unless ``INERTIA_INDEXED_ALIAS_WORKERS`` explicitly
+enables N-1 concurrency capped at three workers for a 2 GiB budget. This module
+does not classify Alias facts or infer semantic evidence.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from angr_platforms.X86_16.ir.function_ssa_registry import (
     publish_function_ssa_artifact_8616,
     registered_function_ssa_artifact_8616,
 )
-from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
+from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 
 from .runtime_support import PreforkJobPool
 
@@ -62,11 +62,10 @@ class _FunctionAddressBoundary8616(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _IndexedAliasFunctionBundle8616:
-    """One worker's Alias result and its exact reusable IR projections."""
+    """One worker's Alias result and its exact reusable raw IR."""
 
     result: IndexedAliasFunctionEvidence8616 | IndexedAliasFunctionRefusal8616
     raw_ir: IRFunctionArtifact | None
-    raw_ssa: SSAFunctionArtifact | None
 
 
 def indexed_alias_program_worker_count_8616(
@@ -123,19 +122,20 @@ def _publish_parent_artifacts_8616(
     project: object,
     bundle: _IndexedAliasFunctionBundle8616,
 ) -> None:
-    """Republish one worker's exact raw IR and IR-stage SSA on the parent."""
+    """Republish raw IR and rebuild deterministic IR-stage SSA on the parent."""
     if isinstance(bundle.result, IndexedAliasFunctionRefusal8616):
-        if bundle.raw_ir is not None or bundle.raw_ssa is not None:
+        if bundle.raw_ir is not None:
             raise ValueError("refused Alias function returned partial IR evidence")
         return
-    if bundle.raw_ir is None or bundle.raw_ssa is None:
-        raise ValueError("materialized Alias function omitted reusable IR evidence")
+    if bundle.raw_ir is None:
+        raise ValueError("materialized Alias function omitted reusable raw IR")
     raw_result = publish_function_ir_artifact_8616(project, bundle.raw_ir)
     if raw_result.verdict is not FunctionIRArtifactVerdict8616.PROVEN:
         raise ValueError("parallel raw IR publication conflicted on parent project")
+    raw_ssa = build_x86_16_function_ssa(bundle.raw_ir)
     ssa_result = publish_function_ssa_artifact_8616(
         project,
-        bundle.raw_ssa,
+        raw_ssa,
         FunctionSSAArtifactStage8616.IR,
     )
     if ssa_result.verdict is not FunctionSSAArtifactVerdict8616.PROVEN:
@@ -167,7 +167,7 @@ def build_indexed_alias_program_evidence_bounded_8616(
         selection = by_addr[payload]
         result = build_indexed_alias_function_evidence_8616(project, selection)
         if isinstance(result, IndexedAliasFunctionRefusal8616):
-            return _IndexedAliasFunctionBundle8616(result, None, None)
+            return _IndexedAliasFunctionBundle8616(result, None)
         raw = registered_function_ir_artifact_8616(project, payload)
         ssa = registered_function_ssa_artifact_8616(project, payload)
         if (
@@ -178,7 +178,7 @@ def build_indexed_alias_program_evidence_bounded_8616(
             or ssa.artifact is None
         ):
             raise ValueError("parallel Alias worker did not retain exact raw IR/SSA")
-        return _IndexedAliasFunctionBundle8616(result, raw.artifact, ssa.artifact)
+        return _IndexedAliasFunctionBundle8616(result, raw.artifact)
 
     jobs = [
         (selection.function_addr, selection.function_addr)
