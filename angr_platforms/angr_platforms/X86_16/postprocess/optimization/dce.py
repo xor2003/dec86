@@ -995,7 +995,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             if (
                 (isinstance(lhs, CUnaryOp)
                 and _dynamic_dce_getattr_8616(lhs, "op", None) in {"Dereference", "Reference"})
-                or isinstance(lhs, (CFunctionCall, CIndexedVariable, CStructField, CVariableField))
+                or isinstance(lhs, (CFunctionCall, CIndexedVariable, CStructField, CTypeCast, CVariableField))
             ):
                 _collect_expr(lhs)
             return reads

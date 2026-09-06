@@ -26,6 +26,11 @@ from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..ir.core import MemSpace
+from ..ir.function_ssa_registry import (
+    FunctionSSAArtifactVerdict8616,
+    registered_function_ssa_artifact_8616,
+)
+from ..pipeline.contracts import SemanticLaneState
 from ..structuring.string_io_loop_carriers import materialize_string_io_loop_carriers_8616
 from ..widening.segmented_load_identity import SegmentedLoadIdentity8616, segmented_load_tags_8616
 from .assignment_lvalue_casts import normalize_scalar_assignment_lvalues_8616
@@ -135,6 +140,8 @@ class _AngrCodegenBoundary8616(Protocol):
     _inertia_stack_pointer_snapshot_stats_8616: StackPointerSnapshotStats8616
     _inertia_linear_global_decomposition_cache_stats_8616: LinearGlobalDecompositionCacheStats8616
     _inertia_final_codegen_projection_replayer_8616: Callable[[object], bool]
+    _inertia_segmented_access_width_lane_8616: SemanticLaneState
+    _inertia_semantic_lanes_8616: tuple[SemanticLaneState, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +153,87 @@ class SegmentedMemoryExpr:
     offset_expr: object
     width_bits: int
     access: str
+
+
+def _reset_segmented_access_width_lane_8616(
+    codegen: _AngrCodegenBoundary8616,
+) -> SemanticLaneState:
+    """Start one closed evidence lane for IR-backed segmented access widths."""
+    lane = SemanticLaneState(name="segmented_access_width")
+    codegen._inertia_segmented_access_width_lane_8616 = lane
+    try:
+        existing = codegen._inertia_semantic_lanes_8616
+    except AttributeError:
+        existing = ()
+    retained = tuple(
+        item
+        for item in existing
+        if isinstance(item, SemanticLaneState) and item.name != lane.name
+    )
+    codegen._inertia_semantic_lanes_8616 = (*retained, lane)
+    return lane
+
+
+def _segmented_access_width_lane_8616(
+    codegen: _AngrCodegenBoundary8616,
+) -> SemanticLaneState:
+    """Return the active typed width-projection lane, creating it when needed."""
+    try:
+        lane = codegen._inertia_segmented_access_width_lane_8616
+    except AttributeError:
+        return _reset_segmented_access_width_lane_8616(codegen)
+    if not isinstance(lane, SemanticLaneState):
+        return _reset_segmented_access_width_lane_8616(codegen)
+    return lane
+
+
+def _logical_segmented_access_width_bits_8616(
+    expr: object,
+    matched: SegmentedMemoryExpr,
+    codegen: _AngrCodegenBoundary8616,
+) -> int | None:
+    """Join one C access to a unique closed IR width by exact site and segment."""
+    source_addrs = instruction_addrs_from_node_8616(expr)
+    cfunc = codegen.cfunc
+    project = codegen.project
+    if not source_addrs or cfunc is None or project is None:
+        return None
+    function_addr = cfunc.addr
+    if not isinstance(function_addr, int):
+        return None
+    resolution = registered_function_ssa_artifact_8616(project, function_addr)
+    if (
+        resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN
+        or resolution.artifact is None
+        or resolution.artifact.logical_memory is None
+        or not resolution.artifact.logical_memory.closed
+    ):
+        return None
+    space = {
+        "DS": MemSpace.DS,
+        "ES": MemSpace.ES,
+        "SS": MemSpace.SS,
+    }.get(matched.space)
+    if space is None:
+        return None
+    candidates = tuple(
+        access
+        for access in resolution.artifact.logical_memory.accesses
+        if access.key.insn_addr in source_addrs and access.address.space is space
+    )
+    if not candidates:
+        return None
+    lane = _segmented_access_width_lane_8616(codegen)
+    lane.raw += 1
+    lane.normalized += 1
+    lane.classified += 1
+    widths = frozenset(access.address.size * 8 for access in candidates)
+    if len(widths) != 1:
+        lane.failures += 1
+        return None
+    lane.materialized += 1
+    lane.verified += 1
+    return next(iter(widths))
 
 
 class NearPointerArgumentRefusalReason8616(StrEnum):
@@ -1431,6 +1519,13 @@ def lower_runtime_segment_access_8616(
             matched = replace(matched, offset_expr=adjusted_offset)
     if matched.space == "SS" and _is_proven_ss_stack_access_8616(matched, codegen=codegen, project=project):
         return None
+    exact_width_bits = _logical_segmented_access_width_bits_8616(
+        expr,
+        matched,
+        cast(_AngrCodegenBoundary8616, codegen),
+    )
+    if exact_width_bits is not None:
+        matched = replace(matched, width_bits=exact_width_bits)
     pointer_access = _near_pointer_arg_access_8616(matched, codegen, provenance_node=expr)
     if pointer_access is not None:
         return cast(object, pointer_access)
@@ -1999,6 +2094,7 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_refusals_8616 = []
+    _reset_segmented_access_width_lane_8616(typed_codegen)
     def _invalidate_segmented_address_caches_8616() -> None:
         """Discard address classifications whose segment child was replaced."""
         rewrite_cache = getattr(project, "_inertia_rewrite_cache", None)

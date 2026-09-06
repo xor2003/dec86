@@ -59,7 +59,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .c_ast_utils import _safe_assign_cfunc_statements_8616
+from .c_ast_utils import (
+    _safe_assign_cfunc_statements_8616,
+    _structured_codegen_node_8616,
+)
 from .lowering.real_mode_linear import _stack_base_bp_bias_8616, _stack_pointer_carrier_offset_8616
 
 _SEGMENT_REGISTER_NAMES_8616 = {"cs", "ds", "es", "ss"}
@@ -154,10 +157,6 @@ def _unwrap_statements_8616(node: object) -> tuple[object, ...]:
     if isinstance(raw, (list, tuple)):
         return tuple(raw)
     return ()
-
-
-def _structured_codegen_node_8616(value: object) -> bool:
-    return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
 
 
 @lru_cache(maxsize=256)

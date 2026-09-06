@@ -33,9 +33,19 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import _is_direct_stack_update_materialization_delta_8616
 from angr_platforms.X86_16.ir import (
+    AddressStatus,
+    IRAddress,
     IRBlock,
     IRFunctionArtifact,
+    IRLogicalMemoryAccess8616,
+    IRLogicalMemoryAccessKey8616,
+    IRLogicalMemoryArtifact8616,
+    IRLogicalMemoryStats8616,
+    IRMemoryAccessKind8616,
+    IRMemoryExecutionSlice8616,
     MemSpace,
+    SegmentOrigin,
+    SSAFunctionArtifact,
     build_x86_16_function_ssa,
     build_x86_16_segment_state_artifact,
 )
@@ -10209,6 +10219,151 @@ def test_lower_runtime_segment_access_rewrites_ds_word_dereference_to_seg_u16():
     assert identity.width == 2
     assert identity.region == codegen.cfunc.addr
     assert lowered.tags["inertia_source_instruction_addrs"] == (0x4042,)
+
+
+def _logical_ds_access(
+    *,
+    function_addr: int,
+    insn_addr: int,
+    ordinal: int,
+    width: int,
+) -> IRLogicalMemoryAccess8616:
+    """Build one complete logical DS access for width-projection tests."""
+    address = IRAddress(
+        MemSpace.DS,
+        base=("si",),
+        size=width,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+    )
+    slices = tuple(
+        IRMemoryExecutionSlice8616(
+            block_addr=insn_addr,
+            instr_index=index,
+            insn_addr=insn_addr,
+            source_byte_offset=index,
+            address=IRAddress(
+                MemSpace.DS,
+                base=("si",),
+                offset=index,
+                size=1,
+                status=AddressStatus.STABLE,
+                segment_origin=SegmentOrigin.PROVEN,
+            ),
+        )
+        for index in range(width)
+    )
+    return IRLogicalMemoryAccess8616(
+        key=IRLogicalMemoryAccessKey8616(
+            function_addr=function_addr,
+            block_addr=insn_addr,
+            insn_addr=insn_addr,
+            access_ordinal=ordinal,
+        ),
+        kind=IRMemoryAccessKind8616.WRITE,
+        address=address,
+        address_bits=16,
+        execution_slices=slices,
+    )
+
+
+def _publish_logical_accesses(
+    project: object,
+    *,
+    function_addr: int,
+    accesses: tuple[IRLogicalMemoryAccess8616, ...],
+) -> None:
+    """Publish one closed SSA logical-memory artifact on a test project."""
+    logical = IRLogicalMemoryArtifact8616(
+        function_addr=function_addr,
+        accesses=accesses,
+        refusals=(),
+        stats=IRLogicalMemoryStats8616(
+            raw_fact_count=len(accesses),
+            normalized_fact_count=len(accesses),
+            classified_fact_count=len(accesses),
+            materialized_count=len(accesses),
+        ),
+    )
+    project._inertia_function_ssa_artifacts_8616 = {
+        function_addr: SSAFunctionArtifact(
+            function_addr=function_addr,
+            blocks=(),
+            logical_memory=logical,
+        )
+    }
+    project._inertia_function_ssa_stages_8616 = {}
+
+
+def test_lower_runtime_segment_access_prefers_exact_ir_byte_store_width():
+    """A closed byte-store fact overrides angr's incorrectly widened C lvalue."""
+    project, codegen = _project()
+    codegen.cfunc.functy = SimpleNamespace(args=())
+    insn_addr = 0x4042
+    _publish_logical_accesses(
+        project,
+        function_addr=codegen.cfunc.addr,
+        accesses=(
+            _logical_ds_access(
+                function_addr=codegen.cfunc.addr,
+                insn_addr=insn_addr,
+                ordinal=0,
+                width=1,
+            ),
+        ),
+    )
+    operand = _seg_linear(project, "ds", _reg(project, "si", codegen), codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+    expr.tags = {"ins_addr": insn_addr}
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CFunctionCall)
+    assert lowered.callee_target == "SEG_U8"
+    lane = codegen._inertia_segmented_access_width_lane_8616
+    assert lane.raw_fact_count == 1
+    assert lane.normalized_fact_count == 1
+    assert lane.classified_fact_count == 1
+    assert lane.materialized_count == 1
+    assert lane.failure_count == 0
+
+
+def test_lower_runtime_segment_access_refuses_ambiguous_ir_store_width():
+    """Conflicting logical widths remain visible and do not guess a helper."""
+    project, codegen = _project()
+    codegen.cfunc.functy = SimpleNamespace(args=())
+    insn_addr = 0x4042
+    _publish_logical_accesses(
+        project,
+        function_addr=codegen.cfunc.addr,
+        accesses=tuple(
+            _logical_ds_access(
+                function_addr=codegen.cfunc.addr,
+                insn_addr=insn_addr,
+                ordinal=ordinal,
+                width=width,
+            )
+            for ordinal, width in enumerate((1, 2))
+        ),
+    )
+    operand = _seg_linear(project, "ds", _reg(project, "si", codegen), codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+    expr.tags = {"ins_addr": insn_addr}
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CFunctionCall)
+    assert lowered.callee_target == "SEG_U16"
+    lane = codegen._inertia_segmented_access_width_lane_8616
+    assert lane.raw_fact_count == 1
+    assert lane.normalized_fact_count == 1
+    assert lane.classified_fact_count == 1
+    assert lane.materialized_count == 0
+    assert lane.failure_count == 1
+    with pytest.raises(PipelineHardError, match="segmented_access_width"):
+        assert_pipeline_contracts_8616(codegen)
 
 
 def test_lower_runtime_segment_access_rewrites_zero_plus_pointer_arg_to_indexed_load():

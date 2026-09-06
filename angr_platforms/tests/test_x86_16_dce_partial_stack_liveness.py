@@ -6,6 +6,9 @@ import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.decompiler_postprocess_utils import (
+    _iter_c_nodes_deep_8616,
+)
 from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.postprocess.optimization.dce import (
     _dead_code_elimination_8616,
@@ -38,6 +41,24 @@ def _constant(codegen: _FakeCodegen, value: int) -> structured_c.CConstant:
     )
 
 
+def test_postprocess_ast_walker_descends_into_semantic_cast() -> None:
+    codegen = _FakeCodegen()
+    variable = SimStackVariable(-8, 2, base="bp", name="segment_word")
+    local = structured_c.CVariable(
+        variable,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    cast = CSemanticCast8616(
+        None,
+        SimTypeChar(False),
+        local,
+        codegen=codegen,
+    )
+
+    assert local in tuple(_iter_c_nodes_deep_8616(cast))
+
+
 def test_dce_partial_stack_write_keeps_prior_full_definition() -> None:
     codegen = _FakeCodegen()
     variable = SimStackVariable(-8, 2, base="bp", name="segment_word")
@@ -67,7 +88,33 @@ def test_dce_partial_stack_write_keeps_prior_full_definition() -> None:
         _constant(codegen, 0x56),
         codegen=codegen,
     )
-    returned = structured_c.CReturn(local, codegen=codegen)
+    returned_value = structured_c.CBinaryOp(
+        "Or",
+        CSemanticCast8616(
+            None,
+            SimTypeChar(False),
+            local,
+            codegen=codegen,
+        ),
+        structured_c.CBinaryOp(
+            "Shl",
+            CSemanticCast8616(
+                None,
+                SimTypeChar(False),
+                structured_c.CBinaryOp(
+                    "Shr",
+                    local,
+                    _constant(codegen, 8),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            _constant(codegen, 8),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    returned = structured_c.CReturn(returned_value, codegen=codegen)
     statements = structured_c.CStatements(
         [full_definition, partial_definition, returned],
         codegen=codegen,
