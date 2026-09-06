@@ -5,6 +5,7 @@ import sys
 
 from _pytest.python import CallSpec2
 
+from scripts import pytest_source_index
 from scripts.pytest_call_hints import concrete_function_addresses
 from scripts.pytest_source_index import (
     build_pytest_source_index,
@@ -47,6 +48,34 @@ def test_source_index_reuses_unchanged_content_and_invalidates_mutation(tmp_path
     assert third is not first
     assert third.has_node("test_other")
     assert not third.has_node("test_case")
+
+
+def test_loaded_source_index_defers_full_facts_until_requested(tmp_path, monkeypatch):
+    test_path = tmp_path / "test_sample.py"
+    test_path.write_text("def test_case():\n    assert result.returncode == 0\n", encoding="utf-8")
+    original_build = pytest_source_index.build_pytest_source_index
+    fact_builds = 0
+
+    def recording_build(source, path, skip_calls):
+        nonlocal fact_builds
+        fact_builds += 1
+        return original_build(source, path, skip_calls)
+
+    clear_pytest_source_index_cache()
+    monkeypatch.setattr(pytest_source_index, "build_pytest_source_index", recording_build)
+
+    index = load_pytest_source_index(test_path, SKIP_CALLS)
+    assert index.has_node("test_case")
+    assert index.skip_xfail_lines("test_case") == ()
+    assert fact_builds == 0
+
+    first = index.facts("test_case")
+    second = index.facts("test_case")
+
+    assert first is second
+    assert first.assertion_count == 1
+    assert first.evidence_hints == ("exit-code",)
+    assert fact_builds == 1
 
 
 def test_source_index_preserves_file_class_and_method_skip_scope(tmp_path):

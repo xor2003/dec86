@@ -15,9 +15,21 @@ from pathlib import Path
 if __package__:
     from scripts.pytest_assertion_facts import PytestNodeFacts, expectation_kind, resolve_local_helper_facts
     from scripts.pytest_call_hints import extract_pytest_call_hints
+    from scripts.pytest_source_structure import (
+        PytestFactsByNode,
+        PytestFactsProvider,
+        PytestSourceIndex,
+        build_pytest_structure_index,
+    )
 else:
     from pytest_assertion_facts import PytestNodeFacts, expectation_kind, resolve_local_helper_facts
     from pytest_call_hints import extract_pytest_call_hints
+    from pytest_source_structure import (
+        PytestFactsByNode,
+        PytestFactsProvider,
+        PytestSourceIndex,
+        build_pytest_structure_index,
+    )
 
 _INPUT_SUFFIXES = (
     ".asm",
@@ -77,37 +89,6 @@ class _MutableNodeFacts:
             subprocess_call_count=self.subprocess_call_count,
             effective_subprocess_call_count=self.subprocess_call_count,
         )
-
-
-@dataclass(frozen=True, slots=True)
-class PytestSourceIndex:
-    """Immutable node and skip/xfail index for one test source version."""
-
-    nodes: frozenset[str]
-    skip_xfail_lines_by_node: tuple[tuple[str, tuple[int, ...]], ...]
-    facts_by_node: tuple[tuple[str, PytestNodeFacts], ...] = ()
-
-    def has_node(self, node_id: str) -> bool:
-        """Return whether a pytest node ID names an indexed source object."""
-
-        normalized = "::".join(part for part in node_id.split("::") if part)
-        return not normalized or normalized in self.nodes
-
-    def skip_xfail_lines(self, node_id: str) -> tuple[int, ...]:
-        """Return skip/xfail call lines within the selected pytest node."""
-
-        normalized = "::".join(part for part in node_id.split("::") if part)
-        return dict(self.skip_xfail_lines_by_node).get(normalized, ())
-
-    def facts(self, node_id: str) -> PytestNodeFacts:
-        """Return static facts for one normalized pytest selector."""
-
-        normalized = "::".join(
-            part.split("[", 1)[0].split("@", 1)[0]
-            for part in node_id.split("::")
-            if part
-        )
-        return dict(self.facts_by_node).get(normalized, PytestNodeFacts())
 
 
 _SOURCE_INDEX_CACHE: dict[tuple[Path, frozenset[str]], tuple[str, PytestSourceIndex]] = {}
@@ -240,17 +221,13 @@ class _PytestSourceVisitor(ast.NodeVisitor):
     def visit_Assert(self, node: ast.Assert) -> None:
         """Record assertion operators and durable evidence categories."""
 
-        assertion_kinds = {
-            child.__class__.__name__
-            for child in ast.walk(node.test)
-            if isinstance(child, ast.cmpop | ast.boolop | ast.unaryop)
-        }
-        assertion_names = {
-            name
-            for child in ast.walk(node.test)
-            if isinstance(child, ast.expr)
-            and (name := _dotted_attribute_name(child)) is not None
-        }
+        assertion_kinds: set[str] = set()
+        assertion_names: set[str] = set()
+        for child in ast.walk(node.test):
+            if isinstance(child, ast.cmpop | ast.boolop | ast.unaryop):
+                assertion_kinds.add(child.__class__.__name__)
+            if isinstance(child, ast.expr) and (name := _dotted_attribute_name(child)) is not None:
+                assertion_names.add(name)
         lowered_names = " ".join(assertion_names).lower()
         evidence = set()
         for token, label in (
@@ -285,13 +262,17 @@ class _PytestSourceVisitor(ast.NodeVisitor):
                 facts.input_hints.add(value)
 
 
-def build_pytest_source_index(source: str, path: Path, skip_calls: frozenset[str]) -> PytestSourceIndex:
+def build_pytest_source_index(
+    source: str,
+    path: Path,
+    skip_calls: frozenset[str],
+) -> PytestSourceIndex:
     """Parse source and build all node-specific indexes in one request."""
 
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError:
-        return PytestSourceIndex(nodes=frozenset(), skip_xfail_lines_by_node=())
+        return PytestSourceIndex(frozenset(), (), PytestFactsProvider(lambda: ()))
     visitor = _PytestSourceVisitor(skip_calls)
     visitor.visit(tree)
     direct_facts = {name: facts.freeze() for name, facts in visitor.facts.items()}
@@ -300,10 +281,13 @@ def build_pytest_source_index(source: str, path: Path, skip_calls: frozenset[str
         name: replace(facts, module_hints=tuple(sorted(set(facts.module_hints) | set(module_hints))))
         for name, facts in direct_facts.items()
     }
+    facts_by_node: PytestFactsByNode = tuple(
+        (name, resolve_local_helper_facts(name, direct_facts)) for name in visitor.facts
+    )
     return PytestSourceIndex(
         nodes=frozenset(visitor.nodes),
         skip_xfail_lines_by_node=tuple((name, tuple(lines)) for name, lines in visitor.skip_lines.items()),
-        facts_by_node=tuple((name, resolve_local_helper_facts(name, direct_facts)) for name in visitor.facts),
+        _facts=PytestFactsProvider(lambda: facts_by_node, facts_by_node),
     )
 
 
@@ -316,7 +300,22 @@ def load_pytest_source_index(path: Path, skip_calls: frozenset[str]) -> PytestSo
     cached = _SOURCE_INDEX_CACHE.get(cache_key)
     if cached is not None and cached[0] == digest:
         return cached[1]
-    index = build_pytest_source_index(source, path, skip_calls)
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError:
+        index = PytestSourceIndex(frozenset(), (), PytestFactsProvider(lambda: ()))
+    else:
+
+        def load_facts() -> PytestFactsByNode:
+            """Build full facts from the captured content version."""
+
+            return build_pytest_source_index(source, path, skip_calls).all_facts()
+
+        index = build_pytest_structure_index(
+            tree,
+            skip_calls,
+            PytestFactsProvider(load_facts),
+        )
     _SOURCE_INDEX_CACHE[cache_key] = (digest, index)
     return index
 

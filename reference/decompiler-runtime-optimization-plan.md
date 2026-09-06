@@ -474,6 +474,16 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   deliberately invalidates all file verdicts and therefore retains a slower
   one-time cold rebuild. Seventy-four focused tests plus changed-file Ruff,
   strict mypy, and the fast architecture gate pass.
+- Pytest target validation now builds only selector and skip/xfail structure;
+  assertion, subprocess, and evidence facts are memoized on first inventory
+  access. The 74-file profiled index path fell from 2.208 to 1.244 seconds
+  (43.7%), with no full-fact builds in the architecture lane. Its DoD is met:
+  content mutation invalidates the index, lazy facts build once, and 75 source
+  index, inventory, profile, and ownership tests pass. A 448 KiB one-file
+  check measured 0.306 seconds cold, 0.002 warm, and 0.298 after content
+  invalidation. An explicit-stack AST walker was rejected because profiler
+  allocation cost made the same path slower; restoring it without contrary
+  aggregate evidence is a failure.
 - The 17,901-line `decompiler_postprocess_stage.py` remains a development,
   review, and typing cost, but is no longer the leading runtime owner.
 - CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
@@ -489,6 +499,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 | P1 | Cold indexed Alias/Widening context construction still spends about 14 seconds before decompilation on a forced current rebuild | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Duplicate cache families, projection hashing, persisted/transported SSA duplication, and quadratic pipe suffix copying are removed; typed IR import, SSA construction, and Alias/Widening remain |
 | P1 | Stable semantic consumers outside the accepted optimization transaction still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
+| P1 | Fresh-process architecture checks still parse 361 files and walk about 1.2 million AST nodes | No decompilation semantic impact | The latest profile attributes 5.34 seconds to repeated checker walks and 3.39 seconds to parsing; the checker is currently foreign-dirty, so shared AST caching is blocked until ownership clears |
 | P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
 | P2 | Persistent cache storage is unbounded; the existing cache occupies about 1.7 GiB, including 1.3 GiB of legacy paired IR/SSA records | New raw-IR records are about 52% smaller, but stale generations still consume disk | Any eviction policy must avoid a directory scan on every write and remain race-safe across workers |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
