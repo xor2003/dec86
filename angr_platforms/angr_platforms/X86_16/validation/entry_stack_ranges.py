@@ -18,6 +18,9 @@ from typing import Protocol, cast
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_variable import SimStackVariable
 
+from ..lowering.stack_function_coordinates import (
+    c_function_stack_coordinate_projection_8616,
+)
 from ..lowering.stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
 )
@@ -103,18 +106,33 @@ def entry_stack_ranges_from_codegen_8616(
         argument_nodes = tuple(arguments)
     except TypeError:
         return EntryStackRangeCollection8616()
+    function_projection = c_function_stack_coordinate_projection_8616(
+        boundary.cfunc
+    )
 
     raw_fact_count = 0
     materialized_count = 0
     failure_count = 0
     ranges: list[DefUseEntryStackRange8616] = []
-    for argument in argument_nodes:
+    for index, argument in enumerate(argument_nodes):
         variable = _stack_argument_variable_8616(argument)
         if variable is None:
             continue
         raw_fact_count += 1
         width = variable.size
-        bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        projected_argument = (
+            function_projection.arguments[index]
+            if function_projection is not None
+            and index < len(function_projection.arguments)
+            else None
+        )
+        bp_offset = (
+            projected_argument.machine_bp_offset
+            if projected_argument is not None
+            and projected_argument.entry_sp_offset == variable.offset
+            and projected_argument.size == width
+            else machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        )
         if (
             variable.base != "bp"
             or not isinstance(width, int)

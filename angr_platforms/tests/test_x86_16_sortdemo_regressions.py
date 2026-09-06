@@ -1331,14 +1331,40 @@ def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
     assert "MK_FP(" not in body
     assert "iBreak = abarWork[iHigh].field_0;" in body
     assert body.count("Swaps(") == 3
-    assert "Swaps(&abarWork[iLow], &abarWork[iHigh]);" in body
-    assert "Swaps(&abarWork[iUp], &abarWork[iDown]);" in body
-    assert "Swaps(&abarWork[iUp], &abarWork[iHigh]);" in body
+    index_view = r"(?:\(unsigned short\))?"
+    assert re.search(
+        rf"Swaps\(&abarWork\[{index_view}iLow\], &abarWork\[{index_view}iHigh\]\);",
+        body,
+    )
+    assert re.search(
+        rf"Swaps\(&abarWork\[{index_view}iUp\], &abarWork\[{index_view}iDown\]\);",
+        body,
+    )
+    assert re.search(
+        rf"Swaps\(&abarWork\[{index_view}iUp\], &abarWork\[{index_view}iHigh\]\);",
+        body,
+    )
     assert body.count("SwapBars(") == 3
-    assert body.count("QuickSort(iLow, iUp - 1);") == 2
-    assert body.count("QuickSort(iUp + 1, iHigh);") == 2
-    assert "QuickSort(iLow, iUp);" not in body
-    assert "QuickSort(iUp, iHigh);" not in body
+    assert len(
+        re.findall(
+            rf"QuickSort\({index_view}iLow, {index_view}iUp - 1\);",
+            body,
+        )
+    ) == 2
+    assert len(
+        re.findall(
+            rf"QuickSort\({index_view}iUp \+ 1, iHigh\);",
+            body,
+        )
+    ) == 2
+    assert re.search(
+        rf"QuickSort\({index_view}iLow, {index_view}iUp\);",
+        body,
+    ) is None
+    assert re.search(
+        rf"QuickSort\({index_view}iUp, iHigh\);",
+        body,
+    ) is None
     do_body = body[body.index("do\n") :]
     first_scan_match = re.search(r"while \((?:true|1)\)", do_body)
     assert first_scan_match is not None

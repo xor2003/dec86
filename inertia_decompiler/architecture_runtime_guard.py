@@ -20,6 +20,7 @@ __all__ = [
     "DecompilerArchitectureGuardError",
     "assert_decompiler_architecture_clean",
     "cached_decompiler_architecture_import_violations",
+    "cached_decompiler_startup_architecture_violations",
     "format_decompiler_architecture_guard_error",
 ]
 
@@ -28,6 +29,11 @@ _ARCHITECTURE_GUARD_CACHE_PATH: Path = (
     architecture_check.REPO_ROOT
     / ".inertia_decomp_cache"
     / "architecture_import_guard.json"
+)
+_ARCHITECTURE_STARTUP_CACHE_PATH: Path = (
+    architecture_check.REPO_ROOT
+    / ".inertia_decomp_cache"
+    / "architecture_startup_guard.json"
 )
 _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID: int | None = None
 
@@ -142,6 +148,47 @@ def cached_decompiler_architecture_import_violations() -> tuple[ArchitectureViol
     if not evaluation.violations:
         _ARCHITECTURE_GUARD_VERIFIED_PROCESS_PID = process_pid
     violations: tuple[ArchitectureViolation, ...] = evaluation.violations
+    return violations
+
+
+def cached_decompiler_startup_architecture_violations() -> tuple[ArchitectureViolation, ...]:
+    """Return the exact cached default-tree startup verdict or evaluate it."""
+    fingerprint = architecture_import_attestation.architecture_startup_source_fingerprint(
+        architecture_check.X86_16_ROOT,
+        architecture_check.REPO_ROOT,
+    )
+    cached: tuple[ArchitectureViolation, ...] | None = (
+        architecture_import_attestation.load_startup_architecture_verdict(
+            _ARCHITECTURE_STARTUP_CACHE_PATH,
+            fingerprint,
+        )
+    )
+    if cached is not None:
+        return cached
+    import_violations = cached_decompiler_architecture_import_violations()
+    violations: tuple[ArchitectureViolation, ...] = architecture_check.check_decompiler_startup_architecture(
+        architecture_check.X86_16_ROOT,
+        architecture_check.CLI_DECOMPILATION,
+        architecture_check.REPO_ROOT,
+        prechecked_import_violations=import_violations,
+    )
+    final_fingerprint = architecture_import_attestation.architecture_startup_source_fingerprint(
+        architecture_check.X86_16_ROOT,
+        architecture_check.REPO_ROOT,
+    )
+    if final_fingerprint != fingerprint:
+        return (
+            ArchitectureViolation(
+                path="<startup-architecture-snapshot>",
+                rule="startup-architecture-source-race",
+                detail="decompiler source changed during startup architecture checking; retry the gate",
+            ),
+        )
+    architecture_import_attestation.store_startup_architecture_verdict(
+        _ARCHITECTURE_STARTUP_CACHE_PATH,
+        fingerprint,
+        violations,
+    )
     return violations
 
 

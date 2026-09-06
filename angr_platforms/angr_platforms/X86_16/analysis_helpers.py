@@ -405,6 +405,7 @@ class InterruptServiceSpec:
     dos_decl: str | None = None
     modern_decl: str | None = None
     result_kind: InterruptServiceResultKind8616 = InterruptServiceResultKind8616.VALUE
+    no_return: bool = False
 
 
 INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
@@ -590,6 +591,7 @@ INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
         dos_decl="void _dos_exit(unsigned char status);",
         modern_decl="void exit(int status);",
         result_kind=InterruptServiceResultKind8616.VOID,
+        no_return=True,
     ),
 }
 
@@ -796,7 +798,8 @@ def ensure_interrupt_service_hook(project: object, call: InterruptCall) -> tuple
 
     project_any = cast(Any, project)
     if not project_any.is_hooked(addr):
-        no_ret = call.vector == 0x21 and call.ah == 0x4C
+        spec = _interrupt_service_spec_for_call(call)
+        no_ret = spec is not None and spec.no_return
 
         def _run(self: SimProcedure) -> object:  # pylint:disable=unused-argument
             if no_ret:
@@ -823,6 +826,43 @@ def ensure_dos_service_hook(project: object, call: InterruptCall) -> tuple[int, 
     return ensure_interrupt_service_hook(project, call)
 
 
+def _remove_proven_no_return_fallthrough_8616(
+    function: object,
+    *,
+    insn_addr: int,
+    return_addr: int | None,
+) -> bool:
+    """Remove the exact CFG fallthrough edge for a proven no-return service."""
+    if return_addr is None:
+        return False
+    graph = _dynamic_analysis_getattr_8616(function, "transition_graph", None)
+    if graph is None:
+        return False
+    nodes = tuple(_dynamic_analysis_getattr_8616(graph, "nodes", ()))
+    source = next(
+        (
+            node
+            for node in nodes
+            if isinstance(_dynamic_analysis_getattr_8616(node, "addr", None), int)
+            and isinstance(_dynamic_analysis_getattr_8616(node, "size", None), int)
+            and node.addr <= insn_addr < node.addr + node.size
+        ),
+        None,
+    )
+    target = next(
+        (
+            node
+            for node in nodes
+            if _dynamic_analysis_getattr_8616(node, "addr", None) == return_addr
+        ),
+        None,
+    )
+    if source is None or target is None or not graph.has_edge(source, target):
+        return False
+    graph.remove_edge(source, target)
+    return True
+
+
 def patch_interrupt_service_call_sites(
     function: object,
     binary_path: Path | str | None = None,
@@ -844,6 +884,14 @@ def patch_interrupt_service_call_sites(
     for call in collect_interrupt_service_calls(function, binary_path, vectors=vectors):
         target_addr, name = ensure_interrupt_service_hook(project, call)
         return_addr = _analysis_function_call_return_8616(function, call.insn_addr)
+        spec = _interrupt_service_spec_for_call(call)
+        if spec is not None and spec.no_return:
+            changed |= _remove_proven_no_return_fallthrough_8616(
+                function,
+                insn_addr=call.insn_addr,
+                return_addr=return_addr,
+            )
+            return_addr = None
         new = (target_addr, return_addr)
         old = function_any._call_sites.get(call.insn_addr)
         if old != new:

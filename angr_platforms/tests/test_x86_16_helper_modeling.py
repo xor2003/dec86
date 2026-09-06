@@ -879,3 +879,60 @@ def test_patch_interrupt_service_call_sites_handles_bios_vectors(monkeypatch):
     assert changed
     assert function._call_sites[0x1234] == (0xFE012, 0x4321)
     assert callee.name == "bios_memsize"
+
+
+def test_patch_interrupt_service_call_sites_removes_only_proven_terminate_returns(monkeypatch):
+    calls = [
+        _decompile.InterruptCall(insn_addr=0x1234, vector=0x21, ah=0x4C),
+        _decompile.InterruptCall(insn_addr=0x1240, vector=0x21, ah=0x09),
+        _decompile.InterruptCall(insn_addr=0x1250, vector=0x21),
+    ]
+    callees = {
+        0xFE04C: SimpleNamespace(name="", _init_prototype_and_calling_convention=lambda: None),
+        0xFE009: SimpleNamespace(name="", _init_prototype_and_calling_convention=lambda: None),
+        0xFE000: SimpleNamespace(name="", _init_prototype_and_calling_convention=lambda: None),
+    }
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=True: callees.get(addr))),
+    )
+    terminate_block = SimpleNamespace(addr=0x1230, size=6)
+    terminate_return = SimpleNamespace(addr=0x1236, size=10)
+    ordinary_block = SimpleNamespace(addr=0x1240, size=2)
+    ordinary_return = SimpleNamespace(addr=0x1242, size=8)
+
+    class _Graph:
+        def __init__(self):
+            self.nodes = (terminate_block, terminate_return, ordinary_block, ordinary_return)
+            self.edges = {(id(terminate_block), id(terminate_return)), (id(ordinary_block), id(ordinary_return))}
+
+        def has_edge(self, source, target):
+            return (id(source), id(target)) in self.edges
+
+        def remove_edge(self, source, target):
+            self.edges.remove((id(source), id(target)))
+
+    graph = _Graph()
+    function = SimpleNamespace(
+        project=project,
+        _call_sites={},
+        transition_graph=graph,
+        get_call_return=lambda addr: addr + 2,
+    )
+
+    monkeypatch.setitem(
+        _decompile.patch_interrupt_service_call_sites.__globals__,
+        "collect_interrupt_service_calls",
+        lambda _function, _binary_path=None, vectors=None: calls,
+    )
+    monkeypatch.setitem(
+        _decompile.patch_interrupt_service_call_sites.__globals__,
+        "ensure_interrupt_service_hook",
+        lambda _project, call: (_decompile.interrupt_service_addr(call), "service"),
+    )
+
+    assert _decompile.patch_interrupt_service_call_sites(function, None)
+    assert function._call_sites[0x1234] == (0xFE04C, None)
+    assert function._call_sites[0x1240] == (0xFE009, 0x1242)
+    assert function._call_sites[0x1250] == (0xFE000, 0x1252)
+    assert not graph.has_edge(terminate_block, terminate_return)
+    assert graph.has_edge(ordinary_block, ordinary_return)

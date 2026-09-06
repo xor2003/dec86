@@ -11,6 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CDirtyExpression,
     CReturn,
+    CTypeCast,
     CUnaryOp,
     CVariable,
 )
@@ -239,6 +240,56 @@ def test_gp_runtime_state_projects_addressed_bh_after_inner_bx_rewrite() -> None
             ),
             codegen=codegen,
         ),
+        unified_local_vars={},
+    )
+
+    assert lower_architectural_gp_register_state_8616(codegen) is True
+    view = runtime_gp_expression_view_8616(codegen.cfunc.statements)
+    assert view is not None
+    assert view.register_name == "bh"
+
+
+def test_gp_runtime_state_projects_casted_addressed_bh_view() -> None:
+    """Casts used by angr to render BH do not turn the byte view into a pointer."""
+    artifact = _gp_live_in_artifact("bx")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        _inertia_function_ssa_artifacts_8616={artifact.function_addr: artifact},
+        _inertia_function_ssa_stages_8616={artifact.function_addr: FunctionSSAArtifactStage8616.IR},
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 1,
+        next_node_idx=lambda: 1,
+        next_ident=lambda name: name,
+    )
+    bx_offset, bx_size = project.arch.registers["bx"]
+    bx = CVariable(
+        SimRegisterVariable(bx_offset, bx_size, ident="bx_3", region=artifact.function_addr),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    reference = CTypeCast(
+        None,
+        SimTypeLong(False),
+        CUnaryOp("Reference", bx, codegen=codegen),
+        codegen=codegen,
+    )
+    address = CTypeCast(
+        None,
+        SimTypeLong(False),
+        CBinaryOp(
+            "Add",
+            reference,
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=artifact.function_addr,
+        statements=CUnaryOp("Dereference", address, codegen=codegen),
         unified_local_vars={},
     )
 

@@ -560,9 +560,15 @@ def _addressed_gp_high_byte_view_8616(
     project: _ProjectGPRegisters8616,
 ) -> tuple[str, structured_c.CVariable] | None:
     """Recognize angr's ``*((byte *)&word_register + 1)`` high-byte view."""
+    def strip_casts(candidate: object) -> object:
+        """Remove representational casts from an angr address expression."""
+        while isinstance(candidate, structured_c.CTypeCast):
+            candidate = candidate.expr
+        return candidate
+
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
         return None
-    address = node.operand
+    address = strip_casts(node.operand)
     if not isinstance(address, structured_c.CBinaryOp) or address.op != "Add":
         return None
     reference: structured_c.CUnaryOp | None = None
@@ -571,6 +577,8 @@ def _addressed_gp_high_byte_view_8616(
         (address.lhs, address.rhs),
         (address.rhs, address.lhs),
     ):
+        candidate_reference = strip_casts(candidate_reference)
+        candidate_displacement = strip_casts(candidate_displacement)
         if (
             isinstance(candidate_reference, structured_c.CUnaryOp)
             and candidate_reference.op in {"Reference", "AddressOf"}
@@ -582,7 +590,7 @@ def _addressed_gp_high_byte_view_8616(
             break
     if reference is None or displacement is None:
         return None
-    carrier = reference.operand
+    carrier = strip_casts(reference.operand)
     source: structured_c.CVariable | None = None
     if isinstance(carrier, structured_c.CVariable) and isinstance(
         carrier.variable,

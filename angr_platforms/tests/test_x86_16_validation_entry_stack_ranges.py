@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CStatements, CVariable
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
     record_stack_variable_coordinate_projection_8616,
@@ -89,6 +89,27 @@ def test_codegen_collector_projects_entry_sp_argument_to_machine_bp() -> None:
     assert collection.stats.classified_fact_count == 1
     assert collection.stats.materialized_count == 1
     assert collection.stats.failure_count == 0
+    assert collection.stats.complete is True
+
+
+def test_codegen_collector_uses_complete_interface_for_coordinate_collision() -> None:
+    codegen = _codegen()
+    low = _cvar(codegen, 2, name="low")
+    high = _cvar(codegen, 4, name="high")
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[low, high],
+        functy=SimTypeFunction(
+            [SimTypeShort(False), SimTypeShort(False)],
+            SimTypeBottom(label="void"),
+        ).with_arch(codegen.project.arch),
+    )
+
+    collection = entry_stack_ranges_from_codegen_8616(codegen)
+
+    assert collection.ranges == (
+        DefUseEntryStackRange8616(base_offset=4, width=2),
+        DefUseEntryStackRange8616(base_offset=6, width=2),
+    )
     assert collection.stats.complete is True
 
 

@@ -7349,6 +7349,88 @@ def test_runtime_import_guard_fingerprint_tracks_source_bytes(tmp_path):
     assert after != before
 
 
+def test_startup_architecture_guard_reuses_cached_failure(
+    tmp_path,
+    monkeypatch,
+):
+    violation = arch_check.ArchitectureViolation(
+        path="bad.py",
+        rule="wrong-layer",
+        detail="semantic recovery crossed the rewrite boundary",
+    )
+    cache = tmp_path / "startup.json"
+    monkeypatch.setattr(architecture_runtime_guard, "_ARCHITECTURE_STARTUP_CACHE_PATH", cache)
+    monkeypatch.setattr(
+        architecture_runtime_guard.architecture_import_attestation,
+        "architecture_startup_source_fingerprint",
+        lambda _root, _repo_root: "source-v1",
+    )
+    architecture_runtime_guard.architecture_import_attestation.store_startup_architecture_verdict(
+        cache,
+        "source-v1",
+        (violation,),
+    )
+    monkeypatch.setattr(
+        arch_check,
+        "check_decompiler_startup_architecture",
+        lambda *_args, **_kwargs: pytest.fail("cached failure must not be re-evaluated"),
+    )
+
+    assert architecture_runtime_guard.cached_decompiler_startup_architecture_violations() == (violation,)
+
+
+def test_startup_architecture_guard_stores_complete_verdict(tmp_path, monkeypatch):
+    cache = tmp_path / "startup.json"
+    monkeypatch.setattr(architecture_runtime_guard, "_ARCHITECTURE_STARTUP_CACHE_PATH", cache)
+    monkeypatch.setattr(
+        architecture_runtime_guard.architecture_import_attestation,
+        "architecture_startup_source_fingerprint",
+        lambda _root, _repo_root: "source-v1",
+    )
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "cached_decompiler_architecture_import_violations",
+        lambda: (),
+    )
+    calls = 0
+
+    def evaluate(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ()
+
+    monkeypatch.setattr(arch_check, "check_decompiler_startup_architecture", evaluate)
+
+    assert architecture_runtime_guard.cached_decompiler_startup_architecture_violations() == ()
+    assert architecture_runtime_guard.cached_decompiler_startup_architecture_violations() == ()
+    assert calls == 1
+
+
+def test_startup_architecture_guard_refuses_concurrent_source_change(
+    tmp_path,
+    monkeypatch,
+):
+    cache = tmp_path / "startup.json"
+    fingerprints = iter(("source-before", "source-after"))
+    monkeypatch.setattr(architecture_runtime_guard, "_ARCHITECTURE_STARTUP_CACHE_PATH", cache)
+    monkeypatch.setattr(
+        architecture_runtime_guard.architecture_import_attestation,
+        "architecture_startup_source_fingerprint",
+        lambda _root, _repo_root: next(fingerprints),
+    )
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "cached_decompiler_architecture_import_violations",
+        lambda: (),
+    )
+    monkeypatch.setattr(arch_check, "check_decompiler_startup_architecture", lambda *_args, **_kwargs: ())
+
+    violations = architecture_runtime_guard.cached_decompiler_startup_architecture_violations()
+
+    assert tuple(item.rule for item in violations) == ("startup-architecture-source-race",)
+    assert not cache.exists()
+
+
 def test_startup_architecture_check_excludes_docs_types_ratchet(tmp_path):
     root, cli = _write_minimal_tree(tmp_path)
     promoted = tmp_path / "monkeytype_config.py"

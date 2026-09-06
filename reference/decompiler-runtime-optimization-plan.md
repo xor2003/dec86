@@ -474,6 +474,15 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   deliberately invalidates all file verdicts and therefore retains a slower
   one-time cold rebuild. Seventy-four focused tests plus changed-file Ruff,
   strict mypy, and the fast architecture gate pass.
+- The complete default-tree startup architecture verdict is now persisted
+  under an exact content fingerprint covering X86_16, CLI package, entrypoint,
+  checker, and cache implementation sources. Cached violations remain
+  violations; custom roots execute directly; and a source change during an
+  uncached check fails closed without storing evidence. After a checker change,
+  the cold rebuild took 8.891 seconds; two fresh-process warm runs took 0.217
+  and 0.232 seconds, a roughly 97.5% feedback-loop reduction. Nine focused
+  cache tests, strict mypy, Ruff, full architecture, context, and ownership
+  gates pass.
 - The optimization quality guard now distinguishes importable in-place mypyc
   extensions from isolated build-cache artifacts. When `default` and
   `pure_python` have the same active import surface, it runs decompilation once
@@ -557,38 +566,6 @@ All measurements are checkout-specific; refresh them after correctness is restor
 - Keep aggregate decompiler worker memory at or below 2 GB.
 
 ## Ordered Work
-
-### 0. Persist Exact Startup-Architecture Verdicts
-
-**Status:** in progress; import-only verdicts are incremental, but every
-source-stable focused gate still repeats the non-import AST rules
-
-**Reason:** A current load-contaminated profile attributes 22.48 seconds to
-the startup architecture subset. The three largest repeated rule families
-consume about 14.7 seconds, while a complete content fingerprint costs about
-0.6 seconds. This is the largest clean development-feedback optimization while
-the semantic stage is owned by concurrent work.
-
-**Work:**
-
-- Store the complete structured startup verdict under an exact fingerprint of
-  every Python source consumed by the default-tree startup checks.
-- Include checker and cache implementations in that identity.
-- Reuse cached violations as violations, not only clean results.
-- Keep custom roots on the direct checker path.
-- Fingerprint before and after an uncached check; fail closed when source
-  changes during evaluation.
-
-**DoD:** A source-stable default-tree rerun skips all startup AST checks;
-changed source, checker, or cache implementation invalidates the verdict;
-cached failures remain failures; custom roots still execute directly;
-concurrent mutation cannot produce a passing attestation; focused tests and
-changed-file Ruff/mypy pass; measured warm wall time falls materially.
-
-**Definition of Failure:** Any changed input reuses a verdict; a cached
-violation becomes clean; a custom root is cached; mutation during checking can
-pass; cache corruption raises an opaque error instead of running checks; or
-the measured warm gate is not materially faster.
 
 ### 1. Publish Consumer-Specific Mutation Generations
 

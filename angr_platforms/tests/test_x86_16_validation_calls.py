@@ -202,6 +202,25 @@ def test_function_parameter_validation_accepts_exact_width() -> None:
     assert report.failure_count == 0
 
 
+def test_function_parameter_validation_projects_complete_entry_sp_interface() -> None:
+    codegen = _Codegen()
+    codegen._inertia_function_parameter_width_facts_8616 = (
+        FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
+        FunctionParameterWidthFact8616(stack_offset=6, width_bytes=2),
+    )
+    _set_parameter_surface(
+        codegen,
+        (SimTypeShort(False), SimTypeShort(False)),
+        offsets=(2, 4),
+    )
+
+    report = validate_function_parameters_8616(codegen.project, codegen)
+
+    assert report.passed
+    assert report.classified_fact_count == 2
+    assert report.materialized_count == 2
+
+
 def test_function_parameter_validation_refuses_width_mismatch() -> None:
     codegen = _Codegen()
     codegen._inertia_function_parameter_width_facts_8616 = (

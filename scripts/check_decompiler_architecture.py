@@ -9955,7 +9955,6 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv)
     if args.startup_only:
-        prechecked_import_violations: tuple[ArchitectureViolation, ...] | None = None
         uses_default_tree = (
             args.x86_16_root.resolve() == X86_16_ROOT.resolve()
             and args.cli.resolve() == CLI_DECOMPILATION.resolve()
@@ -9964,20 +9963,20 @@ def main(argv: list[str] | None = None) -> int:
         if uses_default_tree and __package__:
             from inertia_decompiler.architecture_runtime_guard import (
                 DecompilerArchitectureGuardError,
-                cached_decompiler_architecture_import_violations,
+                cached_decompiler_startup_architecture_violations,
             )
 
             try:
-                prechecked_import_violations = cached_decompiler_architecture_import_violations()
+                violations = cached_decompiler_startup_architecture_violations()
             except DecompilerArchitectureGuardError as exc:
                 print(str(exc), file=sys.stderr)
                 return 1
-        violations = check_decompiler_startup_architecture(
-            args.x86_16_root,
-            args.cli,
-            args.repo_root,
-            prechecked_import_violations=prechecked_import_violations,
-        )
+        else:
+            violations = check_decompiler_startup_architecture(
+                args.x86_16_root,
+                args.cli,
+                args.repo_root,
+            )
     else:
         violations = check_decompiler_architecture(args.x86_16_root, args.cli, args.repo_root)
     if violations:

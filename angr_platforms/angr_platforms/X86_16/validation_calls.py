@@ -51,6 +51,9 @@ from .lowering.return_type_evidence import (
     FunctionReturnClass8616,
     proven_function_return_class_8616,
 )
+from .lowering.stack_function_coordinates import (
+    c_function_stack_coordinate_projection_8616,
+)
 from .lowering.stack_prototype_layout import stack_prototype_argument_layout_8616
 from .lowering.stack_prototype_materialization import FunctionParameterWidthFact8616
 from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
@@ -568,14 +571,28 @@ def _final_function_parameters_8616(
         }
     if len(arg_types) != len(arg_list):
         return normalized_addr, None
+    function_projection = c_function_stack_coordinate_projection_8616(cfunc)
     by_offset: dict[int, _FinalFunctionParameter8616] = {}
-    for cvar, arg_type in zip(arg_list, arg_types, strict=False):
+    for index, (cvar, arg_type) in enumerate(
+        zip(arg_list, arg_types, strict=True)
+    ):
         try:
             variable = cast(_CVariableStorageSurface8616, cvar).variable
         except AttributeError:
             return normalized_addr, None
+        projected_argument = (
+            function_projection.arguments[index]
+            if function_projection is not None
+            and index < len(function_projection.arguments)
+            else None
+        )
         bp_offset = (
-            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            projected_argument.machine_bp_offset
+            if isinstance(variable, SimStackVariable)
+            and projected_argument is not None
+            and projected_argument.entry_sp_offset == variable.offset
+            and projected_argument.size == variable.size
+            else machine_bp_offset_for_stack_variable_8616(codegen, variable)
             if isinstance(variable, SimStackVariable)
             else None
         )
