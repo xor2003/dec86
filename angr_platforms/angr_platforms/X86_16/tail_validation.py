@@ -117,7 +117,10 @@ from .tail_validation_generation import (
     tail_validation_summary_input_generation_8616,
 )
 from .tail_validation_routing import build_tail_validation_family_routing
-from .tail_validation_selector_returns import collect_selector_return_fingerprints_8616
+from .tail_validation_selector_returns import (
+    collect_selector_return_fingerprints_8616,
+    compact_selector_return_fingerprint_8616,
+)
 from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
 from .validation.entry_stack_ranges import entry_stack_ranges_from_codegen_8616
 from .validation.status_flag_preservation import packed_status_flag_preservation_evidence_8616
@@ -1562,6 +1565,13 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
     if field_name not in _COMPACT_OBSERVABLE_FIELDS_8616 or not isinstance(value, str):
         return value
     if field_name == "control_flow_effects":
+        compact_selector = compact_selector_return_fingerprint_8616(
+            value,
+            canonicalize_condition=_canonicalize_condition_fingerprint_for_compare_8616,
+            compact_observable=compact_normalized_validation_observable_8616,
+        )
+        if compact_selector is not None:
+            return compact_selector
         value = _canonical_control_flow_effect_for_compare_8616(value)
     else:
         value = _canonicalize_condition_fingerprint_for_compare_8616(value)

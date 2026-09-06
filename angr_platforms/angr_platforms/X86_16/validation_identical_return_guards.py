@@ -20,6 +20,9 @@ from .structuring.identical_return_guards import (
     IdenticalReturnGuardCollapseResult8616,
     IdenticalReturnGuardShape8616,
 )
+from .tail_validation_selector_returns import (
+    parse_selector_return_fingerprint_8616,
+)
 
 
 class IdenticalReturnGuardValidationStatus8616(StrEnum):
@@ -39,6 +42,7 @@ class IdenticalReturnGuardValidationResult8616:
     status: IdenticalReturnGuardValidationStatus8616
     consumed_condition_count: int = 0
     consumed_control_effect_count: int = 0
+    consumed_selector_return_count: int = 0
     residual_changed: bool = False
 
     @property
@@ -144,6 +148,26 @@ def consume_identical_return_guard_validation_delta_8616(
         remaining_control = tuple(effect for effect in remaining_control if effect != "if:else")
         consumed_control_count += 1
 
+    matching_selectors = tuple(
+        effect
+        for effect in remaining_control
+        if (
+            isinstance(effect, str)
+            and (selector := parse_selector_return_fingerprint_8616(effect))
+            is not None
+            and selector.arms_identical
+            and consumed_condition in selector.condition_candidates
+        )
+    )
+    consumed_selector_return_count = 0
+    if len(matching_selectors) == 1:
+        consumed_selector = matching_selectors[0]
+        remaining_control = tuple(
+            effect for effect in remaining_control if effect != consumed_selector
+        )
+        consumed_control_count += 1
+        consumed_selector_return_count = 1
+
     residual_changed = bool(
         condition_added
         or remaining_conditions
@@ -176,5 +200,6 @@ def consume_identical_return_guard_validation_delta_8616(
         IdenticalReturnGuardValidationStatus8616.ACCEPTED,
         consumed_condition_count=1,
         consumed_control_effect_count=consumed_control_count,
+        consumed_selector_return_count=consumed_selector_return_count,
         residual_changed=residual_changed,
     )

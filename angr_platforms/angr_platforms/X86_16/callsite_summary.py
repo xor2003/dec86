@@ -1137,26 +1137,21 @@ def _direct_call_target_for_insn_8616(function: object, insn: object) -> int | N
         return None
 
 
-def _callee_stack_cleanup_bytes_8616(
+def _callee_location_candidates_8616(
     function: object,
-    insn: object,
-    *,
-    request_cache: CallsiteSummaryRequestCache8616 | None = None,
-) -> int | None:
+    target: int,
+) -> tuple[tuple[CallsiteCleanupProjectRole8616, object, int], ...]:
+    """Return deduplicated current/original locations for one direct callee."""
     project = _dynamic_callsite_getattr_8616(function, "project", None)
-    target = _direct_call_target_for_insn_8616(function, insn)
-    if project is None or not isinstance(target, int):
-        return None
+    if project is None:
+        return ()
     original_delta = _dynamic_callsite_getattr_8616(project, "_inertia_original_linear_delta", None)
     candidate_addrs = [target]
     if isinstance(original_delta, int):
         candidate_addrs.append(target + original_delta)
         if target >= original_delta:
             candidate_addrs.append(target - original_delta)
-    deduped_addrs: list[int] = []
-    for addr in candidate_addrs:
-        if isinstance(addr, int) and addr >= 0 and addr not in deduped_addrs:
-            deduped_addrs.append(addr)
+    deduped_addrs = tuple(dict.fromkeys(addr for addr in candidate_addrs if addr >= 0))
     candidate_projects = (
         (CallsiteCleanupProjectRole8616.CURRENT, project),
         (
@@ -1164,10 +1159,27 @@ def _callee_stack_cleanup_bytes_8616(
             _dynamic_callsite_getattr_8616(project, "_inertia_original_project", None),
         ),
     )
-    for project_role, candidate_project in candidate_projects:
-        if candidate_project is None:
-            continue
-        for candidate_addr in deduped_addrs:
+    return tuple(
+        (project_role, candidate_project, candidate_addr)
+        for project_role, candidate_project in candidate_projects
+        if candidate_project is not None
+        for candidate_addr in deduped_addrs
+    )
+
+
+def _callee_stack_cleanup_bytes_8616(
+    function: object,
+    insn: object,
+    *,
+    request_cache: CallsiteSummaryRequestCache8616 | None = None,
+) -> int | None:
+    target = _direct_call_target_for_insn_8616(function, insn)
+    if not isinstance(target, int):
+        return None
+    for project_role, candidate_project, candidate_addr in _callee_location_candidates_8616(
+        function,
+        target,
+    ):
             def collect_candidate_cleanup(
                 cleanup_project: object = candidate_project,
                 cleanup_address: int = candidate_addr,
@@ -2659,8 +2671,17 @@ def _callee_proven_returning_without_stack_args_8616(
         )
         callee = functions.function(addr=target_addr, create=False)
     except (AttributeError, TypeError):
-        return False
-    return _dynamic_callsite_getattr_8616(callee, "returning", None) is True
+        callee = None
+    if _dynamic_callsite_getattr_8616(callee, "returning", None) is True:
+        return True
+    return any(
+        evidence.complete and evidence.consistent_cleanup == 0
+        for _project_role, candidate_project, candidate_addr in _callee_location_candidates_8616(
+            function,
+            target_addr,
+        )
+        for evidence in (terminal_stack_cleanup_at_address_8616(candidate_project, candidate_addr),)
+    )
 
 
 def _trim_push_arg_sources_to_stack_cleanup(

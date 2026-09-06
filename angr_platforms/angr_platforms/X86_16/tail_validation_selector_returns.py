@@ -24,12 +24,44 @@ from .ir.condition_ir import (
 )
 
 __all__ = [
+    "SelectorReturnFingerprint8616",
     "SelectorReturnFingerprintResult8616",
     "SelectorReturnFingerprintStats8616",
     "collect_selector_return_fingerprints_8616",
+    "compact_selector_return_fingerprint_8616",
+    "encode_selector_return_fingerprint_8616",
+    "parse_selector_return_fingerprint_8616",
 ]
 
 type FingerprintCallback8616 = Callable[[object], str]
+type NormalizeFingerprintCallback8616 = Callable[[str], str]
+type CompactObservableCallback8616 = Callable[[str, str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class SelectorReturnFingerprint8616:
+    """Typed condition and return-arm fields for one selector observation."""
+
+    condition: str
+    true_returns: tuple[str, ...]
+    false_returns: tuple[str, ...]
+    inverse_condition: str | None = None
+
+    @property
+    def arms_identical(self) -> bool:
+        """Return whether both non-empty selector arms return the same values."""
+        return bool(self.true_returns and self.true_returns == self.false_returns)
+
+    @property
+    def condition_candidates(self) -> tuple[str, ...]:
+        """Return the exact primary and optional inverse condition identities."""
+        return tuple(
+            dict.fromkeys(
+                candidate
+                for candidate in (self.condition, self.inverse_condition)
+                if candidate is not None
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +81,109 @@ class SelectorReturnFingerprintResult8616:
 
     fingerprints: tuple[str, ...]
     stats: SelectorReturnFingerprintStats8616
+
+
+def encode_selector_return_fingerprint_8616(
+    fingerprint: SelectorReturnFingerprint8616,
+) -> str:
+    """Encode one typed selector observation in deterministic JSON form."""
+    payload: dict[str, object] = {
+        "condition": fingerprint.condition,
+        "false_returns": sorted(fingerprint.false_returns),
+        "true_returns": sorted(fingerprint.true_returns),
+    }
+    if fingerprint.inverse_condition is not None:
+        payload["inverse_condition"] = fingerprint.inverse_condition
+    return "selector-return:" + json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def parse_selector_return_fingerprint_8616(
+    value: str,
+) -> SelectorReturnFingerprint8616 | None:
+    """Decode only the owned selector-return JSON envelope."""
+    prefix = "selector-return:"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        return None
+    try:
+        payload = json.loads(value[len(prefix) :])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or set(payload) - {
+        "condition",
+        "inverse_condition",
+        "false_returns",
+        "true_returns",
+    }:
+        return None
+    condition = payload.get("condition")
+    inverse_condition = payload.get("inverse_condition")
+    true_returns = payload.get("true_returns")
+    false_returns = payload.get("false_returns")
+    if not isinstance(condition, str) or (
+        inverse_condition is not None and not isinstance(inverse_condition, str)
+    ):
+        return None
+    if not isinstance(true_returns, list) or not isinstance(false_returns, list):
+        return None
+    if not true_returns or not false_returns or any(
+        not isinstance(item, str) for item in (*true_returns, *false_returns)
+    ):
+        return None
+    return SelectorReturnFingerprint8616(
+        condition=condition,
+        inverse_condition=inverse_condition,
+        true_returns=tuple(sorted(true_returns)),
+        false_returns=tuple(sorted(false_returns)),
+    )
+
+
+def compact_selector_return_fingerprint_8616(
+    value: str,
+    *,
+    canonicalize_condition: NormalizeFingerprintCallback8616,
+    compact_observable: CompactObservableCallback8616,
+) -> str | None:
+    """Compact fields independently so selector identity remains inspectable."""
+    fingerprint = parse_selector_return_fingerprint_8616(value)
+    if fingerprint is None:
+        return None
+    condition = canonicalize_condition(fingerprint.condition)
+    inverse_source = fingerprint.inverse_condition
+    if inverse_source is None:
+        inverse_source = invert_condition_fingerprint_string_8616(
+            fingerprint.condition
+        )
+    inverse_condition = (
+        canonicalize_condition(inverse_source)
+        if isinstance(inverse_source, str)
+        else None
+    )
+    compact_condition = compact_observable("conditions", condition)
+    compact_inverse = (
+        compact_observable("conditions", inverse_condition)
+        if inverse_condition is not None
+        else None
+    )
+    if compact_inverse == compact_condition:
+        compact_inverse = None
+    return encode_selector_return_fingerprint_8616(
+        SelectorReturnFingerprint8616(
+            condition=compact_condition,
+            inverse_condition=compact_inverse,
+            true_returns=tuple(
+                compact_observable("returns", item)
+                for item in fingerprint.true_returns
+            ),
+            false_returns=tuple(
+                compact_observable("returns", item)
+                for item in fingerprint.false_returns
+            ),
+        )
+    )
 
 
 def _terminal_return_fingerprints_8616(
@@ -83,19 +218,33 @@ def _selector_return_token_8616(
 ) -> str:
     """Encode one selector, canonicalizing exact inverse-and-swapped arms."""
 
-    def encode(cond: str, true_values: tuple[str, ...], false_values: tuple[str, ...]) -> str:
-        payload = {
-            "condition": cond,
-            "false_returns": sorted(false_values),
-            "true_returns": sorted(true_values),
-        }
-        return "selector-return:" + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    def encode(
+        cond: str,
+        inverse_cond: str | None,
+        true_values: tuple[str, ...],
+        false_values: tuple[str, ...],
+    ) -> str:
+        return encode_selector_return_fingerprint_8616(
+            SelectorReturnFingerprint8616(
+                condition=cond,
+                inverse_condition=inverse_cond,
+                true_returns=true_values,
+                false_returns=false_values,
+            )
+        )
 
     normalized = _normalize_condition_8616(condition)
-    candidates = [encode(normalized, true_returns, false_returns)]
     inverted = invert_condition_fingerprint_string_8616(normalized)
+    normalized_inverse = (
+        _normalize_condition_8616(inverted) if inverted is not None else None
+    )
+    candidates = [
+        encode(normalized, normalized_inverse, true_returns, false_returns)
+    ]
     if inverted is not None:
-        candidates.append(encode(_normalize_condition_8616(inverted), false_returns, true_returns))
+        candidates.append(
+            encode(normalized_inverse or inverted, normalized, false_returns, true_returns)
+        )
     return min(candidates)
 
 

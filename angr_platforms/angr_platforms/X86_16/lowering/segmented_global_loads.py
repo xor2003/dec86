@@ -1944,6 +1944,45 @@ def _materialize_anonymous_direct_segmented_global_stores_8616(
                         )
                     )
                 )
+                tagged_immediate = tuple(
+                    item
+                    for item in candidates
+                    if assignment is not None
+                    and isinstance(assignment.lhs, CUnaryOp)
+                    and assignment.lhs.op == "Dereference"
+                    and item.immediate_value is not None
+                    and _constant_int_8616(assignment.rhs)
+                    == (item.immediate_value & ((1 << (item.width * 8)) - 1))
+                )
+                if assignment is not None and len(tagged_immediate) == 1:
+                    evidence = tagged_immediate[0]
+                    classified.add(evidence)
+                    replacement = (
+                        _make_direct_segmented_global_access_expr_8616(
+                            project,
+                            codegen,
+                            offset=evidence.offset,
+                            width=evidence.width,
+                            space=evidence.space,
+                            source_insn=evidence.ins_addr,
+                            segment_value=evidence.segment_value,
+                            segment_source=evidence.segment_source,
+                        )
+                        if project is not None
+                        else None
+                    )
+                    if replacement is not None:
+                        assignment.lhs = replacement
+                        assignment.rhs = CConstant(
+                            evidence.immediate_value & ((1 << (evidence.width * 8)) - 1),
+                            _type_for_width_8616(codegen, evidence.width),
+                            codegen=codegen,
+                        )
+                        materialized.add(evidence)
+                        changed = True
+                    process_statements(statement)
+                    index += 1
+                    continue
                 if assignment is not None and len(exact_wide) == 1:
                     evidence = exact_wide[0]
                     classified.add(evidence)

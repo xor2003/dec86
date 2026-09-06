@@ -19,6 +19,7 @@ from angr_platforms.X86_16.tail_validation import (
 )
 from angr_platforms.X86_16.tail_validation_selector_returns import (
     collect_selector_return_fingerprints_8616,
+    parse_selector_return_fingerprint_8616,
 )
 
 
@@ -127,3 +128,27 @@ def test_tail_validation_summary_observes_selector_return_edge_polarity() -> Non
 
     assert diff["changed"] is True
     assert any(token.startswith("selector-return:") for token in before.control_flow_effects)
+
+
+def test_tail_validation_compacts_selector_return_as_typed_observation(monkeypatch) -> None:
+    """Oversized selectors retain condition candidates and exact return arms."""
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_FINGERPRINT_LIMIT", "16")
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _Codegen8616()
+    root = _selector_root_8616("CmpLT", 7, 7, codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, body=root)
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+    selector_tokens = tuple(
+        token for token in summary.control_flow_effects if token.startswith("selector-return:")
+    )
+
+    assert len(selector_tokens) == 1
+    observation = parse_selector_return_fingerprint_8616(selector_tokens[0])
+    assert observation is not None
+    assert observation.arms_identical
+    assert len(observation.condition_candidates) == 2
+    assert all(
+        candidate.startswith("conditions:sha256:")
+        for candidate in observation.condition_candidates
+    )

@@ -470,6 +470,43 @@ def test_anonymous_direct_immediate_store_replaces_misidentified_function_symbol
     assert stats.anonymous_direct_store_failure_count == 0
 
 
+def test_anonymous_direct_immediate_store_resegments_exact_tagged_dereference():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    assignment = CAssignment(
+        _deref(_const(0x2461B, codegen), codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x10028},
+    )
+    root = CStatements([assignment], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10000, statements=root, body=root)
+    evidence = (
+        DirectSegmentedGlobalStoreEvidence8616(0x007B, 1, MemSpace.DS, 0x10028, 0),
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert isinstance(assignment.lhs, CFunctionCall)
+    assert assignment.lhs.callee_target == "SEG_U8"
+    assert assignment.lhs.args[0].variable.name == "ds"
+    assert assignment.lhs.args[1].value == 0x007B
+    assert isinstance(assignment.rhs, CConstant)
+    assert assignment.rhs.value == 0
+    assert assignment.tags["ins_addr"] == 0x10028
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 1
+    assert stats.anonymous_direct_store_failure_count == 0
+
+
 def test_anonymous_direct_word_store_folds_exact_instruction_byte_pair_and_replays():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()
