@@ -797,6 +797,18 @@ def test_sidecar_label_for_target_matches_unique_16bit_offset_for_linear_target(
     assert _sidecar_label_for_target_8616(project, 0x10794) == "Swaps"
 
 
+def test_sidecar_exact_generic_entry_blocks_unrelated_range_label():
+    project = SimpleNamespace(
+        _inertia_lst_metadata=SimpleNamespace(
+            code_labels={0x1000: "_NamedOuter", 0x1010: "sub_1010"},
+            code_ranges={0x1000: (0x1000, 0x1020)},
+        ),
+        kb=SimpleNamespace(labels={}),
+    )
+
+    assert _sidecar_label_for_target_8616(project, 0x1010) is None
+
+
 def test_sidecar_label_for_target_prefers_exact_target_over_delta_candidate():
     labels = {0x10794: "_Swaps", 0x109E8: "_PercolateUp"}
     project = SimpleNamespace(
@@ -996,6 +1008,36 @@ def test_attach_callsite_summaries_retains_unrepresented_binary_callsite(monkeyp
     assert tuple(inventory) == (0x4010, 0x4020)
     assert inventory[0x4010].push_arg_sources[0] == ("imm", 104)
     assert inventory[0x4020].push_arg_sources[0] == ("imm", 118)
+
+
+def test_missing_owned_callsite_uses_exact_address_without_name_metadata():
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda *args, **kwargs: None))
+    )
+    codegen = _DummyCodegen(project)
+    root = CStatements([], addr=0x4000, codegen=codegen)
+    summary = CallsiteSummary8616(
+        callsite_addr=0x4030,
+        target_addr=0x14590,
+        return_addr=None,
+        kind="direct_near_tail_jump",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register=None,
+        return_used=False,
+    )
+    codegen._inertia_callsite_summary_inventory_8616 = {
+        summary.callsite_addr: summary,
+    }
+
+    missing = postprocess_calls._missing_calls_from_owned_inventory_8616(
+        project,
+        codegen,
+        root,
+    )
+
+    assert missing == (["sub_14590"], {"sub_14590": [summary]})
 
 
 def test_attach_callsite_summaries_recovers_empty_direct_callsite_inventory_from_blocks(monkeypatch):

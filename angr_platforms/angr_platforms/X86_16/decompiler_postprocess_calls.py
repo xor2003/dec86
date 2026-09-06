@@ -75,7 +75,13 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 
 from inertia_decompiler.telemetry import span
 
-from .analysis_helpers import patch_direct_call_sites, preferred_known_helper_signature_decl
+from .analysis_helpers import (
+    CallTargetKind8616,
+    CallTargetSeed,
+    collect_neighbor_call_targets,
+    patch_direct_call_sites,
+    preferred_known_helper_signature_decl,
+)
 from .annotations import ANNOTATION_KEY, _parse_c_prototype_8616
 from .callee_name_normalization import normalize_callee_name_8616
 from .callsite_argument_value_sources import (
@@ -118,6 +124,7 @@ from .decompiler_postprocess_utils import (
     _replace_c_children_8616,
     _same_c_expression_8616,
 )
+from .frontend_block_inventory import decoded_function_callsite_addresses_8616
 from .lowering.call_argument_expression import (
     CALL_ARGUMENT_INTEGER_OPERATION_NAMES_8616,
     CALL_ARGUMENT_SOURCE_OPERATION_NAMES_8616,
@@ -148,6 +155,7 @@ from .lowering.call_argument_stack_sources import (
     materialize_call_argument_stack_cvariable_8616,
     outgoing_call_stack_carrier_offset_8616,
 )
+from .lowering.callsite_inventory_presence import represented_callsite_addrs_8616
 from .lowering.function_pointer_parameters import materialize_function_pointer_parameters_8616
 from .lowering.real_mode_linear import (
     RealModeLinearStackAccess8616,
@@ -573,6 +581,27 @@ def _callsite_summary_inventory_8616(
     return inventory
 
 
+def _tail_call_summary_from_seed_8616(seed: CallTargetSeed | None) -> CallsiteSummary8616 | None:
+    """Project one frontend-proven external tail transfer into callsite evidence."""
+    if seed is None or seed.kind not in {
+        CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP,
+        CallTargetKind8616.DIRECT_FAR_TAIL_JUMP,
+        CallTargetKind8616.STORED_NEAR_TAIL_JUMP,
+    }:
+        return None
+    return CallsiteSummary8616(
+        seed.callsite_addr,
+        seed.target_addr,
+        None,
+        seed.kind.value,
+        0,
+        (),
+        0,
+        None,
+        False,
+    )
+
+
 class CallsiteAliasArtifactDecision8616(Enum):
     """Evidence decision for pre-call stack-source alias artifacts."""
 
@@ -990,7 +1019,7 @@ def _relocate_recovered_calls_into_loops_8616(
 def _function_has_direct_call_instruction_evidence_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> bool:
-    """Return whether the current function has decoded direct-call evidence."""
+    """Return whether the current function has a decoded call-like target."""
     cfunc = getattr(codegen, "cfunc", None)
     func_addr = getattr(cfunc, "addr", None)
     if not isinstance(func_addr, int):
@@ -998,10 +1027,20 @@ def _function_has_direct_call_instruction_evidence_8616(
     function = _current_callsite_function_8616(project, func_addr)
     if function is None:
         return True
+    target_by_callsite = {
+        seed.callsite_addr: seed.target_addr for seed in collect_neighbor_call_targets(function)
+    }
     get_call_sites = getattr(function, "get_call_sites", None)
     if callable(get_call_sites):
         with contextlib.suppress(Exception):
-            callsite_addrs = tuple(cast(Iterable[StructuredAstValue], get_call_sites() or ()))
+            callsite_addrs = tuple(
+                sorted(
+                    {
+                        *cast(Iterable[int], get_call_sites() or ()),
+                        *target_by_callsite,
+                    }
+                )
+            )
             codegen._inertia_call_recovery_callsite_count_8616 = len(callsite_addrs)
             if not callsite_addrs:
                 return False
@@ -1010,7 +1049,9 @@ def _function_has_direct_call_instruction_evidence_8616(
                 return True
             non_probe_count = 0
             for callsite_addr in callsite_addrs:
-                target = get_call_target(callsite_addr)
+                target = target_by_callsite.get(callsite_addr)
+                if target is None:
+                    target = get_call_target(callsite_addr)
                 if not isinstance(target, int):
                     non_probe_count += 1
                     continue
@@ -1063,6 +1104,7 @@ def _recover_missing_direct_calls_from_evidence_8616(project: StructuredAstValue
             return False
         cfunc, root, root_statements, func_addr, function = prepared
 
+        inventory_missing = _missing_calls_from_owned_inventory_8616(project, codegen, root)
         expected_names, expected_summary_by_name, source_call_names = _recover_expected_calls_8616(
             project, cfunc, function, func_addr
         )
@@ -1077,22 +1119,28 @@ def _recover_missing_direct_calls_from_evidence_8616(project: StructuredAstValue
                 )
             return False
 
-        present_names = _structured_present_call_names_8616(project, codegen, root, source_call_names)
-        if not present_names:
-            for node in _iter_c_nodes_deep_8616(root):
-                if not isinstance(node, CFunctionCall):
-                    continue
-                for raw in (
-                    node.callee_target,
-                    getattr(node.callee_func, "name", None),
-                    getattr(node, "callee", None),
-                ):
-                    if isinstance(raw, str) and raw:
-                        normalized = normalize_callee_name_8616(raw) or raw
-                        present_names.append(normalized)
-                        break
+        if inventory_missing is not None:
+            missing, expected_summary_by_name = inventory_missing
+            source_sequence: list[str] = []
+        else:
+            present_names = _structured_present_call_names_8616(project, codegen, root, source_call_names)
+            if not present_names:
+                for node in _iter_c_nodes_deep_8616(root):
+                    if not isinstance(node, CFunctionCall):
+                        continue
+                    for raw in (
+                        node.callee_target,
+                        getattr(node.callee_func, "name", None),
+                        getattr(node, "callee", None),
+                    ):
+                        if isinstance(raw, str) and raw:
+                            normalized = normalize_callee_name_8616(raw) or raw
+                            present_names.append(normalized)
+                            break
 
-        source_sequence, missing = _missing_calls_from_sequences_8616(source_call_names, expected_names, present_names)
+            source_sequence, missing = _missing_calls_from_sequences_8616(
+                source_call_names, expected_names, present_names
+            )
         if not missing:
             _sync_cfunc_root_statements_8616(cfunc, root, root_statements)
             if debug_enabled:
@@ -1104,7 +1152,7 @@ def _recover_missing_direct_calls_from_evidence_8616(project: StructuredAstValue
                 )
             return False
 
-        summary_map: dict[int, CallsiteSummary8616] = {}
+        summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
         mutable_statements = list(root_statements)
         changed = False
         first_empty_loop_body = _first_empty_loop_body_8616(mutable_statements)
@@ -1162,6 +1210,51 @@ def _recover_missing_direct_calls_from_evidence_8616(project: StructuredAstValue
         return changed
 
     return _impl()
+
+
+def _missing_calls_from_owned_inventory_8616(
+    project: StructuredAstValue,
+    codegen: StructuredAstValue,
+    root: StructuredAstValue,
+) -> tuple[list[str], dict[str, list[CallsiteSummary8616]]] | None:
+    """Return missing calls by exact owned callsite identity when available."""
+    inventory = _callsite_summary_inventory_8616(codegen)
+    if not inventory:
+        return None
+    call_nodes = tuple(
+        node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall)
+    )
+    try:
+        attached_summaries = codegen._inertia_callsite_summaries
+    except AttributeError:
+        attached_summaries = None
+    represented = represented_callsite_addrs_8616(call_nodes, attached_summaries)
+    if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
+        log.warning(
+            "[call-recover] owned-inventory=%r represented=%r",
+            tuple(sorted(inventory)),
+            tuple(sorted(represented)),
+        )
+    names: list[str] = []
+    summaries_by_name: dict[str, list[CallsiteSummary8616]] = {}
+    for callsite_addr, summary in sorted(inventory.items()):
+        if callsite_addr in represented or summary.stack_probe_helper:
+            continue
+        target_addr = summary.target_addr
+        if not isinstance(target_addr, int):
+            continue
+        callee = _lookup_callee_function_8616(project, target_addr, allow_containing=False)
+        callee_name = getattr(callee, "name", None)
+        if not isinstance(callee_name, str) or not callee_name:
+            callee_name = _sidecar_label_for_target_8616(project, target_addr)
+        if not isinstance(callee_name, str) or not callee_name:
+            callee_name = f"sub_{target_addr:x}"
+        if callee_name in _RUNTIME_SEGMENT_HELPERS_8616:
+            continue
+        normalized_name = normalize_callee_name_8616(callee_name) or callee_name
+        names.append(normalized_name)
+        summaries_by_name.setdefault(normalized_name, []).append(summary)
+    return names, summaries_by_name
 
 
 def _prepare_call_recovery_context_8616(
@@ -1226,10 +1319,32 @@ def _recover_expected_calls_8616(
     ]:
         expected_names: list[str] = []
         expected_summary_by_name: dict[str, list[CallsiteSummary8616]] = {}
-        callsite_addrs = _boundary_tuple_8616(sorted(getattr(function, "get_call_sites", list)() or ()))
+        target_seeds = collect_neighbor_call_targets(function)
+        target_by_callsite = {seed.callsite_addr: seed.target_addr for seed in target_seeds}
+        tail_callsite_addrs = {
+            seed.callsite_addr
+            for seed in target_seeds
+            if seed.kind
+            in {
+                CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP,
+                CallTargetKind8616.DIRECT_FAR_TAIL_JUMP,
+                CallTargetKind8616.STORED_NEAR_TAIL_JUMP,
+            }
+        }
+        tail_names: list[str] = []
+        callsite_addrs = _boundary_tuple_8616(
+            sorted(
+                {
+                    *getattr(function, "get_call_sites", list)(),
+                    *target_by_callsite,
+                }
+            )
+        )
         callsite_summaries = []
         for callsite_addr in callsite_addrs:
-            target = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
+            target = target_by_callsite.get(callsite_addr)
+            if target is None:
+                target = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
             if not isinstance(target, int):
                 continue
             summary = summarize_x86_16_callsite(function, callsite_addr)
@@ -1243,6 +1358,8 @@ def _recover_expected_calls_8616(
                 continue
             normalized_name = normalize_callee_name_8616(callee_name) or callee_name
             expected_names.append(normalized_name)
+            if callsite_addr in tail_callsite_addrs:
+                tail_names.append(normalized_name)
             if summary is not None:
                 expected_summary_by_name.setdefault(normalized_name, []).append(summary)
         source_call_names: list[str] = []
@@ -1254,6 +1371,7 @@ def _recover_expected_calls_8616(
                 expected_names = [
                     source_name for source_name in source_call_names if isinstance(source_name, str) and source_name
                 ]
+                expected_names.extend(tail_names)
                 if len(callsite_summaries) == len(expected_names):
                     expected_summary_by_name = {}
                     for source_name, summary in zip(expected_names, callsite_summaries, strict=False):
@@ -1857,6 +1975,14 @@ def _sidecar_label_for_target_8616(project: StructuredAstValue, target_addr: int
                     return normalized
             return None
 
+        def _has_exact_label(addr: int) -> bool:
+            """Return whether sidecar evidence names this exact address."""
+            for labels in label_maps:
+                label = getattr(labels, "get", lambda _addr: None)(addr)
+                if isinstance(label, str) and label:
+                    return True
+            return False
+
         def _containing_range_label(addr: int) -> str | None:
             matches: set[str] = set()
             for metadata in metadata_items:
@@ -1904,6 +2030,12 @@ def _sidecar_label_for_target_8616(project: StructuredAstValue, target_addr: int
         exact_target = _exact_label(target_addr)
         if exact_target is not None:
             return exact_target
+        for lookup_addr in sorted(lookup_addrs - {target_addr}):
+            exact_rebased = _exact_label(lookup_addr)
+            if exact_rebased is not None:
+                return exact_rebased
+        if any(_has_exact_label(lookup_addr) for lookup_addr in lookup_addrs):
+            return None
         range_target = _containing_range_label(target_addr)
         if range_target is not None:
             return range_target
@@ -1911,9 +2043,6 @@ def _sidecar_label_for_target_8616(project: StructuredAstValue, target_addr: int
         if target_offset is not None:
             return target_offset
         for lookup_addr in sorted(lookup_addrs - {target_addr}):
-            exact_rebased = _exact_label(lookup_addr)
-            if exact_rebased is not None:
-                return exact_rebased
             range_rebased = _containing_range_label(lookup_addr)
             if range_rebased is not None:
                 return range_rebased
@@ -4309,6 +4438,7 @@ def _attach_callsite_summaries_8616(project: StructuredAstValue, codegen: Struct
             callsite_addrs,
         )
         target_inventory: CallsiteTargetInventory8616 | None = None
+        target_seeds = {seed.callsite_addr: seed for seed in collect_neighbor_call_targets(function)}
         previous_summary_inventory = _callsite_summary_inventory_8616(codegen)
         summary_inventory: dict[int, CallsiteSummary8616] = {}
         for callsite_addr in callsite_addrs:
@@ -4323,6 +4453,8 @@ def _attach_callsite_summaries_8616(project: StructuredAstValue, codegen: Struct
                     callsite_addr,
                     target_inventory=target_inventory,
                 )
+            if summary is None:
+                summary = _tail_call_summary_from_seed_8616(target_seeds.get(callsite_addr))
             if summary is not None:
                 previous_summary = previous_summary_inventory.get(callsite_addr)
                 if previous_summary is not None:
@@ -4449,26 +4581,15 @@ def _attach_callsite_summaries_8616(project: StructuredAstValue, codegen: Struct
 
 
 def _all_function_callsite_addrs_8616(project: StructuredAstValue, function: StructuredAstValue) -> tuple[int, ...]:
+    """Return exact decoded calls plus CFG-proven external tail-call sites."""
     recorded = {
         int(addr) for addr in (getattr(function, "get_call_sites", list)() or ()) if isinstance(addr, int)
     }
     discovered = set(recorded)
     if getattr(getattr(project, "arch", None), "name", None) != "86_16":
         return tuple(sorted(discovered))
-    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
-        if not isinstance(block_addr, int):
-            continue
-        try:
-            block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
-            continue
-        for insn in _boundary_tuple_8616(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
-            mnemonic = str(getattr(insn, "mnemonic", "") or "").strip().lower()
-            if not mnemonic.startswith("call"):
-                continue
-            insn_addr = getattr(insn, "address", None)
-            if isinstance(insn_addr, int):
-                discovered.add(insn_addr)
+    discovered.update(decoded_function_callsite_addresses_8616(function))
+    discovered.update(target.callsite_addr for target in collect_neighbor_call_targets(function))
     return tuple(sorted(discovered))
 
 
@@ -13944,11 +14065,11 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                             arity_contract.mode is CallArityMode8616.EXACT
                             and _prototype_widths_account_for_push_sources_8616(expected_widths, push_sources)
                         ):
-                            ordered_sources = (
+                            grouped_sources = (
                                 list(reversed(push_sources)) if len(push_sources) > 1 else list(push_sources)
                             )
                             grouped_args = _logical_args_from_push_sources_by_expected_widths_8616(
-                                ordered_sources,
+                                grouped_sources,
                                 expected_arg_widths=expected_widths,
                                 call_name=semantic_call_name,
                             )

@@ -7,12 +7,13 @@ decoding, and preserve the legacy VEX-backed factory as a fail-closed fallback.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, cast
 
 from .frontend_capstone_decode import decode_bounded_capstone_block_8616
+from .frontend_instruction_kinds import is_x86_16_call_mnemonic_8616
 
 
 class _InstructionBoundary8616(Protocol):
@@ -68,6 +69,14 @@ class _ProjectBoundary8616(Protocol):
         DecodedBlockRequest8616,
         DecodedBlockEvidence8616,
     ]
+
+
+class _FunctionBoundary8616(Protocol):
+    """Third-party recovered-function fields used for CFG instruction inventory."""
+
+    blocks: Iterable[_BlockBoundary8616]
+    block_addrs_set: Iterable[int]
+    project: _ProjectBoundary8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,10 +200,76 @@ def decoded_block_instructions_8616(
     ).instructions
 
 
+def decoded_function_instructions_8616(function: object) -> tuple[Any, ...]:
+    """Return one address-ordered instruction inventory for a recovered function."""
+    boundary = cast(_FunctionBoundary8616, function)
+    try:
+        blocks = tuple(boundary.blocks)
+    except Exception:
+        blocks = ()
+
+    by_address: dict[int, Any] = {}
+    if blocks:
+        for block in blocks:
+            try:
+                instructions = tuple(block.capstone.insns)
+            except (AttributeError, TypeError):
+                continue
+            for instruction in instructions:
+                try:
+                    address = instruction.address
+                except AttributeError:
+                    continue
+                if isinstance(address, int):
+                    by_address.setdefault(address, instruction)
+        return tuple(by_address[address] for address in sorted(by_address))
+
+    try:
+        project = boundary.project
+        block_addrs = tuple(
+            sorted(address for address in boundary.block_addrs_set if isinstance(address, int))
+        )
+    except (AttributeError, TypeError):
+        return ()
+    for block_addr in block_addrs:
+        try:
+            instructions = decoded_block_instructions_8616(project, block_addr, opt_level=0)
+        except Exception:
+            continue
+        for instruction in instructions:
+            try:
+                address = instruction.address
+            except AttributeError:
+                continue
+            if isinstance(address, int):
+                by_address.setdefault(address, instruction)
+    return tuple(by_address[address] for address in sorted(by_address))
+
+
+def decoded_function_callsite_addresses_8616(function: object) -> tuple[int, ...]:
+    """Return every exact near or far call address decoded from one function CFG."""
+    callsites: list[int] = []
+    for instruction in decoded_function_instructions_8616(function):
+        try:
+            address = instruction.address
+            mnemonic = instruction.mnemonic
+        except AttributeError:
+            continue
+        if (
+            isinstance(address, int)
+            and isinstance(mnemonic, str)
+            and is_x86_16_call_mnemonic_8616(mnemonic)
+        ):
+            callsites.append(address)
+    return tuple(callsites)
+
+
 __all__ = [
     "DecodedBlockEvidence8616",
     "DecodedBlockRequest8616",
     "DecodedBlockStatus8616",
     "collect_decoded_block_evidence_8616",
     "decoded_block_instructions_8616",
+    "decoded_function_callsite_addresses_8616",
+    "decoded_function_instructions_8616",
 ]

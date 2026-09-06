@@ -1445,6 +1445,13 @@ def _materialize_structuring_terminal_call_result_return_8616(
         codegen,
         callbacks,
     )
+    interrupt_replay_changed = False
+    if interrupt_result_changed:
+        interrupt_replay_changed = bool(materialize_software_interrupt_calls_8616(codegen))
+        interrupt_replay_changed = (
+            bool(materialize_software_interrupt_status_outputs_8616(codegen))
+            or interrupt_replay_changed
+        )
     terminal_call_stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
@@ -1454,6 +1461,7 @@ def _materialize_structuring_terminal_call_result_return_8616(
     codegen._inertia_terminal_call_result_return_stats_8616 = terminal_call_stats
     return (
         interrupt_result_changed
+        or interrupt_replay_changed
         or terminal_call_stats.status is TerminalCallResultReturnStatus8616.MATERIALIZED
     )
 
@@ -1674,12 +1682,11 @@ def _materialize_structuring_pointer_arg_indirect_loads_8616(project: AngrProjec
 
 
 def _materialize_structuring_callsite_prototypes_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface) -> bool:
-    """Attach callsite facts, split proven shared calls, then materialize prototypes.
+    """Materialize typed call targets, identities, shared calls, and prototypes.
 
-    The split must precede every summary consumer. angr may reuse one mutable
-    condition-call node for distinct machine callsites; refreshing summaries
-    before the typed-inventory split would attempt to rebind that node from one
-    exact callsite to another.
+    Existing calls are bound and split before missing-target recovery so a
+    rebased renderer name cannot manufacture a duplicate call. Newly recovered
+    calls are rebound before prototype materialization.
     """
     from . import decompiler_postprocess_calls as _calls
 
@@ -1690,10 +1697,30 @@ def _materialize_structuring_callsite_prototypes_8616(project: AngrProjectSurfac
         )
         changed = bool(_calls._attach_callsite_summaries_8616(project, codegen))
         changed = bool(_codegen.split_distinct_condition_call_occurrences_8616(codegen)) or changed
+        recovered = bool(_calls._recover_missing_direct_calls_from_evidence_8616(project, codegen))
+        changed = recovered or changed
+        if recovered:
+            changed = bool(_calls._attach_callsite_summaries_8616(project, codegen)) or changed
+            changed = bool(_codegen.split_distinct_condition_call_occurrences_8616(codegen)) or changed
         changed = bool(_calls._materialize_callsite_prototypes_8616(project, codegen)) or changed
         return changed
     finally:
+        codegen._inertia_call_target_structuring_pass_ran_8616 = True
         codegen._inertia_callsite_prototypes_structuring_pass_ran_8616 = True
+
+
+def _close_final_structuring_callsites_8616(
+    project: AngrProjectSurface,
+    codegen: AngrCodegenSurface,
+) -> bool:
+    """Materialize late-published typed callsites once at the final boundary."""
+    try:
+        inventory = codegen._inertia_callsite_summary_inventory_8616
+    except AttributeError:
+        return False
+    if not isinstance(inventory, dict) or not inventory:
+        return False
+    return _materialize_structuring_callsite_prototypes_8616(project, codegen)
 
 
 def _bind_structuring_callsite_consumers_8616(codegen: AngrCodegenSurface) -> None:
@@ -1757,8 +1784,8 @@ def _replay_structuring_callsite_arguments_after_regeneration_8616(
 def _materialize_structuring_callsite_stack_arguments_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface) -> bool:
     """Consume existing typed callsite facts before Structuring validation.
 
-    Missing call recovery is not a Structuring responsibility.  This bridge may
-    consume stack-argument facts, but it must never synthesize call nodes.
+    Call-target discovery remains a frontend responsibility. This bridge
+    consumes stack-argument facts but never discovers or guesses calls.
     Exact PUSH effects consumed by materialized arguments are pruned here so
     the Lowering result is part of the Structuring baseline, not a Rewrite
     semantic delta. Stack-probe setup pruning remains disabled because it uses
@@ -4406,6 +4433,13 @@ def _decompile_structuring_8616(self: AngrDecompilerSurface) -> None:
                 carrier_changed=bool(dead_carrier_changed),
                 flags_changed=late_flag_cleanup.changed,
             )
+        with span("x86_16.structuring.final_callsite_closure", function=func_addr):
+            final_callsite_changed = _close_final_structuring_callsites_8616(
+                self.project,
+                self.codegen,
+            )
+            changed = bool(final_callsite_changed) or changed
+            annotate_current_span(changed=bool(final_callsite_changed))
         with span("x86_16.structuring.final_shared_call_ownership", function=func_addr):
             final_shared_call_changed = finalize_shared_call_occurrences_8616(
                 self.project,

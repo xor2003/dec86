@@ -61,10 +61,18 @@ class _Codegen:
 
 
 class _Insn:
-    def __init__(self, address: int, mnemonic: str, operands: tuple[object, ...] = ()) -> None:
+    def __init__(
+        self,
+        address: int,
+        mnemonic: str,
+        operands: tuple[object, ...] = (),
+        *,
+        size: int = 1,
+    ) -> None:
         self.address = address
         self.mnemonic = mnemonic
         self.operands = operands
+        self.size = size
 
     def reg_name(self, reg: int) -> str:
         return {1: "ax", 2: "sp", 3: "bp"}.get(reg, "")
@@ -215,6 +223,53 @@ def test_semantics_recovers_mouse_interrupt_inputs_and_ax_result() -> None:
     )
 
 
+def test_semantics_recovers_dos_allocate_paragraph_count_after_increment() -> None:
+    ah = IRValue(MemSpace.REG, name="ah", size=1)
+    bx = IRValue(MemSpace.REG, name="bx", size=2)
+    incremented = IRValue(MemSpace.TMP, name="t0", size=2, source_tmp=0)
+    artifact = IRFunctionArtifact(
+        function_addr=0x200,
+        blocks=(
+            IRBlock(
+                addr=0x200,
+                instrs=(
+                    IRInstr(
+                        "Iop_Add16",
+                        incremented,
+                        (bx, IRValue(MemSpace.CONST, const=1, size=2)),
+                        size=2,
+                        addr=0x200,
+                    ),
+                    IRInstr("MOV", bx, (incremented,), size=2, addr=0x200),
+                    IRInstr(
+                        "MOV",
+                        ah,
+                        (IRValue(MemSpace.CONST, const=0x48, size=1),),
+                        size=1,
+                        addr=0x202,
+                    ),
+                    IRInstr(
+                        "CALL",
+                        None,
+                        (IRValue(MemSpace.CONST, const=interrupt_core_addr_8616(0x21), size=2),),
+                        size=2,
+                        addr=0x204,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    recovered = build_software_interrupt_input_artifact_8616(artifact)
+
+    assert recovered.stats == SoftwareInterruptInputStats8616(1, 1, 1, 1, 0)
+    assert recovered.facts[0].argument_registers == ("bx",)
+    assert recovered.facts[0].result_register == "ax"
+    assert software_interrupt_value_fingerprint_8616(recovered.facts[0].argument_values[0]) == (
+        "Add(reg:bx:size2,const:0x1:size2):size2"
+    )
+
+
 def test_lowering_materializes_all_interrupt_arguments() -> None:
     codegen = _Codegen()
     call = structured_c.CFunctionCall(
@@ -318,6 +373,68 @@ def test_structuring_materializes_cross_container_terminal_interrupt_result() ->
     assert len(call_container.statements) == 1
     assert isinstance(return_container.statements[1], structured_c.CReturn)
     assert return_container.statements[1].retval is call
+
+
+def test_structuring_restores_interrupt_call_sunk_past_condition() -> None:
+    """A returned interrupt call is restored before a later carry branch."""
+    codegen = _Codegen()
+    fact = _constant_fact()
+    codegen._inertia_software_interrupt_input_artifact_8616 = _artifact(fact)
+    branch = structured_c.CIfElse(
+        [(_const(1, codegen), structured_c.CStatements([], codegen=codegen))],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(fact.vector),
+        None,
+        [],
+        tags={"ins_addr": fact.callsite_addr},
+        codegen=codegen,
+    )
+    stale_pre_call_expression = structured_c.CBinaryOp(
+        "Shl",
+        call,
+        _const(12, codegen),
+        tags={"ins_addr": 0x101},
+        codegen=codegen,
+    )
+    returned_call = structured_c.CReturn(
+        stale_pre_call_expression,
+        tags={"ins_addr": 0x108},
+        codegen=codegen,
+    )
+    branch_container = structured_c.CStatements([branch], codegen=codegen)
+    return_container = structured_c.CStatements([returned_call], codegen=codegen)
+    root = structured_c.CStatements(
+        [branch_container, return_container],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x100, statements=root)
+    callbacks = _callbacks(
+        {
+            0x100: _block(_Insn(fact.callsite_addr, "int", (_imm(fact.vector),))),
+            0x106: _block(_Insn(0x106, "jb", (_imm(0x200),), size=2)),
+            0x108: _block(_Insn(0x108, "ret")),
+        },
+        ((0x100, 6), (0x106, 2), (0x108, 1)),
+        {0x100: (0x106,), 0x106: (0x108,), 0x108: ()},
+    )
+
+    assert materialize_software_interrupt_terminal_results_8616(
+        root,
+        codegen,
+        callbacks,
+    )
+
+    assignment = root.statements[0]
+    assert isinstance(assignment, structured_c.CAssignment)
+    assert assignment.rhs is call
+    assert root.statements[1] is branch_container
+    replacement = return_container.statements[0]
+    assert isinstance(replacement, structured_c.CReturn)
+    assert isinstance(replacement.retval, structured_c.CVariable)
+    assert replacement.retval.variable.reg == codegen.project.arch.registers["ax"][0]
 
 
 def test_structuring_refuses_post_interrupt_ax_clobber() -> None:
@@ -426,6 +543,73 @@ def test_lowering_materializes_dos_interrupt_carry_output_before_branch() -> Non
     assert codegen._inertia_software_interrupt_status_output_stats_8616 == (
         SoftwareInterruptStatusOutputStats8616(1, 1, 1, 1, 0)
     )
+    assert materialize_software_interrupt_status_outputs_8616(codegen) is False
+
+
+def test_lowering_invalidates_pre_interrupt_flags_projection() -> None:
+    """A later carry test uses interrupt FLAGS, not an inlined older FLAGS value."""
+    codegen = _Codegen()
+    flags_offset, _flags_size = codegen.project.arch.registers["flags"]
+    flags = structured_c.CVariable(
+        SimRegisterVariable(flags_offset, 2, name="flags"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    stale_flags = structured_c.CBinaryOp(
+        "Or",
+        structured_c.CBinaryOp(
+            "And",
+            flags,
+            _const(0xF72A, codegen),
+            tags={"ins_addr": 0x102},
+            codegen=codegen,
+        ),
+        _const(0x8D4, codegen),
+        tags={"ins_addr": 0x102},
+        codegen=codegen,
+    )
+    condition = structured_c.CBinaryOp(
+        "And",
+        stale_flags,
+        _const(1, codegen),
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    call = structured_c.CFunctionCall(
+        interrupt_core_addr_8616(0x21),
+        None,
+        [],
+        tags={"ins_addr": 0x104},
+        codegen=codegen,
+    )
+    branch = structured_c.CIfElse(
+        [(condition, structured_c.CStatements([], codegen=codegen))],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([call, branch], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert materialize_software_interrupt_status_outputs_8616(codegen) is True
+
+    assert isinstance(condition.lhs, structured_c.CVariable)
+    assert condition.lhs.variable.reg == flags_offset
+    assert condition.rhs.value == 1
+
+
+def test_status_output_lowering_ignores_non_register_dirty_expression() -> None:
+    """A legal non-register angr dirty payload is not a FLAGS carrier."""
+    codegen = _Codegen()
+    dirty = structured_c.CDirtyExpression(
+        SimpleNamespace(name="non_register_expression"),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [structured_c.CExpressionStatement(dirty, codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=root)
+
     assert materialize_software_interrupt_status_outputs_8616(codegen) is False
 
 

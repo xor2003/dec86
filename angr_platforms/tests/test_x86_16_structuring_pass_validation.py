@@ -569,15 +569,49 @@ def test_structuring_callsite_prototypes_owner_records_pass(monkeypatch):
         calls.append("split")
         return True
 
+    def _targets(_project, _codegen):
+        assert _project is project
+        assert _codegen is codegen
+        calls.append("targets")
+        return True
+
     monkeypatch.setattr(post_stage._calls, "_attach_callsite_summaries_8616", _attach)
     monkeypatch.setattr(stage._codegen, "split_distinct_condition_call_occurrences_8616", _split)
+    monkeypatch.setattr(post_stage._calls, "_recover_missing_direct_calls_from_evidence_8616", _targets)
     monkeypatch.setattr(post_stage._calls, "_materialize_callsite_prototypes_8616", _prototypes)
 
     changed = stage._materialize_structuring_callsite_prototypes_8616(project, codegen)
 
     assert changed is True
-    assert calls == ["attach", "split", "prototypes"]
+    assert calls == ["attach", "split", "targets", "attach", "split", "prototypes"]
+    assert codegen._inertia_call_target_structuring_pass_ran_8616 is True
     assert codegen._inertia_callsite_prototypes_structuring_pass_ran_8616 is True
+
+
+def test_final_structuring_callsite_closure_requires_published_inventory(monkeypatch):
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    monkeypatch.setattr(
+        stage,
+        "_materialize_structuring_callsite_prototypes_8616",
+        lambda *_args: pytest.fail("closure must refuse without typed inventory"),
+    )
+
+    assert stage._close_final_structuring_callsites_8616(project, codegen) is False
+
+
+def test_final_structuring_callsite_closure_replays_published_inventory(monkeypatch):
+    project = SimpleNamespace()
+    codegen = SimpleNamespace(_inertia_callsite_summary_inventory_8616={0x4012: object()})
+    calls: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        stage,
+        "_materialize_structuring_callsite_prototypes_8616",
+        lambda actual_project, actual_codegen: calls.append((actual_project, actual_codegen)) or True,
+    )
+
+    assert stage._close_final_structuring_callsites_8616(project, codegen) is True
+    assert calls == [(project, codegen)]
 
 
 def test_structuring_callsite_stack_arguments_owner_records_pass(monkeypatch):

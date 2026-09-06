@@ -10447,6 +10447,77 @@ def test_recover_missing_direct_calls_skips_stack_probe_only_functions(monkeypat
     assert codegen._inertia_call_recovery_skipped_no_call_instructions_8616 == 1
 
 
+def test_recover_missing_direct_calls_materializes_frontend_proven_tail_jump(monkeypatch):
+    from angr_platforms.X86_16.analysis_helpers import CallTargetKind8616, CallTargetSeed
+
+    project = _project()
+    codegen = _codegen(project, [])
+    current = SimpleNamespace(
+        addr=0x4010,
+        get_call_sites=lambda: (0x4011,),
+        get_call_target=lambda addr: 0x4800 if addr == 0x4011 else None,
+    )
+    ordinary = SimpleNamespace(addr=0x4800, name="ordinary_target")
+    tail = SimpleNamespace(addr=0x5000, name="tail_target")
+
+    class _Functions:
+        def function(self, addr=None, name=None, create=False):
+            if addr == current.addr:
+                return current
+            if addr == ordinary.addr or name == ordinary.name:
+                return ordinary
+            if addr == tail.addr or name == tail.name:
+                return tail
+            return None
+
+    project.kb = SimpleNamespace(functions=_Functions())
+    ordinary_call = CFunctionCall(ordinary.name, ordinary, [], codegen=codegen)
+    codegen.cfunc.statements.statements = [CExpressionStatement(ordinary_call, codegen=codegen)]
+    inventory = {
+        0x4011: CallsiteSummary8616(0x4011, ordinary.addr, 0x4012, "direct_near", 0, (), 0, "ax", False),
+        0x4012: CallsiteSummary8616(0x4012, tail.addr, None, "tail_jump", 0, (), 0, "ax", False),
+    }
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._callsite_summary_inventory_8616",
+        lambda _codegen: inventory,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.lowering.callsite_inventory_presence.structured_callsite_addr_8616",
+        lambda call: 0x4011 if call is ordinary_call else None,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(
+                callsite_addr=0x4011,
+                target_addr=ordinary.addr,
+                return_addr=0x4012,
+                kind=CallTargetKind8616.DIRECT_NEAR_CALL,
+            ),
+            CallTargetSeed(
+                callsite_addr=0x4012,
+                target_addr=tail.addr,
+                return_addr=None,
+                kind=CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._source_call_floor_enabled_8616",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
+        lambda _project, _func_addr: (ordinary.name,),
+    )
+
+    changed = _recover_missing_direct_calls_from_evidence_8616(project, codegen)
+
+    assert changed is True
+    calls = [node for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements) if isinstance(node, CFunctionCall)]
+    assert [call.callee_target for call in calls] == ["ordinary_target", "tail_target"]
+
+
 def test_recover_missing_direct_calls_ignores_rendered_text_presence(monkeypatch):
     project = _project_with_call_recovery_functions()
     codegen = _codegen(project, [])

@@ -1173,12 +1173,15 @@ def collect_interrupt_calls(
                     src_name = ins.reg_name(operands[1].reg).lower()
                     if dst_name == src_name and dst_name in regs:
                         set_reg(dst_name, 0, "0")
-                elif ins.mnemonic == "int":
-                    vector_text = ins.op_str.lower().strip()
-                    try:
-                        vector = int(vector_text, 0) & 0xFF
-                    except ValueError:
-                        continue
+                elif ins.mnemonic in {"int", "int3"}:
+                    if ins.mnemonic == "int3":
+                        vector = 3
+                    else:
+                        vector_text = ins.op_str.lower().strip()
+                        try:
+                            vector = int(vector_text, 0) & 0xFF
+                        except ValueError:
+                            continue
                     if vectors is not None and vector not in vectors:
                         continue
 
@@ -1858,6 +1861,26 @@ def _direct_tail_jump_kind_8616(project: object, block_addr: int) -> CallTargetK
     return None
 
 
+def _tail_jump_target_is_function_entry_8616(project: object, target_addr: int) -> bool:
+    """Require exact function-entry evidence before treating a jump as a tail call."""
+    metadata = _dynamic_analysis_getattr_8616(project, "_inertia_lst_metadata", None)
+    function_entries = _dynamic_analysis_getattr_8616(metadata, "function_entry_addrs", ())
+    if function_entries:
+        candidates = {target_addr}
+        original_delta = _dynamic_analysis_getattr_8616(project, "_inertia_original_linear_delta", None)
+        if isinstance(original_delta, int):
+            candidates.update((target_addr + original_delta, target_addr - original_delta))
+        return any(candidate in function_entries for candidate in candidates)
+
+    functions = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "kb", None), "functions", None)
+    lookup = _dynamic_analysis_getattr_8616(functions, "function", None)
+    if not callable(lookup):
+        return False
+    with contextlib.suppress(Exception):
+        return lookup(addr=target_addr, create=False) is not None
+    return False
+
+
 def patch_direct_call_sites(function: object) -> bool:
     """Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
 
@@ -2120,7 +2143,7 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
                 target_addr = direct_target
                 if direct_kind is not None:
                     kind = direct_kind
-            elif target_addr is None:
+            if direct_target is None and target_addr is None:
                 stored_target = resolve_stored_near_call_target_from_function(function, callsite_addr)
                 if stored_target is not None:
                     target_addr = stored_target
@@ -2155,6 +2178,8 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
                 continue
             function_addr = _analysis_function_addr_8616(function)
             if jump_target in block_addr_set or jump_target == function_addr:
+                continue
+            if not _tail_jump_target_is_function_entry_8616(project, jump_target):
                 continue
             if linked_base is not None and image_end is not None and not (linked_base <= jump_target < image_end):
                 continue

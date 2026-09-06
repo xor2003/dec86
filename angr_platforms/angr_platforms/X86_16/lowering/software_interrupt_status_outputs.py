@@ -169,7 +169,12 @@ def _physical_register_offset_8616(node: object) -> int | None:
                 return candidate.reg
         return None
     if isinstance(node, structured_c.CDirtyExpression):
-        offset = node.dirty.oident
+        try:
+            # Dynamic angr boundary: a dirty payload may be any AIL expression,
+            # not only a VirtualVariable carrying physical register identity.
+            offset = node.dirty.oident
+        except AttributeError:
+            return None
         return offset if isinstance(offset, int) else None
     return None
 
@@ -179,6 +184,19 @@ def _statement_value_roots_8616(statement: object) -> tuple[object, ...]:
     if isinstance(statement, structured_c.CIfElse):
         return tuple(condition for condition, _body in statement.condition_and_nodes)
     return (statement,)
+
+
+def _transparent_statement_leaf_8616(statement: object) -> object:
+    """Unwrap transparent one-statement containers before expression rewrites."""
+    current = statement
+    visited: set[int] = set()
+    while isinstance(current, structured_c.CStatements) and id(current) not in visited:
+        visited.add(id(current))
+        children = tuple(current.statements or ())
+        if len(children) != 1:
+            break
+        current = children[0]
+    return current
 
 
 def _flags_carriers_8616(statement: object, flags_offset: int) -> tuple[structured_c.CExpression, ...]:
@@ -294,6 +312,52 @@ def _replace_dirty_flags_carriers_8616(
     return bool(_replace_c_children_8616(statement, replace))
 
 
+def _replace_stale_flags_projection_8616(
+    statement: object,
+    canonical: structured_c.CExpression,
+    flags_offset: int,
+    callsite_addr: int,
+) -> bool:
+    """Invalidate maximal pre-interrupt FLAGS expressions in one later consumer."""
+    candidates: list[object] = []
+    for root in _statement_value_roots_8616(statement):
+        for node in _iter_c_nodes_deep_8616(root):
+            address = _instruction_address_8616(node)
+            if address is None or address >= callsite_addr:
+                continue
+            if any(
+                _physical_register_offset_8616(descendant) == flags_offset
+                for descendant in _iter_c_nodes_deep_8616(node)
+            ):
+                candidates.append(node)
+    candidate_ids = {id(candidate) for candidate in candidates}
+    maximal_ids = {
+        id(candidate)
+        for candidate in candidates
+        if not any(
+            id(candidate) != id(owner)
+            and any(id(descendant) == id(candidate) for descendant in _iter_c_nodes_deep_8616(owner))
+            for owner in candidates
+        )
+    }
+    if not maximal_ids:
+        return False
+
+    def replace(node: object) -> object:
+        if id(node) not in maximal_ids or id(node) not in candidate_ids:
+            return node
+        replacement = cast(
+            structured_c.CExpression,
+            _clone_c_ast_tree_8616(canonical),
+        )
+        tags = cast(_TaggedNode8616, node).tags
+        if isinstance(tags, dict):
+            replacement.tags = dict(tags)
+        return replacement
+
+    return bool(_replace_c_children_8616(statement, replace))
+
+
 def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
     """Materialize every proven DOS interrupt FLAGS result consumed by C."""
     surface = cast(_CodegenSurface8616, codegen)
@@ -316,7 +380,7 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
         statements = list(container.statements or ())
         pending: tuple[int, int] | None = None
         insertions: dict[int, structured_c.CAssignment] = {}
-        carrier_rewrites: list[tuple[object, structured_c.CExpression]] = []
+        carrier_rewrites: list[tuple[object, structured_c.CExpression, int]] = []
         for index, statement in enumerate(statements):
             calls = _calls_in_statement_8616(statement)
             interrupt_calls = tuple(call for call in calls if _is_dos_int21_call_8616(call))
@@ -351,8 +415,13 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
                     int(flags_info[1]),
                     codegen,
                 )
-                if carrier is not carriers[0]:
-                    carrier_rewrites.append((statement, carrier))
+                carrier_rewrites.append(
+                    (
+                        _transparent_statement_leaf_8616(statement),
+                        carrier,
+                        callsite_addr,
+                    )
+                )
                 if call_index + 1 < len(statements):
                     existing_calls = _calls_in_statement_8616(statements[call_index + 1])
                     if any(_is_status_accessor_call_8616(call) for call in existing_calls):
@@ -381,7 +450,16 @@ def materialize_software_interrupt_status_outputs_8616(codegen: object) -> bool:
                     rewritten.append(insertion)
             container.statements = rewritten
             changed = True
-        for statement, carrier in carrier_rewrites:
+        for statement, carrier, callsite_addr in carrier_rewrites:
+            changed = (
+                _replace_stale_flags_projection_8616(
+                    statement,
+                    carrier,
+                    flags_offset,
+                    callsite_addr,
+                )
+                or changed
+            )
             changed = (
                 _replace_dirty_flags_carriers_8616(
                     statement,

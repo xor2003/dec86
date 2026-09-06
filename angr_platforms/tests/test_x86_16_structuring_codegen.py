@@ -2148,6 +2148,35 @@ class TestStructuringCodegen:
             stats.failure_count,
         ) == (1, 1, 0, 0, 1)
 
+    def test_shared_call_scans_accept_angr_dirty_statement_entries(self):
+        codegen = _AstCodegen()
+        summary = CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x5000,
+            return_addr=None,
+            kind="direct_near_tail_jump",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register=None,
+            return_used=False,
+        )
+        dirty = structured_c.CDirtyStatement(
+            SimpleNamespace(name="terminal_dirty"),
+            codegen=codegen,
+        )
+        codegen.cfunc = SimpleNamespace(
+            statements=structured_c.CStatements([dirty], codegen=codegen)
+        )
+        codegen._inertia_callsite_summaries = {}
+        codegen._inertia_callsite_summary_inventory_8616 = {
+            summary.callsite_addr: summary,
+        }
+
+        assert split_distinct_condition_call_occurrences_8616(codegen) is False
+        assert coalesce_shared_call_side_effect_statements_8616(codegen) is False
+        assert codegen.cfunc.statements.statements == [dirty]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

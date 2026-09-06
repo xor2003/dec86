@@ -1593,8 +1593,14 @@ def split_distinct_condition_call_occurrences_8616(codegen: object) -> bool:
             return
         seen_statement_lists.add(id(statements))
         for statement in statements:
-            if not isinstance(statement, structured_c.CStatement):
-                raise TypeError("angr CStatements contains a non-CStatement value")
+            if not isinstance(
+                statement,
+                (structured_c.CStatement, structured_c.CDirtyStatement),
+            ):
+                raise TypeError(
+                    "angr CStatements contains a non-CStatement value: "
+                    f"{type(statement).__module__}.{type(statement).__qualname__}"
+                )
             for condition_root in _condition_roots_8616(statement):
                 for call in _expression_calls_8616(condition_root.expression):
                     occurrences_by_call.setdefault(id(call), []).append((condition_root, call))
@@ -1884,8 +1890,14 @@ def coalesce_shared_call_side_effect_statements_8616(codegen: object) -> bool:
             tuple[structured_c.CStatements, tuple[tuple[int, str, int], ...]]
         ] = []
         for statement_index, statement in enumerate(statements):
-            if not isinstance(statement, structured_c.CStatement):
-                raise TypeError("angr CStatements contains a non-CStatement value")
+            if not isinstance(
+                statement,
+                (structured_c.CStatement, structured_c.CDirtyStatement),
+            ):
+                raise TypeError(
+                    "angr CStatements contains a non-CStatement value: "
+                    f"{type(statement).__module__}.{type(statement).__qualname__}"
+                )
             child_statement_paths.extend(_iter_child_statement_paths_8616(statement, control_path))
             call = _direct_statement_call_8616(statement)
             condition_carrier_call = _condition_return_carrier_call_8616(statement)
