@@ -18,7 +18,7 @@ Numeric function and global names are acceptable when the executable has no
 debug information. Source names below identify addresses for this report only;
 they must not become recovery evidence.
 
-## Current Checkpoint (2026-09-01)
+## Current Checkpoint (2026-09-06)
 
 Current sidecar-free command:
 
@@ -83,11 +83,15 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
   integer promotion unnoticed. Its fresh 2026-09-01 run is green: all ten
   selected functions decompile, the translation unit recompiles, and the
   rebuilt executable exits `255`
-- the current exact repository baseline is 10,137 collected, 9,944 passed,
-  23 failed, and 170 skipped in 852.88 seconds with seven pytest workers. The
-  exact last-failed rerun then reported 19 failed and 3 passed in 221.20
-  seconds. Subsequent focused closures project 13 failures, but that count is
-  not confirmed until the next complete audit
+- the last clean exact repository baseline is 10,137 collected, 9,944 passed,
+  23 failed, and 170 skipped in 852.88 seconds with seven pytest workers. A
+  2026-09-06 diagnostic audit collected 10,144 tests and reported 9,950 passed,
+  24 failed, and 170 skipped in 1,099.15 seconds, but source changed during the
+  run and a separate profiler contended for CPU; use its failure inventory for
+  triage only, not as a current acceptance or performance baseline. One listed
+  Tail Validation failure was a stale entry-SP fixture: the corrected overlap
+  test and the complete three-test entry-range module pass. A new clean full
+  audit must establish the remaining exact count
 - the full-binary to exact-function project boundary now transports validated,
   immutable callee pointer-argument evidence through the existing ABI seeding
   service. HeapSort therefore emits typed `Swaps` pointers, passes Tail
@@ -325,6 +329,7 @@ source for the total remaining estimate.
 | Function-wide entry-SP to machine-BP validation-coordinate closure | before `2026-09-02 15:06 +02:00`; exact start lost at compaction | `2026-09-02 15:22 +02:00` | 15-25m focused; complete local gate wall excluded | at least 16m retained | completed | 0h | Types/Lowering now owns one typed C-function coordinate projection. It accepts only the coherent 16-bit near-frame delta from entry-SP `+2` to machine-BP `+4`, applies it consistently to arguments and locals, and refuses already-projected, incomplete, or mixed interfaces. An uncached live DrawBar run and its permanent regression return zero with `validation=passed`; 99 focused tests, Ruff, MyPy, architecture checks, and `quality-dev` with 1,924 tests plus all required external quality comparisons pass. |
 | Required project gates after the fix | `2026-08-29 08:51 +02:00` | `2026-09-02 06:40 +02:00` | historical subtotal retained; test time excluded | continued through `2026-09-02` | completed | 0h | Ruff, MyPy over the production surface, the 39-module mypyc smoke, architecture and ownership checks, and 1,921 curated tests pass. All three quality comparisons pass at 1.356x-1.526x. The expanded pipeline remains 5/5: SORTD decompiles 20/20 functions with zero validation failures or timeouts, its generated translation unit compiles with zero warnings, the 19-function sort-core behavior gate passes, and every selected Ultra QuickC and MS C tiny round trip passes. No exclusion or weakened check was added. |
 | Complete repository pytest closure | `2026-09-02` | - | latest full audit wall 852.88s; closure work tracked per root family | active | in progress | 20-35h, overlapping task 9 | The exact baseline is 9,944 passed, 23 failed, 170 skipped out of 10,137. The latest exact last-failed rerun is 19 failed and 3 passed in 221.20s. Focused closures project 13 remaining failures; only a complete rerun may replace the exact count, and final DoD remains zero failures. |
+| Refresh full-suite census and retire stale stack-coordinate overlap fixture | `2026-09-06 15:14 +02:00` | `2026-09-06 16:15 +02:00` | 61m wall, dominated by the audit, concurrent-source retries, and local gates | completed | 0h | The diagnostic audit reported 9,950 passed, 24 failed, and 170 skipped out of 10,144 in 1,099.15s. Concurrent source mutation and profiler contention make it a triage inventory, not a clean baseline. Final Tail Validation correctly maps entry-SP `+3` to machine BP `+5`; all three entry-range tests pass. One intermediate changed surface reached 182 focused passes, and one completed `quality-dev` run reached 1,925 tests plus external quality comparisons, but later concurrent edits remain outside this slice and require their own fresh gate before integration. |
 
 #### Machine-BP prototype identity and indexed byte-pointer closure contract
 
@@ -921,6 +926,7 @@ or output filtering.
 | 9c | Preserve validated callee pointer evidence across exact-function project views | `2026-09-02 12:43 +02:00` | `2026-09-02 13:01 +02:00` | about 18m focused; test waits included | complete | The existing ABI seeding service rebases immutable pointer evidence, detects conflicts, and makes HeapSort's two `Swaps` arguments typed pointers. Focused source-assisted and sidecar-free validation, strict C11 syntax, Ruff, MyPy, architecture checks, and `quality-dev` pass. |
 | 9d | Keep Swaps call-frame and pointer-swap projections coherent through final regeneration | before `2026-09-02 14:02 +02:00`; exact start lost at compaction | `2026-09-02 14:13 +02:00` | exact subtotal unavailable after compaction | complete | Typed return-frame ownership, machine-BP validation coordinates, and the unique exact swap projection now survive their downstream consumers. Live Swaps has exactly three object-copy assignments, the counter effect, clean Tail Validation, and strict C syntax; focused Ruff, MyPy, `quality-dev`, and regression gates pass. |
 | 9e | Keep typed C-function stack coordinates coherent across final validation | before `2026-09-02 15:06 +02:00`; exact start lost at compaction | `2026-09-02 16:08 +02:00` | 45-60m focused after the first checkpoint; broad gate wall separate | complete | The Types/Lowering owner accepts only the canonical near-frame entry-SP-to-BP delta and may project unregistered negative locals, while positive slots remain under Alias/type ownership. Live uncached DrawBar passes; 101 focused tests, `quality-dev` with 1,924 tests, and the mandatory pipeline are green. `scalar_types_io`, including `add_long`, recompiles and exits `255`. |
+| 9f | Refresh the complete failure inventory and remove superseded fixtures | `2026-09-06 15:14 +02:00` | - | 41m first census/checkpoint; waits included | in progress | The first audit provides a 24-failure triage inventory but is not an acceptance baseline because source changed during the run. One entry-SP/machine-BP overlap fixture is corrected and its focused module passes. Rerun the complete collection from a stable tree, then classify every remaining node by shared earliest owner before implementation. |
 | 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus completed 9c/9d/9e slices; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |

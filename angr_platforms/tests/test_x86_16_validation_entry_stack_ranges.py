@@ -107,7 +107,9 @@ def test_final_tail_validation_refuses_read_overlapping_argument_boundary() -> N
     )
     codegen.cfunc = SimpleNamespace(
         arg_list=[argument],
-        statements=CStatements([_cvar(codegen, 5)], codegen=codegen),
+        # Final C stack variables retain entry-SP coordinates. Entry-SP +3
+        # projects to machine BP+5 and overlaps the BP+4..+5 argument.
+        statements=CStatements([_cvar(codegen, 3)], codegen=codegen),
     )
     codegen._inertia_tail_validation_snapshot = {
         "structuring": {"status": "stable", "changed": False},
