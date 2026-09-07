@@ -134,6 +134,51 @@ def test_terminal_ax_evidence_reuses_semantic_classification(monkeypatch) -> Non
     assert effect_count == 1
 
 
+def test_terminal_ax_evidence_memoizes_equal_states_across_branch_diamonds(monkeypatch) -> None:
+    """Reconverged equal lane states must not expand every syntactic CFG path."""
+    diamond_count = 18
+    blocks: dict[int, object] = {}
+    for index in range(diamond_count):
+        branch_addr = 0x1000 + index * 0x10
+        next_addr = 0x1000 + (index + 1) * 0x10
+        blocks[branch_addr] = SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=(_insn(branch_addr, "je", size=2, target=branch_addr + 4),)
+            )
+        )
+        blocks[branch_addr + 2] = SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=(_insn(branch_addr + 2, "jmp", target=next_addr),)
+            )
+        )
+        blocks[branch_addr + 4] = SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=(_insn(branch_addr + 4, "jmp", target=next_addr),)
+            )
+        )
+    terminal_addr = 0x1000 + diamond_count * 0x10
+    blocks[terminal_addr] = SimpleNamespace(
+        capstone=SimpleNamespace(insns=(_insn(terminal_addr, "ret"),))
+    )
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+    effect_count = 0
+
+    def _effect(_insn: object) -> object:
+        nonlocal effect_count
+        effect_count += 1
+        return SimpleNamespace(kind=TerminalAxReturnEffectKind8616.OTHER, dst_reg=None)
+
+    monkeypatch.setattr(terminal_register_returns, "terminal_ax_return_effect_8616", _effect)
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert evidence.complete is True
+    assert evidence.states == frozenset({TerminalAxReturnLane8616.NONE})
+    assert evidence.raw_fact_count == evidence.materialized_count == 1
+    assert effect_count == len(blocks)
+
+
 def test_terminal_ax_evidence_invalidates_changed_block_surface() -> None:
     jump = _insn(0x1000, "jmp", target=0x1010)
     terminal = _insn(0x1010, "ret")

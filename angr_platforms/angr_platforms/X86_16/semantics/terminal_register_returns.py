@@ -11,6 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from angr.errors import SimEngineError, SimTranslationError
@@ -54,6 +55,18 @@ class _FunctionSurface8616(Protocol):
 
     addr: int
     block_addrs_set: set[int]
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminalAxScanState8616:
+    """One finite typed transfer state at a function block entry."""
+
+    block_addr: int
+    lanes: TerminalAxReturnLane8616
+    dx_ax_pair_proven: bool
+    call_output_lanes: TerminalAxReturnLane8616
+    local_definition_lanes: TerminalAxReturnLane8616
+    local_pointer_output_lanes: TerminalAxReturnLane8616
 
 
 def _inner_instruction_8616(insn: object) -> object:
@@ -209,6 +222,7 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
     classified_fact_count = 0
     materialized_count = 0
     failure_count = 0
+    visited_states: set[_TerminalAxScanState8616] = set()
 
     def _record_terminal(
         lanes: TerminalAxReturnLane8616,
@@ -244,11 +258,19 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         call_output_lanes: TerminalAxReturnLane8616,
         local_definition_lanes: TerminalAxReturnLane8616,
         local_pointer_output_lanes: TerminalAxReturnLane8616,
-        path: frozenset[int],
     ) -> None:
-        """Follow one entry-reachable path without crossing cycles."""
-        if block_addr in path:
+        """Propagate one finite typed state once through an entry-reachable block."""
+        state = _TerminalAxScanState8616(
+            block_addr,
+            lanes,
+            dx_ax_pair_proven,
+            call_output_lanes,
+            local_definition_lanes,
+            local_pointer_output_lanes,
+        )
+        if state in visited_states:
             return
+        visited_states.add(state)
         insns = decoded_by_block.get(block_addr)
         if insns is None:
             try:
@@ -330,7 +352,6 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                         call_output_lanes,
                         local_definition_lanes,
                         local_pointer_output_lanes,
-                        path | {block_addr},
                     )
                 else:
                     _record_failure()
@@ -348,7 +369,6 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                             call_output_lanes,
                             local_definition_lanes,
                             local_pointer_output_lanes,
-                            path | {block_addr},
                         )
                     else:
                         _record_failure()
@@ -362,7 +382,6 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
                 call_output_lanes,
                 local_definition_lanes,
                 local_pointer_output_lanes,
-                path | {block_addr},
             )
         else:
             _record_failure()
@@ -374,7 +393,6 @@ def _collect_terminal_ax_return_evidence_uncached_8616(
         TerminalAxReturnLane8616.NONE,
         TerminalAxReturnLane8616.NONE,
         TerminalAxReturnLane8616.NONE,
-        frozenset(),
     )
     return TerminalAxReturnEvidence8616(
         storage_states=frozenset(terminal_states),
