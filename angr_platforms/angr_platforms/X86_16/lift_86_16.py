@@ -205,8 +205,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         cast(Any, self.emu)._inertia_current_block_addr = block_addr
         self.emu.set_lifter_instruction(_LifterInstructionFacade(irsb_c, self))
         if self.instr.invalid_lock or self.instr.invalid_opcode_extension:
-            guard = self.emu.constant(1, Type.int_1)
-            target = self.emu.constant(0, Type.int_32)
+            guard = cast(VexValue, self.emu.constant(1, Type.int_1))
+            target = cast(VexValue, self.emu.constant(0, Type.int_32))
             irsb_c.add_exit(guard.rdt, target.rdt, "Ijk_SigILL", self.arch.ip_offset)
             return
         if self.simple_semantics is not None:
@@ -1406,7 +1406,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             instruction_address = -1
         cfg_dead = cfg_status_flag_dead_write_mask_8616(instruction_address, written)
         if cfg_dead is not None:
-            return cast(StatusFlag8616, cfg_dead)
+            return cfg_dead
         future = []
         for instruction in self._future_instructions:
             decoded = decoded_status_flag_instruction_8616(instruction)
@@ -2787,6 +2787,10 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         mnemonic = "inc" if is_increment else "dec"
         zero_boundary = 0xFFFF if is_increment else 1
         value = self._get_reg16(reg_name)
+        if is_increment:
+            self.emu.update_eflags_inc(self._eflags_value_8616(value))
+        else:
+            self.emu.update_eflags_dec(self._eflags_value_8616(value))
         if self._next_instruction_is_simple_jcc():
             operation_count = self._same_preceding_incdec_reg16_count_8616(
                 reg_name, mnemonic=mnemonic

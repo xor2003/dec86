@@ -1,10 +1,18 @@
 # P0 GitHub CI Closure
 
-## Evidence (2026-09-07)
+## Current Checkpoint (2026-09-07)
 
-The eight latest workflow runs are failed. The latest two were inspected:
+Latest inspected completed CI: `34137913096` on `012c0a71a`, with 4395
+tests passed and 41 failed. Ruff/Lizard passed; Pyright/Vulture failed.
+Subsequent commit `6590e6759` is pushed with verified local typing fixes;
+its remote acceptance is not yet established. The historical counts below
+are checkpoints, not a current full-project typing or test census.
+
+## Initial Evidence (2026-09-07)
+
+At initial inspection, the eight latest workflow runs were failed. Two were inspected:
 Pyright fails, and subsequent Vulture, Lizard, and pytest steps are skipped.
-The latest run, 34131575884 on e7b84fe8b, reports 49 Pyright errors in the
+The then-latest run, 34131575884 on e7b84fe8b, reported 49 Pyright errors in the
 first Make batch. This is not a full typing census or a pytest failure count.
 
 Run: https://github.com/xor2003/inertia_decompiler/actions/runs/34131575884
@@ -226,3 +234,55 @@ Remote run `34137913096` on `012c0a71a` completed with **4395 passed,
 Pyright stopped at 9 errors in its first failing batch. These results precede
 the pending first-batch and frontend declaration fixes. Neither local typing
 progress nor a shorter remote runtime closes the CI or semantic acceptance gate.
+
+### Caller-Cleanup Failure Reproduced
+
+On `6590e6759` plus the pending shared-tree changes, the focused
+`test_caller_cleanup_loop_preserves_affine_stack_pointer` fails locally:
+1 failed, 7 warnings in 10.95s (`PYTHON_JIT=1 PYTHONHASHSEED=0`, pytest
+`-n 7 --dist loadgroup --durations=5 --tb=short --no-header -q`).
+All three stack-pointer assertions pass. The final assertion requires the
+literal `sub_1020();`, but output contains
+`sub_1020((inertia_eax & 0xffff) >> 8, inertia_eax & 0xffff);`.
+Thus this assertion failure does not establish call loss; the call survives.
+It also does not prove the emitted argument values/classes are correct.
+
+There is independent semantic evidence against closure: whole-tail validation
+rejects an uninitialized `reg+0x24:size2` read, and output retains raw FLAGS
+conditions. The current architecture maps offset 0x24 to FLAGS/EFLAGS.
+Postprocess discards its rejected result and emits the earlier representation.
+Next: inspect flag definitions/liveness and the recovered call-storage contract
+at their semantic owners, then repair the signature-sensitive assertion with
+durable target/effect evidence. Do not merely relax the assertion and claim
+semantic acceptance. No regression assertion was changed in this investigation.
+
+### Optimized INC/DEC Execution Repair
+
+The caller-cleanup probe exposed an earlier frontend defect: the optimized
+INC/DEC path wrote the arithmetic register result but never called the shared
+Eflags owner. A raw lift of `add sp,4; dec cx; jnz` therefore contained the
+ADD flag write but no DEC flag write, so the branch executed against stale
+flags. This is instruction execution, not a Rewrite recovery problem.
+
+The simple lifter now invokes the existing INC/DEC Eflags helper before the
+register update, preserving its defined-bit/liveness and carry contracts.
+Eight execution regressions cover INC and DEC, zero/nonzero results with
+contradictory incoming ZF, and 16/32-bit architecture address widths. All eight
+fail before; all pass after. The provenance test also checks that the flag
+helper receives the original operand. The focused combined selection reports
+14 passed and the original caller-cleanup assertion still failed in 13.20s.
+That function remains open: its FLAGS live-in validation and call argument
+contract are not closed by this execution repair.
+
+The regression module is enrolled in the regular pipeline and Make selections.
+Scoped Ruff/MyPy/Pyright pass for the lifter; Ruff/MyPy pass for the pipeline
+owner. The first development gate found one emulator stub without the newly
+required DEC flag method (2118 passed, 1 failed); it now records the call and
+asserts the original operand while retaining its disabled-affine-state checks.
+The final focused frontend selection passes 30 tests in 19.70s.
+The default pipeline passes all three lanes, including 2130 tests in 99.21s
+and seven MS C tiny-example compile/decompile/recompile/run checks. The final
+development gate also exits zero: 2130 tests in 95.65s plus compiled-import,
+architecture, ownership, and generated-C quality guards. These gates ran on
+the shared tree, including the separately pending InitMenu changes; they are
+not a clean-commit full-suite result. The full suite is not yet green.

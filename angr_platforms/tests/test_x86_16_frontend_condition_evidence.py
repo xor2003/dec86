@@ -420,12 +420,16 @@ def test_direct_byte_test_mask_emits_exact_typed_access_evidence() -> None:
 
 
 def test_dec_jcc_does_not_mutate_disabled_affine_state(monkeypatch) -> None:
+    """Publish DEC flags without consulting disabled affine condition state."""
     monkeypatch.delenv("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS", raising=False)
     monkeypatch.setattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {})
     monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
     instruction = Instruction_ANY.__new__(Instruction_ANY)
     instruction.addr = 0x4000
-    instruction.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+    flag_inputs = []
+    instruction.emu = SimpleNamespace(
+        _inertia_current_block_addr=0x4000, update_eflags_dec=flag_inputs.append
+    )
     instruction.simple_semantics = ("dec_reg16", "ax")
     instruction._restore_condition_reg_affine_snapshot_8616 = lambda: None
     instruction._reset_condition_reg_value_state_at_block_entry_8616 = lambda: None
@@ -452,6 +456,7 @@ def test_dec_jcc_does_not_mutate_disabled_affine_state(monkeypatch) -> None:
     instruction._lift_simple()
 
     assert recorded == [(4, 1)]
+    assert flag_inputs == [4]
 
 
 def test_dec_jcc_semantics_keep_typed_register_operands_without_affine_state() -> None:

@@ -2,11 +2,45 @@
 
 from types import SimpleNamespace
 
+import angr
+import pytest
 import pyvex
+from angr import options as o
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir import IRBinaryValue, IRValue, MemSpace
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+
+@pytest.mark.parametrize("address_bits", [16, 32])
+@pytest.mark.parametrize(
+    ("opcode", "initial", "incoming_flags", "expected", "target"),
+    [
+        (0x41, 0xFFFF, 1, 0, 0x103),
+        (0x41, 0, 0x41, 1, 0x105),
+        (0x49, 1, 1, 0, 0x103),
+        (0x49, 2, 0x41, 1, 0x105),
+    ],
+)
+def test_simple_incdec_jnz_executes_new_zero_flag(
+    address_bits, opcode, initial, incoming_flags, expected, target
+) -> None:
+    """Branch on INC/DEC's result, not stale flags, retaining incoming carry."""
+    code = bytes([opcode, 0x75, 2, 0x90, 0x90, 0x90])
+    project = angr.load_shellcode(code, arch=Arch86_16(), load_address=0x100)
+    project.arch.bits = address_bits
+    state = project.factory.blank_state(
+        addr=0x100,
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS},
+    )
+    state.regs.cx = initial
+    state.regs.flags = incoming_flags
+    successors = project.factory.successors(state, num_inst=2).flat_successors
+    assert len(successors) == 1
+    result = successors[0]
+    assert result.solver.eval(result.regs.cx) == expected
+    assert result.addr == target
+    assert result.solver.eval(result.regs.flags) & 1 == incoming_flags & 1
 
 
 def test_simple_inc_preserves_exact_stack_value_for_following_cmp(monkeypatch) -> None:
@@ -22,7 +56,10 @@ def test_simple_inc_preserves_exact_stack_value_for_following_cmp(monkeypatch) -
     instruction.arch = Arch86_16()
     instruction.addr = 0x400D
     instruction.cs = SimpleNamespace(size=3)
-    instruction.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+    flag_inputs = []
+    instruction.emu = SimpleNamespace(
+        _inertia_current_block_addr=0x4000, update_eflags_inc=flag_inputs.append
+    )
     instruction._get_reg16 = lambda _name: 4
     instruction._const16 = lambda value: value
     instruction._next_instruction_is_simple_jcc = lambda: False
@@ -42,6 +79,7 @@ def test_simple_inc_preserves_exact_stack_value_for_following_cmp(monkeypatch) -
             "inc_reg16",
             ("inc_reg16", "ax"),
         )
+        assert flag_inputs == [4]
         instruction.addr = 0x4011
         instruction.cs = SimpleNamespace(size=3)
         lhs, rhs = instruction._condition_operands_from_cmp_semantics_8616(

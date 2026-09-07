@@ -3097,6 +3097,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_status_flag_liveness.py \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \
 	angr_platforms/tests/test_x86_16_alu_effect_order.py \
+	angr_platforms/tests/test_x86_16_simple_incdec_value_provenance.py \
 	angr_platforms/tests/test_x86_16_direct_global_call_return_materialization.py \
 	angr_platforms/tests/test_x86_16_borrow_verification.py \
 	angr_platforms/tests/test_build_msc6_artifact_names.py \
@@ -3153,6 +3154,7 @@ QA_PYTEST_TARGETS += \
 	angr_platforms/tests/test_x86_16_status_flag_liveness.py \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \
 	angr_platforms/tests/test_x86_16_alu_effect_order.py \
+	angr_platforms/tests/test_x86_16_simple_incdec_value_provenance.py \
 	angr_platforms/tests/test_x86_16_borrow_verification.py \
 	angr_platforms/tests/test_build_msc6_artifact_names.py \
 	angr_platforms/tests/test_x86_16_call_argument_carrier_liveness.py \
