@@ -102,6 +102,11 @@ at postprocess is not permission to introduce semantic recovery there.
 
 ### 1. Make Acceptance Checks Trustworthy
 
+Bounded batch completed on 2026-09-07: see
+[gate-inventory evidence](p0-gate-inventory-coherence.md). All four recorded
+gate/ownership failures pass focused checks and quality-hard is green. This
+does not replace the original full-suite census or close global typing.
+
 Reason: misleading gate inventories obscure which checks actually execute.
 DoD: handle literal Make assignments/appends correctly with focused positive
 and negative tests; enroll the real missing node; preserve duplicate/missing

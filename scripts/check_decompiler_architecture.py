@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if __package__:
+    from .makefile_inventory import makefile_variable_words as _makefile_variable_words
     from .pytest_source_index import load_pytest_source_index
 else:
+    from makefile_inventory import makefile_variable_words as _makefile_variable_words
     from pytest_source_index import load_pytest_source_index
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -6763,31 +6765,6 @@ def _makefile_target_path(target: str) -> str:
     """Return the filesystem path part from a Makefile lint or pytest target."""
 
     return target.split("::", 1)[0]
-
-
-def _makefile_variable_words(makefile_text: str, variable_name: str) -> tuple[str, ...]:
-    """Return literal whitespace-separated words assigned to a Makefile variable."""
-
-    lines = makefile_text.splitlines()
-    prefix = f"{variable_name} :="
-    for index, line in enumerate(lines):
-        if not line.startswith(prefix):
-            continue
-        words: list[str] = []
-        current = line.removeprefix(prefix).strip()
-        cursor = index
-        while True:
-            continued = current.endswith("\\")
-            if continued:
-                current = current[:-1].strip()
-            words.extend(part for part in current.split() if part)
-            if not continued:
-                return tuple(words)
-            cursor += 1
-            if cursor >= len(lines):
-                return tuple(words)
-            current = lines[cursor].strip()
-    return ()
 
 
 def _pipeline_tier_literals(tree: ast.Module) -> dict[str, tuple[str, ...]]:

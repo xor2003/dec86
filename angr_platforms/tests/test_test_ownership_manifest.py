@@ -225,7 +225,10 @@ def test_selects_type_array_matching_tests_for_implementation_file():
         ("angr_platforms/angr_platforms/X86_16/type_array_matching.py",)
     )
 
-    assert selected == ("angr_platforms/tests/test_x86_16_array_matching.py",)
+    assert selected == (
+        "angr_platforms/tests/test_generic_annotation_contracts.py",
+        "angr_platforms/tests/test_x86_16_array_matching.py",
+    )
 
 
 def test_selects_type_equivalence_classes_tests_for_implementation_file():
@@ -365,6 +368,7 @@ def test_selects_unique_tests_for_multiple_matching_files():
     )
 
     assert selected == (
+        "angr_platforms/tests/test_makefile_inventory.py",
         "angr_platforms/tests/test_architecture_import_attestation.py",
         "angr_platforms/tests/test_decompiler_architecture_check.py",
     )

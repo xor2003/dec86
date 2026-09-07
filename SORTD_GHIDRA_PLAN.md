@@ -20,6 +20,13 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-07)
 
+The [gate-inventory checkpoint](reference/p0-gate-inventory-coherence.md)
+closes the four audit failures in Make inventory, ownership expectations, and
+quality-module admission under focused tests. The 2,065-test quality-dev and
+quality-hard gates pass, including full architecture and executable guards;
+non-incremental global MyPy still reports 146 errors. The full census below
+has not been rerun. Next is the RunMenu flag/address semantic defect.
+
 The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
 **10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current
 RunMenu compilation and InitMenu/InitBars/control-flow validation failures mean

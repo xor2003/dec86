@@ -63,6 +63,11 @@ class ManifestViolation:
 
 TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
+        owner="makefile-inventory",
+        paths=("Makefile", "scripts/makefile_inventory.py", "scripts/check_decompiler_architecture.py"),
+        tests=("angr_platforms/tests/test_makefile_inventory.py",),
+    ),
+    TestOwnershipRule(
         owner="access-trait-runtime-factory",
         paths=(
             "inertia_decompiler/cli_c_ast_rewrites.py",
@@ -659,7 +664,10 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     ),
     TestOwnershipRule(owner="x86-16-layer-module-status",
         paths=("angr_platforms/angr_platforms/X86_16/layer_module_status.py",),
-        tests=("angr_platforms/tests/test_x86_16_layer_module_status.py",),
+        tests=(
+            "angr_platforms/tests/test_x86_16_layer_module_status.py",
+            "angr_platforms/tests/test_x86_16_layer_boundaries.py",
+        ),
     ),
     TestOwnershipRule(
         owner="x86-16-coverage-manifest",

@@ -4,6 +4,8 @@ import ast
 from functools import cache
 from pathlib import Path
 
+import pytest
+from angr_platforms.X86_16 import quality
 from angr_platforms.X86_16.layer_module_status import (
     LAYER_MODULE_RECORDS,
     LayerModuleAdmission,
@@ -11,6 +13,9 @@ from angr_platforms.X86_16.layer_module_status import (
 )
 from angr_platforms.X86_16.widening.widening_rules import run_typed_widening_pass_8616
 
+from inertia_decompiler import acceptance_scorecard
+
+pytestmark = pytest.mark.xdist_group("layer-boundaries")
 _ROOT = Path(__file__).resolve().parents[1] / "angr_platforms" / "X86_16"
 _OWNING_LAYERS = ("semantics", "alias", "widening", "structuring", "lowering")
 _ALL_GUARDED_LAYERS = (*_OWNING_LAYERS, "postprocess")
@@ -187,12 +192,19 @@ def test_quality_and_diagnostics_modules_are_wired_into_production_paths() -> No
         "angr_platforms.X86_16.semantics.evidence_cache",
         "angr_platforms.X86_16.structuring.simple_loop_recovery",
         "angr_platforms.X86_16.lowering.segmented_lowering",
-        "angr_platforms.X86_16.quality",
+        "inertia_decompiler.acceptance_scorecard",
         "angr_platforms.X86_16.exact_region_diagnostics",
     )
     missing = [module for module in modules if not _production_importers_for_module(module)]
 
     assert missing == []
+
+
+def test_quality_compatibility_exports_retain_canonical_identity() -> None:
+    assert quality.X86_16QualityMetrics is acceptance_scorecard.X86_16QualityMetrics
+    assert quality.measure_x86_16_codegen_quality_8616 is acceptance_scorecard.measure_x86_16_codegen_quality_8616
+    assert quality.measure_x86_16_function_quality_8616 is acceptance_scorecard.measure_x86_16_function_quality_8616
+    assert quality.format_x86_16_quality_report_8616 is acceptance_scorecard.format_x86_16_quality_report_8616
 
 
 def test_prototype_quality_modules_are_test_only_until_pipeline_admission() -> None:

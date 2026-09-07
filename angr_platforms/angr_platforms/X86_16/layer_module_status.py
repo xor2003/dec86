@@ -80,9 +80,9 @@ LAYER_MODULE_RECORDS: tuple[LayerModuleRecord, ...] = (
     ),
     LayerModuleRecord(
         "angr_platforms.X86_16.quality",
-        LayerModuleAdmission.PRODUCTION_WIRED,
+        LayerModuleAdmission.COMPATIBILITY_WRAPPER,
         "diagnostics",
-        "Cross-cutting metrics wired into the MSC6 example harness/reporting.",
+        "Historical quality exports; implementation lives in inertia_decompiler.acceptance_scorecard.",
     ),
     LayerModuleRecord(
         "angr_platforms.X86_16.postprocess.condition_patterns",

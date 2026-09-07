@@ -372,6 +372,7 @@ check-all: ruff-all pyright-all type-ratchet-changed architecture-check agent-co
 	$(MAKE) type-ratchet-changed architecture-check agent-context-check test-ownership-check pytest-all
 
 QA_TYPED_FILES := \
+	scripts/makefile_inventory.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
 	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_constant_flow.py \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
@@ -1364,6 +1365,7 @@ QA_TYPED_FILES := \
 	decompile.py
 
 QA_RUFF_TARGETS := \
+	scripts/makefile_inventory.py \
 	angr_platforms/angr_platforms/X86_16/ir/function_ir_registry.py \
 	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_constant_flow.py \
 	angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py \
@@ -2560,6 +2562,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_generic_annotation_contracts.py \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
 	angr_platforms/tests/test_frame_carrier_type_contracts.py \
+	angr_platforms/tests/test_makefile_inventory.py \
+	angr_platforms/tests/test_x86_16_layer_boundaries.py \
 	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
 	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
 	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
@@ -2690,6 +2694,10 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_clinic_semantic_stages.py
 
 QA_PYTEST_TARGETS := \
+	angr_platforms/tests/test_x86_16_layer_boundaries.py::test_quality_and_diagnostics_modules_are_wired_into_production_paths \
+	angr_platforms/tests/test_x86_16_layer_boundaries.py::test_layer_module_admission_status_matches_production_imports \
+	angr_platforms/tests/test_x86_16_layer_boundaries.py::test_quality_compatibility_exports_retain_canonical_identity \
+	angr_platforms/tests/test_x86_16_cod_regressions.py::test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores \
 	angr_platforms/tests/test_function_ir_ssa_source_scope.py \
 	angr_platforms/tests/test_x86_16_indexed_alias_cache_layers.py \
 	angr_platforms/tests/test_program_callsite_cache.py \
@@ -2839,6 +2847,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_generic_annotation_contracts.py \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
 	angr_platforms/tests/test_frame_carrier_type_contracts.py \
+	angr_platforms/tests/test_makefile_inventory.py \
 	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
 	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
 	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
@@ -3072,7 +3081,6 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_architecture_import_attestation.py \
 	angr_platforms/tests/test_x86_16_tagged_subtree_projection.py \
 	angr_platforms/tests/test_x86_16_dce_purity.py \
-	angr_platforms/tests/test_x86_16_condition_transfer.py \
 	angr_platforms/tests/test_x86_16_condition_artifact_reuse.py \
 	angr_platforms/tests/test_x86_16_indexed_global_stack_coordinates.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_liveness.py \
@@ -3118,7 +3126,6 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_register_reaching_source.py \
 	angr_platforms/tests/test_x86_16_register_source_block_inventory.py \
 	angr_platforms/tests/test_x86_16_patch_direct_calls.py \
-	angr_platforms/tests/test_x86_16_stored_call_result_assignments.py \
 	angr_platforms/tests/test_x86_16_stored_call_return_early_exit.py \
 	angr_platforms/tests/test_x86_16_validation_call_return_storage.py
 

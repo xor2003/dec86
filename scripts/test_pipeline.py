@@ -154,6 +154,13 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_generic_annotation_contracts.py",
     "angr_platforms/tests/test_access_trait_runtime_factory.py",
     "angr_platforms/tests/test_frame_carrier_type_contracts.py",
+    "angr_platforms/tests/test_makefile_inventory.py",
+    "angr_platforms/tests/test_x86_16_layer_boundaries.py::"
+    "test_quality_and_diagnostics_modules_are_wired_into_production_paths",
+    "angr_platforms/tests/test_x86_16_layer_boundaries.py::"
+    "test_layer_module_admission_status_matches_production_imports",
+    "angr_platforms/tests/test_x86_16_layer_boundaries.py::"
+    "test_quality_compatibility_exports_retain_canonical_identity",
     "angr_platforms/tests/test_x86_16_alu_effect_order.py",
     "angr_platforms/tests/test_x86_16_cod_regressions.py::test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores",
     "angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py",
