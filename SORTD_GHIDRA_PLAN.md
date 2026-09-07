@@ -440,6 +440,12 @@ neither Step 9f nor the overall P0 goal is closed by this checkpoint.
 
 #### P0 pointer-store consumption follow-up (2026-09-07)
 
+The [access-trait factory checkpoint](reference/p0-access-trait-runtime-factory.md)
+repairs a reproduced runtime class/type-alias mismatch in legacy CLI wiring;
+the positive collector and existing refusal regressions pass. `quality-dev`
+and the mandatory executable pipeline pass (2,047 pytest cases each). Global
+MyPy diagnostics decrease from 150 to 149; no full P0 closure is claimed.
+
 The [segment-membership checkpoint](reference/p0-segment-register-membership.md)
 aligns Alias's immutable membership contract with IR's ordered register
 inventory, preserves constant restore evidence, and strengthens a stale live

@@ -86,6 +86,7 @@ from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
 from inertia_decompiler import cli_stack_locals as _cli_stack_locals
 from inertia_decompiler import cli_word_global_helpers as _cli_word_global_helpers
 from inertia_decompiler import cli_word_loads as _cli_word_loads
+from inertia_decompiler.cli_access_profiles import AccessTraitStrideEvidence as _AccessTraitStrideEvidence
 from inertia_decompiler.cli_output import (
     _timestamped_print,
 )
@@ -101,7 +102,6 @@ type StructuredCodegenValue = Any
 type AngrProjectValue = Any
 
 type _AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
-type _AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
 
 
 def _compat_callback(callback: Callable[..., object]) -> StructuredAstValue:
