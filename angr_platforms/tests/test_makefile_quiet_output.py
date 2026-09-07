@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_pyright_recipes_resolve_selected_python_environment() -> None:
+@pytest.mark.parametrize("use_path", (False, True))
+def test_pyright_recipes_resolve_selected_python_environment(use_path: bool) -> None:
     """Every Pyright batch must inspect dependencies from Make's interpreter."""
+    interpreter = Path(sys.executable)
+    python = interpreter.name if use_path else sys.executable
+    env = dict(os.environ, PATH=f"{interpreter.parent}{os.pathsep}{os.environ.get('PATH', '')}")
     result = subprocess.run(
         [
             "make", "-n", "pyright", "pyright-all", "pyright-files",
-            f"PYTHON={sys.executable}", "PYRIGHT_WATCH=0",
+            f"PYTHON={python}", "PYRIGHT_WATCH=0",
             "FILES=angr_platforms/angr_platforms/X86_16/access.py",
         ],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True,
     )
     commands = [line for line in result.stdout.splitlines() if " -m pyright " in line]
     assert commands

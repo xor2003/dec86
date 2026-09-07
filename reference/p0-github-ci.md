@@ -147,3 +147,24 @@ batch has 11 errors; later batches remain uncounted.
 Combined `quality-dev` passes with 2,119 tests in 147.61s, compiled-import and
 architecture/ownership checks, and generated-C guards. This checkpoint is
 local/shared-tree evidence, not full-suite or remote CI closure.
+
+## CI PATH Interpreter Correction
+
+Run 34135704289 on d60aeadc1 finished with **4,392 passed, 41 failed in
+532.20s**. Missing COMP32 files and partition cache directories are no longer
+the reported failure modes; the four COMP32 decompilation assertions still
+fail remotely and need separate diagnosis. Vulture remains open.
+
+Its 382 Pyright diagnostics were inflated by a regression in the interpreter
+selection change: CI uses `PYTHON=python`, and Pyright interpreted the bare
+argument as a repository-relative file instead of looking it up on PATH.
+Local verbose reproduction confirmed `/home/xor/vextest/python` and missing
+dependency search paths. Make now asks the selected interpreter for
+`sys.executable` before passing `--pythonpath`. The regression covers both
+explicit paths and PATH commands: one failed/three passed before, four passed
+after (2.55s). A live `make pyright-files PYTHON=python` check with the venv on
+PATH passes for callsite_summary.py. No missing-import suppression is used.
+
+The AST child-field typing follow-up remains uncommitted: nine focused tests,
+Ruff, scoped MyPy and Pyright pass, including new conditional-pair and switch
+replacement/idempotence coverage. Broad gates have not run for that change.

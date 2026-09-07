@@ -38,7 +38,8 @@ endif
 ifeq ($(strip $(PYRIGHT_STATS)),1)
 PYRIGHT_STATS_FLAG := --stats
 endif
-PYRIGHT_CMD_BASE := $(PYTHON) -m pyright $(PYRIGHT_OUTPUT_FLAGS) --pythonpath $(PYTHON) $(PYRIGHT_STATS_FLAG) $(PYRIGHT_WATCH_FLAG)
+PYRIGHT_PYTHON_PATH := $(shell $(PYTHON) -c 'import sys; print(sys.executable)')
+PYRIGHT_CMD_BASE := $(PYTHON) -m pyright $(PYRIGHT_OUTPUT_FLAGS) --pythonpath $(PYRIGHT_PYTHON_PATH) $(PYRIGHT_STATS_FLAG) $(PYRIGHT_WATCH_FLAG)
 PY_FILES_ALL := $(shell git ls-files '*.py')
 PY_FILES := $(filter %.py,$(FILES))
 PYTEST_FILES := $(filter angr_platforms/tests/%.py tests/%.py,$(PY_FILES))
@@ -3259,7 +3260,7 @@ pyright:
 	$(Q)$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/lowering
 	$(Q)$(PYRIGHT_CMD_BASE) $(filter-out angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py,$(wildcard angr_platforms/angr_platforms/X86_16/postprocess/*.py) $(wildcard angr_platforms/angr_platforms/X86_16/postprocess/optimization/*.py))
 	# Legacy hardening check expects this exact DCE command form in makefile text.
-	$(Q)$(if $(strip $(PYRIGHT_WATCH_FLAG)),,$(TIMEOUT) --foreground $(PYRIGHT_DCE_TIMEOUT) $(PYTHON) -m pyright angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py $(PYRIGHT_OUTPUT_FLAGS) --pythonpath $(PYTHON)) || { \
+	$(Q)$(if $(strip $(PYRIGHT_WATCH_FLAG)),,$(TIMEOUT) --foreground $(PYRIGHT_DCE_TIMEOUT) $(PYTHON) -m pyright angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py $(PYRIGHT_OUTPUT_FLAGS) --pythonpath $(PYRIGHT_PYTHON_PATH)) || { \
 		status=$$?; \
 		if [ $$status -eq 124 ]; then echo "pyright: DCE batch exceeded $(PYRIGHT_DCE_TIMEOUT)s; split its oversized function instead of suppressing types"; fi; \
 		exit $$status; \
