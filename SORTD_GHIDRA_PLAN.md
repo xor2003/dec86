@@ -47,7 +47,8 @@ The [InitMenu local-read repair](reference/p0-initmenu-local-reads.md) preserves
 its zero initializer by consuming the shared AST child inventory during
 dead-local read collection. Named InitMenu still fails buffer storage/argument
 validation; sidecar-free passes. This is partial correctness progress, not
-function closure or deferred performance work.
+function closure or deferred performance work. [Remote CI closure](reference/p0-github-ci.md)
+is also required: local focused passes do not replace a green pushed CI run.
 
 The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
 **10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current

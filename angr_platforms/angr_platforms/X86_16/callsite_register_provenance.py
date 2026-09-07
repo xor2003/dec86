@@ -9,7 +9,6 @@ Forbidden: source/COD/rendered-C inference or semantic materialization.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Protocol, cast
 
 from angr.errors import SimEngineError
@@ -23,6 +22,7 @@ from .alias.register_reaching_source import (
 )
 from .analysis_helpers import resolve_direct_call_target_from_instruction_8616
 from .callsite_register_instruction_facts import (
+    DecodedInstructionFactSurface8616,
     instruction_writes_memory_8616,
     instruction_writes_register_8616,
     register_replacement_source_8616,
@@ -46,46 +46,6 @@ __all__ = (
     "recover_callsite_register_source_8616",
     "recover_register_source_before_instruction_8616",
 )
-
-
-class _MemoryOperand8616(Protocol):
-    """Capstone memory fields at the third-party instruction boundary."""
-
-    base: int
-    index: int
-    segment: int
-    disp: int
-
-
-class _Operand8616(Protocol):
-    """Capstone operand fields consumed through instruction-fact helpers."""
-
-    type: int
-    reg: int
-    imm: int
-    size: int
-    access: int
-    mem: _MemoryOperand8616
-
-
-class _DecodedInstruction8616(Protocol):
-    """Capstone detail fields consumed through instruction-fact helpers."""
-
-    operands: Sequence[_Operand8616]
-
-    def reg_name(self, reg_id: int) -> str:
-        """Return one backend register name."""
-
-    def regs_access(self) -> tuple[Sequence[int], Sequence[int]]:
-        """Return registers read and written by this instruction."""
-
-
-class _Instruction8616(Protocol):
-    """angr Capstone wrapper fields used by this collector."""
-
-    address: int
-    mnemonic: str
-    insn: _DecodedInstruction8616
 
 
 class _FunctionManager8616(Protocol):
@@ -191,7 +151,7 @@ def _synthetic_call_preserves_register_8616(
 
 def _block_transfer_8616(
     project: _Project8616,
-    instructions: tuple[_Instruction8616, ...],
+    instructions: tuple[DecodedInstructionFactSurface8616, ...],
     register: str,
 ) -> tuple[RegisterBlockTransferKind8616, tuple[object, ...] | None, bool]:
     """Collect one ordered block-prefix transfer from decoded instructions."""
@@ -274,8 +234,8 @@ def recover_register_source_before_instruction_8616(
     transfers: list[RegisterBlockTransfer8616] = []
     sink_addr: int | None = None
     for block in inventory.blocks:
-        prefix: list[_Instruction8616] = []
-        for instruction in cast(tuple[_Instruction8616, ...], block.instructions):
+        prefix: list[DecodedInstructionFactSurface8616] = []
+        for instruction in cast(tuple[DecodedInstructionFactSurface8616, ...], block.instructions):
             if instruction.address == instruction_addr:
                 if sink_addr is not None:
                     return resolve_register_reaching_source_8616(

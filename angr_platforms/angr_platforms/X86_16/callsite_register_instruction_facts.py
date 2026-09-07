@@ -53,9 +53,11 @@ class _DecodedInstruction8616(Protocol):
 
     def reg_name(self, reg_id: int) -> str:
         """Return the backend register name for ``reg_id``."""
+        ...
 
     def regs_access(self) -> tuple[Sequence[int], Sequence[int]]:
         """Return registers read and written by this instruction."""
+        ...
 
 
 class DecodedInstructionFactSurface8616(Protocol):
