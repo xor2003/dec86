@@ -92,6 +92,9 @@ def test_args_generated_c_contract_refuses_hoisted_verbose_assignment() -> None:
     contract = ultra_qc.ARGS_FIXTURE.generated_c_contract
     assert contract is not None
     stdout = """
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 unsigned short sub_10010(void *a0, unsigned short a1);
 int sub_106d6(unsigned short a0, unsigned short a1);
 extern unsigned short inertia_ds;

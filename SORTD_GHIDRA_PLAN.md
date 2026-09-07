@@ -18,7 +18,7 @@ Numeric function and global names are acceptable when the executable has no
 debug information. Source names below identify addresses for this report only;
 they must not become recovery evidence.
 
-## Current Checkpoint (2026-09-06)
+## Current Checkpoint (2026-09-07)
 
 Current sidecar-free command:
 
@@ -111,6 +111,13 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
   and arrays and keeps wide-return low halves distinct; all 236 segmented
   runtime lowering tests pass
 - accepted results are cached and refused functions are revalidated
+- ARGS no longer loses its caller-clean argument pushes when the callee returns
+  with zero stack cleanup. Recovery Metadata retains all three binary pushes,
+  Types/Lowering removes the stale contained `BP+5` byte view and materializes
+  the `BP+6` pointer owner, and the generated function passes whole-tail
+  validation plus strict recompilation. Three cached and uncached checks produce
+  the same generated-C hash. All four Ultra QuickC fixtures pass their generated-
+  C contracts and report `validation=passed`
 
 The validation-clean loop/control-flow family is now closed. ReInitBars,
 BubbleSort, ExchangeSort, and PercolateUp pass their live function regressions
@@ -937,6 +944,7 @@ or output filtering.
 | 9n | Compose identical-return and JCC Structuring validation proofs | `2026-09-06 22:36 +02:00` | `2026-09-06 23:12 +02:00` | about 28m focused plus 8m current-tree revalidation; executable waits separate | complete | Tail Validation consumes only the exact condition/control-flow observations owned by one closed identical-return collapse and leaves a balanced residual for the existing JCC validator. Seven focused tests, strict MyPy, Ruff `--fix`, and architecture checks pass; sidecar-free QuickSort passes and source-assisted QuickSort reaches `structuring=stable`, exposing only the independent final stack-coordinate defect closed by 9o. |
 | 9o | Resolve final C argument coordinates through the complete function interface | `2026-09-06 23:12 +02:00` | `2026-09-06 23:24 +02:00` | 12m focused; live-test waits separate | complete | Validation consumes the existing Types/Lowering whole-function coordinate projection before ambiguous per-variable fallback. Entry-SP `+4` no longer collides with the first argument's machine-BP `+4`; both QuickSort arguments initialize `BP+4..+7`, parameter width facts resolve at `BP+4/+6`, 53 focused unit tests pass, and named plus sidecar-free QuickSort validate and recompile. The source-comparison fixture now accepts only the explicit 16-bit semantic view while retaining exact call, pointer-index, and recursion-bound checks. |
 | 9p | Preserve wide far-pointer returns and materialize exact stack-offset constants | before `2026-09-07 00:30 +02:00`; exact first diagnostic not retained | `2026-09-07 01:05 +02:00` | exact subtotal unavailable across continuation; final implementation and verification about 25m; test waits separate | complete | Types/Lowering now recognizes only an exact byte-pair word-load shape, so materialization cannot consume its enclosing DX:AX return. Decoded same-block constant flow retains `36` only through exact register and BP-stack identities; overlapping or unresolved writes invalidate it. The focused OVERLAY body emits both words and `36 + (funcNumber << 1)`, passes clean whole-tail validation, avoids asm fallback, and recompiles as portable-flat C. Eight focused tests, the 190-test segmented-load surface, and the 52-test changed-file gate pass with Ruff `--fix`, MyPy, type/doc ratchet, startup architecture, context, and ownership checks green. |
+| 9q | Preserve caller-clean arguments and current typed stack-owner widths | before `2026-09-07 02:27 +02:00`; exact first diagnostic not retained | `2026-09-07 02:46 +02:00` | exact subtotal unavailable across continuation; final root fix and verification about 12m; executable waits separate | complete | Recovery Metadata no longer interprets a returning callee's zero terminal cleanup as zero arguments. ARGS retains its three physical CRT pushes, folds the stale `BP+5` byte view into the current word owner, materializes the `BP+6` pointer, passes strict recompilation and clean whole-tail validation, and is byte-deterministic across three generated-C checks. The 131-test argument surface, the 137-test callsite/fixture surface, focused Ruff/MyPy/type gates, and all four Ultra QuickC fixtures pass. The fixture AST parser is independent of host libc headers. |
 | 9 | Finish remaining general interprocedural contracts, full-suite failure families, and open Ghidra mechanisms | `2026-09-02 02:10 +02:00` | - | prior closures plus completed 9c/9d/9e slices; waits excluded where recorded | 55-76h pending exact recalibration | Tasks 3 and 8 meet their per-step DoD for general indexed, indirect, stack, multi-output, type, CFG, COD, and full-suite contracts; the exact complete collection reaches zero failures without hiding coverage. |
 | 10 | Profile and optimize the remaining serial decompiler tail | not started | - | 0h | 8-12h | Aggregate PSS stays within the 2 GiB budget and measured wall time improves without semantic or validation regression. |
 | 11 | Add proof-backed readability improvements | not started | - | 0h | 8-12h | Readability changes consume existing typed evidence and all semantic gates remain green. |
@@ -1388,6 +1396,50 @@ Definition of failure:
 - repair the symptom in Structuring, Rewrite, postprocess, or CLI, weaken Tail
   Validation or recompilation, or leave any focused type, documentation, lint,
   architecture, ownership, or regression gate failing
+
+#### Step 9q acceptance contract
+
+Reason: one stack-coordinate projection froze the value width while its owned C
+variable could still be upgraded from a byte view to a word. After that owner
+was corrected, Recovery Metadata still reported a complete zero-argument caller
+census because it treated `RET` cleanup zero as proof that a returning callee
+takes no arguments. Zero cleanup instead identifies a caller-clean convention;
+it says nothing about how many preceding pushes belong to the call. The fixture
+gate also parsed host libc implementation headers rather than only generated C,
+making its structural verdict depend on the host toolchain.
+
+Definition of done:
+
+- a stack-coordinate projection derives its current semantic value width from
+  the owned typed C variable while retaining the separately proven storage size
+- a returning callee with zero terminal stack cleanup does not erase physical
+  push evidence or manufacture a zero-argument census
+- tests cover a byte-to-word owner upgrade and a caller-clean call with three
+  physical word arguments; ambiguity continues to retain evidence rather than
+  delete it
+- sidecar-free ARGS has no stale `BP+5` argument, materializes the `BP+6`
+  pointer owner, uses distinct argument/local identities, emits no invalid
+  pointer assignment or shift, passes strict recompilation, and reports clean
+  whole-tail validation
+- repeated ARGS runs produce byte-identical C, and all four Ultra QuickC
+  fixtures pass their generated-C contracts with `validation=passed`
+- the generated-C fixture parser excludes host include expansion and an
+  ARGS-preamble regression proves that its AST verdict is host-header independent
+- focused Ruff `check --fix`, MyPy, type/documentation ratchet, and parallel
+  argument/callsite/fixture regressions pass
+
+Definition of failure:
+
+- infer arity from `RET` cleanup zero, callee returning status, source/COD names,
+  rendered C, or a fixture-specific address
+- discard caller-clean pushes, bypass conflicting evidence in Types/Lowering,
+  or repair argument identity in Structuring, Rewrite, postprocess, or CLI
+- retain the stale contained byte owner, merge unrelated local and argument
+  identities, emit invalid pointer operations, or weaken Tail Validation or
+  strict recompilation
+- let host libc syntax determine fixture-contract success, or leave any focused
+  type, documentation, lint, ownership, deterministic-output, or regression gate
+  failing
 
 ### Estimate History
 

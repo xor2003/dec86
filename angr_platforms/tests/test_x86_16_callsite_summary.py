@@ -16,7 +16,6 @@ from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     StructuredCallKind8616,
-    _callee_proven_returning_without_stack_args_8616,
     _decode_linear_insns_at_8616,
     _logical_arg_interface_for_target_8616,
     _logical_arg_widths_for_target_8616,
@@ -32,24 +31,9 @@ from angr_platforms.X86_16.callsite_summary import (
     summarize_x86_16_callsite,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
-from angr_platforms.X86_16.semantics.terminal_stack_cleanup import TerminalStackCleanupEvidence8616
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
 MSC_ANCHKSTK_BYTES = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
-
-
-def test_zero_cleanup_callee_uses_complete_terminal_evidence_without_kb_function(monkeypatch) -> None:
-    project = SimpleNamespace(
-        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda *, addr, create=False: None))
-    )
-    function = SimpleNamespace(project=project)
-    evidence = TerminalStackCleanupEvidence8616(frozenset({0}), 1, 1, 1, 1, 0)
-    monkeypatch.setattr(
-        "angr_platforms.X86_16.callsite_summary.terminal_stack_cleanup_at_address_8616",
-        lambda candidate_project, address: evidence,
-    )
-
-    assert _callee_proven_returning_without_stack_args_8616(function, 0x5000, 0)
 
 
 def test_follow_decode_refuses_unmapped_lazy_capstone_bytes() -> None:
@@ -396,14 +380,13 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
     )
 
 
-def test_callsite_summary_keeps_zero_cleanup_pushes_caller_owned(monkeypatch):
+def test_callsite_summary_preserves_caller_clean_argument_pushes(monkeypatch):
     function = _function_with_block(
         [
-            _Insn(0x1000, "push", [_Operand(reg=1, size=2)], reg_names={1: "bx"}),
-            _Insn(0x1001, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
-            _Insn(0x1002, "call"),
-            _Insn(0x1005, "pop", [_Operand(reg=3, size=2)], reg_names={3: "dx"}),
-            _Insn(0x1006, "pop", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1000, "push", [_Operand(imm=1, size=2)]),
+            _Insn(0x1001, "push", [_Operand(imm=2, size=2)]),
+            _Insn(0x1002, "push", [_Operand(imm=3, size=2)]),
+            _Insn(0x1003, "call"),
         ]
     )
     callee = SimpleNamespace(returning=True)
@@ -412,19 +395,20 @@ def test_callsite_summary_keeps_zero_cleanup_pushes_caller_owned(monkeypatch):
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
-        lambda _function: [CallTargetSeed(0x1002, 0x1544, 0x1005, "direct_near")],
+        lambda _function: [CallTargetSeed(0x1003, 0x1544, 0x1006, "direct_near")],
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.callsite_summary._callee_stack_cleanup_bytes_8616",
         lambda *_args, **_kwargs: 0,
     )
 
-    summary = summarize_x86_16_callsite(function, 0x1002)
+    summary = summarize_x86_16_callsite(function, 0x1003)
 
     assert summary is not None
-    assert summary.arg_count == 0
-    assert summary.arg_widths == ()
+    assert summary.arg_count == 3
+    assert summary.arg_widths == (2, 2, 2)
     assert summary.logical_arg_widths == ()
+    assert summary.push_arg_instruction_addrs == (0x1000, 0x1001, 0x1002)
 
 
 def test_callsite_summary_recovers_far_call_pushes_and_cleanup(monkeypatch):

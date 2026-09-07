@@ -9,6 +9,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -1198,6 +1199,8 @@ def collect_interrupt_calls(
     """Collect recoverable interrupt calls from a dynamic angr Function boundary."""
 
     def _impl() -> list[InterruptCall]:
+        from .semantics.terminal_stack_cleanup import terminal_stack_cleanup_at_address_8616
+
         nonlocal binary_path
         binary_path = _coerce_path(binary_path)
         project = _dynamic_analysis_getattr_8616(function, "project", None)
@@ -1205,6 +1208,7 @@ def collect_interrupt_calls(
             return []
 
         calls: list[InterruptCall] = []
+        debug_interrupt_stack = bool(os.environ.get("INERTIA_DEBUG_INTERRUPT_STACK"))
         regs: dict[str, tuple[int | None, str | None]] = {
             "ah": (None, None),
             "al": (None, None),
@@ -1267,6 +1271,68 @@ def collect_interrupt_calls(
                 else:
                     regs["dx"] = (None, None)
 
+        def pushed_value(ins: object, operand: object) -> tuple[int | None, str | None] | None:
+            """Capture one exact register/immediate PUSH source before later calls."""
+            operand_type = _dynamic_analysis_getattr_8616(operand, "type", None)
+            if operand_type == 1:
+                reg_name = cast(Any, ins).reg_name(cast(Any, operand).reg).lower()
+                if reg_name not in regs:
+                    return None
+                value, expr = regs[reg_name]
+                if value is None and expr is None:
+                    expr = {
+                        "ax": "inertia_eax & 0xffff",
+                        "bx": "inertia_ebx & 0xffff",
+                        "cx": "inertia_ecx & 0xffff",
+                        "dx": "inertia_edx & 0xffff",
+                        "si": "inertia_esi & 0xffff",
+                        "di": "inertia_edi & 0xffff",
+                        "ds": "inertia_ds",
+                        "es": "inertia_es",
+                        "ss": "inertia_ss",
+                        "cs": "inertia_cs",
+                    }.get(reg_name)
+                return value, expr
+            if operand_type == 2:
+                return _operand_expr(ins, operand)
+            return None
+
+        def call_preserves_symbolic_stack(ins: object, operands: object) -> bool:
+            """Require one direct returning callee with complete zero-cleanup proof."""
+            if not isinstance(operands, (list, tuple)) or len(operands) != 1:
+                return False
+            target = operands[0]
+            if _dynamic_analysis_getattr_8616(target, "type", None) != 2:
+                return False
+            target_addr = _dynamic_analysis_getattr_8616(target, "imm", None)
+            if not isinstance(target_addr, int):
+                return False
+            if ins.mnemonic == "call":
+                ins_addr = _dynamic_analysis_getattr_8616(ins, "address", None)
+                if isinstance(ins_addr, int):
+                    target_addr = (ins_addr & ~0xFFFF) | (target_addr & 0xFFFF)
+            candidates = [(project, target_addr)]
+            original_project = _dynamic_analysis_getattr_8616(project, "_inertia_original_project", None)
+            original_delta = _dynamic_analysis_getattr_8616(project, "_inertia_original_linear_delta", None)
+            if original_project is not None and isinstance(original_delta, int):
+                candidates.append((original_project, target_addr + original_delta))
+            proofs = tuple(
+                (
+                    candidate_addr,
+                    terminal_stack_cleanup_at_address_8616(candidate_project, candidate_addr),
+                )
+                for candidate_project, candidate_addr in candidates
+            )
+            if debug_interrupt_stack:
+                print(
+                    f"[interrupt-stack] target={target_addr:#x} delta={original_delta!r} proofs={proofs!r}",
+                    file=sys.stderr,
+                )
+            return any(
+                evidence.complete and evidence.cleanup_amounts == frozenset({0})
+                for _candidate_addr, evidence in proofs
+            )
+
         block_sizes: dict[int, int] = {}
         graph = _dynamic_analysis_getattr_8616(function, "transition_graph", None)
         if graph is not None:
@@ -1283,7 +1349,17 @@ def collect_interrupt_calls(
             ),
             *block_sizes,
         }
+        symbolic_stack: list[tuple[int | None, str | None]] = []
+        expected_next_block: int | None = None
         for block_addr in sorted(block_addrs):
+            if debug_interrupt_stack:
+                print(
+                    f"[interrupt-stack] block={block_addr:#x} expected={expected_next_block!r} depth={len(symbolic_stack)}",
+                    file=sys.stderr,
+                )
+            if expected_next_block != block_addr:
+                symbolic_stack.clear()
+            expected_next_block = None
             block_size = block_sizes.get(block_addr)
             if block_size is None:
                 block = project.factory.block(block_addr, opt_level=0)
@@ -1292,11 +1368,55 @@ def collect_interrupt_calls(
             block_bytes = bytes(_dynamic_analysis_getattr_8616(block, "bytes", b""))
             capstone_engine = cast(Any, project).arch.capstone
             for ins in capstone_engine.disasm(block_bytes, block_addr):
+                ins_size = _dynamic_analysis_getattr_8616(ins, "size", None)
+                expected_next_block = (
+                    ins.address + ins_size
+                    if isinstance(ins.address, int) and isinstance(ins_size, int)
+                    else None
+                )
                 operands = _dynamic_analysis_getattr_8616(ins, "operands", ())
-                if ins.mnemonic == "mov" and len(operands) == 2:
+                if ins.mnemonic == "push" and len(operands) == 1:
+                    captured = pushed_value(ins, operands[0])
+                    if captured is None:
+                        symbolic_stack.clear()
+                    else:
+                        symbolic_stack.append(captured)
+                    if debug_interrupt_stack:
+                        print(
+                            f"[interrupt-stack] push={ins.op_str!r} captured={captured!r} depth={len(symbolic_stack)}",
+                            file=sys.stderr,
+                        )
+                elif ins.mnemonic == "pop" and len(operands) == 1:
+                    destination = operands[0]
+                    if destination.type != 1 or not symbolic_stack:
+                        symbolic_stack.clear()
+                        continue
+                    reg_name = ins.reg_name(destination.reg).lower()
+                    if reg_name not in regs:
+                        symbolic_stack.clear()
+                        continue
+                    value, expr = symbolic_stack.pop()
+                    set_reg(reg_name, value, expr)
+                    if debug_interrupt_stack:
+                        print(
+                            f"[interrupt-stack] pop={reg_name} value={(value, expr)!r} depth={len(symbolic_stack)}",
+                            file=sys.stderr,
+                        )
+                elif ins.mnemonic in {"call", "lcall"}:
+                    preserves_stack = call_preserves_symbolic_stack(ins, operands)
+                    if debug_interrupt_stack:
+                        print(
+                            f"[interrupt-stack] call={ins.op_str!r} preserves={preserves_stack} depth={len(symbolic_stack)}",
+                            file=sys.stderr,
+                        )
+                    if not preserves_stack:
+                        symbolic_stack.clear()
+                elif ins.mnemonic == "mov" and len(operands) == 2:
                     dst, src = operands
                     if dst.type == 1:
                         reg_name = ins.reg_name(dst.reg).lower()
+                        if reg_name in {"sp", "esp"}:
+                            symbolic_stack.clear()
                         if reg_name in regs:
                             value, expr = _operand_expr(ins, src)
                             set_reg(reg_name, value, expr)
@@ -1305,6 +1425,12 @@ def collect_interrupt_calls(
                     src_name = ins.reg_name(operands[1].reg).lower()
                     if dst_name == src_name and dst_name in regs:
                         set_reg(dst_name, 0, "0")
+                    if dst_name in {"sp", "esp"}:
+                        symbolic_stack.clear()
+                elif operands and _dynamic_analysis_getattr_8616(operands[0], "type", None) == 1:
+                    destination_name = ins.reg_name(operands[0].reg).lower()
+                    if destination_name in {"sp", "esp"}:
+                        symbolic_stack.clear()
                 elif ins.mnemonic in {"int", "int3"}:
                     if ins.mnemonic == "int3":
                         vector = 3
@@ -1335,6 +1461,11 @@ def collect_interrupt_calls(
                     es, es_expr = regs["es"]
                     ss, ss_expr = regs["ss"]
                     cs, cs_expr = regs["cs"]
+                    if debug_interrupt_stack and (symbolic_stack or dx_expr is not None):
+                        print(
+                            f"[interrupt-stack] int={ins.address:#x} ah={ah!r} dx={(dx, dx_expr)!r} depth={len(symbolic_stack)}",
+                            file=sys.stderr,
+                        )
                     path_literal = None
                     if vector == 0x21 and ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
                         path_literal = decode_com_c_string(binary_path, dx)
@@ -1385,6 +1516,8 @@ def collect_interrupt_calls(
                     )
                     if vector == 0x21:
                         set_reg("dx", None, None)
+                if ins.mnemonic.startswith("j") or ins.mnemonic.startswith("loop") or ins.mnemonic.startswith("ret"):
+                    expected_next_block = None
 
         return calls
 
@@ -1414,7 +1547,7 @@ def _dos_path_arg(call: DOSInt21Call, *, far_ptr: bool) -> str | None:
         return f"({cast})0x{call.dx:x}"
     if call.dx_expr is not None:
         cast = "const char far *" if far_ptr else "const char *"
-        return f"({cast}){call.dx_expr}"
+        return f"({cast})({call.dx_expr})"
     return None
 
 
@@ -1498,23 +1631,11 @@ def _interrupt_service_decl(spec: InterruptServiceSpec, api_style: str) -> str:
 
 
 def _render_string_dollar_call_8616(call: DOSInt21Call, api_style: str, name: str) -> str:
-    if api_style == "dos":
-        if call.string_literal is not None:
-            return f'_dos_print_dollar_string("{call.string_literal}")'
-        if call.dx is None:
-            return "_dos_print_dollar_string()"
-        return f"_dos_print_dollar_string((const char far *)0x{call.dx:x})"
-    if api_style == "pseudo":
-        if call.string_literal is not None:
-            return f'{name}("{call.string_literal}")'
-        if call.dx is None:
-            return f"{name}()"
-        return f"{name}((const char *)0x{call.dx:x})"
+    helper_name = "_dos_print_dollar_string" if api_style == "dos" else name if api_style == "pseudo" else "print_dos_string"
     if call.string_literal is not None:
-        return f'print_dos_string("{call.string_literal}")'
-    if call.dx is None:
-        return "print_dos_string()"
-    return f"print_dos_string((const char *)0x{call.dx:x})"
+        return f'{helper_name}("{call.string_literal}")'
+    argument = _dos_path_arg(call, far_ptr=api_style == "dos")
+    return f"{helper_name}({argument})" if argument is not None else f"{helper_name}()"
 
 
 def _render_setvect_call_8616(call: DOSInt21Call, api_style: str, name: str) -> str:

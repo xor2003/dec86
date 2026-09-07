@@ -321,7 +321,7 @@ def _parse_generated_c(source: str, *, compiler: str = "gcc") -> c_ast.FileAST:
     parser_source = "\n".join(
         line
         for line in source.splitlines()
-        if not line.lstrip().startswith(_PRESERVED_RUNTIME_MACRO_PREFIXES)
+        if not line.lstrip().startswith(("#include", *_PRESERVED_RUNTIME_MACRO_PREFIXES))
     )
     completed = subprocess.run(
         [compiler, "-E", "-P", "-x", "c", "-"],
