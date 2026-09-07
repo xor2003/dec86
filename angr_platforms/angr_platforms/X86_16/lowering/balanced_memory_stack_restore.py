@@ -160,12 +160,24 @@ def _memory_operand_key_8616(instruction: object) -> _MemoryOperandKey8616 | Non
     return cast(_MemoryOperandKey8616, values)
 
 
+def _register_operand_width_8616(instruction: object) -> int | None:
+    """Return the exact width of one register-only stack operand."""
+    try:
+        operands = tuple(cast(_DynamicValue8616, instruction).operands or ())
+    except (AttributeError, TypeError):
+        return None
+    if len(operands) != 1 or getattr(operands[0], "type", None) != X86_OP_REG:
+        return None
+    width = getattr(operands[0], "size", None)
+    return width if isinstance(width, int) and not isinstance(width, bool) and width in {2, 4} else None
+
+
 def _balanced_pairs_8616(
     instructions: Iterable[object],
-) -> tuple[tuple[int, int], ...]:
-    """Pair exact LIFO memory saves while refusing control-flow instructions."""
-    stack: list[tuple[int, _MemoryOperandKey8616 | None]] = []
-    pairs: list[tuple[int, int]] = []
+) -> tuple[tuple[int, int, int | None], ...]:
+    """Pair exact LIFO memory saves and register transfers across calls."""
+    stack: list[tuple[int, _MemoryOperandKey8616 | None, int | None]] = []
+    pairs: list[tuple[int, int, int | None]] = []
     for instruction in instructions:
         instruction_id = getattr(instruction, "id", None)
         address = getattr(instruction, "address", None)
@@ -174,7 +186,13 @@ def _balanced_pairs_8616(
         if instruction_id in {X86_INS_CALL, X86_INS_LCALL}:
             continue
         if instruction_id == X86_INS_PUSH:
-            stack.append((address, _memory_operand_key_8616(instruction)))
+            stack.append(
+                (
+                    address,
+                    _memory_operand_key_8616(instruction),
+                    _register_operand_width_8616(instruction),
+                )
+            )
             continue
         if instruction_id != X86_INS_POP:
             groups = frozenset(getattr(instruction, "groups", ()) or ())
@@ -185,10 +203,14 @@ def _balanced_pairs_8616(
             continue
         if not stack:
             return ()
-        push_addr, push_key = stack.pop()
+        push_addr, push_key, push_register_width = stack.pop()
         pop_key = _memory_operand_key_8616(instruction)
         if push_key is not None and push_key == pop_key:
-            pairs.append((push_addr, address))
+            pairs.append((push_addr, address, push_key[-1]))
+            continue
+        pop_register_width = _register_operand_width_8616(instruction)
+        if push_register_width is not None and push_register_width == pop_register_width:
+            pairs.append((push_addr, address, push_register_width))
     return tuple(pairs)
 
 
@@ -641,9 +663,15 @@ def rebind_balanced_memory_stack_restores_8616(
     pairs = tuple(
         sorted(
             set(_balanced_pairs_8616(_instruction_stream_8616(function)))
-            | set(structured_pairs)
+            | {(push_addr, pop_addr, None) for push_addr, pop_addr in structured_pairs}
         )
     )
+    if os.environ.get("INERTIA_DEBUG_BALANCED_REGISTER_RESTORE"):
+        log.warning(
+            "[balanced-memory-restore] function=%#x pairs=%s",
+            cfunc.addr,
+            pairs,
+        )
     raw_count = len(pairs)
     classified = 0
     materialized = 0
@@ -652,7 +680,7 @@ def rebind_balanced_memory_stack_restores_8616(
         for node in _iter_c_nodes_deep_8616(cfunc.statements)
         if isinstance(node, structured_c.CAssignment)
     )
-    for push_addr, pop_addr in pairs:
+    for push_addr, pop_addr, pair_width in pairs:
         push_statements = tuple(
             statement for statement in statements if push_addr in _statement_instruction_addrs_8616(statement)
         )
@@ -661,20 +689,40 @@ def rebind_balanced_memory_stack_restores_8616(
         )
         push_variables = _stack_variables_8616(push_statements)
         pop_variables = _stack_variables_8616(pop_statements)
-        if len(push_variables) != 1 or len(pop_variables) != 1:
-            continue
-        (push_identity, exemplar), = push_variables.items()
-        (pop_identity, _pop_exemplar), = pop_variables.items()
-        if push_identity[1] != pop_identity[1]:
-            continue
-        classified += 1
+        if os.environ.get("INERTIA_DEBUG_BALANCED_REGISTER_RESTORE"):
+            log.warning(
+                "[balanced-memory-restore] pair=%#x->%#x push_statements=%d pop_statements=%d push_variables=%s pop_variables=%s",
+                push_addr,
+                pop_addr,
+                len(push_statements),
+                len(pop_statements),
+                tuple(sorted(push_variables)),
+                tuple(sorted(pop_variables)),
+            )
         push_instruction = (
             _decode_stack_instruction_8616(project, function, push_addr)
             if project is not None
             else None
         )
         push_memory_key = _memory_operand_key_8616(push_instruction)
-        word_pair = push_memory_key is not None and push_memory_key[-1] == 2
+        word_pair = pair_width == 2 or (push_memory_key is not None and push_memory_key[-1] == 2)
+        if len(pop_variables) != 1:
+            continue
+        if len(push_variables) == 1:
+            (push_identity, exemplar), = push_variables.items()
+        elif word_pair and len(push_variables) == 2 and all(
+            identity[1] == 1 for identity in push_variables
+        ):
+            push_identity = min(push_variables, key=lambda identity: identity[0])
+            exemplar = push_variables[push_identity]
+        else:
+            continue
+        (pop_identity, _pop_exemplar), = pop_variables.items()
+        if push_identity[1] != pop_identity[1] and not (
+            word_pair and {push_identity[1], pop_identity[1]} <= {1, 2}
+        ):
+            continue
+        classified += 1
         if word_pair:
             exemplar.variable.size = 2
             exemplar.variable_type = SimTypeShort(False).with_arch(exemplar.codegen.project.arch)
@@ -743,4 +791,12 @@ def rebind_balanced_memory_stack_restores_8616(
         materialized,
         max(raw_count - classified, 0) + max(classified - materialized, 0),
     )
+    if os.environ.get("INERTIA_DEBUG_BALANCED_REGISTER_RESTORE"):
+        log.warning(
+            "[balanced-memory-restore] function=%#x raw=%d classified=%d materialized=%d",
+            cfunc.addr,
+            raw_count,
+            classified,
+            materialized,
+        )
     return materialized > 0 or register_changed

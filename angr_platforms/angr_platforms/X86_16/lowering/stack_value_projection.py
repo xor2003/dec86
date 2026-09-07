@@ -41,6 +41,14 @@ class StackValueProjectionStatus8616(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class StackValueOwnerHint8616:
+    """Alias-proven canonical machine-BP owner for one projected subrange."""
+
+    bp_offset: int
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
 class StackValueProjectionResult8616:
     """One projected stack expression or an evidence-backed refusal."""
 
@@ -139,10 +147,44 @@ def _unsigned_type_for_width_8616(codegen: object, width: int) -> SimType:
         return type_
 
 
+def project_pointer_storage_value_8616(
+    codegen: object,
+    expression: structured_c.CExpression,
+    width: int,
+) -> structured_c.CExpression | None:
+    """Project a host C pointer view to its guest scalar storage value.
+
+    A 16/32-bit real-mode register or memory slot stores the pointer's guest
+    offset bits, not the host address represented by structured C. Non-pointer
+    values pass through unchanged; unsupported pointer widths refuse.
+    """
+    try:
+        source_type = expression.type
+    except (AttributeError, ValueError):
+        source_type = None
+    is_explicit_address = (
+        isinstance(expression, structured_c.CUnaryOp)
+        and expression.op == "AddressOf"
+    )
+    if not isinstance(source_type, SimTypePointer) and not is_explicit_address:
+        return expression
+    helper_name = {2: "PTR_U16", 4: "PTR_U32"}.get(width)
+    if helper_name is None:
+        return None
+    return structured_c.CFunctionCall(
+        helper_name,
+        None,
+        [expression],
+        codegen=codegen,
+    )
+
+
 def project_stack_value_range_8616(
     codegen: object,
     bp_offset: int,
     size: int,
+    *,
+    owner_hint: StackValueOwnerHint8616 | None = None,
 ) -> StackValueProjectionResult8616:
     """Project one proven stack value range as a typed C expression.
 
@@ -164,6 +206,13 @@ def project_stack_value_range_8616(
         if projection.bp_offset <= bp_offset
         and projection.bp_offset + projection.size >= bp_offset + size
     )
+    if owner_hint is not None:
+        owners = tuple(
+            owner
+            for owner in owners
+            if owner.bp_offset == owner_hint.bp_offset
+            and owner.size == owner_hint.size
+        )
     if len(owners) > 1:
         try:
             arguments = tuple(cast(_CodegenBoundary8616, codegen).cfunc.arg_list)
@@ -224,8 +273,12 @@ def project_stack_value_range_8616(
             ),
         )
     if isinstance(source_type, SimTypePointer):
-        helper_name = {2: "PTR_U16", 4: "PTR_U32"}.get(owner.value_size)
-        if helper_name is None:
+        projected_pointer = project_pointer_storage_value_8616(
+            codegen,
+            expression,
+            owner.value_size,
+        )
+        if projected_pointer is None:
             return _publish_result_8616(
                 codegen,
                 StackValueProjectionResult8616(
@@ -233,12 +286,7 @@ def project_stack_value_range_8616(
                     owner=owner,
                 ),
             )
-        expression = structured_c.CFunctionCall(
-            helper_name,
-            None,
-            [expression],
-            codegen=codegen,
-        )
+        expression = projected_pointer
         source_type = _unsigned_type_for_width_8616(codegen, owner.value_size)
     if relative_offset:
         shift_type = _unsigned_type_for_width_8616(codegen, 2)
@@ -266,9 +314,11 @@ def project_stack_value_range_8616(
 
 
 __all__ = [
+    "StackValueOwnerHint8616",
     "StackValueProjectionResult8616",
     "StackValueProjectionStats8616",
     "StackValueProjectionStatus8616",
+    "project_pointer_storage_value_8616",
     "project_stack_value_range_8616",
     "stack_value_projection_stats_8616",
 ]

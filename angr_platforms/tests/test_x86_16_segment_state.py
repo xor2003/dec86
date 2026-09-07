@@ -49,6 +49,47 @@ def test_segment_state_tracks_explicit_ds_and_es_writes() -> None:
     assert segment_state.summary["failure_count"] == 1
 
 
+def test_segment_state_tracks_register_mediated_constant_across_blocks() -> None:
+    """A constant loaded through a GP register remains proven after a DS copy."""
+    artifact = IRFunctionArtifact(
+        function_addr=0x1200,
+        blocks=(
+            IRBlock(
+                addr=0x1200,
+                instrs=(
+                    IRInstr(
+                        "MOV",
+                        IRValue(MemSpace.REG, name="bx", size=2),
+                        (IRValue(MemSpace.CONST, const=0x245A, size=2),),
+                        addr=0x1200,
+                    ),
+                    IRInstr(
+                        "MOV",
+                        IRValue(MemSpace.REG, name="ds", size=2),
+                        (IRValue(MemSpace.REG, name="bx", size=2),),
+                        addr=0x1203,
+                    ),
+                ),
+                successor_addrs=(0x1210,),
+            ),
+            IRBlock(
+                addr=0x1210,
+                instrs=(IRInstr("LOAD", None, (), addr=0x1210),),
+            ),
+        ),
+    )
+
+    segment_state = build_x86_16_segment_state_artifact(
+        artifact,
+        function_ssa=build_x86_16_function_ssa(artifact),
+    )
+
+    state = segment_state.state_before_instruction(0x1210, "ds")
+    assert state is not None
+    assert state.origin is SegmentOrigin.PROVEN
+    assert state.constant_value() == 0x245A
+
+
 def test_segment_state_unknown_predecessor_poisons_must_join() -> None:
     artifact = IRFunctionArtifact(
         function_addr=0x1000,

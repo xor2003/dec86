@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from angr.sim_type import SimStruct, SimTypeShort
-from angr_platforms.X86_16.analysis_helpers import interrupt_service_declarations
+from angr_platforms.X86_16.analysis_helpers import _operand_expr, interrupt_service_declarations
 
 from inertia_decompiler import cli_helper_modeling
 
@@ -16,6 +16,23 @@ assert _spec is not None and _spec.loader is not None
 _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
+
+
+def test_interrupt_memory_handle_expression_is_segmented_c() -> None:
+    """A memory-loaded DOS handle must not leak assembly brackets into C."""
+    instruction = SimpleNamespace(reg_name=lambda _register_id: "")
+    operand = SimpleNamespace(
+        type=3,
+        size=2,
+        mem=SimpleNamespace(segment=0, base=0, index=0, scale=1, disp=0x2BB2),
+    )
+
+    value, expression = _operand_expr(instruction, operand)
+    call = _decompile.InterruptCall(insn_addr=0x1000, vector=0x21, ah=0x3E, bx_expr=expression)
+
+    assert value is None
+    assert expression == "SEG_U16(inertia_ds, 0x2bb2)"
+    assert _decompile.render_interrupt_call(call, "modern") == "close(SEG_U16(inertia_ds, 0x2bb2))"
 
 
 def test_interrupt_replacement_map_includes_explicit_pseudo_service_name():

@@ -183,6 +183,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
         compiler_helper_declarations = "\n".join(_PORTABLE_COMPILER_RUNTIME_HELPER_DECLARATIONS_8616)
         return (
             "#include <stdbool.h>\n"
+            "#include <stddef.h>\n"
             "#include <stdint.h>\n"
             "\n"
             "typedef long clock_t;\n"

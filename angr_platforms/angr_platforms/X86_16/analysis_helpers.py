@@ -1139,6 +1139,7 @@ def _format_imm(value: int) -> str:
 
 
 def _format_mem_operand(ins: object, operand: object) -> str:
+    """Render one typed Capstone memory operand as a segmented C load."""
     mem = _dynamic_analysis_getattr_8616(operand, "mem", None)
     if mem is None:
         return "<mem>"
@@ -1146,11 +1147,14 @@ def _format_mem_operand(ins: object, operand: object) -> str:
     pieces: list[str] = []
     base = _dynamic_analysis_getattr_8616(mem, "base", 0)
     index = _dynamic_analysis_getattr_8616(mem, "index", 0)
+    scale = _dynamic_analysis_getattr_8616(mem, "scale", 1)
     disp = _dynamic_analysis_getattr_8616(mem, "disp", 0)
+    base_name = cast(Any, ins).reg_name(base).lower() if base else ""
     if base:
-        pieces.append(cast(Any, ins).reg_name(base).lower())
+        pieces.append(base_name)
     if index:
-        pieces.append(cast(Any, ins).reg_name(index).lower())
+        index_name = cast(Any, ins).reg_name(index).lower()
+        pieces.append(f"+{index_name} * {scale}" if pieces and scale != 1 else f"+{index_name}" if pieces else index_name)
     if disp:
         disp_text = hex(abs(disp)) if abs(disp) > 9 else str(abs(disp))
         if pieces:
@@ -1159,7 +1163,17 @@ def _format_mem_operand(ins: object, operand: object) -> str:
             pieces.append(("-" if disp < 0 else "") + disp_text)
     if not pieces:
         pieces.append("0")
-    return "[" + "".join(pieces) + "]"
+    segment = _dynamic_analysis_getattr_8616(mem, "segment", 0)
+    segment_name = (
+        cast(Any, ins).reg_name(segment).lower()
+        if segment
+        else "ss" if base_name in {"bp", "sp", "ebp", "esp"} else "ds"
+    )
+    width = _dynamic_analysis_getattr_8616(operand, "size", 0)
+    macro = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}.get(width)
+    if macro is None:
+        return "<mem>"
+    return f"{macro}(inertia_{segment_name}, {''.join(pieces)})"
 
 
 def _operand_expr(ins: object, operand: object) -> tuple[int | None, str | None]:

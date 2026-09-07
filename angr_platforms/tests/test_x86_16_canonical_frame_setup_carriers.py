@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBinaryOp,
     CConstant,
     CStatements,
     CUnaryOp,
@@ -50,6 +51,37 @@ class _Codegen:
     def next_ident(self, name: str) -> str:
         """Return the requested stable identifier."""
         return name
+
+
+def test_subregister_self_mask_combines_with_preserved_upper_lane() -> None:
+    """Avoid redundant self-OR forms that trigger legacy MS C compiler ICEs."""
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _Codegen(project)
+    bx_offset, bx_size = project.arch.registers["bx"]
+    bx = CVariable(
+        SimRegisterVariable(bx_offset, bx_size, name="bx"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    value = CBinaryOp(
+        "And",
+        bx,
+        CConstant(0xF0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    assignment = runtime_gp_state_assignment_8616(
+        "bx",
+        value,
+        codegen=codegen,
+        function_addr=0x1000,
+    )
+
+    assert assignment is not None
+    assert isinstance(assignment.rhs, CBinaryOp)
+    assert assignment.rhs.op == "And"
+    assert isinstance(assignment.rhs.rhs, CConstant)
+    assert assignment.rhs.rhs.value == 0xFFFF00F0
 
 
 def _instruction(

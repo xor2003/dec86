@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-import os
-import sys
 import typing
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
@@ -2206,15 +2204,6 @@ def apply_runtime_segment_lowering_8616(
         failure_count=max(classified_count - materialized_count, 0),
         refusals=tuple(typed_codegen._inertia_near_pointer_argument_refusals_8616),
     )
-    if os.environ.get("INERTIA_DEBUG_NEAR_POINTER_ARGUMENTS") == "1":
-        print(
-            "[near-pointer-debug] "
-            f"facts={facts!r} "
-            f"args={tuple(cfunc.arg_list or ())!r} "
-            f"prototype={tuple(getattr(cfunc.functy, 'args', ()) or ())!r} "
-            f"stats={typed_codegen._inertia_near_pointer_argument_stats_8616!r}",
-            file=sys.stderr,
-        )
     typed_codegen._inertia_stack_pointer_snapshot_stats_8616 = snapshot_tracker.stats
     typed_codegen._inertia_linear_global_decomposition_cache_stats_8616 = (
         decomposition_cache.stats()

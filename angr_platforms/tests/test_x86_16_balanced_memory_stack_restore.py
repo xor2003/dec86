@@ -168,6 +168,87 @@ def test_rebinds_memory_restore_across_caller_neutral_call() -> None:
     assert pop_assignment.rhs.variable.name == "local_2"
 
 
+def test_rebinds_lifo_register_restores_across_neutral_calls() -> None:
+    """Register saves keep their PUSH-owned stack slots across nested calls."""
+    codegen = _Codegen(project=SimpleNamespace(arch=ArchX86()))
+    bx_save = _stack_variable(codegen, -2, "saved_bx")
+    ax_save = _stack_variable(codegen, -4, "saved_ax")
+    shifted_ax_read = structured_c.CVariable(
+        SimStackVariable(2, 2, base="bp", name="shifted_ax", region=0x1000),
+        codegen=codegen,
+    )
+    shifted_bx_read = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="shifted_bx", region=0x1000),
+        codegen=codegen,
+    )
+    push_bx = structured_c.CAssignment(
+        bx_save,
+        structured_c.CConstant(1, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100},
+    )
+    push_bx_high = structured_c.CAssignment(
+        _stack_variable(codegen, 0, "saved_bx_high"),
+        structured_c.CConstant(0, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100},
+    )
+    push_ax = structured_c.CAssignment(
+        ax_save,
+        structured_c.CConstant(2, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x101},
+    )
+    pop_dx = structured_c.CAssignment(
+        _memory_variable(codegen),
+        shifted_ax_read,
+        codegen=codegen,
+        tags={"ins_addr": 0x108},
+    )
+    pop_ax = structured_c.CAssignment(
+        _memory_variable(codegen),
+        shifted_bx_read,
+        codegen=codegen,
+        tags={"ins_addr": 0x109},
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [push_bx, push_bx_high, push_ax, pop_dx, pop_ax],
+            codegen=codegen,
+        )
+    )
+
+    def register_instruction(address: int, instruction_id: int, register: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            address=address,
+            id=instruction_id,
+            operands=(SimpleNamespace(type=X86_OP_REG, size=2, reg=register),),
+            groups=(),
+        )
+
+    instructions = (
+        register_instruction(0x100, X86_INS_PUSH, 1),
+        register_instruction(0x101, X86_INS_PUSH, 2),
+        _instruction(0x103, X86_INS_CALL),
+        _instruction(0x106, X86_INS_CALL),
+        register_instruction(0x108, X86_INS_POP, 3),
+        register_instruction(0x109, X86_INS_POP, 4),
+    )
+    function = SimpleNamespace(
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),)
+    )
+
+    assert rebind_balanced_memory_stack_restores_8616(codegen, function) is True
+    assert isinstance(pop_dx.rhs, structured_c.CVariable)
+    assert isinstance(pop_ax.rhs, structured_c.CVariable)
+    assert pop_dx.rhs.variable.name == "saved_ax"
+    assert pop_dx.rhs.variable.offset == -4
+    assert pop_dx.rhs.variable.size == 2
+    assert pop_ax.rhs.variable.name == "saved_bx"
+    assert pop_ax.rhs.variable.offset == -2
+    assert pop_ax.rhs.variable.size == 2
+
+
 def test_refuses_mismatched_memory_restore() -> None:
     """Different PUSH/POP memory operands do not establish save ownership."""
     codegen = _Codegen(project=SimpleNamespace(arch=ArchX86()))

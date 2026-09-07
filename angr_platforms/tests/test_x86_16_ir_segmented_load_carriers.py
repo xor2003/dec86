@@ -88,6 +88,116 @@ def test_materializes_same_instruction_register_segmented_load(monkeypatch):
     assert stats.failure_count == 0
 
 
+def test_materializes_constant_segment_linear_register_load(monkeypatch):
+    """An IR-proven constant DS base replaces a retained integer dereference."""
+    arch = SimpleNamespace(registers={"bx": (0x0C, 2), "cx": (0x10, 2), "ds": (0x30, 2)})
+    project = SimpleNamespace(arch=arch)
+    codegen = _Codegen(project=project)
+    bx = structured_c.CVariable(
+        SimRegisterVariable(0x0C, 2, name="ir_bx"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    operand = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant((0x245A << 4) + 4, SimTypeShort(False), codegen=codegen),
+        bx,
+        codegen=codegen,
+    )
+    dereference = structured_c.CUnaryOp("Dereference", operand, codegen=codegen)
+    assignment = structured_c.CAssignment(
+        structured_c.CVariable(
+            SimRegisterVariable(0x10, 2, name="ir_cx"),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        dereference,
+        codegen=codegen,
+        tags={"ins_addr": 0x145},
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=structured_c.CStatements([assignment], addr=0x100, codegen=codegen),
+    )
+    address = IRAddress(
+        MemSpace.DS,
+        base=("bx",),
+        offset=4,
+        size=2,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+        base_values=(IRValue(MemSpace.REG, name="bx", size=2),),
+    )
+    load = carriers._SegmentedLoadFact8616(7, 0x145, address, 0x245A)
+    write = carriers._RegisterWriteFact8616(
+        "cx",
+        0x145,
+        IRValue(MemSpace.TMP, name="t7", size=2, source_tmp=7),
+        {7: load},
+    )
+    monkeypatch.setattr(carriers, "_load_facts_8616", lambda _codegen: {(7, 0x145): load})
+    monkeypatch.setattr(
+        carriers,
+        "_register_write_facts_8616",
+        lambda _codegen, _facts: {("cx", 0x145): write},
+    )
+    monkeypatch.setattr(carriers, "_logical_register_write_facts_8616", lambda _codegen: {})
+
+    assert carriers.materialize_ir_segmented_load_carriers_8616(codegen) is True
+    assert isinstance(assignment.rhs, structured_c.CFunctionCall)
+    assert assignment.rhs.callee_target == "SEG_U16"
+    assert assignment.rhs.args[0].value == 0x245A
+
+
+def test_refuses_unproven_constant_linear_dereference(monkeypatch):
+    """A nearby integer base outside the exact IR load lanes remains unchanged."""
+    arch = SimpleNamespace(registers={"bx": (0x0C, 2), "cx": (0x10, 2), "ds": (0x30, 2)})
+    project = SimpleNamespace(arch=arch)
+    codegen = _Codegen(project=project)
+    bx = structured_c.CVariable(
+        SimRegisterVariable(0x0C, 2, name="ir_bx"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    operand = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant((0x245A << 4) + 9, SimTypeShort(False), codegen=codegen),
+        bx,
+        codegen=codegen,
+    )
+    dereference = structured_c.CUnaryOp("Dereference", operand, codegen=codegen)
+    assignment = structured_c.CAssignment(
+        structured_c.CVariable(
+            SimRegisterVariable(0x10, 2, name="ir_cx"),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        dereference,
+        codegen=codegen,
+        tags={"ins_addr": 0x145},
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x100,
+        statements=structured_c.CStatements([assignment], addr=0x100, codegen=codegen),
+    )
+    address = IRAddress(
+        MemSpace.DS,
+        base=("bx",),
+        offset=4,
+        size=2,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+        base_values=(IRValue(MemSpace.REG, name="bx", size=2),),
+    )
+    load = carriers._SegmentedLoadFact8616(7, 0x145, address, 0x245A)
+    monkeypatch.setattr(carriers, "_load_facts_8616", lambda _codegen: {(7, 0x145): load})
+    monkeypatch.setattr(carriers, "_register_write_facts_8616", lambda _codegen, _facts: {})
+    monkeypatch.setattr(carriers, "_logical_register_write_facts_8616", lambda _codegen: {})
+
+    assert carriers.materialize_ir_segmented_load_carriers_8616(codegen) is False
+    assert assignment.rhs is dereference
+
+
 def test_materializes_proven_logical_word_reload(monkeypatch):
     """A byte-safe logical reload is emitted as one proven SEG_U16 expression."""
     arch = SimpleNamespace(registers={"di": (0x24, 2), "si": (0x18, 2), "ds": (0x30, 2)})

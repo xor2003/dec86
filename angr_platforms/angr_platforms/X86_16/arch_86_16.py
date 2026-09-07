@@ -99,7 +99,7 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
     instruction_endness = Endness.LE
     # FIXME: something in angr assumes that sizeof(long) == sizeof(return address on stack)
     # initial_sp = 0x7fff
-    call_sp_fix = 2
+    call_sp_fix: ClassVar[int] = -2
     instruction_alignment = 1
     # ioreg_offset = 0x20
     memory_endness = Endness.LE

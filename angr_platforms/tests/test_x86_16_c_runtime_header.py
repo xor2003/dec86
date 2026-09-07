@@ -14,6 +14,7 @@ from angr_platforms.X86_16.lowering.c_runtime_header import (
 def test_x86_16_c_runtime_header_renders_portable_flat_helpers() -> None:
     header = render_c_runtime_header_8616("portable-flat")
 
+    assert "#include <stddef.h>" in header
     assert "#include <stdint.h>" in header
     assert "extern uint8_t inertia_memory[];" in header
     assert "extern uint16_t inertia_ds;" in header

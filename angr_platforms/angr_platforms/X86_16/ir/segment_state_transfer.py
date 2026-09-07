@@ -68,6 +68,17 @@ class SegmentRegisterState:
             "origin": self.origin.value,
         }
 
+    def constant_value(self) -> int | None:
+        """Return the proven numeric segment value carried by this state."""
+        if self.origin is not SegmentOrigin.PROVEN or self.source is None:
+            return None
+        if self.value_kind is SegmentValueKind8616.ARCHITECTURAL_LIVE_IN:
+            return None
+        try:
+            return int(self.source, 0) & 0xFFFF
+        except ValueError:
+            return None
+
 
 @dataclass(frozen=True, slots=True)
 class SegmentRestoreSource:
@@ -154,7 +165,7 @@ def _written_register_state(
     """Propagate typed segment identities through proven register writes."""
     if restored is not None:
         return restored
-    if dst_name in SEGMENT_REGISTERS and src.space is MemSpace.CONST and src.const is not None:
+    if src.space is MemSpace.CONST and src.const is not None:
         return SegmentRegisterState(
             dst_name,
             SegmentValueKind8616.CONST_WRITE,

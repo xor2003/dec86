@@ -510,6 +510,49 @@ def _runtime_gp_expr_8616(
     )
 
 
+def _runtime_gp_parent_mask_8616(
+    expression: structured_c.CExpression,
+    parent_name: str,
+    codegen: object,
+) -> int | None:
+    """Return the constant mask on one unshifted runtime GP parent."""
+    mask = 0xFFFF_FFFF
+    while isinstance(expression, structured_c.CTypeCast):
+        expression = expression.expr
+    while (
+        isinstance(expression, structured_c.CBinaryOp)
+        and expression.op == "And"
+        and isinstance(expression.rhs, structured_c.CConstant)
+        and isinstance(expression.rhs.value, int)
+    ):
+        mask &= expression.rhs.value
+        expression = expression.lhs
+        while isinstance(expression, structured_c.CTypeCast):
+            expression = expression.expr
+    if (
+        isinstance(expression, structured_c.CVariable)
+        and runtime_gp_name_for_variable_8616(expression.variable) == parent_name
+    ):
+        return mask
+    if isinstance(expression, structured_c.CVariable) and isinstance(
+        expression.variable,
+        SimRegisterVariable,
+    ):
+        project = cast(_CodegenGPRegisters8616, codegen).project
+        if project is None:
+            return None
+        projection = _register_projection_for_shape_8616(
+            project,
+            expression.variable.reg,
+            expression.variable.size,
+        )
+        if projection is not None:
+            projected_parent, projected_shift, projected_width = projection
+            if projected_parent == parent_name and projected_shift == 0:
+                return mask & ((1 << (projected_width * 8)) - 1)
+    return None
+
+
 def _runtime_gp_subview_write_8616(
     register_name: str,
     bit_shift: int,
@@ -528,6 +571,24 @@ def _runtime_gp_subview_write_8616(
     parent_read = _runtime_gp_cvar_8616(register_name, source, function_addr)
     value_mask = (1 << (view_width * 8)) - 1
     preserve_mask = 0xFFFF_FFFF ^ (value_mask << bit_shift)
+    self_mask = (
+        _runtime_gp_parent_mask_8616(value, register_name, codegen)
+        if bit_shift == 0
+        else None
+    )
+    if self_mask is not None:
+        combined_mask = preserve_mask | (self_mask & value_mask)
+        return structured_c.CAssignment(
+            parent_lhs,
+            structured_c.CBinaryOp(
+                "And",
+                parent_read,
+                structured_c.CConstant(combined_mask, lane_type, codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+            tags=tags,
+        )
     preserved = structured_c.CBinaryOp(
         "And",
         parent_read,

@@ -104,6 +104,7 @@ from angr_platforms.X86_16.validation_dataflow import validate_structured_def_us
 from angr_platforms.X86_16.widening.segmented_load_identity import segmented_load_identity_8616
 from capstone.x86_const import (
     X86_GRP_JUMP,
+    X86_GRP_RET,
     X86_INS_ADC,
     X86_INS_ADD,
     X86_INS_CALL,
@@ -118,6 +119,7 @@ from capstone.x86_const import (
     X86_INS_POP,
     X86_INS_PUSH,
     X86_INS_RET,
+    X86_INS_RETF,
     X86_INS_SAR,
     X86_INS_SHL,
     X86_INS_SUB,
@@ -131,6 +133,7 @@ from capstone.x86_const import (
     X86_REG_CS,
     X86_REG_CX,
     X86_REG_DI,
+    X86_REG_DS,
     X86_REG_DX,
     X86_REG_INVALID,
     X86_REG_SI,
@@ -9750,6 +9753,66 @@ def test_callee_saved_frame_evidence_retries_after_incomplete_decode(monkeypatch
     )
     assert project._inertia_decode_function_insns_cache_8616[(function.addr, 0x100)] == (push_di, pop_di, ret)
     assert project._inertia_callee_saved_register_names_cache_8616[function.addr] == frozenset({"di"})
+
+
+def test_callee_saved_frame_evidence_accepts_far_return_and_segment_pair(monkeypatch):
+    project, _codegen = _project()
+    function = SimpleNamespace(addr=0x4010)
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda *, addr, create: function if addr == function.addr else None
+        )
+    )
+    push_ds = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_PUSH,
+        groups=(),
+        operands=(_reg_operand(X86_REG_DS),),
+        reg_name=lambda reg: "ds" if reg == X86_REG_DS else "",
+        regs_access=lambda: ((X86_REG_DS,), ()),
+    )
+    pop_ds = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_POP,
+        groups=(),
+        operands=(_reg_operand(X86_REG_DS),),
+        reg_name=lambda reg: "ds" if reg == X86_REG_DS else "",
+        regs_access=lambda: ((), (X86_REG_DS,)),
+    )
+    retf = SimpleNamespace(
+        address=0x4021,
+        id=X86_INS_RETF,
+        groups=(X86_GRP_RET,),
+        operands=(),
+    )
+    trailing = SimpleNamespace(address=0x4022, id=X86_INS_MOV, groups=(), operands=())
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_direct_global_update_blocks_8616",
+        lambda _project, _function: (
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(push_ds, pop_ds, retf, trailing))
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_capstone_insns_for_direct_global_update_8616",
+        lambda _project, block: block.capstone.insns,
+    )
+
+    decoded = real_mode_linear._decode_function_insns_8616(
+        project,
+        function.addr,
+        function=function,
+    )
+
+    assert decoded == (push_ds, pop_ds, retf)
+    assert real_mode_linear._callee_saved_register_names_from_frame_evidence_8616(
+        project,
+        function.addr,
+        function=function,
+    ) == frozenset({"ds"})
 
 
 def test_callee_saved_frame_evidence_deduplicates_and_rejects_post_pop_write(monkeypatch):

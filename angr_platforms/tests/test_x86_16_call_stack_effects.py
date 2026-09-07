@@ -7,6 +7,7 @@ from dataclasses import replace
 from angr_platforms.X86_16.alias.partial_register_address_break import (
     PartialRegisterAddressBreakEvidence8616,
 )
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
     CallsiteArgumentClass8616,
     CallsiteSummary8616,
@@ -33,6 +34,14 @@ from angr_platforms.X86_16.semantics.call_stack_effect_contracts import (
 from angr_platforms.X86_16.semantics.call_stack_effects import (
     materialize_call_stack_effects_8616,
 )
+
+
+def test_arch_call_stack_fix_matches_near_return_address_push() -> None:
+    """Keep angr's post-CALL stack coordinate aligned with the 16-bit frame."""
+    arch = Arch86_16()
+
+    assert arch.call_pushes_ret is True
+    assert arch.call_sp_fix == arch.stack_change == -2
 
 
 def _slot() -> IRAddress:

@@ -16143,6 +16143,10 @@ def _decompile_8616(self: StructuredAstValue) -> None:
                     self.codegen,
                 ),
             )
+            _run_pre_validation_prime_step_8616(
+                "ir_segmented_load_carriers_after_segment_globals",
+                lambda: materialize_ir_segmented_load_carriers_8616(self.codegen),
+            )
             _debug_prevalidation_pointer_surface_8616("after-segmented-memory-replay")
             _run_pre_validation_prime_step_8616(
                 "stack_word_loads_final",

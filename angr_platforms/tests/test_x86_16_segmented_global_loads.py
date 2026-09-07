@@ -507,6 +507,50 @@ def test_anonymous_direct_immediate_store_resegments_exact_tagged_dereference():
     assert stats.anonymous_direct_store_failure_count == 0
 
 
+def test_anonymous_direct_word_store_projects_stack_address_to_guest_offset():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    local = CVariable(
+        SimStackVariable(-4, 1, base="bp", name="local_4", region=0x10000),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    lvalue = CFunctionCall(
+        "SEG_U16",
+        None,
+        [_ds(project, codegen), _const(0x0030, codegen)],
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        lvalue,
+        CUnaryOp("AddressOf", local, codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x10015},
+    )
+    root = CStatements([assignment], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10000, statements=root, body=root)
+    evidence = (
+        DirectSegmentedGlobalStoreEvidence8616(0x0030, 2, MemSpace.DS, 0x10015),
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CFunctionCall)
+    assert assignment.rhs.callee_target == "PTR_U16"
+    assert assignment.rhs.args[0].op == "AddressOf"
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 1
+    assert stats.anonymous_direct_store_failure_count == 0
+
+
 def test_anonymous_direct_word_store_folds_exact_instruction_byte_pair_and_replays():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()

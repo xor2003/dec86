@@ -185,6 +185,7 @@ from .segment_access_policy import (
 )
 from .segment_register_state import runtime_segment_name_for_variable_8616
 from .semantic_cast import CSemanticCast8616
+from .stack_value_projection import project_pointer_storage_value_8616
 from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from .storage_identity_facts import (
     StorageIdentityEvidenceKind8616,
@@ -1986,6 +1987,15 @@ def _materialize_anonymous_direct_segmented_global_stores_8616(
                 if assignment is not None and len(exact_wide) == 1:
                     evidence = exact_wide[0]
                     classified.add(evidence)
+                    if isinstance(assignment.rhs, CExpression):
+                        projected_rhs = project_pointer_storage_value_8616(
+                            codegen,
+                            assignment.rhs,
+                            evidence.width,
+                        )
+                        if projected_rhs is not None and projected_rhs is not assignment.rhs:
+                            assignment.rhs = projected_rhs
+                            changed = True
                     if (
                         identity is not None
                         and identity[1] > evidence.width

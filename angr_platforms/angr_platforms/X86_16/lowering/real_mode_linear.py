@@ -218,6 +218,7 @@ from .stack_lowering_from_facts import (
 from .stack_probe_return_facts import TypedStackProbeReturnFact8616
 from .stack_storage_evidence import alias_proves_stack_range_8616
 from .stack_value_projection import (
+    StackValueOwnerHint8616,
     StackValueProjectionStatus8616,
     project_stack_value_range_8616,
 )
@@ -1007,11 +1008,44 @@ def _copy_existing_arg_surface_to_stack_cvar_8616(existing_arg: StructuredAstVal
 
 
 def _prototype_arg_type_for_bp_offset_8616(codegen: StructuredCodegenValue, offset: int) -> StructuredAstValue | None:
+    """Resolve a parameter type by its exact materialized BP coordinate."""
     if not isinstance(offset, int) or offset < 4:
         return None
+    cfunc = getattr(codegen, "cfunc", None)
+    physical_arguments = _boundary_tuple_8616(
+        getattr(cfunc, "arg_list", ()) or ()
+    )
     for proto in _candidate_function_prototypes_8616(codegen):
+        prototype_arguments = _boundary_tuple_8616(
+            getattr(proto, "args", ()) or ()
+        )
+        if prototype_arguments and len(physical_arguments) == len(
+            prototype_arguments
+        ):
+            physical_types: list[tuple[int, StructuredAstValue]] = []
+            for argument, arg_type in zip(
+                physical_arguments,
+                prototype_arguments,
+                strict=True,
+            ):
+                variable = getattr(argument, "variable", None)
+                bp_offset = (
+                    machine_bp_offset_for_stack_variable_8616(codegen, variable)
+                    if isinstance(variable, SimStackVariable)
+                    else None
+                )
+                if not isinstance(bp_offset, int):
+                    break
+                physical_types.append((bp_offset, arg_type))
+            else:
+                matches = tuple(
+                    arg_type
+                    for bp_offset, arg_type in physical_types
+                    if bp_offset == offset
+                )
+                return matches[0] if len(matches) == 1 else None
         current_offset = 4
-        for arg_type in _boundary_tuple_8616(getattr(proto, "args", ()) or ()):
+        for arg_type in prototype_arguments:
             if current_offset == offset:
                 return arg_type
             current_offset += max(2, _type_size_bytes_8616(arg_type))
@@ -1129,6 +1163,7 @@ def stack_cvar_for_stable_ss_linear_access_8616(
     access: RealModeLinearStackAccess8616,
     *,
     instruction_access: InstructionBpStackAccess8616 | None = None,
+    owner_hint: StackValueOwnerHint8616 | None = None,
     require_lvalue: bool = False,
 ) -> StructuredAstValue | None:
     """Materialize a proven SS access, retaining exact instruction evidence."""
@@ -1147,7 +1182,12 @@ def stack_cvar_for_stable_ss_linear_access_8616(
     requested_size = int(access.width) if isinstance(access.width, int) and access.width > 0 else None
     variables_in_use = getattr(cfunc, "variables_in_use", None)
     projected_value = (
-        project_stack_value_range_8616(codegen, displacement, requested_size)
+        project_stack_value_range_8616(
+            codegen,
+            displacement,
+            requested_size,
+            owner_hint=owner_hint,
+        )
         if requested_size is not None
         else None
     )
@@ -3696,6 +3736,14 @@ def _is_mov_sp_bp_8616(insn: StructuredAstValue) -> bool:
     return bool(_op_reg_id_8616(insn, 0) == X86_REG_SP and _op_reg_id_8616(insn, 1) == X86_REG_BP)
 
 
+def _is_function_return_instruction_8616(insn: StructuredAstValue) -> bool:
+    """Recognize decoded near and far returns through Capstone semantics."""
+    return bool(
+        getattr(insn, "id", None) == X86_INS_RET
+        or X86_GRP_RET in frozenset(getattr(insn, "groups", ()) or ())
+    )
+
+
 def _decode_function_insns_at_8616(
     project: AngrProjectValue,
     function_addr: int,
@@ -3739,9 +3787,9 @@ def _decode_function_insns_at_8616(
     ordered = []
     for insn in sorted(insns, key=lambda item: int(getattr(item, "address", 0) or 0)):
         ordered.append(insn)
-        if getattr(insn, "id", None) == X86_INS_RET:
+        if _is_function_return_instruction_8616(insn):
             break
-    if not any(getattr(insn, "id", None) == X86_INS_RET for insn in ordered):
+    if not any(_is_function_return_instruction_8616(insn) for insn in ordered):
         if debug:
             log.warning(
                 "[callee-save-prune] incomplete decode addr=%#x blocks=%d insns=%d first=%r last=%r",
@@ -3832,7 +3880,7 @@ def _callee_saved_register_names_from_frame_evidence_8616(
         )
     if not insns:
         return frozenset()
-    preservable = frozenset({"ax", "bx", "cx", "dx", "si", "di"})
+    preservable = frozenset({"ax", "bx", "cx", "dx", "si", "di", "ds", "es"})
     pushed: list[str] = []
     for insn in insns:
         if getattr(insn, "id", None) == X86_INS_PUSH:
@@ -3841,14 +3889,21 @@ def _callee_saved_register_names_from_frame_evidence_8616(
                 reg_name = insn.reg_name(reg_id)
                 if reg_name in preservable:
                     pushed.append(reg_name)
-        if getattr(insn, "id", None) == X86_INS_RET:
+        if _is_function_return_instruction_8616(insn):
             break
     if debug:
         log.warning("[callee-save-prune] decoded pushes=%r", tuple(pushed))
     if not pushed:
         return frozenset()
 
-    ret_index = next((idx for idx, insn in enumerate(insns) if getattr(insn, "id", None) == X86_INS_RET), None)
+    ret_index = next(
+        (
+            idx
+            for idx, insn in enumerate(insns)
+            if _is_function_return_instruction_8616(insn)
+        ),
+        None,
+    )
     if ret_index is None:
         return frozenset()
     restored: list[str] = []
@@ -3932,7 +3987,7 @@ def _remove_callee_saved_stack_spills_8616(
         function_addr,
         function=function,
     )
-    preservable = frozenset({"ax", "bx", "cx", "dx", "si", "di"})
+    preservable = frozenset({"ax", "bx", "cx", "dx", "si", "di", "ds", "es"})
     pushed: set[str] = set()
     popped: set[str] = set()
     for insn in decoded_insns:
@@ -17565,7 +17620,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
     def _instruction_bp_stack_access_8616(
         node: StructuredAstValue,
         shaped_access: RealModeLinearStackAccess8616,
-    ) -> InstructionBpStackAccess8616 | None:
+    ) -> tuple[InstructionBpStackAccess8616, StackValueOwnerHint8616 | None] | None:
         """Bind one SS-shaped access to its exact direct BP instruction operand."""
         nonlocal instruction_bp_access_index
         source_addrs = instruction_addrs_from_node_8616(node)
@@ -17591,6 +17646,28 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         if exact is None:
             return None
         shaped_width = shaped_access.width if isinstance(shaped_access.width, int) else 0
+        logical_owner_ranges = {
+            StackValueOwnerHint8616(candidate.displacement, candidate.size)
+            for source_addr in source_addrs
+            for candidate in instruction_bp_access_index.by_instruction_addr.get(
+                source_addr,
+                (),
+            )
+            if candidate.evidence
+            is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+            and candidate.kind is exact.kind
+            and candidate.displacement <= shaped_access.displacement
+            and candidate.displacement + candidate.size
+            >= shaped_access.displacement + shaped_width
+        }
+        owner_hint = (
+            next(iter(logical_owner_ranges))
+            if len(logical_owner_ranges) == 1
+            else StackValueOwnerHint8616(exact.displacement, exact.size)
+            if exact.evidence
+            is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
+            else None
+        )
         if (
             exact.evidence is InstructionBpStackAccessEvidence8616.LOGICAL_ACCESS
             and exact.displacement != shaped_access.displacement
@@ -17637,7 +17714,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         if size > 0 and width > 0 and size != width and not logical_same_base_owner:
             return None
         instruction_bp_access_lane.classified += 1
-        return exact
+        return exact, owner_hint
 
     def transform(node: StructuredAstValue) -> StructuredAstValue:
         """Materialize only proven SS stack accesses while preserving unrelated AST."""
@@ -17685,7 +17762,20 @@ def lower_stable_ss_linear_stack_dereferences_8616(
                             changed = True
                             materialized_count += 1
                             return materialized
-                instruction_access = _instruction_bp_stack_access_8616(stripped_node, access)
+                instruction_selection = _instruction_bp_stack_access_8616(
+                    stripped_node,
+                    access,
+                )
+                instruction_access = (
+                    instruction_selection[0]
+                    if instruction_selection is not None
+                    else None
+                )
+                owner_hint = (
+                    instruction_selection[1]
+                    if instruction_selection is not None
+                    else None
+                )
                 if instruction_access is not None:
                     access = RealModeLinearStackAccess8616(
                         displacement=instruction_access.displacement,
@@ -17695,6 +17785,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
                     codegen,
                     access,
                     instruction_access=instruction_access,
+                    owner_hint=owner_hint,
                 )
                 if cvar is None:
                     if instruction_access is not None:

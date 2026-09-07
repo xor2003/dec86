@@ -42,6 +42,7 @@ from ..ir.logical_memory_register_transfer_contracts import (
     LogicalMemoryRegisterTransfer8616,
     LogicalMemoryRegisterTransferKind8616,
 )
+from ..ir.segment_state import SegmentStateArtifact
 from ..ir.ssa_cfg import build_ssa_cfg_snapshot_8616, compute_ssa_dominators_8616
 from .gp_register_state import (
     gp_live_in_names_from_ssa_8616,
@@ -78,6 +79,7 @@ class _Codegen8616(Protocol):
 
     project: _Project8616 | None
     cfunc: _CFunction8616 | None
+    _inertia_segment_state_artifact: SegmentStateArtifact
     _inertia_ir_segmented_load_carrier_stats_8616: IRSegmentedLoadCarrierStats8616
 
 
@@ -209,6 +211,271 @@ def _owned_load_fact_8616(
     return matches[0] if len(matches) == 1 else None
 
 
+def _iter_dereference_operands_8616(node: object) -> tuple[object, ...]:
+    """Return dereference nodes reachable through bounded value operators."""
+    if isinstance(node, structured_c.CUnaryOp):
+        return (node,) if node.op == "Dereference" else ()
+    if isinstance(node, structured_c.CBinaryOp):
+        return (
+            *_iter_dereference_operands_8616(node.lhs),
+            *_iter_dereference_operands_8616(node.rhs),
+        )
+    if isinstance(node, structured_c.CTypeCast):
+        return _iter_dereference_operands_8616(node.expr)
+    return ()
+
+
+def _additive_terms_8616(node: object, sign: int = 1) -> tuple[tuple[int, object], ...]:
+    """Flatten only additive structured-C address terms without rewriting them."""
+    if isinstance(node, structured_c.CBinaryOp) and node.op == "Add":
+        return _additive_terms_8616(node.lhs, sign) + _additive_terms_8616(node.rhs, sign)
+    if isinstance(node, structured_c.CBinaryOp) and node.op == "Sub":
+        return _additive_terms_8616(node.lhs, sign) + _additive_terms_8616(node.rhs, -sign)
+    return ((sign, node),)
+
+
+def _register_shapes_in_expr_8616(node: object) -> frozenset[tuple[int, int]]:
+    """Collect physical register shapes from one bounded address expression."""
+    shapes: set[tuple[int, int]] = set()
+    for _sign, term in _additive_terms_8616(node):
+        if not isinstance(term, structured_c.CVariable):
+            continue
+        for variable in (term.unified_variable, term.variable):
+            if (
+                isinstance(variable, SimRegisterVariable)
+                and isinstance(variable.reg, int)
+                and isinstance(variable.size, int)
+            ):
+                shapes.add((variable.reg, variable.size))
+    return frozenset(shapes)
+
+
+def _constant_integer_expr_8616(node: object) -> int | None:
+    """Evaluate a bounded, side-effect-free integer expression or refuse it."""
+    if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, structured_c.CTypeCast):
+        return _constant_integer_expr_8616(node.expr)
+    if not isinstance(node, structured_c.CBinaryOp):
+        return None
+    lhs = _constant_integer_expr_8616(node.lhs)
+    rhs = _constant_integer_expr_8616(node.rhs)
+    if lhs is None or rhs is None:
+        return None
+    if node.op == "Add":
+        return lhs + rhs
+    if node.op == "Sub":
+        return lhs - rhs
+    if node.op == "Mul":
+        return lhs * rhs
+    if node.op == "Shl" and 0 <= rhs < 64:
+        return lhs << rhs
+    return None
+
+
+def _matches_constant_segment_linear_load_8616(
+    codegen: _Codegen8616,
+    expression: object,
+    fact: _SegmentedLoadFact8616,
+) -> bool:
+    """Prove that an integer dereference is one lane of an exact IR load.
+
+    The segment constant, logical address, width, and source instruction all
+    come from owned IR. Structured C contributes only the still-visible linear
+    base and physical-register address terms. An arbitrary integer dereference
+    therefore remains untouched.
+    """
+    return _constant_segment_offset_expr_8616(codegen, expression, fact) is not None
+
+
+def _constant_segment_offset_expr_8616(
+    codegen: _Codegen8616,
+    dereference: object,
+    fact: _SegmentedLoadFact8616,
+) -> object | None:
+    """Recover one SSA-preserving offset from an IR-proven linear dereference."""
+    project = codegen.project
+    segment = fact.segment_constant
+    if (
+        project is None
+        or segment is None
+        or not isinstance(dereference, structured_c.CUnaryOp)
+        or dereference.op != "Dereference"
+    ):
+        return None
+    required_shapes = {
+        project.arch.registers[value.name][:2]
+        for value in fact.address.base_values
+        if value.space is MemSpace.REG
+        and isinstance(value.name, str)
+        and value.name in project.arch.registers
+    }
+    if len(required_shapes) != len(fact.address.base_values):
+        return None
+    linear_base = (segment & 0xFFFF) << 4
+    first_lane = fact.address.offset & 0xFFFF
+    allowed_lanes = {
+        (first_lane + lane) & 0xFFFF
+        for lane in range(max(int(fact.address.size), 1))
+    }
+    operand = dereference.operand
+    if not required_shapes.issubset(_register_shapes_in_expr_8616(operand)):
+        return None
+    terms = _additive_terms_8616(operand)
+    constant_values = tuple(_constant_integer_expr_8616(term) for _sign, term in terms)
+    matching_bases = tuple(
+        index
+        for index, ((sign, _term), value) in enumerate(zip(terms, constant_values, strict=True))
+        if value is not None
+        and sign == 1
+        and linear_base <= value <= linear_base + 0xFFFF
+        and (
+            value
+            - linear_base
+            + sum(
+                other_sign * other_value
+                for other_index, ((other_sign, _other_term), other_value) in enumerate(
+                    zip(terms, constant_values, strict=True)
+                )
+                if other_index != index and other_value is not None
+            )
+        )
+        in allowed_lanes
+    )
+    if len(matching_bases) != 1:
+        return None
+    base_index = matching_bases[0]
+    base_value = constant_values[base_index]
+    if base_value is None:
+        return None
+    offset_terms: list[tuple[int, object]] = []
+    for index, (sign, term) in enumerate(terms):
+        if index == base_index:
+            residual = base_value - linear_base
+            if residual:
+                offset_terms.append(
+                    (
+                        1,
+                        structured_c.CConstant(
+                            residual,
+                            SimTypeShort(False),
+                            codegen=codegen,
+                        ),
+                    )
+                )
+            continue
+        offset_terms.append((sign, term))
+    if not offset_terms:
+        return structured_c.CConstant(0, SimTypeShort(False), codegen=codegen)
+    result: object | None = None
+    for sign, term in offset_terms:
+        if result is None:
+            result = (
+                term
+                if sign == 1
+                else structured_c.CBinaryOp(
+                    "Sub",
+                    structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                    term,
+                    codegen=codegen,
+                )
+            )
+        else:
+            result = structured_c.CBinaryOp(
+                "Add" if sign == 1 else "Sub",
+                result,
+                term,
+                codegen=codegen,
+            )
+    return result
+
+
+def _constant_segment_helper_for_dereference_8616(
+    codegen: _Codegen8616,
+    dereference: object,
+    facts: tuple[_SegmentedLoadFact8616, ...],
+) -> tuple[structured_c.CFunctionCall, _SegmentedLoadFact8616] | None:
+    """Materialize one uniquely matched dereference while retaining its SSA offset."""
+    matches = tuple(
+        (fact, offset)
+        for fact in facts
+        if (offset := _constant_segment_offset_expr_8616(codegen, dereference, fact)) is not None
+    )
+    if len(matches) != 1:
+        return None
+    fact, offset = matches[0]
+    helper = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}.get(fact.address.size)
+    if helper is None or fact.segment_constant is None:
+        return None
+    return (
+        structured_c.CFunctionCall(
+            helper,
+            None,
+            [
+                structured_c.CConstant(
+                    fact.segment_constant,
+                    SimTypeShort(False),
+                    codegen=codegen,
+                ),
+                offset,
+            ],
+            codegen=codegen,
+            tags={
+                "inertia_x86_16_runtime_segment_helper": helper,
+                "inertia_source_instruction_addrs": (fact.instruction_addr,),
+            },
+        ),
+        fact,
+    )
+
+
+def _constant_segment_facts_for_assignment_8616(
+    codegen: _Codegen8616,
+    assignment: structured_c.CAssignment,
+    facts: dict[tuple[int, int], _SegmentedLoadFact8616],
+) -> tuple[_SegmentedLoadFact8616, ...]:
+    """Return unique instruction-owned facts matched by a linear C dereference."""
+    matched: dict[tuple[int, MemSpace, tuple[str, ...], int, int], _SegmentedLoadFact8616] = {}
+    instruction_addrs = instruction_addrs_from_node_8616(assignment)
+    if os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+        candidates = tuple(
+            fact
+            for fact in facts.values()
+            if fact.instruction_addr in instruction_addrs and fact.segment_constant is not None
+        )
+        if candidates:
+            logging.getLogger(__name__).warning(
+                "IR segmented-load linear candidate insns=%r rhs=%s derefs=%d facts=%r",
+                tuple(sorted(instruction_addrs)),
+                type(assignment.rhs).__name__,
+                len(_iter_dereference_operands_8616(assignment.rhs)),
+                tuple(
+                    (fact.instruction_addr, fact.address.base, fact.address.offset, fact.address.size)
+                    for fact in candidates
+                ),
+            )
+    for fact in facts.values():
+        if fact.instruction_addr not in instruction_addrs:
+            continue
+        if not any(
+            _matches_constant_segment_linear_load_8616(codegen, dereference, fact)
+            for dereference in (
+                assignment.rhs,
+                *_iter_dereference_operands_8616(assignment.rhs),
+            )
+        ):
+            continue
+        key = (
+            fact.instruction_addr,
+            fact.address.space,
+            fact.address.base,
+            fact.address.offset,
+            fact.address.size,
+        )
+        matched[key] = fact
+    return tuple(matched.values())
+
+
 def _register_expr_8616(
     codegen: _Codegen8616, register_name: str
 ) -> structured_c.CVariable | None:
@@ -288,6 +555,10 @@ def _load_facts_8616(codegen: _Codegen8616) -> dict[tuple[int, int], _SegmentedL
     resolution = registered_function_ir_artifact_8616(project, cfunc.addr)
     if resolution.verdict is not FunctionIRArtifactVerdict8616.PROVEN or resolution.artifact is None:
         return {}
+    try:
+        segment_state = codegen._inertia_segment_state_artifact
+    except AttributeError:
+        segment_state = None
     candidates: dict[tuple[int, int], _SegmentedLoadFact8616 | None] = {}
     for block in resolution.artifact.blocks:
         register_constants: dict[str, int] = {}
@@ -338,12 +609,30 @@ def _load_facts_8616(codegen: _Codegen8616) -> dict[tuple[int, int], _SegmentedL
                 or address.size not in {1, 2, 4}
             ):
                 continue
+            segment_constant = segment_constants.get(address.space)
+            if segment_constant is None and isinstance(segment_state, SegmentStateArtifact):
+                state = segment_state.state_before_instruction(
+                    instruction.addr,
+                    address.space.value,
+                )
+                segment_constant = state.constant_value() if state is not None else None
             fact = _SegmentedLoadFact8616(
                 destination.source_tmp,
                 instruction.addr,
                 address,
-                segment_constants.get(address.space),
+                segment_constant,
             )
+            if os.environ.get("INERTIA_DEBUG_IR_SEGMENTED_LOAD_CARRIERS"):
+                logging.getLogger(__name__).warning(
+                    "IR segmented-load fact tmp=%d insn=%#x space=%s base=%r offset=%#x width=%d segment=%r",
+                    fact.temporary_id,
+                    fact.instruction_addr,
+                    fact.address.space.value,
+                    fact.address.base,
+                    fact.address.offset,
+                    fact.address.size,
+                    fact.segment_constant,
+                )
             key = (fact.temporary_id, fact.instruction_addr)
             candidates[key] = fact if key not in candidates else None
     return {key: fact for key, fact in candidates.items() if fact is not None}
@@ -1158,6 +1447,42 @@ def materialize_ir_segmented_load_carriers_8616(codegen: object) -> bool:
                     materialized.add(key)
                 return node
             register_name = _register_name_from_node_8616(boundary, node.lhs)
+            constant_segment_facts = _constant_segment_facts_for_assignment_8616(
+                boundary,
+                node,
+                facts,
+            )
+            constant_fact_tuple = tuple(constant_segment_facts)
+            replaced_facts: list[_SegmentedLoadFact8616] = []
+
+            def replace_constant_dereference(value: object) -> object:
+                """Replace one exact constant-segment dereference leaf."""
+                replacement = _constant_segment_helper_for_dereference_8616(
+                    boundary,
+                    value,
+                    constant_fact_tuple,
+                )
+                if replacement is None:
+                    return value
+                helper, replaced_fact = replacement
+                replaced_facts.append(replaced_fact)
+                return helper
+
+            new_rhs = replace_constant_dereference(node.rhs)
+            if new_rhs is node.rhs:
+                _replace_c_children_8616(node.rhs, replace_constant_dereference)
+            else:
+                node.rhs = new_rhs
+            if replaced_facts:
+                for replaced_fact in replaced_facts:
+                    direct_key = (
+                        "tmp",
+                        replaced_fact.temporary_id,
+                        replaced_fact.instruction_addr,
+                    )
+                    classified.add(direct_key)
+                    materialized.add(direct_key)
+                return node
             if register_name is None:
                 return node
             if not (

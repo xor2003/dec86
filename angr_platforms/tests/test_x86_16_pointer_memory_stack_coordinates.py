@@ -25,6 +25,7 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     stack_cvar_for_stable_ss_linear_access_8616,
 )
 from angr_platforms.X86_16.lowering.stack_value_projection import (
+    StackValueOwnerHint8616,
     StackValueProjectionStatus8616,
     project_stack_value_range_8616,
     stack_value_projection_stats_8616,
@@ -172,8 +173,14 @@ def test_runtime_high_byte_load_projects_word_argument_not_padding() -> None:
         entry_sp_offset=5,
         size=2,
     )
+    codegen.cfunc.arg_list = [word, overlapping]
 
-    high = project_stack_value_range_8616(codegen, 5, 1)
+    high = project_stack_value_range_8616(
+        codegen,
+        5,
+        1,
+        owner_hint=StackValueOwnerHint8616(4, 2),
+    )
     low = _stack_slot_expr_8616(codegen, 4, 1)
 
     assert high.status is StackValueProjectionStatus8616.CONTAINED_VALUE
@@ -186,7 +193,12 @@ def test_runtime_high_byte_load_projects_word_argument_not_padding() -> None:
     assert low.expr is word
     assert low.dst_type.size == 8
     word.variable_type = SimTypePointer(SimTypeChar(False)).with_arch(arch)
-    pointer_high = project_stack_value_range_8616(codegen, 5, 1)
+    pointer_high = project_stack_value_range_8616(
+        codegen,
+        5,
+        1,
+        owner_hint=StackValueOwnerHint8616(4, 2),
+    )
     assert pointer_high.expression is not None
     assert isinstance(pointer_high.expression.expr.lhs, CFunctionCall)
     assert pointer_high.expression.expr.lhs.callee_target == "PTR_U16"
