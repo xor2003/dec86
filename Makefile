@@ -2559,6 +2559,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
 	angr_platforms/tests/test_generic_annotation_contracts.py \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
+	angr_platforms/tests/test_frame_carrier_type_contracts.py \
 	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
 	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
 	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
@@ -2837,6 +2838,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_pytest_profile.py \
 	angr_platforms/tests/test_generic_annotation_contracts.py \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
+	angr_platforms/tests/test_frame_carrier_type_contracts.py \
 	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
 	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
 	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \

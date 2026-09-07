@@ -110,9 +110,9 @@ def collect_frame_register_carriers_8616(
 ) -> FrameRegisterCarrierResolution8616:
     """Collect unique same-instruction BP/SP snapshots from structured C."""
     allowed = frozenset(
-        PhysicalRegisterView8616(*register)
+        PhysicalRegisterView8616(*register_span)
         for name in ("bp", "sp")
-        if (register := project.arch.registers.get(name)) is not None
+        if (register_span := project.arch.registers.get(name)) is not None
     )
     definitions: dict[FrameVirtualCarrierIdentity8616, list[PhysicalRegisterView8616]] = {}
     raw_count = 0
@@ -125,7 +125,7 @@ def collect_frame_register_carriers_8616(
             continue
         identity = _temporary_identity_8616(node.lhs)
         register = physical_register_view_8616(_unwrap_casts_8616(node.rhs))
-        if identity is None or register not in allowed:
+        if identity is None or register is None or register not in allowed:
             continue
         raw_count += 1
         normalized_count += 1

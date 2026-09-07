@@ -440,6 +440,12 @@ neither Step 9f nor the overall P0 goal is closed by this checkpoint.
 
 #### P0 pointer-store consumption follow-up (2026-09-07)
 
+The [frame-carrier typing checkpoint](reference/p0-frame-carrier-types.md)
+preserves exact BP/SP proof decisions while removing a tuple/view binding
+collision. Eighteen focused tests pass, including a paired-owner MyPy regression;
+`quality-dev` passes with 2,053 pytest cases and its external guards. Global
+MyPy diagnostic lines decrease from 149 to 146; full-suite acceptance remains open.
+
 The [access-trait factory checkpoint](reference/p0-access-trait-runtime-factory.md)
 repairs a reproduced runtime class/type-alias mismatch in legacy CLI wiring;
 the positive collector and existing refusal regressions pass. `quality-dev`

@@ -1563,6 +1563,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
         owner="x86-16-frame-carrier-lowering",
         paths=(
+            "angr_platforms/angr_platforms/X86_16/lowering/frame_register_carriers.py",
             "angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py",
             "angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py",
             "angr_platforms/angr_platforms/X86_16/lowering/physical_registers.py",
@@ -1570,6 +1571,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=(
             "angr_platforms/tests/test_x86_16_callee_saved_frame.py",
             "angr_platforms/tests/test_x86_16_canonical_frame_carriers.py",
+            "angr_platforms/tests/test_frame_carrier_type_contracts.py",
             "angr_platforms/tests/test_x86_16_terminal_register_return_values.py",
         ),
     ),
