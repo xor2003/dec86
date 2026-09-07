@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import os
+import sys
 import typing
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
@@ -2095,6 +2097,52 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_refusals_8616 = []
     _reset_segmented_access_width_lane_8616(typed_codegen)
+
+    def _debug_argument_lifecycle_8616(stage: str) -> None:
+        """Report temporary C-variable identity evidence for pipeline diagnosis."""
+        if os.environ.get("INERTIA_DEBUG_ARGUMENT_LIFECYCLE") != "1":
+            return
+        arguments = tuple(cfunc.arg_list or ())
+        argument_surface = tuple(
+            (
+                id(argument),
+                id(argument.variable),
+                argument.variable.offset,
+                argument.variable.size,
+                argument.variable.name,
+                type(argument.variable_type).__name__,
+            )
+            for argument in arguments
+            if isinstance(argument, structured_c.CVariable)
+            and isinstance(argument.variable, SimStackVariable)
+        )
+        body_by_identity: dict[int, tuple[object, ...]] = {}
+        for node in _iter_c_nodes_deep_8616(cfunc.statements):
+            if not isinstance(node, structured_c.CVariable) or not isinstance(
+                node.variable,
+                SimStackVariable,
+            ):
+                continue
+            body_by_identity.setdefault(
+                id(node),
+                (
+                    id(node),
+                    id(node.variable),
+                    node.variable.offset,
+                    node.variable.size,
+                    node.variable.name,
+                    type(node.variable_type).__name__,
+                ),
+            )
+        body_surface = tuple(body_by_identity.values())
+        print(
+            f"[argument-lifecycle] {stage} args={argument_surface!r} "
+            f"body={body_surface!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    _debug_argument_lifecycle_8616("start")
     def _invalidate_segmented_address_caches_8616() -> None:
         """Discard address classifications whose segment child was replaced."""
         rewrite_cache = getattr(project, "_inertia_rewrite_cache", None)
@@ -2104,6 +2152,7 @@ def apply_runtime_segment_lowering_8616(
         rewrite_cache.pop("segmented_addr_expr", None)
 
     changed = _rematerialize_binary_proven_near_pointer_types_8616(typed_codegen)
+    _debug_argument_lifecycle_8616("after-pointer-types")
     changed = lower_packed_flags_live_in_8616(codegen) or changed
     changed = lower_direction_flag_state_8616(codegen) or changed
     changed = materialize_string_io_loop_carriers_8616(project, codegen) or changed
@@ -2158,12 +2207,16 @@ def apply_runtime_segment_lowering_8616(
         fallback_to_positive_bp=False,
     ):
         changed = True
+    _debug_argument_lifecycle_8616("after-annotated-prototype")
     if materialize_positive_bp_arguments_8616(project, typed_codegen):
         changed = True
+    _debug_argument_lifecycle_8616("after-positive-bp")
     if unify_positive_bp_argument_identity_8616(typed_codegen):
         changed = True
+    _debug_argument_lifecycle_8616("after-argument-identity")
     if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
         changed = True
+    _debug_argument_lifecycle_8616("after-ss-stack")
     if materialize_balanced_immediate_register_restores_8616(
         codegen,
         active_function,
@@ -2204,6 +2257,7 @@ def apply_runtime_segment_lowering_8616(
         failure_count=max(classified_count - materialized_count, 0),
         refusals=tuple(typed_codegen._inertia_near_pointer_argument_refusals_8616),
     )
+    _debug_argument_lifecycle_8616("end")
     typed_codegen._inertia_stack_pointer_snapshot_stats_8616 = snapshot_tracker.stats
     typed_codegen._inertia_linear_global_decomposition_cache_stats_8616 = (
         decomposition_cache.stats()

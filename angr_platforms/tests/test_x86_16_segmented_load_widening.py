@@ -261,3 +261,81 @@ def test_segmented_load_widening_joins_ssa_proven_statement_byte_pair() -> None:
     assert report.classified_fact_count == 1
     assert report.materialized_count == 1
     assert report.failure_count == 0
+
+
+def test_segmented_load_widening_coalesces_proven_overwide_byte_lanes() -> None:
+    """A proven word MOV is not emitted as two overlapping word helpers."""
+    codegen = _Codegen()
+    instruction_addr = 0x10580
+    bx_offset, bx_size = codegen.project.arch.registers["bx"]
+    si_offset, si_size = codegen.project.arch.registers["si"]
+    address = IRAddress(
+        MemSpace.DS,
+        base_values=(IRValue(MemSpace.REG, name="bx", offset=bx_offset, size=bx_size),),
+    )
+    block = SSABlock(
+        addr=instruction_addr,
+        instrs=(
+            IRInstr(
+                "MOV",
+                IRValue(MemSpace.REG, name="si", offset=si_offset, size=si_size),
+                (address,),
+                2,
+                instruction_addr,
+            ),
+        ),
+        bindings=(),
+    )
+    codegen.project._inertia_function_ssa_artifacts_8616 = {
+        codegen.cfunc.addr: SSAFunctionArtifact(
+            function_addr=codegen.cfunc.addr,
+            blocks=(block,),
+            predecessor_map={instruction_addr: ()},
+        )
+    }
+    codegen.project._inertia_function_ssa_stages_8616 = {
+        codegen.cfunc.addr: FunctionSSAArtifactStage8616.IR,
+    }
+    ds_offset, ds_size = codegen.project.arch.registers["ds"]
+    ds = CVariable(SimRegisterVariable(ds_offset, ds_size, name="ds"), codegen=codegen)
+    bx = CVariable(SimRegisterVariable(bx_offset, bx_size, name="bx"), codegen=codegen)
+    low_offset = CBinaryOp(
+        "Add",
+        CConstant(0x931F, SimTypeShort(False), codegen=codegen),
+        bx,
+        codegen=codegen,
+    )
+    high_offset = CBinaryOp(
+        "Add",
+        CConstant(0x9320, SimTypeShort(False), codegen=codegen),
+        bx,
+        codegen=codegen,
+    )
+    tags = {
+        "inertia_x86_16_runtime_segment_helper": "SEG_U16",
+        "inertia_source_instruction_addrs": (instruction_addr,),
+    }
+    low = CFunctionCall("SEG_U16", None, [ds, low_offset], codegen=codegen, tags=dict(tags))
+    high = CFunctionCall("SEG_U16", None, [ds, high_offset], codegen=codegen, tags=dict(tags))
+    expression = CBinaryOp(
+        "Or",
+        low,
+        CBinaryOp(
+            "Shl",
+            high,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements([expression], codegen=codegen)
+    codegen.cfunc.body = root
+    codegen.cfunc.statements = root
+
+    changed = apply_segmented_load_widening_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements.statements[0]
+    assert isinstance(result, CFunctionCall)
+    assert result.callee_target == "SEG_U16"
+    assert result.args[1] is low_offset

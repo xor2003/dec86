@@ -39,9 +39,13 @@ class StackVariableCoordinateProjection8616:
     bp_offset: int
     entry_sp_offset: int
     size: int
-    value_size: int
     display_name: str = ""
     equivalent_variables: tuple[SimStackVariable, ...] = ()
+
+    @property
+    def value_size(self) -> int:
+        """Return the current typed value width inside this storage slot."""
+        return _semantic_value_size_8616(self.cvar, self.size)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,7 +270,6 @@ def record_stack_variable_coordinate_projection_8616(
         bp_offset=bp_offset,
         entry_sp_offset=entry_sp_offset,
         size=size,
-        value_size=_semantic_value_size_8616(cvar, size),
         display_name=(
             display_name
             if isinstance(display_name, str) and display_name
@@ -309,7 +312,6 @@ def record_stack_variable_coordinate_alias_8616(
         bp_offset=projection.bp_offset,
         entry_sp_offset=projection.entry_sp_offset,
         size=projection.size,
-        value_size=projection.value_size,
         display_name=projection.display_name,
         equivalent_variables=(*projection.equivalent_variables, variable),
     )
@@ -346,7 +348,6 @@ def bind_stack_variable_coordinate_cvar_8616(
         bp_offset=projection.bp_offset,
         entry_sp_offset=projection.entry_sp_offset,
         size=projection.size,
-        value_size=_semantic_value_size_8616(cvar, projection.size),
         display_name=display_name or projection.display_name,
         equivalent_variables=projection.equivalent_variables,
     )

@@ -194,6 +194,20 @@ def _segmented_byte_load_8616(node: object) -> tuple[CFunctionCall, object, obje
     return node, node.args[0], node.args[1]
 
 
+def _overwide_segmented_byte_lane_8616(
+    node: object,
+) -> tuple[CFunctionCall, object, object] | None:
+    """Return a word helper used as one lane of an angr byte decomposition."""
+    node = _strip_casts_8616(node)
+    if not isinstance(node, CFunctionCall) or not isinstance(node.tags, dict):
+        return None
+    if node.tags.get("inertia_x86_16_runtime_segment_helper") != "SEG_U16":
+        return None
+    if not isinstance(node.args, (list, tuple)) or len(node.args) != 2:
+        return None
+    return node, node.args[0], node.args[1]
+
+
 def _shifted_high_byte_8616(node: object) -> tuple[CFunctionCall, object, object] | None:
     """Return a segmented byte load widened into the high byte position."""
     node = _strip_casts_8616(node)
@@ -205,6 +219,22 @@ def _shifted_high_byte_8616(node: object) -> tuple[CFunctionCall, object, object
     for possible_load, possible_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
         if _pure_constant_value_8616(possible_scale) == expected:
             return _segmented_byte_load_8616(possible_load)
+    return None
+
+
+def _shifted_overwide_segmented_byte_lane_8616(
+    node: object,
+) -> tuple[CFunctionCall, object, object] | None:
+    """Return an over-wide segmented lane shifted into byte position one."""
+    node = _strip_casts_8616(node)
+    if not isinstance(node, CBinaryOp):
+        return None
+    expected = 8 if node.op == "Shl" else 0x100 if node.op == "Mul" else None
+    if expected is None:
+        return None
+    for possible_load, possible_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        if _pure_constant_value_8616(possible_scale) == expected:
+            return _overwide_segmented_byte_lane_8616(possible_load)
     return None
 
 
@@ -458,6 +488,9 @@ def apply_segmented_load_widening_8616(codegen: object) -> bool:
     normalized = 0
     classified = 0
     materialized = 0
+    proven_mov_addrs = _ssa_segmented_word_mov_addrs_8616(
+        typed_codegen
+    ) | _decoded_segmented_word_mov_addrs_8616(typed_codegen)
 
     def transform(node: object) -> object:
         """Materialize one adjacent byte pair when all widening facts agree."""
@@ -493,6 +526,38 @@ def apply_segmented_load_widening_8616(codegen: object) -> bool:
                 codegen=codegen,
                 tags=tags,
             )
+        for possible_low, possible_high in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            low = _overwide_segmented_byte_lane_8616(possible_low)
+            high = _shifted_overwide_segmented_byte_lane_8616(possible_high)
+            if low is None or high is None:
+                continue
+            raw += 1
+            low_call, low_segment, low_offset = low
+            high_call, high_segment, high_offset = high
+            if not _same_c_expression_8616(low_segment, high_segment):
+                continue
+            normalized += 1
+            if not _adjacent_offsets_8616(low_offset, high_offset):
+                continue
+            authorized = (
+                _instruction_addrs_8616(low_call)
+                & _instruction_addrs_8616(high_call)
+                & proven_mov_addrs
+            )
+            if len(authorized) != 1:
+                continue
+            classified += 1
+            materialized += 1
+            return CFunctionCall(
+                "SEG_U16",
+                None,
+                [low_segment, low_offset],
+                codegen=codegen,
+                tags={
+                    "inertia_x86_16_runtime_segment_helper": "SEG_U16",
+                    "inertia_source_instruction_addrs": tuple(sorted(authorized)),
+                },
+            )
         return node
 
     roots: list[tuple[list[str], object]] = []
@@ -523,9 +588,6 @@ def apply_segmented_load_widening_8616(codegen: object) -> bool:
                 break
             changed = True
 
-    proven_mov_addrs = _ssa_segmented_word_mov_addrs_8616(
-        typed_codegen
-    ) | _decoded_segmented_word_mov_addrs_8616(typed_codegen)
     statement_changed, statement_raw, statement_normalized, statement_classified, statement_materialized = (
         _widen_statement_byte_loads_8616(
             _dynamic_cfunc_attr_8616(cfunc, "statements"),

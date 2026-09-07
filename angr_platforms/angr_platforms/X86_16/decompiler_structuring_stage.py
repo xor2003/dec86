@@ -126,6 +126,7 @@ from .lowering.real_mode_linear import (
     prune_frame_prologue_stack_assignments_8616,
     prune_materialized_call_push_stack_assignments_8616,
 )
+from .lowering.register_indirect_call_targets import materialize_register_indirect_call_target_types_8616
 from .lowering.register_local_declarations import (
     materialize_typed_register_locals_8616 as finalize_typed_register_locals_8616,
 )
@@ -1658,6 +1659,7 @@ def _materialize_structuring_pointer_arg_indirect_loads_8616(project: AngrProjec
     try:
         changed = bool(apply_runtime_segment_lowering_8616(codegen, target=target))
         changed = bool(apply_segmented_load_widening_8616(codegen)) or changed
+        changed = bool(materialize_register_indirect_call_target_types_8616(codegen)) or changed
         if os.environ.get("INERTIA_DEBUG_POINTER_MEMORY_IDIOMS") == "1":
             try:
                 facts = codegen._inertia_near_pointer_argument_facts_8616

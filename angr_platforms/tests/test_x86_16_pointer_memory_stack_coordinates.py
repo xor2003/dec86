@@ -228,6 +228,17 @@ def test_runtime_high_byte_load_projects_word_argument_not_padding() -> None:
 
     assert padding.status is StackValueProjectionStatus8616.OUTSIDE_VALUE
     assert padding.expression is None
+    char.variable_type = SimTypeShort(False).with_arch(arch)
+    promoted_high = project_stack_value_range_8616(
+        char_codegen,
+        5,
+        1,
+        owner_hint=StackValueOwnerHint8616(4, 2),
+    )
+    assert promoted_high.status is StackValueProjectionStatus8616.CONTAINED_VALUE
+    assert promoted_high.expression is not None
+    assert promoted_high.expression.expr.op == "Shr"
+    assert promoted_high.expression.expr.lhs is char
     assert stack_value_projection_stats_8616(char_codegen).failure_count == 1
 
 

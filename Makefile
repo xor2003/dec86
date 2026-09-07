@@ -889,6 +889,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/register_indirect_call_targets.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py \
@@ -1878,6 +1879,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/register_indirect_call_targets.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py \
