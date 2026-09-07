@@ -20,12 +20,22 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-07)
 
+The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
+**10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current
+RunMenu compilation and InitMenu/InitBars/control-flow validation failures mean
+the earlier SORTD acceptance below is historical, not a current green claim.
+Follow that report's ordered batches, DoD, and failure conditions for the next
+P0 work. Global MyPy remains red at 146 diagnostic lines. The weighted 75% and
+80-115h figures are historical estimates, not a revalidated forecast.
+
 Current sidecar-free command:
 
 ```text
 PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
   --ignore-local-sidecar-hints --no-alternate-source-c -q
 ```
+
+Earlier accepted output (must be revalidated after the current regressions):
 
 - discovery and execution attempt all 20 non-library functions
 - the strict executable-only gate emits validated C for all 20 functions with
