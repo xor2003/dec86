@@ -526,6 +526,8 @@ def test_partitioned_controller_runs_short_lived_heavy_waves_exactly_once(
 ) -> None:
     """Keep memory-reset waves coherent with exact inventory accounting."""
 
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    assert not (tmp_path / ".cache").exists()
     nodes_by_path = {"heavy-a.py": "heavy-a", "heavy-b.py": "heavy-b", "light.py": "light"}
     observed_waves: list[tuple[str, ...]] = []
     observed_worker_limits: list[int] = []
@@ -602,6 +604,7 @@ def test_partitioned_controller_runs_short_lived_heavy_waves_exactly_once(
     )
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert list((tmp_path / ".cache" / "pytest").iterdir()) == []
     assert exit_status == expected_exit_status
     assert summary["schema_version"] == 9
     assert observed_waves == [("light-0",), ("heavy-0",), ("heavy-exclusive-0",)]

@@ -21,6 +21,7 @@ from typing import Any, Protocol, cast
 import claripy
 from angr import SimProcedure
 from angr.sim_type import SimTypeFunction
+from capstone import CsInsn
 
 from .frontend_function_instructions import collect_function_instruction_inventory_8616
 from .frontend_instruction_reachability import collect_decoded_block_evidence_8616
@@ -1326,7 +1327,7 @@ def collect_interrupt_calls(
             return None
 
         def direct_call_stack_effect(
-            ins: object,
+            ins: CsInsn,
             operands: object,
         ) -> _InterruptDirectCallStackEffect8616:
             """Prove one direct callee's cleanup and consistent return-frame shape."""

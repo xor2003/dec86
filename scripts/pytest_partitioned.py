@@ -342,6 +342,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     worker_specs: dict[str, WorkerSpec] = {}
     last_active_nodeids: dict[str, str] = {}
     wave_resource_facts: list[dict[str, object]] = []
+    (REPO_ROOT / ".cache" / "pytest").mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pytest-partition-", dir=REPO_ROOT / ".cache" / "pytest") as raw_run_root:
         run_root = Path(raw_run_root)
         weights_path = run_root / "weights.json"

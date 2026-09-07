@@ -45,7 +45,10 @@ changes and is not a clean-commit or remote full-suite acceptance result.
 Status: open. The configuration correction does not resolve existing typing
 debt. Run 34133441640 on 704dc5688 confirms the changed execution conditions:
 Ruff and Lizard passed, Pyright and Vulture failed, and pytest subsequently
-started. Its final result is not yet collected. Run 34133444219 is a separate
+ran: **4,384 passed, 44 failed in 477.50s**, with 10 warnings. This focused CI
+selection is not the full suite. Pyright reported 28 errors in its first batch.
+Vulture reported unused `propagator` in stack_compat.py and `timeout_millis`
+in telemetry.py. Run 34133444219 is a separate
 Dependabot job, not the focused test workflow.
 
 The next local typing repair preserves the segmented-byte access methods and
@@ -58,3 +61,57 @@ The default test pipeline passes all three lanes on this shared tree, with
 2,119 unit tests in 105.02s and successful external compiler round trips
 (`/tmp/inertia-ci-access-pipeline.log`). This does not close named InitMenu or
 the source-stable full audit.
+
+Pending follow-up: the direct-call stack-effect helper now declares its actual
+Capstone `CsInsn` input rather than `object`. Its caller feeds decoded Capstone
+instructions; no instruction processing changes. `analysis_helpers.py` passes
+Ruff, scoped MyPy, and Pyright. Eleven interrupt/AST regressions pass before
+(8.44s) and after (10.61s). Broad gates have not been repeated for this
+annotation-only follow-up.
+
+## Interpreter Resolution And Next Failure Groups
+
+Pyright's verbose log proved that invoking `.venv/bin/python -m pyright`
+without `--pythonpath` still inspected system Python 3.12 packages on this
+host. Earlier local first-batch counts therefore mixed real source errors and
+environment mismatches; do not use them as a clean typing progress census.
+Make now selects its `PYTHON` explicitly for every Pyright invocation,
+including the separately timed DCE batch. The regression dry-runs all three
+Pyright targets: one failure before, three passes after (1.29s).
+For direct use, pass `--pythonpath ./.venv/bin/python` as well.
+
+Callsite None checks and the abstract tag-map method are now explicit;
+108 callsite/register-source tests pass before (8.66s) and after (9.74s).
+Scoped MyPy and Ruff pass; Pyright passes for callsite_summary.py when it uses
+the actual project environment. The corrected first Make batch has 17 errors.
+
+Prioritize the newly visible CI failures as follows, without deleting checks:
+1. Clean-checkout setup: two partition-controller tests assume `.cache/pytest`
+   exists; COMP32 tests need their generated binary; DOS recompilation needs
+   kvikdos. Reproduce without local artifacts and establish explicit fixture
+   creation/toolchain prerequisites, not success-by-skip.
+2. Test contract drift: the frame-push inventory-cache test calls a changed
+   helper signature without `request_cache`. Verify its intended cache behavior
+   against the current owner before repairing the test.
+3. Real decompiler failures: inspect exact tail-validation and call-effect
+   diagnostics, separate timeouts from semantic failures, and retain the
+   sidecar-free acceptance contract. Environment fixes alone cannot close them.
+
+Detailed remote log: `/tmp/inertia-ci-704dc-failed.log`.
+
+Follow-up `quality-dev` passes on the current shared tree: 2,119 tests in
+101.37s, architecture/ownership checks, and generated-C guards. The three
+Makefile output/interpreter tests were also run separately and pass. These
+local results form a partial checkpoint; remote CI and full-suite closure remain
+open.
+
+Clean-cache follow-up: both controller cases reproduce the remote
+FileNotFoundError with REPO_ROOT redirected to an empty temporary directory.
+The runner now creates its cache parent; all 21 partition-runner tests pass
+in 1.93s, including cleanup of per-run temporary files. Ruff, scoped MyPy,
+and Pyright pass. The stale frame-push cache test now passes `callsite_addr`
+and uses keyword arguments, retaining the result and single-collection
+assertions: one failed/four passed before, five passed after in 7.72s.
+These three CI failure cases are fixed under focused checks; remote acceptance
+is not yet rerun. The Vulture findings are protocol parameter declarations,
+not established dead runtime code.

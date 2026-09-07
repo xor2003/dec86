@@ -392,6 +392,7 @@ class _StructuredCallsiteTagMap8616(Protocol):
 
     def items(self) -> Iterable[tuple[str, object]]:
         """Return structured tag entries."""
+        ...
 
 
 class _StructuredCallsiteTagCarrier8616(Protocol):
@@ -1436,7 +1437,7 @@ def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
             continue
         reg_name = _operand_reg_name(insn, operands[0])
         address = _instruction_address_8616(insn)
-        if reg_name in restored_on_all_paths and isinstance(address, int):
+        if reg_name is not None and reg_name in restored_on_all_paths and isinstance(address, int):
             push_by_register.setdefault(reg_name, address)
     return frozenset(push_by_register.values())
 
@@ -2655,7 +2656,7 @@ def _unresolved_entry_push_register_8616(
         return None
     operands = _instruction_operands(push)
     register = _operand_reg_name(push, operands[0]) if len(operands) == 1 else None
-    if register in {None, "sp", "bp", "ss", "ds", "es", "cs"}:
+    if register is None or register in {"sp", "bp", "ss", "ds", "es", "cs"}:
         return None
     return register, push_addr
 

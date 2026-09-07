@@ -166,17 +166,19 @@ def test_frame_push_filter_uses_request_local_semantic_cache(
 
     first = callsite_summary._filter_callee_saved_frame_pushes_8616(
         function,
-        (2, 2),
-        (("reg", "bp"), ("imm", 7)),
-        (0x1000, 0x1002),
-        cache,
+        callsite_addr=0x1004,
+        widths=(2, 2),
+        sources=(("reg", "bp"), ("imm", 7)),
+        instruction_addrs=(0x1000, 0x1002),
+        request_cache=cache,
     )
     second = callsite_summary._filter_callee_saved_frame_pushes_8616(
         function,
-        (2, 2),
-        (("reg", "bp"), ("imm", 7)),
-        (0x1000, 0x1002),
-        cache,
+        callsite_addr=0x1004,
+        widths=(2, 2),
+        sources=(("reg", "bp"), ("imm", 7)),
+        instruction_addrs=(0x1000, 0x1002),
+        request_cache=cache,
     )
 
     assert first == second == ((2,), (("imm", 7),), (0x1002,))

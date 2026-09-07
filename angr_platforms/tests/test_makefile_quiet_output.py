@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_pyright_recipes_resolve_selected_python_environment() -> None:
+    """Every Pyright batch must inspect dependencies from Make's interpreter."""
+    result = subprocess.run(
+        [
+            "make", "-n", "pyright", "pyright-all", "pyright-files",
+            f"PYTHON={sys.executable}", "PYRIGHT_WATCH=0",
+            "FILES=angr_platforms/angr_platforms/X86_16/access.py",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    commands = [line for line in result.stdout.splitlines() if " -m pyright " in line]
+    assert commands
+    assert all(f"--pythonpath {sys.executable}" in line for line in commands)
 
 
 def test_makefile_quiets_inventory_expanded_tool_recipes() -> None:
