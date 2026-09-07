@@ -41,6 +41,10 @@ from .interrupt_contract import (
     SoftwareInterruptServiceTargetFact8616,
     record_software_interrupt_service_target_8616,
 )
+from .semantics.terminal_stack_cleanup import (
+    TerminalReturnFrameKind8616,
+    terminal_stack_cleanup_at_address_8616,
+)
 
 __all__ = (
     "DOS_SERVICE_BASE_ADDR",
@@ -1190,6 +1194,24 @@ def _operand_expr(ins: object, operand: object) -> tuple[int | None, str | None]
     return None, None
 
 
+@dataclass(frozen=True, slots=True)
+class _InterruptSymbolicStackWord8616:
+    """One exactly decoded PUSH value retained for interrupt-input recovery."""
+
+    value: int | None
+    expr: str | None
+    source_register: str | None
+    fallthrough_addr: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _InterruptDirectCallStackEffect8616:
+    """Typed caller-stack effect proven from one direct callee's terminals."""
+
+    preserves_stack: bool
+    return_frame_kind: TerminalReturnFrameKind8616 | None
+
+
 def collect_interrupt_calls(
     function: object,
     binary_path: Path | str | None = None,
@@ -1199,8 +1221,6 @@ def collect_interrupt_calls(
     """Collect recoverable interrupt calls from a dynamic angr Function boundary."""
 
     def _impl() -> list[InterruptCall]:
-        from .semantics.terminal_stack_cleanup import terminal_stack_cleanup_at_address_8616
-
         nonlocal binary_path
         binary_path = _coerce_path(binary_path)
         project = _dynamic_analysis_getattr_8616(function, "project", None)
@@ -1271,8 +1291,15 @@ def collect_interrupt_calls(
                 else:
                     regs["dx"] = (None, None)
 
-        def pushed_value(ins: object, operand: object) -> tuple[int | None, str | None] | None:
+        def pushed_value(ins: object, operand: object) -> _InterruptSymbolicStackWord8616 | None:
             """Capture one exact register/immediate PUSH source before later calls."""
+            ins_addr = _dynamic_analysis_int_attr_8616(ins, "address")
+            ins_size = _dynamic_analysis_int_attr_8616(ins, "size")
+            fallthrough_addr = (
+                ins_addr + ins_size
+                if ins_addr is not None and ins_size is not None and ins_size > 0
+                else None
+            )
             operand_type = _dynamic_analysis_getattr_8616(operand, "type", None)
             if operand_type == 1:
                 reg_name = cast(Any, ins).reg_name(cast(Any, operand).reg).lower()
@@ -1292,21 +1319,26 @@ def collect_interrupt_calls(
                         "ss": "inertia_ss",
                         "cs": "inertia_cs",
                     }.get(reg_name)
-                return value, expr
+                return _InterruptSymbolicStackWord8616(value, expr, reg_name, fallthrough_addr)
             if operand_type == 2:
-                return _operand_expr(ins, operand)
+                value, expr = _operand_expr(ins, operand)
+                return _InterruptSymbolicStackWord8616(value, expr, None, fallthrough_addr)
             return None
 
-        def call_preserves_symbolic_stack(ins: object, operands: object) -> bool:
-            """Require one direct returning callee with complete zero-cleanup proof."""
+        def direct_call_stack_effect(
+            ins: object,
+            operands: object,
+        ) -> _InterruptDirectCallStackEffect8616:
+            """Prove one direct callee's cleanup and consistent return-frame shape."""
+            unknown = _InterruptDirectCallStackEffect8616(False, None)
             if not isinstance(operands, (list, tuple)) or len(operands) != 1:
-                return False
+                return unknown
             target = operands[0]
             if _dynamic_analysis_getattr_8616(target, "type", None) != 2:
-                return False
+                return unknown
             target_addr = _dynamic_analysis_getattr_8616(target, "imm", None)
             if not isinstance(target_addr, int):
-                return False
+                return unknown
             if ins.mnemonic == "call":
                 ins_addr = _dynamic_analysis_getattr_8616(ins, "address", None)
                 if isinstance(ins_addr, int):
@@ -1328,10 +1360,17 @@ def collect_interrupt_calls(
                     f"[interrupt-stack] target={target_addr:#x} delta={original_delta!r} proofs={proofs!r}",
                     file=sys.stderr,
                 )
-            return any(
-                evidence.complete and evidence.cleanup_amounts == frozenset({0})
+            qualifying = tuple(
+                evidence
                 for _candidate_addr, evidence in proofs
+                if evidence.complete and evidence.consistent_cleanup == 0
             )
+            if not qualifying:
+                return unknown
+            frame_kinds = frozenset(evidence.consistent_return_frame_kind for evidence in qualifying)
+            if len(frame_kinds) != 1:
+                return unknown
+            return _InterruptDirectCallStackEffect8616(True, next(iter(frame_kinds)))
 
         block_sizes: dict[int, int] = {}
         graph = _dynamic_analysis_getattr_8616(function, "transition_graph", None)
@@ -1349,7 +1388,7 @@ def collect_interrupt_calls(
             ),
             *block_sizes,
         }
-        symbolic_stack: list[tuple[int | None, str | None]] = []
+        symbolic_stack: list[_InterruptSymbolicStackWord8616] = []
         expected_next_block: int | None = None
         for block_addr in sorted(block_addrs):
             if debug_interrupt_stack:
@@ -1395,21 +1434,39 @@ def collect_interrupt_calls(
                     if reg_name not in regs:
                         symbolic_stack.clear()
                         continue
-                    value, expr = symbolic_stack.pop()
-                    set_reg(reg_name, value, expr)
+                    restored = symbolic_stack.pop()
+                    set_reg(reg_name, restored.value, restored.expr)
                     if debug_interrupt_stack:
                         print(
-                            f"[interrupt-stack] pop={reg_name} value={(value, expr)!r} depth={len(symbolic_stack)}",
+                            f"[interrupt-stack] pop={reg_name} "
+                            f"value={(restored.value, restored.expr)!r} depth={len(symbolic_stack)}",
                             file=sys.stderr,
                         )
                 elif ins.mnemonic in {"call", "lcall"}:
-                    preserves_stack = call_preserves_symbolic_stack(ins, operands)
+                    effect = direct_call_stack_effect(ins, operands)
+                    call_addr = _dynamic_analysis_int_attr_8616(ins, "address")
+                    consumes_explicit_return_segment = (
+                        effect.preserves_stack
+                        and effect.return_frame_kind is TerminalReturnFrameKind8616.FAR
+                        and ins.mnemonic == "call"
+                        and bool(symbolic_stack)
+                        and symbolic_stack[-1].source_register == "cs"
+                        and symbolic_stack[-1].fallthrough_addr == call_addr
+                    )
+                    if consumes_explicit_return_segment:
+                        symbolic_stack.pop()
                     if debug_interrupt_stack:
                         print(
-                            f"[interrupt-stack] call={ins.op_str!r} preserves={preserves_stack} depth={len(symbolic_stack)}",
+                            f"[interrupt-stack] call={ins.op_str!r} preserves={effect.preserves_stack} "
+                            f"frame={effect.return_frame_kind!r} "
+                            f"consumed_cs={consumes_explicit_return_segment} depth={len(symbolic_stack)}",
                             file=sys.stderr,
                         )
-                    if not preserves_stack:
+                    if not effect.preserves_stack or (
+                        effect.return_frame_kind is TerminalReturnFrameKind8616.FAR
+                        and ins.mnemonic == "call"
+                        and not consumes_explicit_return_segment
+                    ):
                         symbolic_stack.clear()
                 elif ins.mnemonic == "mov" and len(operands) == 2:
                     dst, src = operands
