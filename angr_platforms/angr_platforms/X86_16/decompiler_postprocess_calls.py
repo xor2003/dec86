@@ -4355,6 +4355,7 @@ def _known_helper_prototype_arg_widths_8616(
 
 
 def _near_function_pointer_type_8616(project: StructuredAstValue, arg_count: int | None) -> SimTypePointer:
+    """Retain the pointer type class when binding the legacy callable view."""
     argc = arg_count if isinstance(arg_count, int) and arg_count >= 0 else 1
     prototype = SimTypeFunction(
         [_word_type_8616(project) for _ in range(argc)],
@@ -4365,7 +4366,7 @@ def _near_function_pointer_type_8616(project: StructuredAstValue, arg_count: int
     if arch is not None and hasattr(prototype, "with_arch"):
         prototype = prototype.with_arch(arch)
     ptr_type = SimTypePointer(prototype)
-    return ptr_type.with_arch(arch) if arch is not None and hasattr(ptr_type, "with_arch") else ptr_type
+    return cast(SimTypePointer, ptr_type.with_arch(arch)) if arch is not None else ptr_type
 
 
 def _summary_return_type_8616(project: StructuredAstValue, summary: StructuredAstValue) -> StructuredAstValue:

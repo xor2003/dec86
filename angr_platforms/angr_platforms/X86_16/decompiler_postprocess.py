@@ -1601,10 +1601,11 @@ def _prototype_pointer_flags_for_codegen_function_8616(
 
 
 def _pointer_type_for_codegen_8616(codegen: Any) -> SimTypePointer:
+    """Bind a pointer view to the codegen architecture, retaining its type class."""
     pointer_type = SimTypePointer(SimTypeShort(False))
     arch = getattr(getattr(codegen, "project", None), "arch", None)
-    if arch is not None and hasattr(pointer_type, "with_arch"):
-        pointer_type = pointer_type.with_arch(arch)
+    if arch is not None:
+        pointer_type = cast(SimTypePointer, pointer_type.with_arch(arch))
     return pointer_type
 
 

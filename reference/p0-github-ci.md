@@ -126,3 +126,24 @@ This removes the clean-checkout missing-input dependency, not the separate
 requirement to run the MS C compiler round-trip pipeline. Exact historical
 binary rebuild reproducibility is not claimed. Broad/remote gates have not
 yet been repeated for this fixture-only change.
+
+Typing follow-up: explicit architecture-binding result types remove
+four more diagnostics. The installed angr implementations return concrete
+SimTypeFunction/SimTypePointer objects, although the public with_arch return
+annotation is SimType. The casts preserve those existing classes, not new
+semantic recovery; two redundant pointer capability checks are removed.
+Eight annotation regressions pass before (17.25s); 63 smoke/prototype tests
+pass after (27.61s). Ruff and scoped MyPy pass. The corrected first Pyright
+batch at that point reported 13 errors.
+
+The AIL OUT compatibility consumer now declares exact block, dirty-statement,
+helper-expression, and constant-payload fields instead of reading them through
+`object` or assigning through `Any`. Runtime class guards and conversion
+semantics are unchanged. The existing I/O regression now covers 8/16/32-bit
+OUT instructions: seven tests pass before (8.04s) and after (9.26s).
+Scoped Ruff, MyPy, and Pyright pass for compat.py. The first broader Pyright
+batch has 11 errors; later batches remain uncounted.
+
+Combined `quality-dev` passes with 2,119 tests in 147.61s, compiled-import and
+architecture/ownership checks, and generated-C guards. This checkpoint is
+local/shared-tree evidence, not full-suite or remote CI closure.

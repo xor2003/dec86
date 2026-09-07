@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import pyvex
 from angr.ailment import IRSBConverter, Manager
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -81,9 +82,10 @@ def test_registered_pyvex_const_port_read_emits_dirty_helper() -> None:
     assert args[1] == ("const", 32, "Ity_I8")
 
 
-def test_out_dirty_helper_has_complete_ail_effect_metadata() -> None:
+@pytest.mark.parametrize(("encoding", "width"), (("ee", 8), ("ef", 16), ("66ef", 32)))
+def test_out_dirty_helper_has_complete_ail_effect_metadata(encoding: str, width: int) -> None:
     arch = Arch86_16()
-    irsb = pyvex.lift(bytes.fromhex("ee"), 0x1000, arch, max_inst=1, opt_level=0)
+    irsb = pyvex.lift(bytes.fromhex(encoding), 0x1000, arch, max_inst=1, opt_level=0)
     dirty = next(statement for statement in irsb.statements if isinstance(statement, pyvex.stmt.Dirty))
 
     assert dirty.cee.name == "x86g_dirtyhelper_OUT"
@@ -97,7 +99,7 @@ def test_out_dirty_helper_has_complete_ail_effect_metadata() -> None:
     ail, raw, normalized, materialized, failures = _normalize_x86_16_io_dirty_statements(ail)
 
     assert (raw, normalized, materialized, failures) == (1, 1, 1, 0)
-    assert any("inertia_io_out8" in repr(statement) for statement in ail.statements)
+    assert any(f"inertia_io_out{width}" in repr(statement) for statement in ail.statements)
 
 
 def test_memory_io_registration_maps_pages_and_forwards_accesses() -> None:

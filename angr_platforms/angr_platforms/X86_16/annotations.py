@@ -329,13 +329,13 @@ def annotate_function(
             parsed_name, parsed_proto, _ = _parse_c_prototype_8616(c_decl)
             if parsed_proto is None:
                 raise ValueError(f"Failed to parse C declaration: {c_decl}")
-            parsed_proto = parsed_proto.with_arch(arch)
+            parsed_proto = cast(SimTypeFunction, parsed_proto.with_arch(arch))
 
         final_name = name if name is not None else parsed_name
         if final_name is not None:
             func.name = final_name
 
-        final_proto = prototype.with_arch(arch) if prototype is not None else parsed_proto
+        final_proto = cast(SimTypeFunction, prototype.with_arch(arch)) if prototype is not None else parsed_proto
         if final_proto is not None:
             func.prototype = final_proto
             func.is_prototype_guessed = False
@@ -348,12 +348,13 @@ def annotate_function(
             if func.prototype is None:
                 raise ValueError("Cannot assign argument names without a prototype.")
             normalized_names = _normalize_arg_names(arg_names, len(func.prototype.args))
-            func.prototype = SimTypeFunction(
+            renamed_proto = SimTypeFunction(
                 func.prototype.args,
                 func.prototype.returnty,
                 arg_names=tuple(normalized_names),
                 variadic=func.prototype.variadic,
-            ).with_arch(arch)
+            )
+            func.prototype = cast(SimTypeFunction, renamed_proto.with_arch(arch))
             func.is_prototype_guessed = False
 
         if stack_vars:

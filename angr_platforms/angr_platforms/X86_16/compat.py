@@ -6,7 +6,7 @@ Forbidden: recovering alias, type, or validation semantics through compatibility
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, cast
 
 from angr import ailment
@@ -18,6 +18,35 @@ from .stack_compat import apply_x86_16_stack_compatibility as _apply_stack_compa
 from .typehoon_compat import apply_x86_16_typehoon_compatibility as _apply_typehoon_compatibility
 
 __all__ = ["apply_x86_16_compatibility"]
+
+
+class _AilBlockStatements8616(Protocol):
+    """Mutable statement sequence shared by Python and Rust AIL blocks."""
+
+    statements: list[object]
+
+
+class _AilConstantValue8616(Protocol):
+    """Constant payload read only after the backend's Const class check."""
+
+    value: object
+
+
+class _AilDirtyExpression8616(Protocol):
+    """Decoded dirty-helper fields needed to preserve an OUT side effect."""
+
+    callee: str
+    operands: Sequence[object]
+    idx: int | None
+    tags: Mapping[str, object]
+
+
+class _AilDirtyStatement8616(Protocol):
+    """Dirty-statement fields shared by the supported AIL backends."""
+
+    dirty: _AilDirtyExpression8616
+    idx: int | None
+    tags: Mapping[str, object]
 
 
 class _ClinicArchBoundary8616(Protocol):
@@ -44,6 +73,7 @@ def _normalize_x86_16_io_dirty_statements(
     """Convert typed OUT Dirty statements into ordinary AIL side-effect calls."""
     if not isinstance(block, ailment.Block):
         return block, 0, 0, 0, 0
+    ail_block = cast(_AilBlockStatements8616, block)
     raw_fact_count = 0
     normalized_fact_count = 0
     materialized_count = 0
@@ -54,17 +84,21 @@ def _normalize_x86_16_io_dirty_statements(
         16: "inertia_io_out16",
         32: "inertia_io_out32",
     }
-    for statement in block.statements:
+    for statement in ail_block.statements:
         if not isinstance(statement, ailment.Stmt.DirtyStatement):
             statements.append(statement)
             continue
-        dirty = statement.dirty
+        dirty_statement = cast(_AilDirtyStatement8616, statement)
+        dirty = dirty_statement.dirty
         if dirty.callee != "x86g_dirtyhelper_OUT":
             statements.append(statement)
             continue
         raw_fact_count += 1
         operands = tuple(dirty.operands)
-        width_value = operands[-1].value if len(operands) == 3 and isinstance(operands[-1], ailment.Expr.Const) else None
+        width_value = (
+            cast(_AilConstantValue8616, operands[-1]).value
+            if len(operands) == 3 and isinstance(operands[-1], ailment.Expr.Const) else None
+        )
         width = width_value if isinstance(width_value, int) else None
         helper = helper_by_width.get(width) if width is not None else None
         if helper is None:
@@ -81,13 +115,13 @@ def _normalize_x86_16_io_dirty_statements(
         )
         statements.append(
             ailment.Stmt.SideEffectStatement(
-                statement.idx,
+                dirty_statement.idx,
                 call,
-                **dict(statement.tags),
+                **dict(dirty_statement.tags),
             )
         )
         materialized_count += 1
-    block.statements = cast(Any, statements)
+    ail_block.statements = statements
     return block, raw_fact_count, normalized_fact_count, materialized_count, failure_count
 
 
