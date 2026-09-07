@@ -36,6 +36,7 @@ def _looks_like_diagnostic_line(line: str) -> bool:
 
 
 def _timestamped_print(*args: object, **kwargs: object) -> None:
+    """Render C and route non-C diagnostics consistently across display modes."""
     def _impl() -> None:
         sep = str(kwargs.pop("sep", " "))
         end = str(kwargs.pop("end", "\n"))
@@ -44,6 +45,13 @@ def _timestamped_print(*args: object, **kwargs: object) -> None:
         text = sep.join(str(arg) for arg in args)
         pytest_mode = "PYTEST_CURRENT_TEST" in os.environ
         if pytest_mode or _brief_mode():
+            if file is None and text and all(
+                not line.strip() or (
+                    _looks_like_diagnostic_line(line) and not line.lstrip().startswith("/*")
+                )
+                for line in text.splitlines()
+            ):
+                file = sys.stderr
             return _RAW_PRINT(text, end=end, file=file, flush=flush)
         if file is None and text:
             lines = text.splitlines()
@@ -62,12 +70,13 @@ def _timestamped_print(*args: object, **kwargs: object) -> None:
 
 
 def _print_diagnostic_text(text: str) -> None:
+    """Emit diagnostic lines to stderr, omitting timestamps in compact modes."""
     if not text:
         return
     pytest_mode = "PYTEST_CURRENT_TEST" in os.environ
     if _brief_mode() or pytest_mode:
         for line in text.splitlines():
-            _RAW_PRINT(line)
+            _RAW_PRINT(line, file=sys.stderr)
         return
     for line in text.splitlines():
         stamped = line if re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s+", line.lstrip()) else f"{_timestamp_prefix()} {line}"

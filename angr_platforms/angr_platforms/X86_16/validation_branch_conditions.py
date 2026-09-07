@@ -45,7 +45,7 @@ from .ir.function_ssa_registry import (
     FunctionSSAArtifactVerdict8616,
     registered_function_ssa_artifact_8616,
 )
-from .ir.logical_memory_register_transfer import trace_logical_word_register_transfer_8616
+from .ir.logical_memory_register_transfer import trace_logical_word_register_transfers_8616
 from .ir.logical_memory_register_transfer_contracts import (
     LogicalMemoryRegisterTransfer8616,
     LogicalMemoryRegisterTransferKind8616,
@@ -413,8 +413,10 @@ def _build_logical_reload_validation_context_8616(
         tuple[str, int],
         list[LogicalMemoryRegisterTransfer8616],
     ] = {}
-    for access in logical_memory.accesses:
-        traced = trace_logical_word_register_transfer_8616(resolution.artifact, access)
+    for traced in trace_logical_word_register_transfers_8616(
+        resolution.artifact,
+        logical_memory.accesses,
+    ):
         if not (
             isinstance(traced, LogicalMemoryRegisterTransfer8616)
             and traced.kind is LogicalMemoryRegisterTransferKind8616.RELOAD

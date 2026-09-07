@@ -223,14 +223,17 @@ def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
     )
     trace_calls: list[object] = []
 
-    def _trace_reload(*_args: object) -> LogicalMemoryRegisterTransfer8616:
-        trace_calls.append(access)
-        return transfer
+    def _trace_reloads(
+        _artifact: object,
+        accesses: tuple[object, ...],
+    ) -> tuple[LogicalMemoryRegisterTransfer8616, ...]:
+        trace_calls.extend(accesses)
+        return tuple(transfer for _access in accesses)
 
     monkeypatch.setattr(
         validation_branch_conditions,
-        "trace_logical_word_register_transfer_8616",
-        _trace_reload,
+        "trace_logical_word_register_transfers_8616",
+        _trace_reloads,
     )
     fact = ConditionIR(
         "eq",

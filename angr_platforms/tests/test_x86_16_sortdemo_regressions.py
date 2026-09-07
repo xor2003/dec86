@@ -11,6 +11,7 @@ import pytest
 from x86_16_timeout_support import scaled_decompile_timeout as _scaled_timeout
 
 from inertia_decompiler.acceptance_scorecard import build_acceptance_scorecard
+from inertia_decompiler.recompile_check import check_c_recompiles_8616
 from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
 from scripts.check_sortd_sidecar_free import mz_executable_image
 
@@ -674,6 +675,8 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert "function: 0x101f0 sub_101f0" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
+    compile_result = check_c_recompiles_8616(result.stdout)
+    assert compile_result.passed, compile_result.stderr
     assert "gcc syntax check failed:" not in combined
     assert re.search(r"void sub_101f0\([^)]*,[^)]*,[^)]*,[^)]*\)", result.stdout)
     final_body = _function_body_from_stdout(result.stdout, "void sub_101f0")
@@ -683,9 +686,8 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert final_body.count("sub_113d4(local_52,") == 3
     assert final_body.count("sub_128e4(") == 3
     assert final_body.count("sub_12756(local_52, inertia_ss);") == 3
-    assert re.search(
-        r"for \(local_2 = \w+ \+ 1; local_2 <= \w+; local_2 \+= 1\)", final_body
-    )
+    assert re.search(r"local_2 = \w+ \+ 1;\s+while \(\(short\)local_2 <= \w+\)", final_body)
+    assert final_body.count("local_2 += 1;") == 1
     assert "break;" not in final_body
     assert "SEG_U" not in final_body
     assert "vvar_" not in final_body
@@ -1671,16 +1673,18 @@ def test_drawframe_stack_array_and_memset_calls_survive_regeneration():
     assert result.returncode == 0, combined
     assert "function: 0x101f0 DrawFrame" in result.stdout
     assert "validation=passed" in combined
+    compile_result = check_c_recompiles_8616(result.stdout)
+    assert compile_result.passed, compile_result.stderr
     assert "Source-backed quality guard rejected" not in combined
     body = _function_body_from_stdout(result.stdout, "void DrawFrame")
     assert "char achTmp[80];" in body
     assert "unsigned short iRow;" in body
     assert "unsigned long iRow;" not in body
     assert "iRow = iTop + 1;" in body
-    assert body.count("memset(achTmp, 205, iWidth);") == 2
-    assert body.count("memset(achTmp, 32, iWidth);") == 1
+    assert len(re.findall(r"memset\(achTmp, 205, (?:\(unsigned short\))?iWidth\);", body)) == 2
+    assert len(re.findall(r"memset\(achTmp, 32, (?:\(unsigned short\))?iWidth\);", body)) == 1
     assert "memset(&achTmp" not in body
-    assert "settextposition(iTop, iLeft);" in body
+    assert re.search(r"settextposition\((?:\(unsigned short\))?iTop, (?:\(unsigned short\))?iLeft\);", body)
     assert body.count("outtext(achTmp);") == 3
     assert "outtext(&achTmp);" not in body
     assert "void * memset(void *dst, int value, unsigned short count);" in result.stdout

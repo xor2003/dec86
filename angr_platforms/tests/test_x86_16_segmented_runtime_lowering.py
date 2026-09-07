@@ -10670,7 +10670,7 @@ def test_apply_runtime_segment_lowering_consumes_typed_pointer_register_store_ca
     helper = CFunctionCall(
         "SEG_U16",
         None,
-        [_reg(project, "ss", codegen), bx],
+        [_reg(project, "ds", codegen), bx],
         codegen=codegen,
         tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
     )
@@ -10741,7 +10741,7 @@ def test_apply_runtime_segment_lowering_reassembles_pointer_word_store_byte_pair
     low_helper = CFunctionCall(
         "SEG_U8",
         None,
-        [_reg(project, "ss", codegen), bx],
+        [_reg(project, "ds", codegen), bx],
         codegen=codegen,
         tags={"inertia_x86_16_runtime_segment_helper": "SEG_U8"},
     )
@@ -10749,7 +10749,7 @@ def test_apply_runtime_segment_lowering_reassembles_pointer_word_store_byte_pair
         "SEG_U8",
         None,
         [
-            _reg(project, "ss", codegen),
+            _reg(project, "ds", codegen),
             CBinaryOp("Add", bx, _const(1, codegen), codegen=codegen),
         ],
         codegen=codegen,
@@ -10790,6 +10790,102 @@ def test_apply_runtime_segment_lowering_reassembles_pointer_word_store_byte_pair
         )
     )
     project.kb = SimpleNamespace(functions=SimpleNamespace(get=lambda _addr: function))
+
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    result = codegen.cfunc.statements.statements[0]
+    assert isinstance(result, CAssignment)
+    assert isinstance(result.lhs, CIndexedVariable)
+    assert result.lhs.variable is argv
+    assert isinstance(result.lhs.index, CConstant)
+    assert result.lhs.index.value == 0
+    assert result.rhs is value
+
+
+def test_runtime_segment_lowering_materializes_one_word_store_from_ir_width():
+    """One logical word write must not become two word-pointer elements."""
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argv = CVariable(
+        SimStackVariable(6, 2, base="bp", name="argv", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    bx = _reg(project, "bx", codegen)
+    value = CVariable(
+        SimRegisterVariable(*project.arch.registers["ax"], name="value"),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [argv]
+    codegen.cfunc.functy = SimTypeFunction(
+        [scalar_type],
+        SimTypeShort(False),
+        arg_names=["argv"],
+    ).with_arch(project.arch)
+    low_operand = _seg_linear(project, "ds", bx, codegen)
+    low_operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    low_lhs = CUnaryOp("Dereference", low_operand, codegen=codegen)
+    high_operand = _seg_linear(
+        project,
+        "ds",
+        CBinaryOp("Add", bx, _const(1, codegen), codegen=codegen),
+        codegen,
+    )
+    high_operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    high_lhs = CUnaryOp("Dereference", high_operand, codegen=codegen)
+    store_addr = 0x4018
+    low_lhs.tags = {"ins_addr": store_addr}
+    high_lhs.tags = {"ins_addr": store_addr}
+    codegen.cfunc.statements.statements.extend(
+        [
+            CAssignment(bx, argv, codegen=codegen),
+            CAssignment(low_lhs, value, codegen=codegen),
+            CAssignment(
+                high_lhs,
+                CBinaryOp("Shr", value, _const(8, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+        ]
+    )
+    load_argv = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _bp_mem_operand(6)),
+    )
+    store_argv = SimpleNamespace(
+        address=store_addr,
+        id=X86_INS_MOV,
+        operands=(_reg_indirect_mem_operand(X86_REG_BX), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(
+                addr=0x4014,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(insn=load_argv),
+                        SimpleNamespace(insn=store_argv),
+                    )
+                ),
+            ),
+        )
+    )
+    project.kb = SimpleNamespace(functions=SimpleNamespace(get=lambda _addr: function))
+    _publish_logical_accesses(
+        project,
+        function_addr=codegen.cfunc.addr,
+        accesses=(
+            _logical_ds_access(
+                function_addr=codegen.cfunc.addr,
+                insn_addr=store_addr,
+                ordinal=0,
+                width=2,
+            ),
+        ),
+    )
 
     changed = apply_runtime_segment_lowering_8616(codegen)
 

@@ -14,6 +14,9 @@ from angr_platforms.X86_16.callsite_summary import (
     record_caller_return_use_evidence_8616,
 )
 from angr_platforms.X86_16.lowering.near_pointer_type import SimTypeNearPointer16_8616
+from angr_platforms.X86_16.lowering.stack_argument_identity import (
+    unify_positive_bp_argument_identity_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import attach_cod_stack_alias_annotations_8616
 from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
     FunctionParameterWidthFact8616,
@@ -1863,49 +1866,7 @@ def test_annotation_rewrites_do_not_alias_next_argument_to_shifted_placeholder_n
     assert rewritten_condition.lhs.variable.name == "which"
 
 
-def test_unify_positive_bp_arg_stack_variables_replaces_duplicate_body_slots():
-    arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
-    arg_cvar = structured_c.CVariable(
-        SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000),
-        variable_type=SimTypeShort(False).with_arch(arch),
-        codegen=c_codegen,
-    )
-    duplicate_cvar = structured_c.CVariable(
-        SimStackVariable(6, 2, base="bp", name="arg_6", region=0x1000),
-        variable_type=SimTypeShort(False).with_arch(arch),
-        codegen=c_codegen,
-    )
-    call = structured_c.CFunctionCall("DrawBar", None, [duplicate_cvar], codegen=c_codegen)
-    statements = structured_c.CStatements(
-        [structured_c.CExpressionStatement(call, codegen=c_codegen)],
-        codegen=c_codegen,
-    )
-    cfunc = SimpleNamespace(
-        arg_list=[arg_cvar],
-        statements=statements,
-        variables_in_use={
-            arg_cvar.variable: arg_cvar,
-            duplicate_cvar.variable: duplicate_cvar,
-        },
-        unified_local_vars={
-            duplicate_cvar.variable: {(duplicate_cvar, duplicate_cvar.variable_type)},
-        },
-    )
-    codegen = SimpleNamespace(cfunc=cfunc)
-
-    changed = postprocess._unify_positive_bp_arg_stack_variables_8616(SimpleNamespace(arch=arch), codegen)
-
-    assert changed is True
-    assert call.args[0] is not duplicate_cvar
-    assert call.args[0].variable is arg_cvar.variable
-    assert list(cfunc.variables_in_use.values()) == [arg_cvar]
-    assert duplicate_cvar.variable not in cfunc.unified_local_vars
-    assert codegen._inertia_arg_stack_identity_unified_8616 == 1
-    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
-
-
-def test_unify_positive_bp_arg_stack_variables_rebinds_shifted_header_arg_to_body_slot():
+def test_argument_identity_refuses_unproven_shifted_header_arg():
     arch = Arch86_16()
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stale_arg_cvar = structured_c.CVariable(
@@ -1932,53 +1893,17 @@ def test_unify_positive_bp_arg_stack_variables_rebinds_shifted_header_arg_to_bod
     )
     codegen = SimpleNamespace(cfunc=cfunc)
 
-    changed = postprocess._unify_positive_bp_arg_stack_variables_8616(SimpleNamespace(arch=arch), codegen)
-
-    assert changed is True
-    assert cfunc.arg_list == [body_arg_cvar]
-    assert ret.retval.variable is body_arg_cvar.variable
-    assert body_arg_cvar.variable not in cfunc.unified_local_vars
-    assert codegen._inertia_arg_stack_identity_unified_8616 == 1
-    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
-
-
-def test_unify_positive_bp_arg_stack_variables_does_not_shift_real_bp4_arg_to_bp6():
-    arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
-    first_arg_cvar = structured_c.CVariable(
-        SimStackVariable(4, 2, base="bp", name="which", region=0x1000),
-        variable_type=SimTypeShort(True).with_arch(arch),
-        codegen=c_codegen,
-    )
-    second_arg_cvar = structured_c.CVariable(
-        SimStackVariable(6, 2, base="bp", name="arg_6", region=0x1000),
-        variable_type=SimTypeShort(True).with_arch(arch),
-        codegen=c_codegen,
-    )
-    ret = structured_c.CReturn(second_arg_cvar, codegen=c_codegen)
-    cfunc = SimpleNamespace(
-        arg_list=[first_arg_cvar],
-        statements=structured_c.CStatements([ret], codegen=c_codegen),
-        variables_in_use={
-            first_arg_cvar.variable: first_arg_cvar,
-            second_arg_cvar.variable: second_arg_cvar,
-        },
-        unified_local_vars={
-            second_arg_cvar.variable: {(second_arg_cvar, second_arg_cvar.variable_type)},
-        },
-    )
-    codegen = SimpleNamespace(cfunc=cfunc)
-
-    changed = postprocess._unify_positive_bp_arg_stack_variables_8616(SimpleNamespace(arch=arch), codegen)
+    changed = unify_positive_bp_argument_identity_8616(codegen)
 
     assert changed is False
-    assert cfunc.arg_list == [first_arg_cvar]
-    assert ret.retval is second_arg_cvar
-    assert second_arg_cvar.variable in cfunc.variables_in_use
+    assert cfunc.arg_list == [stale_arg_cvar]
+    assert ret.retval is body_arg_cvar
+    assert body_arg_cvar.variable in cfunc.variables_in_use
+    assert body_arg_cvar.variable in cfunc.unified_local_vars
     assert not hasattr(codegen, "_inertia_codegen_decl_refresh_required_8616")
 
 
-def test_unify_positive_bp_arg_stack_variables_refuses_selector_return_contract():
+def test_argument_identity_refuses_selector_return_contract():
     arch = Arch86_16()
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_cvar = structured_c.CVariable(
@@ -2008,13 +1933,13 @@ def test_unify_positive_bp_arg_stack_variables_refuses_selector_return_contract(
     )
     codegen = SimpleNamespace(cfunc=cfunc, _inertia_return_selector_materialized_8616=True)
 
-    changed = postprocess._unify_positive_bp_arg_stack_variables_8616(SimpleNamespace(arch=arch), codegen)
+    changed = unify_positive_bp_argument_identity_8616(codegen)
 
     assert changed is False
     assert call.args[0] is duplicate_cvar
     assert duplicate_cvar.variable in cfunc.variables_in_use
     assert duplicate_cvar.variable in cfunc.unified_local_vars
-    assert codegen._inertia_arg_stack_identity_unify_refused_selector_return_8616 == 1
+    assert not hasattr(codegen, "_inertia_codegen_decl_refresh_required_8616")
 
 
 def test_metadata_lookup_does_not_merge_rebased_source_body_annotations():

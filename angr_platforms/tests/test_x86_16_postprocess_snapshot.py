@@ -186,15 +186,19 @@ def test_cod_global_name_refs_require_byte_matched_structured_refs():
     assert indexed_refs[0x1044].name == "g_table"
 
 
-def test_positive_bp_arg_unifier_is_validated_and_locally_rejectable():
+def test_positive_bp_arg_unifier_is_owned_by_lowering_not_postprocess():
     pass_names = {
         "_unify_positive_bp_arg_stack_variables_8616",
         "_unify_positive_bp_arg_stack_variables_final_8616",
     }
+    registered_pass_names = {
+        spec.name for spec in post_stage.DECOMPILER_POSTPROCESS_PASSES
+    }
 
-    assert pass_names <= LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
-    assert pass_names <= MANDATORY_VALIDATION_PASS_NAMES_8616
-    assert pass_names <= PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+    assert pass_names.isdisjoint(registered_pass_names)
+    assert pass_names.isdisjoint(LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616)
+    assert pass_names.isdisjoint(MANDATORY_VALIDATION_PASS_NAMES_8616)
+    assert pass_names.isdisjoint(PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616)
 
 
 def test_after_ss_callsite_materialization_disables_consumed_store_prune(monkeypatch):

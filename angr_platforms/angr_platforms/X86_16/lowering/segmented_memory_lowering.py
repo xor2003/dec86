@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-import os
-import sys
 import typing
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
@@ -229,7 +227,7 @@ def _logical_segmented_access_width_bits_8616(
     lane.raw += 1
     lane.normalized += 1
     lane.classified += 1
-    widths = frozenset(access.address.size * 8 for access in candidates)
+    widths = frozenset(int(access.address.size) * 8 for access in candidates)
     if len(widths) != 1:
         lane.failures += 1
         return None
@@ -785,6 +783,7 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                     len(carrier_uses) != 1
                     or helper_width is None
                     or helper_args is None
+                    or _segment_base_name_8616(helper_args[0], project, codegen=codegen) != "ds"
                     or _pointer_store_byte_index_8616(helper_args[1], carrier_key) is None
                     or pointer_width_bits is None
                     or pointer_width_bits < helper_width * 8
@@ -813,7 +812,7 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                 if proven_width > helper_width:
                     if helper_width != 1:
                         break
-                    for pair_index in range(use_index + 1, len(statements)):
+                    for pair_index in range(use_index + 1, min(use_index + 2, len(statements))):
                         pair_statement = statements[pair_index]
                         if not isinstance(pair_statement, structured_c.CAssignment):
                             break
@@ -823,6 +822,8 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                         )
                         if pair_args is None or pair_width != helper_width:
                             continue
+                        if _segment_base_name_8616(pair_args[0], project, codegen=codegen) != "ds":
+                            break
                         next_index = _pointer_store_byte_index_8616(pair_args[1], carrier_key)
                         if next_index != byte_index + 1:
                             continue
@@ -836,12 +837,48 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                         break
                     if len(pair) != proven_width:
                         break
+                consumed_uses = {item[1] for item in pair}
+                if any(
+                    isinstance(node, structured_c.CVariable) and _carrier_key_8616(node) == carrier_key
+                    for index in range(setup_index + 1, len(statements))
+                    for node in _iter_c_nodes_deep_8616(
+                        statements[index].rhs if index in consumed_uses else statements[index]
+                    )
+                ):
+                    break
                 index_type = SimTypeShort(False).with_arch(project.arch)
                 tags = {
                     "inertia_source_instruction_addrs": tuple(
                         sorted(fact.dereference_ins_addr for fact in matching_facts)
                     )
                 }
+                if proven_width == helper_width == 2 and byte_index % proven_width == 1:
+                    low_use = statements[use_index - 1] if use_index > 0 else None
+                    if not isinstance(low_use, structured_c.CAssignment):
+                        break
+                    low_lhs = _strip_casts_8616(low_use.lhs)
+                    low_source_addrs = instruction_addrs_from_node_8616(low_lhs)
+                    fact_addrs = frozenset(
+                        fact.dereference_ins_addr for fact in matching_facts
+                    )
+                    word_source = _word_source_from_pointer_byte_pair_8616(
+                        low_use.rhs,
+                        use.rhs,
+                    )
+                    if (
+                        not isinstance(low_lhs, structured_c.CIndexedVariable)
+                        or not _same_c_expression_8616(low_lhs.variable, pointer)
+                        or _constant_value_8616(low_lhs.index) != byte_index // proven_width
+                        or not source_addrs
+                        or not low_source_addrs
+                        or not source_addrs & low_source_addrs & fact_addrs
+                        or word_source is None
+                    ):
+                        break
+                    low_use.rhs = word_source
+                    consumed_indexes.update((setup_index, use_index))
+                    changed = True
+                    break
                 if proven_width > helper_width:
                     if byte_index % proven_width != 0:
                         break
@@ -860,9 +897,11 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                     use.rhs = word_source
                     consumed_indexes.update(item[1] for item in pair[1:])
                 else:
+                    if byte_index % proven_width != 0:
+                        break
                     use.lhs = structured_c.CIndexedVariable(
                         pointer,
-                        structured_c.CConstant(byte_index, index_type, codegen=codegen),
+                        structured_c.CConstant(byte_index // proven_width, index_type, codegen=codegen),
                         codegen=codegen,
                         tags=tags,
                     )
@@ -2061,9 +2100,9 @@ def replay_final_codegen_projections_8616(codegen: object) -> bool:
     boundary. Re-materialize only state whose typed lowering evidence still
     exists; do not infer new semantics at this orchestration boundary.
     """
-    flags_changed = lower_packed_flags_live_in_8616(codegen)
-    gp_state_changed = lower_architectural_gp_register_state_8616(codegen)
-    gp_stack_changed = materialize_gp_stack_restores_8616(codegen)
+    flags_changed = bool(lower_packed_flags_live_in_8616(codegen))
+    gp_state_changed = bool(lower_architectural_gp_register_state_8616(codegen))
+    gp_stack_changed = bool(materialize_gp_stack_restores_8616(codegen))
     return flags_changed or gp_state_changed or gp_stack_changed
 
 
@@ -2098,51 +2137,6 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_near_pointer_argument_refusals_8616 = []
     _reset_segmented_access_width_lane_8616(typed_codegen)
 
-    def _debug_argument_lifecycle_8616(stage: str) -> None:
-        """Report temporary C-variable identity evidence for pipeline diagnosis."""
-        if os.environ.get("INERTIA_DEBUG_ARGUMENT_LIFECYCLE") != "1":
-            return
-        arguments = tuple(cfunc.arg_list or ())
-        argument_surface = tuple(
-            (
-                id(argument),
-                id(argument.variable),
-                argument.variable.offset,
-                argument.variable.size,
-                argument.variable.name,
-                type(argument.variable_type).__name__,
-            )
-            for argument in arguments
-            if isinstance(argument, structured_c.CVariable)
-            and isinstance(argument.variable, SimStackVariable)
-        )
-        body_by_identity: dict[int, tuple[object, ...]] = {}
-        for node in _iter_c_nodes_deep_8616(cfunc.statements):
-            if not isinstance(node, structured_c.CVariable) or not isinstance(
-                node.variable,
-                SimStackVariable,
-            ):
-                continue
-            body_by_identity.setdefault(
-                id(node),
-                (
-                    id(node),
-                    id(node.variable),
-                    node.variable.offset,
-                    node.variable.size,
-                    node.variable.name,
-                    type(node.variable_type).__name__,
-                ),
-            )
-        body_surface = tuple(body_by_identity.values())
-        print(
-            f"[argument-lifecycle] {stage} args={argument_surface!r} "
-            f"body={body_surface!r}",
-            file=sys.stderr,
-            flush=True,
-        )
-
-    _debug_argument_lifecycle_8616("start")
     def _invalidate_segmented_address_caches_8616() -> None:
         """Discard address classifications whose segment child was replaced."""
         rewrite_cache = getattr(project, "_inertia_rewrite_cache", None)
@@ -2152,7 +2146,6 @@ def apply_runtime_segment_lowering_8616(
         rewrite_cache.pop("segmented_addr_expr", None)
 
     changed = _rematerialize_binary_proven_near_pointer_types_8616(typed_codegen)
-    _debug_argument_lifecycle_8616("after-pointer-types")
     changed = lower_packed_flags_live_in_8616(codegen) or changed
     changed = lower_direction_flag_state_8616(codegen) or changed
     changed = materialize_string_io_loop_carriers_8616(project, codegen) or changed
@@ -2207,16 +2200,12 @@ def apply_runtime_segment_lowering_8616(
         fallback_to_positive_bp=False,
     ):
         changed = True
-    _debug_argument_lifecycle_8616("after-annotated-prototype")
     if materialize_positive_bp_arguments_8616(project, typed_codegen):
         changed = True
-    _debug_argument_lifecycle_8616("after-positive-bp")
     if unify_positive_bp_argument_identity_8616(typed_codegen):
         changed = True
-    _debug_argument_lifecycle_8616("after-argument-identity")
     if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
         changed = True
-    _debug_argument_lifecycle_8616("after-ss-stack")
     if materialize_balanced_immediate_register_restores_8616(
         codegen,
         active_function,
@@ -2257,7 +2246,6 @@ def apply_runtime_segment_lowering_8616(
         failure_count=max(classified_count - materialized_count, 0),
         refusals=tuple(typed_codegen._inertia_near_pointer_argument_refusals_8616),
     )
-    _debug_argument_lifecycle_8616("end")
     typed_codegen._inertia_stack_pointer_snapshot_stats_8616 = snapshot_tracker.stats
     typed_codegen._inertia_linear_global_decomposition_cache_stats_8616 = (
         decomposition_cache.stats()

@@ -187,8 +187,6 @@ LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616: frozenset[str] = (
             "_repair_conditional_continue_guards_after_loop_break_8616",
             "_repair_loop_exit_return_guards_8616",
             "_repair_unresolved_function_exit_gotos_8616",
-            "_unify_positive_bp_arg_stack_variables_8616",
-            "_unify_positive_bp_arg_stack_variables_final_8616",
             "_simplify_structured_expressions_after_call_stack_lowering_8616",
             "_simplify_structured_expressions_after_final_call_materialization_8616",
             "_recover_missing_direct_calls_from_evidence_early_8616",
@@ -262,8 +260,6 @@ MANDATORY_VALIDATION_PASS_NAMES_8616: frozenset[str] = frozenset(
         "_rerun_stack_lowering_consumers_after_calls_8616",
         "_materialize_direct_stack_mov_instructions_8616",
         "_materialize_direct_stack_mov_instructions_final_8616",
-        "_unify_positive_bp_arg_stack_variables_8616",
-        "_unify_positive_bp_arg_stack_variables_final_8616",
     }
     | CALL_RECOVERY_VALIDATION_PASS_NAMES_8616
     | DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616
@@ -308,8 +304,6 @@ PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616: frozenset[str] = frozenset(
         "_rerun_stack_lowering_consumers_after_calls_8616",
         "_materialize_direct_stack_mov_instructions_8616",
         "_materialize_direct_stack_mov_instructions_final_8616",
-        "_unify_positive_bp_arg_stack_variables_8616",
-        "_unify_positive_bp_arg_stack_variables_final_8616",
     }
     | CALL_RECOVERY_VALIDATION_PASS_NAMES_8616
     | DIRECT_GLOBAL_UPDATE_VALIDATION_PASS_NAMES_8616

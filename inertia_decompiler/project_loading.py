@@ -36,8 +36,9 @@ _TRACE_FUNCTION: Any = cast(Any, trace_function)
 
 
 def _debug_print(message: str) -> None:
+    """Keep loader diagnostics off generated-C stdout, including subprocess tests."""
     if "PYTEST_CURRENT_TEST" in os.environ:
-        print(message)
+        print(message, file=sys.stderr)
         return
     print(f"{time.strftime('[%H:%M:%S]')} {message}", file=sys.stderr)
 

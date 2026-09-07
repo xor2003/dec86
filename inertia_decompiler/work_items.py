@@ -98,8 +98,9 @@ def _work_item_status_display(result: WorkItemStatus | str) -> WorkItemStatus:
 
 
 def _diagnostic_print(line: str) -> None:
+    """Emit work-item diagnostics without contaminating generated-C stdout."""
     if "PYTEST_CURRENT_TEST" in os.environ:
-        print(line)
+        print(line, file=sys.stderr)
         return
     print(f"{time.strftime('[%H:%M:%S]')} {line}", file=sys.stderr)
 

@@ -82,6 +82,7 @@ from ..callsite_summary import (
     build_callsite_summary_inventory_8616,
     callsite_summary_inventory_8616,
 )
+from ..capstone_memory_segment import effective_capstone_memory_segment_8616
 from ..cod_extract import CODProcMetadata
 from ..codegen_metadata import (
     GlobalDeclarationArrayExtent8616,
@@ -213,7 +214,7 @@ _DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616 = DIRECT_CALL_RETURN_STORE_EVIDENCE_
 
 @dataclass(frozen=True, slots=True)
 class CapstoneMemoryView8616:
-    """Typed snapshot of one dynamic Capstone memory operand."""
+    """Typed memory operand with its effective, rather than override-only, segment."""
 
     segment: int | None
     base: int | None
@@ -397,7 +398,9 @@ def _capstone_memory_view_8616(memory_raw: object) -> CapstoneMemoryView8616:
     except AttributeError:
         displacement = None
     return CapstoneMemoryView8616(
-        segment=_optional_int_boundary_8616(segment),
+        segment=effective_capstone_memory_segment_8616(
+            _optional_int_boundary_8616(segment), _optional_int_boundary_8616(base),
+        ),
         base=_optional_int_boundary_8616(base),
         index=_optional_int_boundary_8616(index),
         displacement=_optional_int_boundary_8616(displacement),
@@ -1972,7 +1975,7 @@ def _materialize_anonymous_direct_segmented_global_stores_8616(
                         if project is not None
                         else None
                     )
-                    if replacement is not None:
+                    if replacement is not None and evidence.immediate_value is not None:
                         assignment.lhs = replacement
                         assignment.rhs = CConstant(
                             evidence.immediate_value & ((1 << (evidence.width * 8)) - 1),

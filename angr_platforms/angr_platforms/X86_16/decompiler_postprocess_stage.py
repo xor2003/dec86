@@ -8247,11 +8247,6 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
             True,
         ),
         DecompilerPostprocessPassSpec(
-            "_unify_positive_bp_arg_stack_variables_8616",
-            _post._unify_positive_bp_arg_stack_variables_8616,
-            True,
-        ),
-        DecompilerPostprocessPassSpec(
             "_materialize_pointer_arg_indirect_loads_8616",
             _materialize_pointer_arg_indirect_loads_postprocess_8616,
             True,
@@ -8375,11 +8370,6 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
         DecompilerPostprocessPassSpec(
             "_materialize_direct_global_incdec_instructions_final_8616",
             _materialize_direct_global_incdec_instructions_postprocess_8616,
-            True,
-        ),
-        DecompilerPostprocessPassSpec(
-            "_unify_positive_bp_arg_stack_variables_final_8616",
-            _post._unify_positive_bp_arg_stack_variables_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -10291,7 +10281,6 @@ def _selector_return_contract_skip_passes_8616() -> frozenset[str]:
             "_prune_return_address_stack_arguments_8616",
             "_lower_stable_ss_stack_accesses_8616",
             "_normalize_function_prototype_arg_names_8616",
-            "_unify_positive_bp_arg_stack_variables_8616",
             "_materialize_callsite_stack_arguments_8616",
             "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
             "_prune_consumed_segmented_stack_arg_stores_8616",
@@ -10299,7 +10288,6 @@ def _selector_return_contract_skip_passes_8616() -> frozenset[str]:
             "_materialize_stable_stack_semantics_final_8616",
             "_materialize_direct_stack_mov_instructions_final_8616",
             "_materialize_direct_stack_incdec_instructions_final_8616",
-            "_unify_positive_bp_arg_stack_variables_final_8616",
             "_rewrite_decoded_jcc_conditions_8616",
             "_rewrite_decoded_jcc_conditions_after_calls_8616",
         }

@@ -592,147 +592,6 @@ def _normalize_function_prototype_arg_names_8616(project: Any, codegen: Any) -> 
     return True
 
 
-def _unify_positive_bp_arg_stack_variables_8616(project: SimpleNamespace, codegen: SimpleNamespace) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
-        return False
-    if getattr(codegen, "_inertia_return_selector_materialized_8616", False):
-        codegen._inertia_arg_stack_identity_unify_refused_selector_return_8616 = (
-            int(getattr(codegen, "_inertia_arg_stack_identity_unify_refused_selector_return_8616", 0) or 0) + 1
-        )
-        return False
-
-    cfunc = codegen.cfunc
-    arg_by_identity: dict[object, CVariable] = {}
-    arg_variable_ids: set[int] = set()
-    for cvar in getattr(cfunc, "arg_list", ()) or ():
-        if not isinstance(cvar, CVariable):
-            continue
-        variable = cvar.variable
-        if not isinstance(variable, SimStackVariable):
-            continue
-        offset = variable.offset
-        if not isinstance(offset, int) or offset <= 0:
-            continue
-        identity = _stack_slot_identity_for_variable(variable)
-        if identity is None:
-            continue
-        arg_by_identity[identity] = cvar
-        arg_variable_ids.add(id(variable))
-
-    if not arg_by_identity:
-        return False
-
-    positive_body_cvars_by_offset: dict[int, CVariable] = {}
-    for node in _iter_c_nodes_deep_8616(cfunc.statements):
-        if not isinstance(node, CVariable):
-            continue
-        # Dynamic angr/codegen compatibility boundary.
-        variable = node.variable
-        if not isinstance(variable, SimStackVariable):
-            continue
-        # Dynamic angr/codegen compatibility boundary.
-        offset = variable.offset
-        if not isinstance(offset, int) or offset <= 0:
-            continue
-        if _stack_slot_identity_for_variable(variable) in arg_by_identity:
-            continue
-        positive_body_cvars_by_offset.setdefault(offset, node)
-
-    changed = False
-
-    # Dynamic angr/codegen compatibility boundary.
-    arg_list = getattr(cfunc, "arg_list", None)
-    if isinstance(arg_list, list):
-        for index, arg_cvar in enumerate(tuple(arg_list)):
-            if not isinstance(arg_cvar, CVariable):
-                continue
-            # Dynamic angr/codegen compatibility boundary.
-            variable = arg_cvar.variable
-            if not isinstance(variable, SimStackVariable):
-                continue
-            # Dynamic angr/codegen compatibility boundary.
-            offset = variable.offset
-            if not isinstance(offset, int) or offset <= 0:
-                continue
-            if offset != 2:
-                continue
-            body_cvar = positive_body_cvars_by_offset.get(offset + 2)
-            if body_cvar is None:
-                continue
-            # Dynamic angr/codegen compatibility boundary.
-            body_variable = getattr(body_cvar, "variable", None)
-            if not isinstance(body_variable, SimStackVariable):
-                continue
-            body_identity = _stack_slot_identity_for_variable(body_variable)
-            if body_identity is None:
-                continue
-            arg_list[index] = body_cvar
-            arg_by_identity.pop(_stack_slot_identity_for_variable(variable), None)
-            arg_by_identity[body_identity] = body_cvar
-            arg_variable_ids.discard(id(variable))
-            arg_variable_ids.add(id(body_variable))
-            changed = True
-
-    def _clone_arg_cvar_for_replacement_8616(cvar: CVariable) -> CVariable:
-        clone = CVariable(
-            cvar.variable,
-            variable_type=getattr(cvar, "variable_type", None),
-            codegen=getattr(cvar, "codegen", None),
-        )
-        with contextlib.suppress(Exception):
-            clone.tags = dict(getattr(cvar, "tags", {}) or {})
-        return clone
-
-    def transform(node: object) -> object:
-        if not isinstance(node, CVariable):
-            return node
-        variable = node.variable
-        if not isinstance(variable, SimStackVariable):
-            return node
-        identity = _stack_slot_identity_for_variable(variable)
-        replacement = arg_by_identity.get(identity)
-        if replacement is None or replacement is node:
-            return node
-        return _clone_arg_cvar_for_replacement_8616(replacement)
-
-    if _replace_c_children_8616(cfunc.statements, transform):
-        changed = True
-
-    variables_in_use = getattr(cfunc, "variables_in_use", None)
-    if isinstance(variables_in_use, dict):
-        for variable, cvar in tuple(variables_in_use.items()):
-            if not isinstance(variable, SimStackVariable) or id(variable) in arg_variable_ids:
-                if isinstance(variable, SimStackVariable):
-                    identity = _stack_slot_identity_for_variable(variable)
-                    replacement = arg_by_identity.get(identity)
-                    if replacement is not None and cvar is not replacement:
-                        variables_in_use[variable] = replacement
-                        changed = True
-                continue
-            identity = _stack_slot_identity_for_variable(variable)
-            if identity in arg_by_identity:
-                del variables_in_use[variable]
-                changed = True
-
-    unified = getattr(cfunc, "unified_local_vars", None)
-    if isinstance(unified, dict):
-        for variable in tuple(unified.keys()):
-            if not isinstance(variable, SimStackVariable):
-                continue
-            identity = _stack_slot_identity_for_variable(variable)
-            if identity in arg_by_identity:
-                del unified[variable]
-                changed = True
-
-    if changed:
-        with contextlib.suppress(Exception):
-            codegen._inertia_codegen_decl_refresh_required_8616 = True
-        codegen._inertia_arg_stack_identity_unified_8616 = (
-            int(getattr(codegen, "_inertia_arg_stack_identity_unified_8616", 0) or 0) + 1
-        )
-    return changed
-
-
 def _collect_goto_label_names_8616(root: object) -> set[str]:
     names: set[str] = set()
     for node in _iter_c_nodes_deep_8616(root):
@@ -3531,13 +3390,13 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                     return name, vartype
             return None, None
 
-        arg_slot_identities: set[_StackSlotIdentity | None] = set()
+        arg_slot_identities: set[_StackSlotIdentity] = set()
         for arg in getattr(codegen.cfunc, "arg_list", ()) or ():
             arg_variable = getattr(arg, "variable", None)
             if isinstance(arg_variable, SimStackVariable):
-                arg_slot_identities.add(
-                    machine_bp_stack_identity_8616(codegen, arg_variable)
-                )
+                identity = machine_bp_stack_identity_8616(codegen, arg_variable)
+                if identity is not None:
+                    arg_slot_identities.add(identity)
         helper_arg_names = list(getattr(getattr(func, "prototype", None), "arg_names", ()) or ())
         helper_arg_offsets = sorted(offset for offset in stack_specs if isinstance(offset, int) and offset > 0)
         helper_arg_name_by_offset: dict[int, str] = {
@@ -3586,6 +3445,17 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
             size_rank = -size if isinstance(size, int) else 0
             exact_rank = 1 if exact else 0
             return (exact_rank, is_arg_slot, has_preferred_name, size_rank, -identity.offset)
+
+        # Lowering owns the function interface.  Its canonical arguments may
+        # intentionally be absent from angr's body-only declaration table.
+        for arg in getattr(codegen.cfunc, "arg_list", ()) or ():
+            variable = getattr(arg, "variable", None)
+            if not isinstance(arg, CVariable) or not isinstance(variable, SimStackVariable):
+                continue
+            identity = _machine_bp_stack_binding_identity_8616(codegen, variable, arg)
+            if identity is not None:
+                score = _stack_candidate_score(variable, arg, exact=True)
+                exact_stack_candidates.setdefault(identity.offset, []).append((score, arg))
 
         for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if isinstance(variable, SimStackVariable):

@@ -209,6 +209,18 @@ Both CLI invocation shapes validate and recompile with direct `cs[0]`/`ss[0]`
 stores. Focused Ruff/MyPy, `quality-dev` with 1,923 tests, and the mandatory
 external pipeline pass.
 
+A later exact-width replay regression in that wrapper is now closed at
+Types/Lowering. One logical 16-bit IR write had reached structured C as two
+byte-lane lvalues; lowering widened both independently, then interpreted byte
+displacement `+1` as C word-pointer element `[1]`. Lowering now materializes the
+same-instruction little-endian pair once, converts aligned byte displacements to
+typed element indexes, and refuses an unaligned full-width helper without the
+complete pair proof. Annotation replay also preserves the canonical
+Lowering-owned argument variables instead of replacing them with body-only byte
+views. Generic fail-first tests, both live COD CLI shapes, whole-tail validation,
+portable-flat recompilation, focused Ruff/MyPy/type ratchets, 435 related tests,
+and startup architecture/ownership checks pass.
+
 The larger DOS `loadprog` body is now also closed at its owning layers.
 Types/Lowering preserves one binary-proven four-byte `cmdline` stack owner and
 projects its exact low/high word views without inventing a fifth logical
@@ -337,6 +349,7 @@ source for the total remaining estimate.
 | Required project gates after the fix | `2026-08-29 08:51 +02:00` | `2026-09-02 06:40 +02:00` | historical subtotal retained; test time excluded | continued through `2026-09-02` | completed | 0h | Ruff, MyPy over the production surface, the 39-module mypyc smoke, architecture and ownership checks, and 1,921 curated tests pass. All three quality comparisons pass at 1.356x-1.526x. The expanded pipeline remains 5/5: SORTD decompiles 20/20 functions with zero validation failures or timeouts, its generated translation unit compiles with zero warnings, the 19-function sort-core behavior gate passes, and every selected Ultra QuickC and MS C tiny round trip passes. No exclusion or weakened check was added. |
 | Complete repository pytest closure | `2026-09-02` | - | latest full audit wall 852.88s; closure work tracked per root family | active | in progress | 20-35h, overlapping task 9 | The exact baseline is 9,944 passed, 23 failed, 170 skipped out of 10,137. The latest exact last-failed rerun is 19 failed and 3 passed in 221.20s. Focused closures project 13 remaining failures; only a complete rerun may replace the exact count, and final DoD remains zero failures. |
 | Refresh full-suite census and retire stale stack-coordinate overlap fixture | `2026-09-06 15:14 +02:00` | `2026-09-06 16:15 +02:00` | 61m wall, dominated by the audit, concurrent-source retries, and local gates | completed | 0h | The diagnostic audit reported 9,950 passed, 24 failed, and 170 skipped out of 10,144 in 1,099.15s. Concurrent source mutation and profiler contention make it a triage inventory, not a clean baseline. Final Tail Validation correctly maps entry-SP `+3` to machine BP `+5`; all three entry-range tests pass. One intermediate changed surface reached 182 focused passes, and one completed `quality-dev` run reached 1,925 tests plus external quality comparisons, but later concurrent edits remain outside this slice and require their own fresh gate before integration. |
+| DOS logical word-store and canonical annotation-interface closure | before `2026-09-07 04:21 +02:00`; exact start lost at continuation | `2026-09-07 04:31 +02:00` | 25-35m focused engineering; test waits excluded | completed | 0h | Types/Lowering consumes one closed IR word-write fact once across angr's two byte projections, scales aligned byte displacement by the pointee width, and preserves canonical argument identity through annotation replay. The generic regression failed before and passes after; both live COD CLI tests, portable-flat recompilation, whole-tail validation, focused Ruff/MyPy/type checks, 435 related tests, and architecture/ownership gates pass. |
 
 #### Machine-BP prototype identity and indexed byte-pointer closure contract
 
@@ -380,6 +393,129 @@ resolving stack identity by raw offset when a machine-BP projection exists;
 deleting a non-PUSH store or a PUSH without exact consumed-argument proof;
 missing either return or pointer store; any validation, compile, focused-test,
 lint, type, or mandatory-pipeline failure.
+
+#### DOS logical word-store materialization closure contract
+
+Reason: one closed 16-bit logical memory write can be represented by angr as
+two structured-C byte projections with the same instruction provenance.
+Applying the logical width independently to both lvalues widened the high-byte
+address as a word access; the pointer-carrier consumer then confused byte
+displacement `+1` with C element index `[1]`. Annotation replay independently
+allowed body-only byte declarations to replace the canonical function
+interface.
+
+DoD: Types/Lowering joins the low/high stores only when a closed IR word-write,
+the same exact instruction address, one typed pointer owner, adjacent byte
+offsets, DS identity, and one shared little-endian source all agree. A carrier
+setup may not be consumed when another statement in its sequence still uses
+it; byte-pair folding may not cross an intervening statement. Aligned helper byte
+offsets are divided by pointee width; unaligned full-width helpers without that
+complete proof remain explicit; annotation consumes and preserves the canonical
+Lowering-owned argument identities. Generic regressions cover the split
+projection and wrong element stride. Both `_dos_loadProgram` CLI paths emit one
+`cs[0]` and one `ss[0]` store with no `[1]` or residual function-body `SEG_U*`,
+report `validation=passed` and clean whole-tail validation, and portable-flat C
+recompiles. Focused Ruff `check --fix`, MyPy/type ratchets, related tests, and
+architecture/ownership checks pass.
+
+2026-09-07 safety review: three new refusal cases failed before the follow-up
+guard: ES stores, SS stores, and a carrier read after the folded store. All
+three now preserve their original statements. The existing carrier-as-value
+refusal also remains covered. One old positive fixture incorrectly described
+a default-DS `mov [bx], ax` using an SS helper; its helper now matches its binary
+evidence, with explicit negative segment tests retained in a focused module.
+The related 250-test run passes, including the live DOS wrapper's Tail
+Validation and generated-C recompilation. The new refusal and annotation
+identity modules are enrolled in Ruff, focused ownership, and the normal
+pipeline.
+
+The independent venv last-failed refresh completed before this follow-up:
+14 failed, 346 passed in 251.47s. This is a selected failure inventory, not a
+full-suite count; the pytest cache also contains historical removed nodes.
+Failures cover InBoxLng, DrawRadarAlt, dos_free, SetGear, InitBars, ExchangeSort,
+DrawFrame, RunMenu, PercolateDown, InsertionSort, TIDShowRange, and main, with
+duplicate tests for some functions and timeout-contaminated results. Global
+`quality-fast` is still red on MyPy errors outside this store-fold change;
+neither Step 9f nor the overall P0 goal is closed by this checkpoint.
+
+#### P0 pointer-evidence safety review (2026-09-07)
+
+Reason: the decoded near-pointer collector attributed `BP + scalar_argument`
+stack-array accesses to the scalar argument as a pointer, and treated LEA's
+memory-shaped operand as a dereference. DrawFrame's `iWidth` consequently
+acquired a false pointer contract, causing both binary-only and named output
+to fail parameter validation. This is a Types/Lowering evidence-classification
+bug; changing the validator or rendered signature would conceal the root.
+
+DoD: BP-indexed scalar accesses and LEA publish no pointer-dereference fact;
+an actual direct argument dereference still publishes its exact slot, site,
+and width. Frontend resolves the effective memory segment, including explicit
+overrides and 32-bit SIB base/index distinctions, before Lowering classifies
+global accesses. Both DrawFrame variants must retain four scalar arguments, the
+80-byte local array, three memory-fill calls, three output calls, the signed
+row-loop condition, clean Tail Validation, and recompilable portable C.
+Binary-only regression tests, the related Lowering tests, focused types/docs
+and Ruff, `quality-dev`, and the mandatory MS C pipeline must pass.
+
+Definition of Failure: using source names or addresses as proof; suppressing
+parameter validation; classifying every address contributor as a pointer;
+counting LEA as a load; losing a real dereference, call, loop, or memory effect;
+claiming performance improvement without a controlled measurement.
+
+Timing: the first fail-first run started at `2026-09-07 11:04:51 +02:00`.
+Two binary-only negative tests failed and the positive dereference test passed.
+The generic collector correction makes both DrawFrame variants pass semantic
+validation. Live GCC C11 syntax checks pass; the named variant retains the
+existing DOS-width `memset` builtin-signature warning. The sidecar-free output
+uses an explicit signed `while` condition and still has unrelated rejected
+cleanup passes, so no universal speedup or full P0 closure is claimed.
+Verification finished at `2026-09-07 11:33:50 +02:00`: 28m59s wall span
+from the first fail-first run, including test/build waits; focused engineering
+time was not separately measured. Final `quality-dev` reports 1,992 passed,
+seven warnings in 81.91s for its pytest phase, a passing external executable
+case, and a 39-module mypyc import smoke. The mandatory `test-pipeline` run
+reports 1,974 passed, eight warnings in 131.73s and all seven MS C tiny
+compile/decompile/recompile/execute cases passing. That pipeline preceded the
+last shared diagnostic-routing correction; the final changed-surface gate and
+21 focused diagnostics/project-cache/live-DrawFrame tests cover that correction.
+Both DrawFrame variants now compile unfiltered stdout and pass Tail Validation.
+These are curated gates, not a clean full-suite audit. Global `quality-fast`
+remains red on the previously recorded out-of-scope MyPy debt. Step 9f and P0
+remain open; no measured end-to-end speedup is claimed for this slice.
+The accompanying logical-register-transfer batch reuses one scalar-definition
+index per function. Its two focused test modules pass (29 tests in 15.79s),
+and scoped Ruff `--fix`, MyPy, and the type ratchet pass. This preserves the
+other agent's work without treating index-build reduction as an end-to-end
+performance result.
+
+The broader gate exposed a related adapter defect: Capstone's absent segment
+override was treated as DS even for BP-based addresses. The new frontend
+`capstone_memory_segment.py` owns the effective segment rule; the existing
+Lowering memory view consumes it. Four default-segment cases failed before,
+while explicit overrides already passed. Six real encoded-memory cases now
+cover BP, SI, overrides, and EBP as a SIB base versus index. This also removes
+the previous four spurious legacy global sites: the reviewed SORTD inventory
+now has 19 exact functions, one divergent function, zero legacy-only keys,
+and unchanged authoritative Alias/materialization counts. The updated baseline
+preserves the remaining four Alias-only keys and does not weaken the gate.
+
+Cold-run acceptance also exposed stdout contamination. Reason: project and
+work-item emitters switched diagnostics to stdout under `PYTEST_CURRENT_TEST`,
+and the shared CLI printer bypassed routing in pytest/brief modes. A warm cache
+hid this behavior. DoD: diagnostic emitters use stderr in every mode, C remains
+on stdout, and both DrawFrame variants compile directly from unfiltered CLI
+stdout. Definition of Failure: stripping debug lines in the test, relying only
+on a warm result, or treating pytest/brief mode as permission to emit non-C on
+stdout. The shared routing matrix adds 18 cases; eight failed before the shared
+printer/work-item correction. This is CLI reporting work, not semantic recovery.
+
+Definition of Failure: recovering from function names, addresses, COD/source,
+assembly text, or rendered C; treating a byte displacement as a typed element
+index; coalescing stores with different instruction provenance, pointer owners,
+or source values; silently deleting an unproved lane; replacing the canonical
+interface with a body subview; repairing the symptom in Structuring, Rewrite,
+postprocess, or CLI; or losing any call, return, memory effect, validation,
+recompilation, type, lint, documentation, architecture, or focused-test gate.
 
 #### F14 `_InBox`/`_InBoxLng` predicate closure contract
 

@@ -423,6 +423,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/arch_86_16.py \
 	angr_platforms/angr_platforms/X86_16/access.py \
 	angr_platforms/angr_platforms/X86_16/addressing_helpers.py \
+	angr_platforms/angr_platforms/X86_16/capstone_memory_segment.py \
 	angr_platforms/angr_platforms/X86_16/address_ir.py \
 	angr_platforms/angr_platforms/X86_16/alu_helpers.py \
 	angr_platforms/angr_platforms/X86_16/annotations.py \
@@ -1413,6 +1414,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/arch_86_16.py \
 	angr_platforms/angr_platforms/X86_16/access.py \
 	angr_platforms/angr_platforms/X86_16/addressing_helpers.py \
+	angr_platforms/angr_platforms/X86_16/capstone_memory_segment.py \
 	angr_platforms/angr_platforms/X86_16/address_ir.py \
 	angr_platforms/angr_platforms/X86_16/alu_helpers.py \
 	angr_platforms/angr_platforms/X86_16/annotations.py \
@@ -2390,6 +2392,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
 	angr_platforms/tests/test_generated_c_indexed_argument_contract.py \
 	angr_platforms/tests/test_project_loading_cache.py \
+	angr_platforms/tests/test_project_loading_diagnostics.py \
 	angr_platforms/tests/test_function_work_item_contract.py \
 	angr_platforms/tests/test_pytest_profile.py \
 	angr_platforms/tests/test_parallel_job_defaults.py \
@@ -2551,6 +2554,9 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
 	angr_platforms/tests/test_x86_16_segmented_global_loads.py \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
+	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
+	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
+	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
@@ -2821,6 +2827,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
 	angr_platforms/tests/test_generated_c_indexed_argument_contract.py \
 	angr_platforms/tests/test_project_loading_cache.py \
+	angr_platforms/tests/test_project_loading_diagnostics.py \
 	angr_platforms/tests/test_pytest_profile.py \
 	angr_platforms/tests/test_parallel_job_defaults.py \
 	angr_platforms/tests/test_pytest_partitioned.py \

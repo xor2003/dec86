@@ -319,8 +319,9 @@ def _trace_reload_8616(
 def trace_logical_word_register_transfer_8616(
     artifact: SSAFunctionArtifact,
     access: IRLogicalMemoryAccess8616,
+    definitions: ScalarDefinitionIndex8616 | None = None,
 ) -> LogicalMemoryRegisterTransfer8616 | LogicalMemoryRegisterTransferRefusal8616:
-    """Trace one complete logical 16-bit operand to its register endpoint."""
+    """Trace one logical word, reusing an exact scalar index when supplied."""
     if not access.complete:
         return LogicalMemoryRegisterTransferRefusal8616(
             access,
@@ -333,10 +334,35 @@ def trace_logical_word_register_transfer_8616(
             LogicalMemoryRegisterTransferFailure8616.ACCESS_WIDTH_UNSUPPORTED,
             "only exact two-byte logical operands are register-transfer candidates",
         )
-    definitions = build_scalar_definition_index_8616(artifact)
+    active_definitions = (
+        definitions
+        if definitions is not None
+        else build_scalar_definition_index_8616(artifact)
+    )
     if access.kind is IRMemoryAccessKind8616.WRITE:
-        return _trace_spill_8616(artifact, access, definitions)
-    return _trace_reload_8616(artifact, access, definitions)
+        return _trace_spill_8616(artifact, access, active_definitions)
+    return _trace_reload_8616(artifact, access, active_definitions)
+
+
+def trace_logical_word_register_transfers_8616(
+    artifact: SSAFunctionArtifact,
+    accesses: tuple[IRLogicalMemoryAccess8616, ...],
+) -> tuple[
+    LogicalMemoryRegisterTransfer8616 | LogicalMemoryRegisterTransferRefusal8616,
+    ...,
+]:
+    """Trace a batch of logical words through one shared scalar index."""
+    if not accesses:
+        return ()
+    definitions = build_scalar_definition_index_8616(artifact)
+    return tuple(
+        trace_logical_word_register_transfer_8616(
+            artifact,
+            access,
+            definitions,
+        )
+        for access in accesses
+    )
 
 
 __all__ = [
@@ -345,4 +371,5 @@ __all__ = [
     "LogicalMemoryRegisterTransferKind8616",
     "LogicalMemoryRegisterTransferRefusal8616",
     "trace_logical_word_register_transfer_8616",
+    "trace_logical_word_register_transfers_8616",
 ]

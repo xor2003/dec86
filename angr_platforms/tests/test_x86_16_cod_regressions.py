@@ -666,6 +666,8 @@ def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
             "ax = exeLoadParams",
         ),
     )
+    compile_result = check_c_recompiles_8616(result.stdout, target="portable-flat")
+    assert compile_result.passed, compile_result.stderr
 
 
 def test_prune_dead_local_assignments_removes_unused_constant_stores():

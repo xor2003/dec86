@@ -243,8 +243,8 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     ),
     TestOwnershipRule(
         owner="cli-project-loading",
-        paths=("inertia_decompiler/project_loading.py",),
-        tests=("angr_platforms/tests/test_project_loading_cache.py",),
+        paths=("inertia_decompiler/project_loading.py", "inertia_decompiler/cli_output.py", "inertia_decompiler/work_items.py"),
+        tests=("angr_platforms/tests/test_project_loading_cache.py", "angr_platforms/tests/test_project_loading_diagnostics.py"),
     ),
     TestOwnershipRule(
         owner="display-catalog-cache",
@@ -1227,6 +1227,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
         owner="x86-16-lowering-segmented-runtime",
         paths=(
+            "angr_platforms/angr_platforms/X86_16/capstone_memory_segment.py",
             "angr_platforms/angr_platforms/X86_16/lowering/gp_register_state.py",
             "angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py",
             "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py",
@@ -1235,6 +1236,9 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
         ),
         tests=(
+            "angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py",
+            "angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py",
+            "angr_platforms/tests/test_x86_16_annotation_argument_identity.py",
             "angr_platforms/tests/test_x86_16_gp_register_state.py",
             "angr_platforms/tests/test_x86_16_ir_segmented_load_carriers.py",
             "angr_platforms/tests/test_x86_16_register_indirect_call_targets.py",

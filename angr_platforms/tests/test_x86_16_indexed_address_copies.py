@@ -36,6 +36,7 @@ from angr_platforms.X86_16.ir import (
     build_x86_16_ir_function_artifact,
     collect_indexed_address_copy_evidence_8616,
     collect_indexed_address_evidence_8616,
+    logical_memory_register_transfer,
 )
 from angr_platforms.X86_16.ir.indexed_address_access_normalization import (
     normalize_indexed_address_accesses_8616,
@@ -104,6 +105,33 @@ def _project_alias_copy(code: bytes) -> IndexedAliasCopyEvidence8616:
         aliases,
         classify_indexed_alias_accesses_8616(aliases),
     )
+
+
+def test_logical_register_transfer_batch_builds_one_scalar_index(monkeypatch) -> None:
+    """A function-wide logical transfer batch indexes scalar SSA only once."""
+    artifact = _lift(GLOBAL_WORD_COPY)
+    logical_memory = artifact.logical_memory
+    assert logical_memory is not None
+    real_builder = logical_memory_register_transfer.build_scalar_definition_index_8616
+    index_builds: list[SSAFunctionArtifact] = []
+
+    def _build_index(active_artifact: SSAFunctionArtifact):
+        index_builds.append(active_artifact)
+        return real_builder(active_artifact)
+
+    monkeypatch.setattr(
+        logical_memory_register_transfer,
+        "build_scalar_definition_index_8616",
+        _build_index,
+    )
+
+    transfers = logical_memory_register_transfer.trace_logical_word_register_transfers_8616(
+        artifact,
+        logical_memory.accesses,
+    )
+
+    assert len(transfers) == len(logical_memory.accesses)
+    assert index_builds == [artifact]
 
 
 def test_normalization_retains_both_word_store_members() -> None:
