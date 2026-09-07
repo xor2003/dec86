@@ -117,6 +117,49 @@ def apply_x86_16_typehoon_compatibility() -> None:
 
     solver_dynamic.SimpleSolver._pointer_class = _pointer_class_16
 
+    if getattr(_typehoon_simple_solver.SimpleSolver.determine, "__name__", "") != "_determine_unsolved_roots_8616":
+        _orig_determine = _typehoon_simple_solver.SimpleSolver.determine
+
+        def _determine_unsolved_roots_8616(
+            self: object,
+            sketches: object,
+            tvs: object,
+            equivalence_classes: dict[TypeVariable, TypeVariable],
+            solution: dict[object, object],
+            nodes: set[object] | None = None,
+        ) -> None:
+            """Avoid re-solving 16-bit roots already proven by a connected solve."""
+            solver = cast(Any, self)
+            if solver.bits != 16 or nodes is not None:
+                cast(Any, _orig_determine)(
+                    self,
+                    sketches,
+                    tvs,
+                    equivalence_classes,
+                    solution,
+                    nodes=nodes,
+                )
+                return
+
+            sketches_by_typevar = cast(Any, sketches)
+            for typevar in cast(Any, tvs):
+                if typevar in solution:
+                    continue
+                solver._solution_cache = {}
+                solver._determine(
+                    typevar,
+                    sketches_by_typevar[typevar],
+                    equivalence_classes,
+                    solution,
+                    nodes=None,
+                )
+
+            for variable, equivalent in solver._equivalence.items():
+                if variable not in solution and equivalent in solution:
+                    solution[variable] = solution[equivalent]
+
+        solver_dynamic.SimpleSolver.determine = _determine_unsolved_roots_8616
+
     _orig_simple_solver_init = _typehoon_simple_solver.SimpleSolver.__init__
 
     def _simple_solver_init_8616(
