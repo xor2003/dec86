@@ -221,10 +221,16 @@ def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
             artifact=artifact,
         ),
     )
+    trace_calls: list[object] = []
+
+    def _trace_reload(*_args: object) -> LogicalMemoryRegisterTransfer8616:
+        trace_calls.append(access)
+        return transfer
+
     monkeypatch.setattr(
         validation_branch_conditions,
         "trace_logical_word_register_transfer_8616",
-        lambda *_args: transfer,
+        _trace_reload,
     )
     fact = ConditionIR(
         "eq",
@@ -234,17 +240,93 @@ def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
         block_addr=0x108,
     )
 
+    context = validation_branch_conditions._build_logical_reload_validation_context_8616(codegen)
     projected = validation_branch_conditions._proven_logical_reload_condition_fingerprints_8616(
         codegen,
         fact,
         "CmpEQ(reg:si,const:65535)",
         None,
+        context,
+    )
+    repeated = validation_branch_conditions._proven_logical_reload_condition_fingerprints_8616(
+        codegen,
+        fact,
+        "CmpEQ(reg:si,const:65535)",
+        None,
+        context,
     )
 
+    assert repeated == projected
+    assert trace_calls == [access]
     assert (
         "CmpEQ(Dereference(Add(Mul(reg:ds,const:16),reg:di,const:6149)),const:65535)"
         in projected
     )
+
+
+def test_branch_validation_builds_one_logical_reload_context(monkeypatch) -> None:
+    """Multiple register predicates share one function-wide reload index."""
+    register = IRValue(MemSpace.REG, name="ax", size=2, version=1)
+    facts = tuple(
+        ConditionIR(
+            "eq",
+            register,
+            IRValue(MemSpace.CONST, const=0, size=2),
+            src_insn=jcc_addr,
+            block_addr=block_addr,
+        )
+        for jcc_addr, block_addr in ((0x4015, 0x4010), (0x4025, 0x4020))
+    )
+    codegen = _Codegen(None)
+    codegen._inertia_typed_conditions = facts
+    codegen.cfunc = SimpleNamespace(addr=0x4000)
+    conditions = tuple(
+        CBinaryOp(
+            "CmpEQ",
+            _variable(codegen, -offset, "ax"),
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+            tags={
+                "ins_addr": fact.src_insn,
+                "vex_block_addr": fact.block_addr,
+                "inertia_structuring_condition_cfg_materialized_8616": True,
+            },
+        )
+        for offset, fact in enumerate(facts, start=1)
+    )
+    root = CStatements(
+        [
+            CIfElse(
+                [(condition, CStatements([], codegen=codegen))],
+                else_node=None,
+                cstyle_ifs=True,
+                codegen=codegen,
+            )
+            for condition in conditions
+        ],
+        codegen=codegen,
+    )
+    context_builds: list[object] = []
+
+    def _build_context(active_codegen: object):
+        context_builds.append(active_codegen)
+        return validation_branch_conditions._empty_logical_reload_validation_context_8616()
+
+    monkeypatch.setattr(
+        validation_branch_conditions,
+        "_build_logical_reload_validation_context_8616",
+        _build_context,
+    )
+
+    report = validate_materialized_branch_conditions_8616(
+        codegen,
+        root,
+        condition_fingerprint=_fingerprint,
+        condition_ir_fingerprint=lambda _fact: "CmpEQ(var:ax,const:0)",
+    )
+
+    assert report.passed
+    assert context_builds == [codegen]
 
 
 def test_materialized_branch_condition_refuses_dropped_additive_operand() -> None:

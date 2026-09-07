@@ -50,7 +50,9 @@ from .ir.logical_memory_register_transfer_contracts import (
     LogicalMemoryRegisterTransfer8616,
     LogicalMemoryRegisterTransferKind8616,
 )
+from .ir.ssa import SSABlock
 from .ir.ssa_cfg import build_ssa_cfg_snapshot_8616, compute_ssa_dominators_8616
+from .ir.ssa_cfg_contracts import SSACFGSnapshot8616, SSADominators8616
 from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .validation_condition_chains import validate_complete_condition_chain_8616
 from .validation_condition_identity import (
@@ -154,6 +156,30 @@ class _TaggedConditionNode8616(Protocol):
     """Third-party C AST node carrying optional Structuring tags."""
 
     tags: Mapping[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _LogicalReloadValidationContext8616:
+    """Immutable function-wide proofs reused by register reload validation."""
+
+    snapshot: SSACFGSnapshot8616 | None
+    dominators: SSADominators8616 | None
+    blocks_by_addr: Mapping[int, SSABlock]
+    transfers_by_register: Mapping[
+        tuple[str, int],
+        tuple[LogicalMemoryRegisterTransfer8616, ...],
+    ]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether CFG, dominance, blocks, and transfers are proven."""
+        return bool(
+            self.snapshot is not None
+            and self.snapshot.complete
+            and self.dominators is not None
+            and self.dominators.complete
+            and self.blocks_by_addr
+        )
 
 
 def _node_tags_8616(node: object) -> Mapping[str, object]:
@@ -346,13 +372,26 @@ def _logical_reload_address_fingerprint_8616(
     )
 
 
-def _proven_logical_reload_condition_fingerprints_8616(
+def _empty_logical_reload_validation_context_8616() -> _LogicalReloadValidationContext8616:
+    """Return an explicit unproven logical-reload validation context."""
+    return _LogicalReloadValidationContext8616(None, None, {}, {})
+
+
+def _condition_register_operands_8616(fact: ConditionIR) -> tuple[IRValue, ...]:
+    """Return named register operands that may have a proven memory origin."""
+    return tuple(
+        value
+        for value in (fact.lhs, fact.rhs)
+        if isinstance(value, IRValue)
+        and value.space is MemSpace.REG
+        and isinstance(value.name, str)
+    )
+
+
+def _build_logical_reload_validation_context_8616(
     codegen: object,
-    fact: ConditionIR,
-    expected: str,
-    normalizer: Callable[[str], str] | None,
-) -> frozenset[str]:
-    """Project exact versioned register operands through proven logical reloads."""
+) -> _LogicalReloadValidationContext8616:
+    """Build function-wide CFG and reload indexes once for validation."""
     surface = cast(_TypedConditionCodegen8616, codegen)
     try:
         resolution = registered_function_ssa_artifact_8616(
@@ -360,47 +399,69 @@ def _proven_logical_reload_condition_fingerprints_8616(
             surface.cfunc.addr,
         )
     except AttributeError:
-        return frozenset()
+        return _empty_logical_reload_validation_context_8616()
     if resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or resolution.artifact is None:
-        return frozenset()
-    register_operands = tuple(
-        value
-        for value in (fact.lhs, fact.rhs)
-        if isinstance(value, IRValue)
-        and value.space is MemSpace.REG
-        and isinstance(value.name, str)
-    )
-    if not register_operands:
-        return frozenset()
+        return _empty_logical_reload_validation_context_8616()
+    logical_memory = resolution.artifact.logical_memory
+    if logical_memory is None or not logical_memory.closed:
+        return _empty_logical_reload_validation_context_8616()
     snapshot = build_ssa_cfg_snapshot_8616(resolution.artifact)
     dominators = compute_ssa_dominators_8616(snapshot)
-    logical_memory = resolution.artifact.logical_memory
-    if (
-        not snapshot.complete
-        or not dominators.complete
-        or logical_memory is None
-        or not logical_memory.closed
-    ):
-        return frozenset()
-    blocks_by_addr = {block.addr: block for block in resolution.artifact.blocks}
-    transfers: list[LogicalMemoryRegisterTransfer8616] = []
+    if not snapshot.complete or not dominators.complete:
+        return _empty_logical_reload_validation_context_8616()
+    transfers_by_register: dict[
+        tuple[str, int],
+        list[LogicalMemoryRegisterTransfer8616],
+    ] = {}
     for access in logical_memory.accesses:
         traced = trace_logical_word_register_transfer_8616(resolution.artifact, access)
         if not (
             isinstance(traced, LogicalMemoryRegisterTransfer8616)
             and traced.kind is LogicalMemoryRegisterTransferKind8616.RELOAD
             and traced.complete
+            and isinstance(traced.register.name, str)
         ):
             continue
-        transfers.append(traced)
+        key = (traced.register.name.lower(), traced.register.size)
+        transfers_by_register.setdefault(key, []).append(traced)
+    return _LogicalReloadValidationContext8616(
+        snapshot,
+        dominators,
+        {block.addr: block for block in resolution.artifact.blocks},
+        {
+            key: tuple(transfers)
+            for key, transfers in transfers_by_register.items()
+        },
+    )
+
+
+def _proven_logical_reload_condition_fingerprints_8616(
+    codegen: object,
+    fact: ConditionIR,
+    expected: str,
+    normalizer: Callable[[str], str] | None,
+    context: _LogicalReloadValidationContext8616 | None = None,
+) -> frozenset[str]:
+    """Project exact versioned register operands through proven logical reloads."""
+    register_operands = _condition_register_operands_8616(fact)
+    if not register_operands:
+        return frozenset()
+    active_context = context or _build_logical_reload_validation_context_8616(codegen)
+    if not active_context.complete:
+        return frozenset()
+    snapshot = active_context.snapshot
+    dominators = active_context.dominators
+    if snapshot is None or dominators is None:
+        return frozenset()
     replacements: dict[str, str] = {}
     for operand in register_operands:
         candidates = tuple(
             transfer
-            for transfer in transfers
-            if isinstance(transfer.register.name, str)
-            and transfer.register.name.lower() == operand.name.lower()
-            and transfer.register.size == operand.size
+            for transfer in active_context.transfers_by_register.get(
+                (operand.name.lower(), operand.size),
+                (),
+            )
+            if transfer.register.size == operand.size
             and dominators.dominates(transfer.register_site.block_addr, fact.block_addr) is True
             and (
                 transfer.register_site.block_addr != fact.block_addr
@@ -452,7 +513,7 @@ def _proven_logical_reload_condition_fingerprints_8616(
             continue
         stable = True
         for block_addr in path_blocks:
-            block = blocks_by_addr.get(block_addr)
+            block = active_context.blocks_by_addr.get(block_addr)
             if block is None:
                 stable = False
                 break
@@ -580,6 +641,7 @@ def validate_materialized_branch_conditions_8616(
                 )
             )
 
+    logical_reload_context: _LogicalReloadValidationContext8616 | None = None
     classified_count = 0
     materialized_count = 0
     issues: list[BranchConditionIssue8616] = []
@@ -665,11 +727,14 @@ def validate_materialized_branch_conditions_8616(
             else None
         )
         precision_after = precision_after_by_jcc.get(jcc_addr, set())
+        if logical_reload_context is None and _condition_register_operands_8616(facts[0]):
+            logical_reload_context = _build_logical_reload_validation_context_8616(codegen)
         logical_reload_fingerprints = _proven_logical_reload_condition_fingerprints_8616(
             codegen,
             facts[0],
             expected,
             condition_fingerprint_normalizer,
+            logical_reload_context,
         )
         chain_validation = validate_complete_condition_chain_8616(
             candidates[0],
