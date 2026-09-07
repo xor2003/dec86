@@ -19,6 +19,7 @@ class _DetailedInstructionBoundary8616(Protocol):
 
     def reg_name(self, register_id: int) -> str:
         """Return Capstone's canonical name for one register id."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

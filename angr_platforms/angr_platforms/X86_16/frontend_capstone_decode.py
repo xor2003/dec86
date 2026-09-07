@@ -41,6 +41,7 @@ class _CapstoneDecoderBoundary8616(Protocol):
 
     def disasm(self, code: bytes, address: int) -> Iterable[object]:
         """Decode bytes at their loaded address."""
+        ...
 
 
 class _ArchitectureBoundary8616(Protocol):
@@ -54,6 +55,7 @@ class _LoaderMemoryBoundary8616(Protocol):
 
     def load(self, address: int, size: int) -> object:
         """Read one loaded address range."""
+        ...
 
 
 class _LoaderBoundary8616(Protocol):

@@ -3181,10 +3181,10 @@ def _choose_return_type_for_shape_8616(
     return_shapes: set[str],
     source_shape: str | None,
     existing_returnty: object,
-) -> object | None:
+) -> SimType | None:
     """Choose a changed return type, or refuse an idempotent/no-proof update."""
 
-    def _impl() -> object | None:
+    def _impl() -> SimType | None:
         if shape == "void":
             return None if _is_void_return_type_8616(existing_returnty) else SimTypeBottom(label="void")
         if shape == "scalar_ax" and ((return_shapes and return_shapes <= {"scalar"}) or source_shape == "scalar"):
@@ -3733,26 +3733,27 @@ def _rename_stack_variables_from_specs_8616(
             return selected.name, selected.type_spec
 
         changed = False
-        stack_items = sorted(
-            [
-                (identity, variable, cvar)
-                for variable, cvar in variables_in_use.items()
-                if isinstance(variable, SimStackVariable)
-                and (
-                    identity := _machine_bp_stack_binding_identity_8616(
-                        codegen,
-                        variable,
-                        cvar,
-                    )
+        stack_candidates: list[tuple[_StackSlotIdentity, SimStackVariable, CVariable]] = [
+            (identity, variable, cvar)
+            for variable, cvar in variables_in_use.items()
+            if isinstance(variable, SimStackVariable)
+            and (
+                identity := _machine_bp_stack_binding_identity_8616(
+                    codegen,
+                    variable,
+                    cvar,
                 )
-                is not None
-                and isinstance(variable.size, int)
-                and isinstance(cvar, CVariable)
-            ],
+            )
+            is not None
+            and isinstance(variable.size, int)
+            and isinstance(cvar, CVariable)
+        ]
+        stack_items = sorted(
+            stack_candidates,
             key=lambda item: (
                 0 if item[0].offset > 0 else 1,
                 abs(item[0].offset),
-                item[1].size,
+                cast(int, item[1].size),
                 item[1].name or "",
             ),
         )

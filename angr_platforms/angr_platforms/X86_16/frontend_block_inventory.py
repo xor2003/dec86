@@ -46,6 +46,7 @@ class _FactoryBoundary8616(Protocol):
         num_inst: int | None = None,
     ) -> _BlockBoundary8616:
         """Decode one block at ``addr``."""
+        ...
 
 
 class _MainObjectBoundary8616(Protocol):

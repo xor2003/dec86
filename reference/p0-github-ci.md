@@ -188,3 +188,41 @@ compiler files, register a runner on this workstation without authorization,
 disable MS C acceptance, or turn missing prerequisites into passing skips.
 Other typing and decompiler failures remain actionable while this prerequisite
 is being resolved. This is not a blocker for the entire plan.
+
+### First Pyright Batch Closed Locally
+
+Pending changes expose existing return types and Lowering-proven carrier
+classes, type the stack-name candidate list, and use the known integer key
+after callsite equality succeeds. They add no recovery in postprocess.
+Both compatibility modules pass scoped Ruff, MyPy, and Pyright. Forty selected
+return/carrier tests pass before; both complete callsite test modules pass
+179 tests in 10.00s. Eight annotation regressions pass in 14.94s.
+
+The last first-batch error was the missing optional Unicorn import. Test/dev
+extras now include unicorn==2.1.4, matching installed angr's own declared
+Unicorn extra. It was installed with uv, and 65 smoke/I/O tests pass in 22.51s.
+The first Make Pyright batch is green. The next, previously unmeasured batch
+reports **58 errors**; later batches remain uncounted. This is not full typing
+closure. The subsequent `quality-dev` checkpoint below covers these changes.
+
+### Frontend Protocol Declarations
+
+The next batch includes docstring-only Protocol methods that Pyright treats as
+implicit `None` returns. The block factory, Capstone register lookup, decoder,
+and loader-memory declarations now use explicit abstract ellipsis bodies.
+Runtime implementations and frontend semantics are unchanged. Scoped Ruff
+(`check --fix`), MyPy, and Pyright pass for the three touched modules.
+The focused decoder/inventory selection passes 8 tests in 8.66s; this run
+overlapped the edits and is not a clean before-change baseline.
+A clean post-edit rerun passes 8 tests in 10.59s. `PYTHON_JIT=1
+PYTHONHASHSEED=0 make quality-dev PYTHON=./.venv/bin/python` exits zero,
+including 2119 tests in 105.58s, the 39-module compiled-import smoke,
+architecture/ownership checks, and quality guards. The slowest test is the
+RunMenu ESC-preservation regression at 45.41s. This verifies the development
+gate, not the full suite or the unfinished InitMenu semantic repair.
+
+Remote run `34137913096` on `012c0a71a` completed with **4395 passed,
+41 failed, 10 warnings in 452.15s**. Ruff and Lizard passed; Vulture failed;
+Pyright stopped at 9 errors in its first failing batch. These results precede
+the pending first-batch and frontend declaration fixes. Neither local typing
+progress nor a shorter remote runtime closes the CI or semantic acceptance gate.

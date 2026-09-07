@@ -6059,11 +6059,13 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         offset = outgoing_call_stack_carrier_offset_8616(codegen, node)
         if offset is None:
             return None
+        cvar = cast(structured_c.CVariable, node)
+        variable = cast(SimStackVariable, cvar.variable)
         return (
             offset,
-            node.variable.size,
-            node.variable.base,
-            node.variable.name or node.name,
+            variable.size,
+            variable.base,
+            variable.name or cvar.name,
         )
 
     def _value_expr_key(expr: StructuredAstValue) -> StructuredAstValue:
@@ -11410,7 +11412,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             if summary is not None:
                 return summary
             tagged_callsite = structured_callsite_addr_8616(call)
-            return summary_by_callsite_addr.get(tagged_callsite) if tagged_callsite == callsite_addr else None
+            return summary_by_callsite_addr.get(callsite_addr) if tagged_callsite == callsite_addr else None
 
         def walk_node(node: StructuredAstValue) -> None:
             if node is None:
