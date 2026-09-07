@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from ..ir.core import AddressStatus, IRAddress, IRAtom, IRInstr, IRValue, MemSpace
-from ..ir.segment_state_transfer import SEGMENT_REGISTERS
+from ..ir.segment_state_transfer import SEGMENT_REGISTER_SET
 
 __all__ = [
     "SegmentStackByteOrigin8616",
@@ -59,7 +59,7 @@ def segment_value_fragments_8616(
         value,
         instruction_addr,
         values,
-        tracked_registers=SEGMENT_REGISTERS,
+        tracked_registers=SEGMENT_REGISTER_SET,
     )
 
 
@@ -206,7 +206,7 @@ def computed_segment_fragments_8616(
     return computed_stack_register_fragments_8616(
         instruction,
         values,
-        tracked_registers=SEGMENT_REGISTERS,
+        tracked_registers=SEGMENT_REGISTER_SET,
     )
 
 

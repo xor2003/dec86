@@ -440,6 +440,12 @@ neither Step 9f nor the overall P0 goal is closed by this checkpoint.
 
 #### P0 pointer-store consumption follow-up (2026-09-07)
 
+The [segment-membership checkpoint](reference/p0-segment-register-membership.md)
+aligns Alias's immutable membership contract with IR's ordered register
+inventory, preserves constant restore evidence, and strengthens a stale live
+DS-state assertion. Global MyPy diagnostics decrease from 155 to 150; full P0
+acceptance remains open.
+
 The subsequent [generic-typing checkpoint](reference/p0-generic-typing.md)
 removes nine global MyPy diagnostics (164 to 155) while preserving runtime
 behavior. Its static decorator-inference regression is enrolled in the routine

@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import Final, Protocol, cast
 
 from ..ir.core import IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
-from ..ir.segment_state_transfer import SEGMENT_REGISTERS, SegmentRestoreSource
+from ..ir.segment_state_transfer import SEGMENT_REGISTER_SET, SegmentRestoreSource
 from .segment_stack_fragments import (
     SegmentStackByteOrigin8616,
     SegmentStackFragments8616,
@@ -184,7 +184,7 @@ def _transfer_block(
     block_addr: int,
     instructions: tuple[IRInstr, ...],
     entry_state: _SegmentStackAliasState8616,
-    tracked_registers: frozenset[str] = SEGMENT_REGISTERS,
+    tracked_registers: frozenset[str] = SEGMENT_REGISTER_SET,
 ) -> tuple[list[SegmentStackRestoreFact8616], _SegmentStackAliasState8616]:
     """Transfer exact stack identities and classify restorations in one block."""
     values: dict[str, SegmentStackFragments8616] = {}
@@ -249,7 +249,7 @@ def _transfer_block(
                         stack_offsets, SegmentStackRestoreVerdict8616.PROVEN,
                     )
                 )
-            elif tracked_registers == SEGMENT_REGISTERS and (
+            elif tracked_registers == SEGMENT_REGISTER_SET and (
                 constant := complete_stack_constant_8616(fragments)
             ) is not None:
                 constant_value, saved_addr, stack_offsets = constant
@@ -291,7 +291,7 @@ def _transfer_block(
 
 def _solve_stack_states(
     artifact: IRFunctionArtifact,
-    tracked_registers: frozenset[str] = SEGMENT_REGISTERS,
+    tracked_registers: frozenset[str] = SEGMENT_REGISTER_SET,
 ) -> dict[int, _SegmentStackAliasState8616]:
     """Reach a deterministic must-state fixed point across typed IR edges."""
     blocks_by_addr = {block.addr: block for block in artifact.blocks}

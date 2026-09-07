@@ -955,7 +955,10 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/ir/segment_state_solver.py",
             "angr_platforms/angr_platforms/X86_16/ir/segment_state_transfer.py",
         ),
-        tests=("angr_platforms/tests/test_x86_16_segment_stack_restore.py",),
+        tests=(
+            "angr_platforms/tests/test_x86_16_segment_stack_restore.py",
+            "angr_platforms/tests/test_segment_register_membership.py",
+        ),
     ),
     TestOwnershipRule(
         owner="x86-16-vex-import-ir",

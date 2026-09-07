@@ -156,7 +156,9 @@ def test_real_vex_push_pop_restores_ds_through_exact_stack_bytes() -> None:
     )
     changed = state.state_after_instruction(0x1004, "ds")
     restored = state.state_after_instruction(0x1006, "ds")
-    assert changed is not None and changed.origin is SegmentOrigin.UNKNOWN
+    assert changed is not None and changed.origin is SegmentOrigin.PROVEN
+    assert changed.value_kind is SegmentValueKind8616.SEGMENT_COPY
+    assert changed.source == "0xb800"
     assert restored is not None and restored.value_kind is SegmentValueKind8616.STACK_RESTORE
     assert restored.source == "ds"
     assert restored.origin is SegmentOrigin.PROVEN

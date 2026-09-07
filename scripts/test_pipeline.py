@@ -129,6 +129,8 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_segment_access_policy.py",
     "angr_platforms/tests/test_x86_16_segment_address_policy.py",
     "angr_platforms/tests/test_x86_16_segment_state.py",
+    "angr_platforms/tests/test_x86_16_segment_stack_restore.py",
+    "angr_platforms/tests/test_segment_register_membership.py",
     "angr_platforms/tests/test_x86_16_vex_import.py",
     "angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py",
     "angr_platforms/tests/test_x86_16_indexed_address_aliases.py",

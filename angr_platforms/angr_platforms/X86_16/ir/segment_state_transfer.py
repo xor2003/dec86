@@ -17,6 +17,7 @@ from .core import IRBlock, IRInstr, IRValue, MemSpace, SegmentOrigin
 
 __all__ = [
     "SEGMENT_REGISTERS",
+    "SEGMENT_REGISTER_SET",
     "InstructionStateKey",
     "SegmentRegisterState",
     "SegmentRestoreSource",
@@ -28,6 +29,7 @@ __all__ = [
 ]
 
 SEGMENT_REGISTERS: tuple[str, ...] = ("cs", "ds", "es", "ss", "fs", "gs")
+SEGMENT_REGISTER_SET: frozenset[str] = frozenset(SEGMENT_REGISTERS)
 type InstructionStateKey = int | tuple[int, int]
 
 

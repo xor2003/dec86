@@ -2355,6 +2355,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_segment_program_layout.py \
 	angr_platforms/tests/test_segment_program_layout_reporting.py \
 	angr_platforms/tests/test_x86_16_segment_stack_restore.py \
+	angr_platforms/tests/test_segment_register_membership.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_alias.py \
 	angr_platforms/tests/test_serial_clean_worker_cache.py \
 	angr_platforms/tests/test_direct_request_cache.py \
@@ -2790,6 +2791,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_segment_program_layout.py \
 	angr_platforms/tests/test_segment_program_layout_reporting.py \
 	angr_platforms/tests/test_x86_16_segment_stack_restore.py \
+	angr_platforms/tests/test_segment_register_membership.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_alias.py \
 	angr_platforms/tests/test_serial_clean_worker_cache.py \
 	angr_platforms/tests/test_direct_request_cache.py \
