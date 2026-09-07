@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import copy
 import typing
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
 from functools import lru_cache
 from typing import Protocol, cast
@@ -89,6 +89,18 @@ class _CodegenCFunc8616(Protocol):
     """Codegen view needed at the dynamic third-party angr boundary."""
 
     cfunc: _CFuncStatements8616
+
+
+class _ConditionalPairs8616(Protocol):
+    """Conditional children exposed by the dynamic codegen boundary."""
+
+    condition_and_nodes: Sequence[tuple[object, object]] | None
+
+
+class _SwitchCases8616(Protocol):
+    """Case entries preserved and replaced at the dynamic codegen boundary."""
+
+    cases: Sequence[object] | None
 
 
 def _unwrap_statements_8616(node: object) -> tuple[object, ...]:
@@ -417,7 +429,7 @@ def _replace_c_children_8616(
         if not hasattr(current, "condition_and_nodes"):
             return False
         try:
-            pairs = current.condition_and_nodes
+            pairs = cast(_ConditionalPairs8616, current).condition_and_nodes
         except Exception:
             pairs = None
         if not pairs:
@@ -435,7 +447,7 @@ def _replace_c_children_8616(
                 node_stack.append(new_body)
             new_pairs.append((new_cond, new_body))
         if pair_changed:
-            typing.cast(typing.Any, current).condition_and_nodes = new_pairs
+            cast(_ConditionalPairs8616, current).condition_and_nodes = new_pairs
         return pair_changed
 
     def _process_switch_cases(current: object, node_stack: list[object]) -> bool:
@@ -443,7 +455,7 @@ def _replace_c_children_8616(
         if not hasattr(current, "cases"):
             return False
         try:
-            cases = current.cases
+            cases = cast(_SwitchCases8616, current).cases
         except Exception:
             return False
         if not cases:
@@ -465,7 +477,7 @@ def _replace_c_children_8616(
                 node_stack.append(new_body)
             new_cases.append((new_value, new_body))
         if changed_local:
-            typing.cast(typing.Any, current).cases = new_cases
+            cast(_SwitchCases8616, current).cases = new_cases
         return changed_local
 
     if seen is None:

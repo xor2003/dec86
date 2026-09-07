@@ -165,6 +165,26 @@ explicit paths and PATH commands: one failed/three passed before, four passed
 after (2.55s). A live `make pyright-files PYTHON=python` check with the venv on
 PATH passes for callsite_summary.py. No missing-import suppression is used.
 
-The AST child-field typing follow-up remains uncommitted: nine focused tests,
+The AST child-field typing follow-up passes nine focused tests,
 Ruff, scoped MyPy and Pyright pass, including new conditional-pair and switch
-replacement/idempotence coverage. Broad gates have not run for that change.
+replacement/idempotence coverage. `quality-dev` also passes: 2,119 tests in
+161.81s, compiled-import/architecture/ownership checks, and generated-C guards.
+This is a local typing checkpoint, not remote CI or full-suite closure.
+
+### External Toolchain Prerequisite
+
+Inspection of the four COMP32 failure bodies identifies the immediate cause:
+the mandatory MS C 5.1 syntax acceptance check reports `kvikdos not found`.
+These are no longer missing binary inputs, and the log does not justify
+labeling these four failures as new semantic-recovery defects.
+`recompile_check.py` consumes `INERTIA_KVIKDOS_PATH` and `INERTIA_MSC51_ROOT`;
+without overrides it uses workstation-specific `/home/xor/...` paths. The
+hosted workflow installs neither tool. Repository secret and release listings
+are empty as checked on 2026-09-07.
+
+User input requested: an authorized private compiler artifact or an existing
+self-hosted runner with the required toolchain. Do not publish proprietary
+compiler files, register a runner on this workstation without authorization,
+disable MS C acceptance, or turn missing prerequisites into passing skips.
+Other typing and decompiler failures remain actionable while this prerequisite
+is being resolved. This is not a blocker for the entire plan.

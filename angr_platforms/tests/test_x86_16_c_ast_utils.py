@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CExpressionStatement,
+    CIfElse,
     CMultiStatementExpression,
     CStatements,
+    CSwitchCase,
     CVariable,
 )
 from angr.sim_type import SimTypeShort
@@ -36,6 +39,35 @@ class _DummyCodegen:
         return self.next_idx("")
     def next_ident(self, name: str) -> str:
         return name
+
+
+@pytest.mark.parametrize("switch", (False, True))
+def test_replace_c_children_preserves_conditional_pair_and_case_structure(switch: bool) -> None:
+    """Typed boundary views must preserve replacement and idempotence behavior."""
+    codegen = _DummyCodegen()
+    original = CConstant(1, SimTypeShort(False), codegen=codegen)
+    replacement = CConstant(2, SimTypeShort(False), codegen=codegen)
+    body = CStatements([], codegen=codegen)
+    new_body = CStatements([], codegen=codegen)
+    root = (
+        CSwitchCase(original, [(7, body)], None, codegen=codegen)
+        if switch else CIfElse([(original, body)], codegen=codegen)
+    )
+
+    def replace(node: object) -> object:
+        if node is original:
+            return replacement
+        return new_body if node is body else node
+
+    assert _replace_c_children_8616(root, replace)
+    if switch:
+        assert root.switch is replacement
+        assert root.cases == [(7, new_body)]
+        assert root.default is None
+    else:
+        assert root.condition_and_nodes == [(replacement, new_body)]
+        assert root.else_node is None
+    assert not _replace_c_children_8616(root, replace)
 
 
 def test_c_ast_cycle_path_reports_active_path_cycle() -> None:
