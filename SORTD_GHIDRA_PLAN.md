@@ -440,6 +440,11 @@ neither Step 9f nor the overall P0 goal is closed by this checkpoint.
 
 #### P0 pointer-store consumption follow-up (2026-09-07)
 
+The subsequent [generic-typing checkpoint](reference/p0-generic-typing.md)
+removes nine global MyPy diagnostics (164 to 155) while preserving runtime
+behavior. Its static decorator-inference regression is enrolled in the routine
+pipeline. Global typing and full-suite acceptance remain open.
+
 The subsequent [logical-memory width checkpoint](reference/p0-logical-memory-width.md)
 corrects execution-byte promotion to logical-word width in Types/Lowering and
 separates proven store projection from setup deletion. Arithmetic tests and the

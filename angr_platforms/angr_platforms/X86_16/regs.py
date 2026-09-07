@@ -7,9 +7,6 @@ Forbidden: semantic recovery, alias ownership, lowering, structuring, or rewrite
 from __future__ import annotations
 
 from enum import Enum, IntEnum
-from typing import TypeVar
-
-_E = TypeVar("_E", bound=IntEnum)
 
 
 class reg32_t(IntEnum):
@@ -78,7 +75,8 @@ class dtreg_t(IntEnum):
     DTREGS_COUNT = 4
 
 
-def _coerce_enum[E: IntEnum](enum_cls: type[_E], value: object) -> _E:
+def _coerce_enum[E: IntEnum](enum_cls: type[E], value: object) -> E:
+    """Coerce a numeric register identifier while retaining its enum type."""
     if isinstance(value, enum_cls):
         return value
     raw_value = value.value if isinstance(value, IntEnum) else value

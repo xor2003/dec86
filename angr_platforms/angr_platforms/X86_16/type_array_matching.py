@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -39,18 +39,14 @@ from .c_ast_utils import _replace_c_children_8616, _safe_assign_cfunc_statements
 from .ir.core import IRAddress
 from .type_storage_object_bridge import load_storage_object_bridge
 
-if TYPE_CHECKING:
-    pass
-
 logger: logging.Logger = logging.getLogger(__name__)
 MAX_TYPED_ARRAY_CANDIDATES: int = 64
-_MappingKey = TypeVar("_MappingKey")
-_MappingValue = TypeVar("_MappingValue")
 
 
 def _limit_sorted_mapping_8616[MappingKey, MappingValue](
-    mapping: dict[_MappingKey, _MappingValue], limit: int
-) -> dict[_MappingKey, _MappingValue]:
+    mapping: dict[MappingKey, MappingValue], limit: int
+) -> dict[MappingKey, MappingValue]:
+    """Limit an already ordered mapping without changing its key/value types."""
     if limit <= 0 or len(mapping) <= limit:
         return mapping
     return dict(list(mapping.items())[:limit])
@@ -622,7 +618,8 @@ def _profile_induction_match_8616(codegen: object, loop_var: object) -> Inductio
 def _rewrite_induction_loops_8616(codegen: object) -> bool:
     """Rewrite induction loop shape at the dynamic third-party angr codegen boundary."""
     # Dynamic codegen boundary: this pass is called with third-party angr codegen instances.
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
         return False
 
     changed = False
@@ -681,7 +678,6 @@ def _rewrite_induction_loops_8616(codegen: object) -> bool:
         changed = True
         return node
 
-    cfunc = cast(Any, codegen.cfunc)
     root = cfunc.statements
     new_root = transform(root)
     if new_root is not root:

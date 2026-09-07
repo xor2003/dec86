@@ -63,6 +63,16 @@ class ManifestViolation:
 
 TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
+        owner="generic-annotation-contracts",
+        paths=(
+            "inertia_decompiler/fork_timeout.py",
+            "inertia_decompiler/telemetry.py",
+            "angr_platforms/angr_platforms/X86_16/regs.py",
+            "angr_platforms/angr_platforms/X86_16/type_array_matching.py",
+        ),
+        tests=("angr_platforms/tests/test_generic_annotation_contracts.py",),
+    ),
+    TestOwnershipRule(
         owner="generated-translation-unit-assembly",
         paths=(
             "inertia_decompiler/cli_batch_c_output.py",

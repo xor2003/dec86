@@ -25,7 +25,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import ParamSpec, Protocol, TypeVar, cast, overload
+from typing import Protocol, cast, overload
 
 TRACE_ENABLE_ENV: str = "INERTIA_OTEL_SPANS"
 TRACE_FILE_ENV: str = "INERTIA_OTEL_SPAN_FILE"
@@ -219,8 +219,6 @@ _CURRENT_SPAN_ID: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "inertia_current_span_id",
     default=None,
 )
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
 _AUTO_ATTR_NAMES = {
     "addr",
     "address",
@@ -586,41 +584,52 @@ def span_here(**attrs: object) -> contextlib.AbstractContextManager[None]:
 
 
 @overload
-def trace_function[**P](  # noqa: D418
+def trace_function[**P, R](  # noqa: D418
     func: None = None,
     *,
     name: str | None = None,
     attrs: dict[str, object] | None = None,
-    attr_factory: Callable[_P, dict[str, object] | None] | None = None,
-) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    attr_factory: None = None,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Return a decorator configured for a function discovered later."""
 
 
 @overload
 def trace_function[**P, R](  # noqa: D418
-    func: Callable[_P, _R],
+    func: None = None,
     *,
     name: str | None = None,
     attrs: dict[str, object] | None = None,
-    attr_factory: Callable[_P, dict[str, object] | None] | None = None,
-) -> Callable[_P, _R]:
+    attr_factory: Callable[P, dict[str, object] | None],
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Bind arguments from an attribute factory while preserving result type."""
+
+
+@overload
+def trace_function[**P, R](  # noqa: D418
+    func: Callable[P, R],
+    *,
+    name: str | None = None,
+    attrs: dict[str, object] | None = None,
+    attr_factory: Callable[P, dict[str, object] | None] | None = None,
+) -> Callable[P, R]:
     """Decorate an already supplied function with an optional telemetry span."""
 
 
 def trace_function[**P, R](
-    func: Callable[_P, _R] | None = None,
+    func: Callable[P, R] | None = None,
     *,
     name: str | None = None,
     attrs: dict[str, object] | None = None,
-    attr_factory: Callable[_P, dict[str, object] | None] | None = None,
-) -> Callable[_P, _R] | Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    attr_factory: Callable[P, dict[str, object] | None] | None = None,
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """Decorate a function so calls are wrapped in optional telemetry spans."""
 
-    def _decorate(target: Callable[_P, _R]) -> Callable[_P, _R]:
+    def _decorate(target: Callable[P, R]) -> Callable[P, R]:
         span_name = name or f"{target.__module__}.{target.__name__}"
 
         @functools.wraps(target)
-        def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
             if not _STATE.enabled:
                 return target(*args, **kwargs)
             span_attrs = _auto_span_attrs(target, tuple(args), dict(kwargs))

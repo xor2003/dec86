@@ -23,7 +23,6 @@ import typing
 from collections.abc import Callable
 from dataclasses import dataclass
 
-_ResultT = typing.TypeVar("_ResultT")
 _ROOT_PROCESS_GROUP: int | None = None
 
 
@@ -137,7 +136,7 @@ def _configure_child_stack_dump() -> None:
             faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
 
 
-def _run_child[ResultT](func: Callable[[], _ResultT], write_fd: int, read_fd: int, *, owns_process_group: bool) -> typing.NoReturn:
+def _run_child[ResultT](func: Callable[[], ResultT], write_fd: int, read_fd: int, *, owns_process_group: bool) -> typing.NoReturn:
     """Execute and report one callable from the fork child."""
     global _ROOT_PROCESS_GROUP
 
@@ -171,10 +170,10 @@ def _run_child[ResultT](func: Callable[[], _ResultT], write_fd: int, read_fd: in
 
 
 def run_with_timeout_in_fork[ResultT](
-    func: Callable[[], _ResultT],
+    func: Callable[[], ResultT],
     *,
     timeout: int,
-) -> _ResultT:
+) -> ResultT:
     """Run a callable in a bounded POSIX process tree and reap all descendants."""
     if os.name != "posix" or not hasattr(os, "fork"):
         raise RuntimeError("fork unavailable")
