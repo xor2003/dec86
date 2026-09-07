@@ -105,6 +105,70 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
     assert project._inertia_decompiler_stage == "structuring:condition_materialization:provenance"
 
 
+def test_cfg_condition_chain_reuses_reconverged_typed_suffixes(monkeypatch):
+    """Materialize each equal-address suffix once instead of every syntactic path."""
+    codegen = _Codegen()
+    project = _Project()
+    condition_count = 18
+    conditions = tuple(
+        ConditionIR(
+            op="eq",
+            lhs=object(),
+            rhs=object(),
+            src_insn=0x2000 + index,
+            block_addr=0x1000 + index,
+            taken_target=(0x1001 + index if index + 1 < condition_count else 0x3000),
+            fallthrough_target=(0x1001 + index if index + 1 < condition_count else 0x3001),
+        )
+        for index in range(condition_count)
+    )
+    materialized_sources: list[int | None] = []
+
+    monkeypatch.setattr(
+        condition_materialization,
+        "recover_wide_stack_condition_chain_8616",
+        lambda *_args: SimpleNamespace(condition=None),
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "recover_local_wide_stack_condition_chain_8616",
+        lambda *_args: SimpleNamespace(condition=None),
+    )
+
+    def _materialize(_project, active_codegen, condition):
+        materialized_sources.append(condition.src_insn)
+        return CConstant(1, SimTypeShort(False), codegen=active_codegen)
+
+    monkeypatch.setattr(
+        condition_materialization,
+        "materialize_condition_ir_expression_8616",
+        _materialize,
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "lower_call_output_stack_fields_in_condition_8616",
+        lambda _codegen, expression, _conditions: SimpleNamespace(expression=expression),
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "bind_condition_chain_provenance_8616",
+        lambda _expression, _conditions: None,
+    )
+
+    result = condition_materialization._materialize_cfg_condition_chain_expr_8616(
+        project,
+        codegen,
+        conditions[0],
+        {condition.block_addr: condition for condition in conditions},
+        {},
+        0x3000,
+        0x3001,
+    )
+
+    assert isinstance(result, CExpression)
+    assert materialized_sources == [condition.src_insn for condition in conditions]
+
+
 def test_canonical_wide_return_owner_blocks_competing_condition_consumers(monkeypatch):
     codegen = _Codegen()
     project = _Project()

@@ -901,33 +901,49 @@ def _materialize_cfg_condition_chain_expr_8616(
             record_wide_condition_argument_type_evidence_8616(codegen, wide_result.condition)
             return wide_expression
 
-    def build_from_address(address: int, visited: frozenset[int]) -> CExpression | bool | None:
+    materialized_by_address: dict[int, CExpression | bool] = {}
+    active_addresses: set[int] = set()
+
+    def build_from_address(address: int) -> CExpression | bool | None:
+        """Build one acyclic CFG suffix once and reuse its identical predicate."""
         if address == true_target:
             return True
         if address == false_target:
             return False
-        if address in visited or len(visited) >= 24:
+        cached = materialized_by_address.get(address)
+        if cached is not None:
+            return cached
+        if address in active_addresses:
             _debug_condition_chain_8616(
                 "cfg-chain-address-cycle",
                 address=address,
-                visited=tuple(sorted(visited)),
+                visited=tuple(sorted(active_addresses)),
             )
             return None
-        condition = conditions_by_block.get(address)
-        if condition is not None:
-            return build_from_condition(condition, visited | {address})
-        next_addrs = successors.get(address, ())
-        if len(next_addrs) != 1:
-            _debug_condition_chain_8616(
-                "cfg-chain-successor-refused",
-                address=address,
-                successors=next_addrs,
-                visited=tuple(sorted(visited)),
-            )
-            return None
-        return build_from_address(next_addrs[0], visited | {address})
+        active_addresses.add(address)
+        try:
+            condition = conditions_by_block.get(address)
+            if condition is not None:
+                result = build_from_condition(condition)
+            else:
+                next_addrs = successors.get(address, ())
+                if len(next_addrs) != 1:
+                    _debug_condition_chain_8616(
+                        "cfg-chain-successor-refused",
+                        address=address,
+                        successors=next_addrs,
+                        visited=tuple(sorted(active_addresses)),
+                    )
+                    return None
+                result = build_from_address(next_addrs[0])
+        finally:
+            active_addresses.remove(address)
+        if result is not None:
+            materialized_by_address[address] = result
+        return result
 
-    def build_from_condition(condition: ConditionIR, visited: frozenset[int]) -> CExpression | bool | None:
+    def build_from_condition(condition: ConditionIR) -> CExpression | bool | None:
+        """Materialize one typed branch after its owning address is cycle-guarded."""
         if not isinstance(condition.taken_target, int) or not isinstance(condition.fallthrough_target, int):
             _debug_condition_chain_8616(
                 "cfg-chain-target-refused",
@@ -962,13 +978,18 @@ def _materialize_cfg_condition_chain_expr_8616(
                 codegen,
                 local_wide.condition,
             )
-            wide_visited = visited.union(
+            consumed_addrs = {
                 consumed.block_addr
                 for consumed in local_wide.consumed_conditions
                 if isinstance(consumed.block_addr, int)
-            )
-            taken = build_from_address(local_wide.true_target, wide_visited)
-            fallthrough = build_from_address(local_wide.false_target, wide_visited)
+            }
+            newly_active = consumed_addrs - active_addresses
+            active_addresses.update(newly_active)
+            try:
+                taken = build_from_address(local_wide.true_target)
+                fallthrough = build_from_address(local_wide.false_target)
+            finally:
+                active_addresses.difference_update(newly_active)
             if taken is None or fallthrough is None:
                 return None
             return _combine_condition_outcomes_8616(
@@ -987,8 +1008,8 @@ def _materialize_cfg_condition_chain_expr_8616(
                 src_insn=condition.src_insn,
             )
             return None
-        taken = build_from_address(condition.taken_target, visited)
-        fallthrough = build_from_address(condition.fallthrough_target, visited)
+        taken = build_from_address(condition.taken_target)
+        fallthrough = build_from_address(condition.fallthrough_target)
         if taken is None or fallthrough is None:
             _debug_condition_chain_8616(
                 "cfg-chain-outcome-refused",
@@ -1000,7 +1021,15 @@ def _materialize_cfg_condition_chain_expr_8616(
             return None
         return _combine_condition_outcomes_8616(materialized, taken, fallthrough, codegen)
 
-    result = build_from_condition(root_condition, frozenset())
+    root_addr = root_condition.block_addr
+    root_added = isinstance(root_addr, int) and root_addr not in active_addresses
+    if root_added:
+        active_addresses.add(root_addr)
+    try:
+        result = build_from_condition(root_condition)
+    finally:
+        if root_added:
+            active_addresses.remove(cast(int, root_addr))
     if not isinstance(result, CExpression):
         _debug_condition_chain_8616(
             "cfg-chain-result-refused",
