@@ -15,6 +15,7 @@ from angr_platforms.X86_16.postprocess.optimization.local_liveness import (
     local_liveness_key_8616,
     stack_storage_liveness_key_8616,
 )
+from angr_platforms.X86_16.postprocess.optimization.local_read_keys import collect_local_read_keys_8616
 
 _PURE_GENERATED_HELPER_CALLEES = frozenset(
     {
@@ -88,6 +89,7 @@ def _prune_dead_local_assignments(
     unwrap_c_casts: Callable[[object], object],
     describe_alias_storage: Callable[[object], _AliasStorageLike],
 ) -> bool:
+    """Prune local assignments using read keys from the cleanup owner."""
     cfunc = codegen.cfunc
     if cfunc is None:
         return False
@@ -102,104 +104,12 @@ def _prune_dead_local_assignments(
         *,
         allow_variable_read: bool = True,
     ) -> None:
-        if not structured_codegen_node(node):
-            return
-        if seen is None:
-            seen = set()
-        node_id = id(node)
-        if node_id in seen:
-            return
-        seen.add(node_id)
-        try:
-            if isinstance(node, structured_c.CVariable):
-                if allow_variable_read:
-                    variable = node.variable
-                    if variable is not None:
-                        keys.add(("var", id(variable)))
-                        unified = node.unified_variable
-                        if unified is not None:
-                            keys.add(("unified", id(unified)))
-                        storage_key = describe_alias_storage(node).identity
-                        if storage_key is not None:
-                            keys.add(("storage", storage_key))
-                        liveness_key = local_liveness_key_8616(node)
-                        if liveness_key is not None:
-                            keys.add(("liveness", liveness_key))
-                return
-
-            if isinstance(node, structured_c.CAssignment):
-                if structured_codegen_node(node.lhs):
-                    collect_storage_read_keys(node.lhs, keys, seen, allow_variable_read=False)
-                if structured_codegen_node(node.rhs):
-                    collect_storage_read_keys(node.rhs, keys, seen, allow_variable_read=True)
-                return
-
-            if node.__class__.__name__ == "CDirtyExpression":
-                if allow_variable_read:
-                    # Dynamic codegen boundary: dirty expressions are external codegen nodes.
-                    dirty = getattr(node, "dirty", None)
-                    if dirty is not None:
-                        # Dynamic codegen boundary: dirty metadata fields vary by angr expression.
-                        varid = getattr(dirty, "varid", None)
-                        if isinstance(varid, int):
-                            keys.add(("dirty_varid", varid))
-                        # Dynamic codegen boundary: dirty metadata fields vary by angr expression.
-                        name = getattr(dirty, "name", None)
-                        if isinstance(name, str) and name:
-                            keys.add(("dirty_name", name))
-                return
-
-            for attr in (
-                "lhs",
-                "rhs",
-                "expr",
-                "operand",
-                "condition",
-                "cond",
-                "body",
-                "iffalse",
-                "iftrue",
-                "else_node",
-                "retval",
-            ):
-                if not hasattr(node, attr):
-                    continue
-                try:
-                    # Dynamic codegen boundary: child field names vary across angr C AST nodes.
-                    value = getattr(node, attr)
-                except Exception:
-                    continue
-                if structured_codegen_node(value):
-                    collect_storage_read_keys(value, keys, seen)
-
-            for attr in ("args", "operands", "statements"):
-                if not hasattr(node, attr):
-                    continue
-                try:
-                    # Dynamic codegen boundary: child sequence fields vary across angr C AST nodes.
-                    items = getattr(node, attr)
-                except Exception:
-                    continue
-                if not items:
-                    continue
-                for item in items:
-                    if structured_codegen_node(item):
-                        collect_storage_read_keys(item, keys, seen)
-
-            if hasattr(node, "condition_and_nodes"):
-                try:
-                    # Dynamic codegen boundary: CIfElse-like nodes may expose condition/body pairs.
-                    pairs = node.condition_and_nodes
-                except Exception:
-                    pairs = None
-                if pairs:
-                    for cond, body in pairs:
-                        if structured_codegen_node(cond):
-                            collect_storage_read_keys(cond, keys, seen)
-                        if structured_codegen_node(body):
-                            collect_storage_read_keys(body, keys, seen)
-        finally:
-            seen.remove(node_id)
+        """Delegate read traversal to the structured-C cleanup owner."""
+        collect_local_read_keys_8616(
+            node, keys, seen, allow_variable_read=allow_variable_read,
+            structured_codegen_node=structured_codegen_node,
+            describe_alias_storage=describe_alias_storage,
+        )
 
     reads: set[tuple[object, ...]] = set()
     collect_storage_read_keys(root, reads)

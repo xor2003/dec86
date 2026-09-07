@@ -128,6 +128,13 @@ or acceptance based only on disappearance of the equations.
 
 ### 3. Restore Initializers, Unique Calls, and Guards
 
+The [InitMenu local-read repair](p0-initmenu-local-reads.md) records the current
+focused evidence and rejected diagnostic hypotheses. Late dead-local pruning
+omitted structured child reads; the generic cleanup-owner repair restores the
+zero initializer. Named InitMenu still fails stack-buffer identity and argument
+validation, while its sidecar-free regression passes. This is not full function
+closure and does not replace the complete-suite census.
+
 Reason: validation detects missing data/control effects, not cosmetic issues.
 DoD: InitMenu/InitBars/ExchangeSort/PercolateDown and TIDShowRange regressions
 pass at their owning layers, with exact initialized storage, call multiplicity,

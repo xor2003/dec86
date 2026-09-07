@@ -20,6 +20,14 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-07)
 
+Scheduling decision (2026-09-07): **defer performance optimization, Step 10,
+until the other remaining steps are complete**. Finish correctness, full-suite
+and quality-gate closure, proof-backed readability, and applicable remaining
+mechanisms first. Keep accepted optimizations and required compiled-import
+checks; do not start profiling campaigns or new speed experiments during those
+steps. Fixing DCE that deletes live code remains correctness work, not deferred
+performance work. The revised priority section below overrides older schedules.
+
 The [gate-inventory checkpoint](reference/p0-gate-inventory-coherence.md)
 closes the four audit failures in Make inventory, ownership expectations, and
 quality-module admission under focused tests. The 2,065-test quality-dev and
@@ -34,6 +42,12 @@ sidecar-free validation and recompilation pass. Final quality-hard passes
 three lanes, including seven MS C tiny round trips. The unit lane remains over
 its time budget. A generic unreachable-selector-call validation shield remains
 open in the checkpoint report; this repair does not close the full audit.
+
+The [InitMenu local-read repair](reference/p0-initmenu-local-reads.md) preserves
+its zero initializer by consuming the shared AST child inventory during
+dead-local read collection. Named InitMenu still fails buffer storage/argument
+validation; sidecar-free passes. This is partial correctness progress, not
+function closure or deferred performance work.
 
 The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
 **10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current
@@ -1083,17 +1097,29 @@ by the easiest percentage gain:
    multi-output/indexed/indirect storage first, type and object identity second,
    CFG/condition recovery third, and isolated corpus regressions only after
    those shared mechanisms close.
-2. **P1 - Step 10, profile and optimize the serial tail.** Start implementation
-   after the first P0 family closes and an exact full-suite baseline is stable;
-   collect profiles during P0 test waits. Keep only optimizations whose measured
-   savings repay their engineering cost across the remaining gates and remain
-   under the 2 GiB aggregate-worker budget.
-3. **P2 - Step 11, proof-backed readability.** Begin only after the semantic
+2. **P1 - Step 11, proof-backed readability.** Begin only after the semantic
    suite is green, because readable output must consume stable typed evidence
    rather than hide unresolved ownership defects.
-4. **P3 - Step 12, evidence-supported Reko mechanisms.** Implement last, and
+3. **P2 - Step 12, evidence-supported Reko mechanisms.** Implement after
+   the preceding non-performance work, and
    only where the existing IR/Alias/Types contracts can prove the mechanism;
-   this has less immediate corpus and gate leverage than P0-P2.
+   unsupported proposals must be explicitly closed with evidence rather than
+   implemented speculatively.
+4. **Deferred - Step 10, profile and optimize the serial tail.** Resume only
+   after the other remaining steps close. No opportunistic profiling during
+   P0 test waits, worker-reuse experiments, scheduling rewrites, or new mypyc
+   performance experiments until then. Preserve accepted work and rejected
+   experiment records. On resumption, re-profile the then-current HEAD before
+   selecting any implementation; retain the existing measurement and semantic
+   acceptance requirements, including the aggregate-worker memory budget.
+
+Reason for deferral: focus engineering effort on the remaining functional and
+quality blockers and avoid optimizing code that correctness work may replace.
+Scheduling DoD: the active work queue contains no standalone Step 10 task;
+the remaining non-performance steps retain their original acceptance gates.
+Definition of Failure: restarting speed work before those steps close, removing
+working optimizations, weakening correctness gates to save time, or postponing
+a live-code preservation fix merely because its owner is an optimization pass.
 
 P0 definition of done: every currently failing in-scope repository test is
 either corrected by a generic earliest-layer implementation or retired with

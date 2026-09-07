@@ -1,5 +1,15 @@
 # Inertia Decompiler Performance Plan
 
+## Scheduling Status (2026-09-07)
+
+Deferred by user request until the other remaining steps in
+`SORTD_GHIDRA_PLAN.md` are complete. Do not start new profiling, parallel-worker,
+scheduling, or mypyc speed experiments in the meantime. Preserve accepted work
+and the experiment ledger. Required correctness, lint, typing, and existing
+compiled-import gates continue; fixing an optimization pass that deletes live
+code is correctness work and is not deferred. On resumption, re-profile the
+current HEAD before relying on the historical measurements below.
+
 ## Objective
 
 Reduce cold and incremental decompilation time without changing recovered

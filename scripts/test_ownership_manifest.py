@@ -291,8 +291,14 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     ),
     TestOwnershipRule(
         owner="cli-dead-local-prune",
-        paths=("inertia_decompiler/cli_dead_local_prune.py",),
-        tests=("angr_platforms/tests/test_x86_16_dead_local_prune.py",),
+        paths=(
+            "inertia_decompiler/cli_dead_local_prune.py",
+            "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_read_keys.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_dead_local_prune.py",
+            "angr_platforms/tests/test_x86_16_dead_local_structured_reads.py",
+        ),
     ),
     TestOwnershipRule(
         owner="cli-timeout-policy",

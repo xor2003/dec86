@@ -1851,6 +1851,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_purity.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py",
+    "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_read_keys.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py",

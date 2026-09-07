@@ -954,6 +954,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_purity.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_read_keys.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
@@ -1948,6 +1949,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_purity.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_read_keys.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
@@ -2484,6 +2486,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_packed_flags_state.py \
 		angr_platforms/tests/test_x86_16_dce_lvalue_reads.py \
 		angr_platforms/tests/test_x86_16_dead_local_prune.py \
+		angr_platforms/tests/test_x86_16_dead_local_structured_reads.py \
 		angr_platforms/tests/test_x86_16_local_liveness.py \
 		angr_platforms/tests/test_cli_semantic_rollback.py \
 		angr_platforms/tests/test_x86_16_trivial_copy_optimization.py \
@@ -2946,6 +2949,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_packed_flags_state.py \
 	angr_platforms/tests/test_x86_16_dce_lvalue_reads.py \
 	angr_platforms/tests/test_x86_16_dead_local_prune.py \
+	angr_platforms/tests/test_x86_16_dead_local_structured_reads.py \
 	angr_platforms/tests/test_x86_16_local_liveness.py \
 	angr_platforms/tests/test_cli_semantic_rollback.py \
 	angr_platforms/tests/test_x86_16_trivial_copy_optimization.py \
