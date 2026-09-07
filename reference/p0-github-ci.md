@@ -286,3 +286,29 @@ development gate also exits zero: 2130 tests in 95.65s plus compiled-import,
 architecture, ownership, and generated-C quality guards. These gates ran on
 the shared tree, including the separately pending InitMenu changes; they are
 not a clean-commit full-suite result. The full suite is not yet green.
+
+### Immediate Bit-Group Dispatch Contract
+
+Pyright identified a genuine call-contract mismatch in `Instr16.code_0fba`:
+the error callback occupied the required opcode-string parameter. Valid
+selectors still dispatched, but invalid selectors raised a generic error
+containing a function representation instead of invoking the intended error
+handler. The 32-bit sibling already passed the opcode and callback correctly.
+The 16-bit handler now supplies `"0x0fba"` explicitly.
+
+Parameterized tests exercise all eight selectors for both operand widths.
+Before: four invalid 16-bit cases fail, 16 tests pass (8.72s). After: all 20
+tests pass (9.25s), including exact error arguments and valid-handler identity.
+The module is enrolled in regular pipeline and Make selections. Existing VEX
+boundary adapters now precede LOOP/IDIV dynamic-member access, and an obsolete
+class-level typing suppression was removed. Scoped Ruff, MyPy, and Pyright
+pass for `instr16.py`; no instruction arithmetic was changed by those adapters.
+`quality-dev` exits zero with 2150 tests passed in 103.08s, compiled-import,
+architecture/ownership, and generated-C quality guards. This shared-tree gate
+does not close the full suite; the default external pipeline was last run for
+the preceding INC/DEC repair, not repeated for this dispatch-only change.
+
+Remote run `34139402208` on `6590e6759` confirmed first-batch Pyright closure
+(zero errors), then stopped at 55 errors in the second batch. Pytest remained
+4395 passed, 41 failed in 466.47s. It predates the INC/DEC execution repair;
+neither this count nor the local scoped fixes establishes current full closure.

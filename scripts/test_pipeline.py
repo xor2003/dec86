@@ -168,6 +168,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "test_quality_compatibility_exports_retain_canonical_identity",
     "angr_platforms/tests/test_x86_16_alu_effect_order.py",
     "angr_platforms/tests/test_x86_16_simple_incdec_value_provenance.py",
+    "angr_platforms/tests/test_x86_16_lifting_opcode_tables.py",
     "angr_platforms/tests/test_x86_16_cod_regressions.py::test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores",
     "angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py",
     "angr_platforms/tests/test_project_loading_diagnostics.py",

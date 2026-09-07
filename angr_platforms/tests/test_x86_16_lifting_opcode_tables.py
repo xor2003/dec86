@@ -1,9 +1,33 @@
 import inspect
 from types import SimpleNamespace
 
+import pytest
+from angr_platforms.X86_16 import instr16, instr32
 from angr_platforms.X86_16.instr_base import InstrBase
 from angr_platforms.X86_16.instruction import CHK_IMM8, CHK_MODRM, MAX_OPCODE
 from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+
+@pytest.mark.parametrize("module,cls,width", [(instr16, instr16.Instr16, 16), (instr32, instr32.Instr32, 32)])
+@pytest.mark.parametrize("selector", range(8))
+def test_bit_immediate_group_dispatches_or_reports_exact_invalid_selector(
+    monkeypatch, module, cls, width, selector
+):
+    """Keep valid bit handlers and invalid-extension diagnostics coherent."""
+    host = cls.__new__(cls)
+    host.instr = SimpleNamespace(modrm=SimpleNamespace(reg=selector))
+    calls = []
+    errors = []
+    for operation in ("bt", "bts", "btr", "btc"):
+        monkeypatch.setattr(
+            host, f"{operation}_rm{width}_imm8", lambda op=operation: calls.append(op)
+        )
+    monkeypatch.setattr(module, "ERROR", lambda fmt, reg: errors.append((fmt, reg)))
+
+    host.code_0fba()
+
+    assert calls == ([] if selector < 4 else [("bt", "bts", "btr", "btc")[selector - 4]])
+    assert errors == ([("invalid 0x0fba /%d\n", selector)] if selector < 4 else [])
 
 
 def _dummy_handler() -> None:

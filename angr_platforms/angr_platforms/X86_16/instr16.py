@@ -80,7 +80,7 @@ X86_16_OPCODE_HELPERS: tuple[tuple[int, int, str, int], ...] = (
 )
 
 
-class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend base
+class Instr16(InstrBase):
     """Implement operand-size-16 instruction effects for the x86 frontend."""
 
     _opcode_template_instrfuncs: list[OpcodeExecHandler | None] | None = None
@@ -299,7 +299,7 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         counter_type = Type.int_32 if self.instr.address_bits == 32 else Type.int_16
         counter = self.emu.get_gpreg(counter_reg) - self.emu.constant(1, counter_type)
         self.emu.set_gpreg(counter_reg, counter)
-        return _vex_expr((counter != self.emu.constant(0, counter_type)).cast_to(Type.int_1))
+        return _vex_expr(counter != self.emu.constant(0, counter_type)).cast_to(Type.int_1)
 
     def loop16(self) -> None:
         """Execute decoded ``LOOP16`` semantics through frontend emulator effects."""
@@ -1250,6 +1250,7 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         """Dispatch immediate-index BT/BTS/BTR/BTC group members."""
         self._dispatch_modrm_reg(
             (None, None, None, None, self.bt_rm16_imm8, self.bts_rm16_imm8, self.btr_rm16_imm8, self.btc_rm16_imm8),
+            "0x0fba",
             lambda reg: ERROR("invalid 0x0fba /%d\n", reg),
         )
 
@@ -1935,8 +1936,8 @@ class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend b
         remainder = val_s - quotient * rm16_s
         signed_quotient = quotient.signed
         self._divide_error_if(
-            (signed_quotient < self.emu.constant(0xFFFF8000, Type.int_32).signed)
-            | (signed_quotient > self.emu.constant(0x00007FFF, Type.int_32).signed)
+            (signed_quotient < _vex_expr(self.emu.constant(0xFFFF8000, Type.int_32)).signed)
+            | (signed_quotient > _vex_expr(self.emu.constant(0x00007FFF, Type.int_32)).signed)
         )
         self.emu.set_gpreg(reg16_t.AX, quotient.cast_to(Type.int_16))
         self.emu.set_gpreg(reg16_t.DX, remainder.cast_to(Type.int_16))
