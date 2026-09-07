@@ -40,10 +40,13 @@ if TYPE_CHECKING:
     from angr.analyses.decompiler.structured_codegen.c import CConstant, CExpression
 
 __all__ = [
+    "SameBlockRegisterAssignment8616",
+    "SameBlockRegisterAssignmentIndex8616",
     "SameBlockRegisterProjectionResult8616",
     "SameBlockRegisterProjectionStats8616",
     "SameBlockRegisterProjectionVerdict8616",
     "attach_condition_segment_access_provenance_8616",
+    "build_same_block_register_assignment_index_8616",
     "condition_op_to_structured_kind_8616",
     "condition_origin_tags_8616",
     "condition_segment_access_tags_8616",
@@ -111,6 +114,37 @@ class SameBlockRegisterProjectionResult8616:
     stats: SameBlockRegisterProjectionStats8616
 
 
+@dataclass(frozen=True, slots=True)
+class SameBlockRegisterAssignment8616:
+    """One tagged register assignment available to typed condition lowering."""
+
+    instruction_addr: int
+    lhs: object
+    rhs: object
+    register_offset: int
+    register_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class SameBlockRegisterAssignmentIndex8616:
+    """Immutable per-AST index of tagged register assignments by CFG block."""
+
+    assignments_by_block: tuple[
+        tuple[int, tuple[SameBlockRegisterAssignment8616, ...]],
+        ...,
+    ]
+
+    def assignments_for_block(
+        self,
+        block_addr: int,
+    ) -> tuple[SameBlockRegisterAssignment8616, ...]:
+        """Return assignments indexed for one exact CFG block address."""
+        for indexed_block, assignments in self.assignments_by_block:
+            if indexed_block == block_addr:
+                return assignments
+        return ()
+
+
 def _make_c_constant_8616(value: int, codegen: object, signed: bool = False) -> CConstant:
     """Create a structured-codegen CConstant node."""
     from angr.analyses.decompiler.structured_codegen.c import CConstant
@@ -129,6 +163,61 @@ def _register_offset_size_for_value_8616(value: IRValue, project: object) -> tup
     return int(value.offset), int(value.size or 2)
 
 
+def build_same_block_register_assignment_index_8616(
+    codegen: object,
+) -> SameBlockRegisterAssignmentIndex8616:
+    """Index the current C AST once for same-block register projections."""
+    from angr.analyses.decompiler.structured_codegen.c import CAssignment, CVariable
+    from angr.sim_variable import SimRegisterVariable
+
+    roots: list[object] = []
+    try:
+        cfunc = cast(_CodegenFunctionBoundary8616, codegen).cfunc
+    except AttributeError:
+        cfunc = None
+    if cfunc is not None:
+        roots.append(cfunc)
+        with contextlib.suppress(AttributeError):
+            roots.append(cast(_CFunctionStatementsBoundary8616, cfunc).statements)
+        with contextlib.suppress(AttributeError):
+            roots.append(cast(_CFunctionBodyBoundary8616, cfunc).body)
+
+    indexed: dict[int, list[SameBlockRegisterAssignment8616]] = {}
+    seen_nodes: set[int] = set()
+    for root in roots:
+        for node in _iter_c_nodes_deep_8616(root):
+            if id(node) in seen_nodes:
+                continue
+            seen_nodes.add(id(node))
+            if not isinstance(node, CAssignment):
+                continue
+            tags = node.tags if isinstance(node.tags, dict) else {}
+            instruction_addr = tags.get("ins_addr")
+            block_addr = tags.get("vex_block_addr")
+            if (
+                not isinstance(instruction_addr, int)
+                or not isinstance(block_addr, int)
+                or not isinstance(node.lhs, CVariable)
+                or not isinstance(node.lhs.variable, SimRegisterVariable)
+            ):
+                continue
+            indexed.setdefault(block_addr, []).append(
+                SameBlockRegisterAssignment8616(
+                    instruction_addr=instruction_addr,
+                    lhs=node.lhs,
+                    rhs=node.rhs,
+                    register_offset=int(node.lhs.variable.reg),
+                    register_size=int(node.lhs.variable.size),
+                )
+            )
+    return SameBlockRegisterAssignmentIndex8616(
+        assignments_by_block=tuple(
+            (block_addr, tuple(assignments))
+            for block_addr, assignments in sorted(indexed.items())
+        )
+    )
+
+
 def lower_ir_value_to_c_expr_8616(
     value: IRValue,
     project: object,
@@ -145,6 +234,8 @@ def materialize_same_block_register_projection_8616(
     condition: ConditionIR,
     project: object,
     codegen: object,
+    *,
+    assignment_index: SameBlockRegisterAssignmentIndex8616 | None = None,
 ) -> SameBlockRegisterProjectionResult8616:
     """Project a condition subregister from its unique same-block assignment.
 
@@ -153,15 +244,12 @@ def materialize_same_block_register_projection_8616(
     multiple assignments at the same instruction are explicit refusals.
     """
     from angr.analyses.decompiler.structured_codegen.c import (
-        CAssignment,
         CBinaryOp,
         CConstant,
         CExpression,
         CFunctionCall,
-        CVariable,
     )
     from angr.sim_type import SimTypeShort
-    from angr.sim_variable import SimRegisterVariable
 
     if value.space is not MemSpace.REG:
         return SameBlockRegisterProjectionResult8616(
@@ -184,50 +272,16 @@ def materialize_same_block_register_projection_8616(
         project,
     )
     requested_end = requested_offset + requested_size
-    candidates: list[tuple[int, object, object, tuple[int, int]]] = []
-    roots: list[object] = []
-    try:
-        cfunc = cast(_CodegenFunctionBoundary8616, codegen).cfunc
-    except AttributeError:
-        cfunc = None
-    if cfunc is not None:
-        roots.append(cfunc)
-        with contextlib.suppress(AttributeError):
-            roots.append(cast(_CFunctionStatementsBoundary8616, cfunc).statements)
-        with contextlib.suppress(AttributeError):
-            roots.append(cast(_CFunctionBodyBoundary8616, cfunc).body)
-    seen_nodes: set[int] = set()
-    for root in roots:
-        for node in _iter_c_nodes_deep_8616(root):
-            if id(node) in seen_nodes:
-                continue
-            seen_nodes.add(id(node))
-            if not isinstance(node, CAssignment):
-                continue
-            tags = node.tags if isinstance(node.tags, dict) else {}
-            ins_addr = tags.get("ins_addr")
-            block_addr = tags.get("vex_block_addr")
-            if (
-                not isinstance(ins_addr, int)
-                or ins_addr >= bind_addr
-                or block_addr != condition.block_addr
-                or not isinstance(node.lhs, CVariable)
-                or not isinstance(node.lhs.variable, SimRegisterVariable)
-            ):
-                continue
-            written_offset = int(node.lhs.variable.reg)
-            written_size = int(node.lhs.variable.size)
-            written_end = written_offset + written_size
-            if requested_offset >= written_end or written_offset >= requested_end:
-                continue
-            candidates.append(
-                (
-                    ins_addr,
-                    node.lhs,
-                    node.rhs,
-                    (written_offset, written_size),
-                )
-            )
+    active_index = assignment_index or build_same_block_register_assignment_index_8616(
+        codegen
+    )
+    candidates = [
+        assignment
+        for assignment in active_index.assignments_for_block(condition.block_addr)
+        if assignment.instruction_addr < bind_addr
+        and requested_offset < assignment.register_offset + assignment.register_size
+        and assignment.register_offset < requested_end
+    ]
 
     if not candidates:
         return SameBlockRegisterProjectionResult8616(
@@ -235,8 +289,12 @@ def materialize_same_block_register_projection_8616(
             SameBlockRegisterProjectionVerdict8616.NO_CANDIDATE,
             SameBlockRegisterProjectionStats8616(raw_fact_count=1),
         )
-    latest_addr = max(candidate[0] for candidate in candidates)
-    latest = tuple(candidate for candidate in candidates if candidate[0] == latest_addr)
+    latest_addr = max(candidate.instruction_addr for candidate in candidates)
+    latest = tuple(
+        candidate
+        for candidate in candidates
+        if candidate.instruction_addr == latest_addr
+    )
     normalized = len(latest)
     if len(latest) != 1:
         return SameBlockRegisterProjectionResult8616(
@@ -248,7 +306,11 @@ def materialize_same_block_register_projection_8616(
                 failure_count=1,
             ),
         )
-    _candidate_addr, lhs, rhs, (written_offset, written_size) = latest[0]
+    candidate = latest[0]
+    lhs = candidate.lhs
+    rhs = candidate.rhs
+    written_offset = candidate.register_offset
+    written_size = candidate.register_size
     if not (
         written_offset <= requested_offset
         and requested_end <= written_offset + written_size

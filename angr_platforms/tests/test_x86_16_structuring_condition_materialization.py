@@ -123,6 +123,18 @@ def test_cfg_condition_chain_reuses_reconverged_typed_suffixes(monkeypatch):
         for index in range(condition_count)
     )
     materialized_sources: list[int | None] = []
+    expected_assignment_index = object()
+    index_builds: list[object] = []
+
+    def _build_assignment_index(active_codegen):
+        index_builds.append(active_codegen)
+        return expected_assignment_index
+
+    monkeypatch.setattr(
+        condition_materialization,
+        "build_same_block_register_assignment_index_8616",
+        _build_assignment_index,
+    )
 
     monkeypatch.setattr(
         condition_materialization,
@@ -135,7 +147,14 @@ def test_cfg_condition_chain_reuses_reconverged_typed_suffixes(monkeypatch):
         lambda *_args: SimpleNamespace(condition=None),
     )
 
-    def _materialize(_project, active_codegen, condition):
+    def _materialize(
+        _project,
+        active_codegen,
+        condition,
+        *,
+        assignment_index=None,
+    ):
+        assert assignment_index is expected_assignment_index
         materialized_sources.append(condition.src_insn)
         return CConstant(1, SimTypeShort(False), codegen=active_codegen)
 
@@ -166,6 +185,7 @@ def test_cfg_condition_chain_reuses_reconverged_typed_suffixes(monkeypatch):
     )
 
     assert isinstance(result, CExpression)
+    assert index_builds == [codegen]
     assert materialized_sources == [condition.src_insn for condition in conditions]
 
 
@@ -561,7 +581,7 @@ def test_structuring_projects_high_byte_from_same_block_word_assignment() -> Non
     assert expression.rhs.value == 0x40
 
 
-def test_structuring_replays_high_byte_projection_into_typed_condition() -> None:
+def test_structuring_replays_high_byte_projection_into_typed_condition(monkeypatch) -> None:
     """The structuring pass must project conditions built by the legacy consumer."""
     codegen = _Codegen()
     prior_bx = CVariable(
@@ -617,6 +637,29 @@ def test_structuring_replays_high_byte_projection_into_typed_condition() -> None
         fallthrough_target=0x1014,
         producer_semantics=("cmp_reg_imm8", "bh", 0x40),
     )
+    real_builder = condition_materialization.build_same_block_register_assignment_index_8616
+    real_condition_key = condition_materialization.condition_key_from_tags_8616
+    index_builds: list[object] = []
+    condition_key_queries: list[object] = []
+
+    def _record_index_build(active_codegen):
+        index_builds.append(active_codegen)
+        return real_builder(active_codegen)
+
+    def _record_condition_key_query(node):
+        condition_key_queries.append(node)
+        return real_condition_key(node)
+
+    monkeypatch.setattr(
+        condition_materialization,
+        "build_same_block_register_assignment_index_8616",
+        _record_index_build,
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "condition_key_from_tags_8616",
+        _record_condition_key_query,
+    )
 
     stats = condition_materialization.materialize_same_block_condition_register_projections_8616(
         root,
@@ -632,6 +675,8 @@ def test_structuring_replays_high_byte_projection_into_typed_condition() -> None
         materialized_count=1,
         changed_count=1,
     )
+    assert index_builds == [codegen]
+    assert condition_key_queries == [typed]
     assert isinstance(typed.lhs, CBinaryOp)
     assert typed.lhs.op == "And"
     assert isinstance(typed.lhs.lhs, CBinaryOp)

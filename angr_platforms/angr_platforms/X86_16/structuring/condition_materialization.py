@@ -93,6 +93,8 @@ from .condition_evidence_closure import (
     classify_condition_evidence_closure_8616,
 )
 from .condition_lowering import (
+    SameBlockRegisterAssignmentIndex8616,
+    build_same_block_register_assignment_index_8616,
     condition_op_to_structured_kind_8616,
     condition_origin_tags_8616,
     lower_ir_value_to_c_expr_8616,
@@ -159,6 +161,8 @@ def materialize_condition_ir_expression_8616(
     project: object,
     codegen: object,
     condition: ConditionIR,
+    *,
+    assignment_index: SameBlockRegisterAssignmentIndex8616 | None = None,
 ) -> CExpression | None:
     """Lower one proven ConditionIR through the Structuring-owned boundary.
 
@@ -184,12 +188,14 @@ def materialize_condition_ir_expression_8616(
             bound_condition,
             project,
             codegen,
+            assignment_index=assignment_index,
         ) if isinstance(bound_condition.lhs, IRValue) else None
         rhs_projection = materialize_same_block_register_projection_8616(
             bound_condition.rhs,
             bound_condition,
             project,
             codegen,
+            assignment_index=assignment_index,
         ) if isinstance(bound_condition.rhs, IRValue) else None
         if lhs_projection is not None:
             projection_stats.append(lhs_projection.stats)
@@ -540,6 +546,7 @@ def materialize_same_block_condition_register_projections_8616(
     conditions: tuple[ConditionIR, ...],
 ) -> SameBlockConditionRegisterProjectionStats8616:
     """Replay exact same-block register projections into typed comparisons."""
+    assignment_index = build_same_block_register_assignment_index_8616(codegen)
     conditions_by_key: dict[tuple[int, int], list[ConditionIR]] = {}
     conditions_by_block: dict[int, list[ConditionIR]] = {}
     for condition in conditions:
@@ -557,15 +564,16 @@ def materialize_same_block_condition_register_projections_8616(
         if id(node) in seen_nodes or not isinstance(node, CBinaryOp):
             continue
         seen_nodes.add(id(node))
+        if not str(node.op).startswith("Cmp"):
+            continue
         tags = _copied_condition_tags_8616(node)
-        if str(node.op).startswith("Cmp"):
-            _debug_condition_chain_8616(
-                "register-projection-candidate",
-                key=condition_key_from_tags_8616(node),
-                op=node.op,
-                typed=tags.get("typed_condition"),
-            )
         key = condition_key_from_tags_8616(node)
+        _debug_condition_chain_8616(
+            "register-projection-candidate",
+            key=key,
+            op=node.op,
+            typed=tags.get("typed_condition"),
+        )
         if key is None:
             continue
         matching = tuple(conditions_by_key.get(key, ()))
@@ -586,6 +594,7 @@ def materialize_same_block_condition_register_projections_8616(
                 project,
                 codegen,
                 condition,
+                assignment_index=assignment_index,
             )
             raw_count += 1
             normalized_count += 1
@@ -613,6 +622,7 @@ def materialize_same_block_condition_register_projections_8616(
                 condition,
                 project,
                 codegen,
+                assignment_index=assignment_index,
             )
             raw_count += result.stats.raw_fact_count
             normalized_count += result.stats.normalized_fact_count
@@ -874,6 +884,7 @@ def _materialize_cfg_condition_chain_expr_8616(
 ) -> CExpression | None:
     """Materialize one target-directed predicate from typed conditions and CFG."""
     consumed_conditions: list[ConditionIR] = []
+    assignment_index = build_same_block_register_assignment_index_8616(codegen)
 
     def prove_wide_pair(high_value: IRValue, low_value: IRValue) -> bool:
         high_expression = lower_ir_value_to_c_expr_8616(high_value, project, codegen)
@@ -895,7 +906,10 @@ def _materialize_cfg_condition_chain_expr_8616(
     )
     if wide_result.condition is not None:
         wide_expression = materialize_condition_ir_expression_8616(
-            project, codegen, wide_result.condition
+            project,
+            codegen,
+            wide_result.condition,
+            assignment_index=assignment_index,
         )
         if wide_expression is not None:
             record_wide_condition_argument_type_evidence_8616(codegen, wide_result.condition)
@@ -971,6 +985,7 @@ def _materialize_cfg_condition_chain_expr_8616(
                 project,
                 codegen,
                 local_wide.condition,
+                assignment_index=assignment_index,
             )
             if materialized_wide is None:
                 return None
@@ -1000,7 +1015,12 @@ def _materialize_cfg_condition_chain_expr_8616(
             )
         if condition not in consumed_conditions:
             consumed_conditions.append(condition)
-        materialized = materialize_condition_ir_expression_8616(project, codegen, condition)
+        materialized = materialize_condition_ir_expression_8616(
+            project,
+            codegen,
+            condition,
+            assignment_index=assignment_index,
+        )
         if materialized is None:
             _debug_condition_chain_8616(
                 "cfg-chain-expression-refused",
@@ -2630,12 +2650,18 @@ def materialize_structuring_conditions_8616(
         )
         typed_changed = bool(projection_stats.changed_count) or typed_changed
     stage_project._inertia_decompiler_stage = "structuring:condition_materialization:loops"
+    loop_assignment_index = build_same_block_register_assignment_index_8616(codegen)
     loop_stats = materialize_typed_loop_continuation_conditions_8616(
         root,
         codegen,
         typed_conditions,
         condition_chain_successors_8616(project, codegen),
-        lambda condition: materialize_condition_ir_expression_8616(project, codegen, condition),
+        lambda condition: materialize_condition_ir_expression_8616(
+            project,
+            codegen,
+            condition,
+            assignment_index=loop_assignment_index,
+        ),
     )
     metadata_codegen._inertia_typed_loop_condition_stats_8616 = loop_stats
     _debug_condition_chain_8616("typed-loops", stats=loop_stats)
