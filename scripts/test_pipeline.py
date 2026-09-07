@@ -58,6 +58,8 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_frontend_condition_evidence.py",
     "angr_platforms/tests/test_x86_16_frontend_function_boundary_index.py",
     "angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py",
+    "angr_platforms/tests/test_x86_16_status_flag_cfg_liveness.py",
+    "angr_platforms/tests/test_x86_16_status_flag_cfg_projection.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py",
     "angr_platforms/tests/test_x86_16_positive_bp_argument_plan.py",

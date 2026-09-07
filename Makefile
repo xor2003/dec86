@@ -3084,6 +3084,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_condition_artifact_reuse.py \
 	angr_platforms/tests/test_x86_16_indexed_global_stack_coordinates.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_liveness.py \
+	angr_platforms/tests/test_x86_16_status_flag_cfg_projection.py \
 	angr_platforms/tests/test_x86_16_status_flag_lift_context.py \
 	angr_platforms/tests/test_x86_16_status_flag_liveness.py \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \
@@ -3138,6 +3139,7 @@ QA_PYTEST_TARGETS += \
 	angr_platforms/tests/test_x86_16_tagged_subtree_projection.py \
 	angr_platforms/tests/test_x86_16_indexed_global_stack_coordinates.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_liveness.py \
+	angr_platforms/tests/test_x86_16_status_flag_cfg_projection.py \
 	angr_platforms/tests/test_x86_16_status_flag_lift_context.py \
 	angr_platforms/tests/test_x86_16_status_flag_liveness.py \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \

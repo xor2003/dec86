@@ -321,7 +321,7 @@ class _StatusFlagFunctionSummaryResolver8616:
                 entry_address=function_address,
                 instruction_effect=self._project_wrapped_effect,
             )
-            effect = StatusFlagEffect8616(reads=summary.reads)
+            effect = StatusFlagEffect8616(reads=summary.reads, overwrites=summary.overwrites)
             self._effect_cache[function_address] = effect
             return effect
         finally:

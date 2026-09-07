@@ -25,7 +25,10 @@ closes the four audit failures in Make inventory, ownership expectations, and
 quality-module admission under focused tests. The 2,065-test quality-dev and
 quality-hard gates pass, including full architecture and executable guards;
 non-incremental global MyPy still reports 146 errors. The full census below
-has not been rerun. Next is the RunMenu flag/address semantic defect.
+has not been rerun. The [RunMenu flag-summary checkpoint](reference/p0-runmenu-callee-flags.md)
+removes falsely live stack-adjustment flags; RunMenu remains open because its
+pre-existing raw switch selector still fails C recompilation. The checkpoint
+records refusal tests, gate evidence, and the next investigation boundary.
 
 The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
 **10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current

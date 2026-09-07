@@ -147,7 +147,11 @@ def x86_16_block_successors_from_capstone_8616(
     region_start: int,
     region_end: int,
 ) -> tuple[set[int], bool]:
-    """Return bounded block successors and whether control flow is unresolved."""
+    """Return bounded successors, refusing unknown or out-of-region edges.
+
+    Excluding an edge from this inventory does not prove a function return.
+    Consumers must retain conservative liveness for every omitted edge.
+    """
     boundary = cast(_BlockBoundary8616, block)
     if isinstance(block, DirectCapstoneBlock8616):
         instructions = block.instructions
@@ -163,30 +167,32 @@ def x86_16_block_successors_from_capstone_8616(
     mnemonic = last.mnemonic.lower()
     block_end = boundary.addr + boundary.size
     successors: set[int] = set()
+    unresolved = False
 
     def add_target(target: int | None) -> None:
+        """Record a bounded edge or preserve its missing-evidence status."""
+        nonlocal unresolved
         if isinstance(target, int) and region_start <= target < region_end:
             successors.add(target)
+        else:
+            unresolved = True
 
     if mnemonic in {"ret", "retf", "iret", "retw", "iretq"}:
         return successors, False
     if is_x86_16_call_mnemonic_8616(mnemonic):
-        if block_end < region_end:
-            successors.add(block_end)
-        return successors, False
+        add_target(block_end)
+        return successors, unresolved
     if mnemonic in {"jmp", "ljmp"}:
         target = _direct_target_8616(last)
         add_target(target)
-        return successors, target is None
+        return successors, unresolved
     if mnemonic.startswith("j") or mnemonic in {"loop", "loope", "loopne", "loopnz", "loopz"}:
         target = _direct_target_8616(last)
         add_target(target)
-        if block_end < region_end:
-            successors.add(block_end)
-        return successors, target is None
-    if block_end < region_end:
-        successors.add(block_end)
-    return successors, False
+        add_target(block_end)
+        return successors, unresolved
+    add_target(block_end)
+    return successors, unresolved
 
 
 def collect_instruction_reachability_8616(
