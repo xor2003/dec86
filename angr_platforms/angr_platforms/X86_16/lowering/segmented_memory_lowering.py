@@ -52,6 +52,11 @@ from .near_pointer_argument import (
 from .near_pointer_type import near_pointer_type_8616, with_near_pointer_parameter_8616
 from .packed_flags_state import lower_packed_flags_live_in_8616
 from .physical_registers import physical_register_name_8616
+from .pointer_store_consumption import (
+    PointerStoreConsumptionFailure8616,
+    prove_pointer_store_consumption_8616,
+    prove_pointer_store_source_preservation_8616,
+)
 from .positive_bp_arguments import materialize_positive_bp_arguments_8616
 from .real_mode_linear import (
     RealModeLinearStackAccess8616,
@@ -192,7 +197,7 @@ def _logical_segmented_access_width_bits_8616(
     matched: SegmentedMemoryExpr,
     codegen: _AngrCodegenBoundary8616,
 ) -> int | None:
-    """Join one C access to a unique closed IR width by exact site and segment."""
+    """Constrain C width without promoting an execution slice to its operand."""
     source_addrs = instruction_addrs_from_node_8616(expr)
     cfunc = codegen.cfunc
     project = codegen.project
@@ -223,11 +228,14 @@ def _logical_segmented_access_width_bits_8616(
     )
     if not candidates:
         return None
+    widths = frozenset(int(access.address.size) * 8 for access in candidates)
+    # Site and segment alone do not prove consumption of the complete operand.
+    if len(widths) == 1 and next(iter(widths)) > matched.width_bits:
+        return None
     lane = _segmented_access_width_lane_8616(codegen)
     lane.raw += 1
     lane.normalized += 1
     lane.classified += 1
-    widths = frozenset(int(access.address.size) * 8 for access in candidates)
     if len(widths) != 1:
         lane.failures += 1
         return None
@@ -735,10 +743,12 @@ def _lower_typed_pointer_register_carrier_stores_8616(
         return False
 
     roots_by_id: dict[int, structured_c.CStatements] = {}
+    function_roots: dict[int, object] = {}
     for attribute in ("body", "statements", "stmt"):
         root = builtins.getattr(cfunc, attribute, None)
         if root is None:
             continue
+        function_roots[id(root)] = root
         for node in _iter_c_nodes_deep_8616(root):
             if isinstance(node, structured_c.CStatements):
                 roots_by_id[id(node)] = node
@@ -809,7 +819,8 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                 pair: list[tuple[structured_c.CAssignment, int, int]] = [
                     (use, use_index, byte_index)
                 ]
-                if proven_width > helper_width:
+                mixed_projection = proven_width == 2 and byte_index % proven_width == 1
+                if proven_width > helper_width and not mixed_projection:
                     if helper_width != 1:
                         break
                     for pair_index in range(use_index + 1, min(use_index + 2, len(statements))):
@@ -837,13 +848,21 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                         break
                     if len(pair) != proven_width:
                         break
-                consumed_uses = {item[1] for item in pair}
-                if any(
-                    isinstance(node, structured_c.CVariable) and _carrier_key_8616(node) == carrier_key
-                    for index in range(setup_index + 1, len(statements))
-                    for node in _iter_c_nodes_deep_8616(
-                        statements[index].rhs if index in consumed_uses else statements[index]
-                    )
+                consumption_stores = tuple(item[0] for item in pair)
+                if mixed_projection:
+                    previous = statements[use_index - 1]
+                    if isinstance(previous, structured_c.CAssignment):
+                        consumption_stores += (previous,)
+                intervening = tuple(statements[setup_index + 1:use_index])
+                consumption = prove_pointer_store_consumption_8616(
+                    tuple(function_roots.values()), setup, carrier, pointer,
+                    consumption_stores, intervening,
+                )
+                if not consumption.complete and (
+                    consumption.failure is not PointerStoreConsumptionFailure8616.UNCONSUMED_REGISTER
+                    or not prove_pointer_store_source_preservation_8616(
+                        carrier, pointer, consumption_stores, intervening,
+                    ).source_preserved
                 ):
                     break
                 index_type = SimTypeShort(False).with_arch(project.arch)
@@ -852,7 +871,7 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                         sorted(fact.dereference_ins_addr for fact in matching_facts)
                     )
                 }
-                if proven_width == helper_width == 2 and byte_index % proven_width == 1:
+                if mixed_projection:
                     low_use = statements[use_index - 1] if use_index > 0 else None
                     if not isinstance(low_use, structured_c.CAssignment):
                         break
@@ -876,7 +895,9 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                     ):
                         break
                     low_use.rhs = word_source
-                    consumed_indexes.update((setup_index, use_index))
+                    consumed_indexes.add(use_index)
+                    if consumption.complete:
+                        consumed_indexes.add(setup_index)
                     changed = True
                     break
                 if proven_width > helper_width:
@@ -905,7 +926,8 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                         codegen=codegen,
                         tags=tags,
                     )
-                consumed_indexes.add(setup_index)
+                if consumption.complete:
+                    consumed_indexes.add(setup_index)
                 changed = True
                 break
         if consumed_indexes:

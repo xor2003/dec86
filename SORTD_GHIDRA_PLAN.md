@@ -438,6 +438,23 @@ duplicate tests for some functions and timeout-contaminated results. Global
 `quality-fast` is still red on MyPy errors outside this store-fold change;
 neither Step 9f nor the overall P0 goal is closed by this checkpoint.
 
+#### P0 pointer-store consumption follow-up (2026-09-07)
+
+The subsequent [logical-memory width checkpoint](reference/p0-logical-memory-width.md)
+corrects execution-byte promotion to logical-word width in Types/Lowering and
+separates proven store projection from setup deletion. Arithmetic tests and the
+strict live DOS LoadProgram regression pass without changing byte-safe frontend
+execution. The mandatory pipeline and final 2,027-test `quality-dev` gate pass;
+the latter now includes the arithmetic suite and live wrapper. Global
+`quality-fast` still fails with 164 MyPy error lines. This bounded checkpoint
+does not close Step 9f or the full-suite acceptance requirement.
+
+Whole-function carrier consumption now guards pointer-store setup removal at
+Types/Lowering. See [the focused evidence record](reference/p0-pointer-store-consumption.md)
+for reason, DoD, failure conditions, positive/refusal coverage, and the remaining
+full-suite acceptance boundary. This does not close Step 9f or raise the stale
+weighted completion estimate.
+
 #### P0 pointer-evidence safety review (2026-09-07)
 
 Reason: the decoded near-pointer collector attributed `BP + scalar_argument`

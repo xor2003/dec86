@@ -83,6 +83,8 @@ def test_unit_lane_promotes_type_ratchet_contract():
 
 
 def test_unit_lane_promotes_segmented_runtime_and_cache_contracts():
+    assert "angr_platforms/tests/test_x86_16_alu_effect_order.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_cod_regressions.py::test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores" in test_pipeline.FOCUSED_PYTEST_TARGETS
     assert "angr_platforms/tests/test_x86_16_segment_access_policy.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
     assert "angr_platforms/tests/test_x86_16_segment_address_policy.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
     assert "angr_platforms/tests/test_x86_16_segment_state.py" in test_pipeline.FOCUSED_PYTEST_TARGETS

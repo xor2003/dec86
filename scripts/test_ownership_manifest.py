@@ -1233,6 +1233,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py",
             "angr_platforms/angr_platforms/X86_16/lowering/register_indirect_call_targets.py",
             "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/pointer_store_consumption.py",
             "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
         ),
         tests=(

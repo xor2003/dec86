@@ -1279,6 +1279,8 @@ _PIPELINE_TIER_CONTRACT = {
 
 _PROMOTED_TYPED_FILES = (
     "monkeytype_config.py",
+    "angr_platforms/angr_platforms/X86_16/capstone_memory_segment.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/pointer_store_consumption.py",
     "angr_platforms/angr_platforms/X86_16/__init__.py",
     "angr_platforms/angr_platforms/X86_16/alias/__init__.py",
     "angr_platforms/angr_platforms/X86_16/alias_model.py",

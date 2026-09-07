@@ -889,6 +889,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
+	angr_platforms/angr_platforms/X86_16/lowering/pointer_store_consumption.py \
 	angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_indirect_call_targets.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
@@ -1880,6 +1881,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
+	angr_platforms/angr_platforms/X86_16/lowering/pointer_store_consumption.py \
 	angr_platforms/angr_platforms/X86_16/lowering/ir_segmented_load_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_indirect_call_targets.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
@@ -2829,6 +2831,9 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_project_loading_cache.py \
 	angr_platforms/tests/test_project_loading_diagnostics.py \
 	angr_platforms/tests/test_pytest_profile.py \
+	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
+	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
+	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
 	angr_platforms/tests/test_parallel_job_defaults.py \
 	angr_platforms/tests/test_pytest_partitioned.py \
 	angr_platforms/tests/test_pytest_process_metrics.py \

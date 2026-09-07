@@ -10358,8 +10358,9 @@ def _publish_logical_accesses(
     project._inertia_function_ssa_stages_8616 = {}
 
 
-def test_lower_runtime_segment_access_prefers_exact_ir_byte_store_width():
-    """A closed byte-store fact overrides angr's incorrectly widened C lvalue."""
+@pytest.mark.parametrize("logical_width,rendered_byte", ((1, False), (2, True)))
+def test_lower_runtime_segment_access_prefers_exact_ir_byte_store_width(logical_width, rendered_byte):
+    """Narrow a proven byte access, but never widen a word's byte fragment."""
     project, codegen = _project()
     codegen.cfunc.functy = SimpleNamespace(args=())
     insn_addr = 0x4042
@@ -10371,12 +10372,12 @@ def test_lower_runtime_segment_access_prefers_exact_ir_byte_store_width():
                 function_addr=codegen.cfunc.addr,
                 insn_addr=insn_addr,
                 ordinal=0,
-                width=1,
+                width=logical_width,
             ),
         ),
     )
     operand = _seg_linear(project, "ds", _reg(project, "si", codegen), codegen)
-    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    operand._type = SimTypePointer(SimTypeChar(False) if rendered_byte else SimTypeShort(False)).with_arch(project.arch)
     expr = CUnaryOp("Dereference", operand, codegen=codegen)
     expr.tags = {"ins_addr": insn_addr}
 
@@ -10384,6 +10385,8 @@ def test_lower_runtime_segment_access_prefers_exact_ir_byte_store_width():
 
     assert isinstance(lowered, CFunctionCall)
     assert lowered.callee_target == "SEG_U8"
+    if rendered_byte:
+        return
     lane = codegen._inertia_segmented_access_width_lane_8616
     assert lane.raw_fact_count == 1
     assert lane.normalized_fact_count == 1

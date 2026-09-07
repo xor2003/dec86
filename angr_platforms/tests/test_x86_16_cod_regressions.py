@@ -641,12 +641,13 @@ def test_prune_unused_local_declarations_text_drops_unused_stack_bp_placeholder_
     assert "char s_fffa;" in pruned
 
 
-def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
+def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores(monkeypatch):
+    monkeypatch.setenv("INERTIA_DEBUG_TIMING", "1")
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_loadProgram")
 
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
-    if result.returncode != 0:
-        return
+    assert result.returncode == 0, result.stderr
+    assert "validation=passed" in result.stderr
+    assert result.stdout.count("err = loadprog(") == 1
     _assert_has_all(
         result.stdout,
         (
