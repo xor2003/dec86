@@ -1092,6 +1092,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/structuring/simple_loop_recovery.py \
 	angr_platforms/angr_platforms/X86_16/structuring/switch_artifact_identity.py \
 	angr_platforms/angr_platforms/X86_16/structuring/typed_switch_seqnode.py \
+	angr_platforms/angr_platforms/X86_16/structuring/switch_selector_binding.py \
 	angr_platforms/angr_platforms/X86_16/structuring/wide_return_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/__init__.py \
 	angr_platforms/angr_platforms/X86_16/validation/__init__.py \
@@ -2085,6 +2086,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/structuring/simple_loop_recovery.py \
 	angr_platforms/angr_platforms/X86_16/structuring/switch_artifact_identity.py \
 	angr_platforms/angr_platforms/X86_16/structuring/typed_switch_seqnode.py \
+	angr_platforms/angr_platforms/X86_16/structuring/switch_selector_binding.py \
 	angr_platforms/angr_platforms/X86_16/structuring/wide_return_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/__init__.py \
 	angr_platforms/angr_platforms/X86_16/validation/__init__.py \
@@ -3085,6 +3087,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_indexed_global_stack_coordinates.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_liveness.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_projection.py \
+	angr_platforms/tests/test_x86_16_typed_switch_seqnode.py \
 	angr_platforms/tests/test_x86_16_status_flag_lift_context.py \
 	angr_platforms/tests/test_x86_16_status_flag_liveness.py \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \
@@ -3140,6 +3143,7 @@ QA_PYTEST_TARGETS += \
 	angr_platforms/tests/test_x86_16_indexed_global_stack_coordinates.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_liveness.py \
 	angr_platforms/tests/test_x86_16_status_flag_cfg_projection.py \
+	angr_platforms/tests/test_x86_16_typed_switch_seqnode.py \
 	angr_platforms/tests/test_x86_16_status_flag_lift_context.py \
 	angr_platforms/tests/test_x86_16_status_flag_liveness.py \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \

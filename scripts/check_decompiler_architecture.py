@@ -1980,6 +1980,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/scalar_return_evidence.py",
     "angr_platforms/angr_platforms/X86_16/structuring/simple_loop_recovery.py",
     "angr_platforms/angr_platforms/X86_16/structuring/typed_switch_seqnode.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/switch_selector_binding.py",
     "angr_platforms/angr_platforms/X86_16/structuring/register_dependencies.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_return_values.py",
     "angr_platforms/angr_platforms/X86_16/structuring/__init__.py",

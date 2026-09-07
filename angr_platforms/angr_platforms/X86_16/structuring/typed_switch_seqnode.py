@@ -7,6 +7,8 @@ Responsibility: materialize a typed, evidence-complete switch plan in angr's
 pre-codegen SeqNode tree. The runtime hook may bridge angr lifecycle metadata
 into this module, but switch proof validation and AST mutation belong here.
 No rendered C, source text, COD text, or CLI fallback policy is consumed.
+Preserve the reaching SSA selector and decline already structured switches:
+simplification may have folded a side-effecting call into their selector.
 
 Dynamic boundary: project architecture and angr SeqNode objects are third-party
 surfaces, so narrowly scoped dynamic attribute reads are required here.
@@ -18,7 +20,6 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import cast
 
 from angr.analyses.decompiler.structurer_nodes import SequenceNode
 
@@ -33,6 +34,7 @@ class TypedSwitchSeqNodeRefusal8616(Enum):
     """Structured refusal classes for typed SeqNode switch materialization."""
 
     OWNER_PATHS_NOT_READY = "owner_paths_not_ready"
+    ALREADY_STRUCTURED = "already_structured"
     NOT_LOOP_BREAK_DEFAULT_CANDIDATE = "not_loop_break_default_candidate"
     MISSING_AIL_SWITCH_EXPRESSION = "missing_ail_switch_expr"
     MISSING_LOOP_SEQUENCE = "missing_loop_sequence"
@@ -73,6 +75,14 @@ class TypedSwitchSeqNodeResult8616:
             "changed": self.changed,
             "refusal_reasons": refusal_reasons,
             "replaced_count": self.replaced_count,
+            # Count complete switch plans, not individual register writes.
+            "selector_binding": {
+                "raw_fact_count": self.attempted_count,
+                "normalized_fact_count": self.replaced_count,
+                "classified_fact_count": self.replaced_count,
+                "materialized_count": self.replaced_count,
+                "failure_count": self.attempted_count - self.replaced_count,
+            },
         }
         if self.changed:
             record["case_count"] = self.case_count
@@ -156,8 +166,8 @@ def _node_at_path_8616(sequence: object, path: object) -> object | None:
     return current
 
 
-def _register_expression_8616(project: object | None, payload: object) -> object | None:
-    """Build an AIL register expression from a typed ConditionIR value."""
+def _register_view_8616(project: object | None, payload: object) -> tuple[int, int] | None:
+    """Read the physical view of an already proven typed switch selector."""
     if not isinstance(payload, Mapping) or payload.get("space") != "reg":
         return None
     name = payload.get("name")
@@ -169,20 +179,7 @@ def _register_expression_8616(project: object | None, payload: object) -> object
     offset = reg_info[0] if isinstance(reg_info, tuple) and reg_info else payload.get("offset")
     if not isinstance(offset, int):
         return None
-    try:
-        from angr.ailment import Expr
-    except ImportError:
-        return None
-    bits = size * 8
-    return cast(
-        object | None,
-        Expr.Register(
-            None,
-            offset,
-            bits,
-            reg_name=name,
-        ),
-    )
+    return offset, size
 
 
 def _switch_case_body_8616(node: object) -> SequenceNode:
@@ -230,8 +227,8 @@ def materialize_typed_switch_seqnode_8616(
             attempted=True,
             detail=detail if isinstance(detail, str) else None,
         )
-    switch_expr = _register_expression_8616(project, first_mapping.get("switch_condition_lhs"))
-    if switch_expr is None:
+    switch_view = _register_view_8616(project, first_mapping.get("switch_condition_lhs"))
+    if switch_view is None:
         return _refusal_8616(
             TypedSwitchSeqNodeRefusal8616.MISSING_AIL_SWITCH_EXPRESSION,
             attempted=True,
@@ -309,6 +306,19 @@ def materialize_typed_switch_seqnode_8616(
             TypedSwitchSeqNodeRefusal8616.SWITCH_CASE_NODE_UNAVAILABLE,
             attempted=True,
             detail=type(exc).__name__,
+        )
+    if isinstance(_node_at_path_8616(loop_sequence, replace_path), SwitchCaseNode):
+        return _refusal_8616(TypedSwitchSeqNodeRefusal8616.ALREADY_STRUCTURED, attempted=False)
+    from .switch_selector_binding import bind_switch_selector_value_8616
+
+    switch_expr = bind_switch_selector_value_8616(
+        loop_sequence, replace_path,
+        register_offset=switch_view[0], size=switch_view[1],
+    )
+    if switch_expr is None:
+        return _refusal_8616(
+            TypedSwitchSeqNodeRefusal8616.MISSING_AIL_SWITCH_EXPRESSION,
+            attempted=True,
         )
     switch_node = SwitchCaseNode(
         switch_expr,

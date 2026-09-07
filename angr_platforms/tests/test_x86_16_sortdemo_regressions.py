@@ -1499,8 +1499,7 @@ def test_sortdemo_runmenu_default_direct_path_validates_without_temp_carrier_fal
     assert "after exhausting direct-address fallback budget" not in combined
     body = _function_body_from_stdout(result.stdout, "void RunMenu")
     assert "vvar_" not in body
-    assert "ax = toupper(ch);" in body
-    assert "switch (ax)" in body
+    assert "switch (toupper(ch))" in body
     for case_value in (27, 60, 62, 66, 69, 72, 73, 81, 83, 84):
         assert f"case {case_value}:" in body
     assert "ch = getch();" in body
@@ -1549,6 +1548,9 @@ def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path)
     body = _function_body_from_stdout(result.stdout, "sub_102e0(")
     assert "inertia_esp" not in body
     assert re.search(r"local_2\s*=\s*sub_11292\(\);", body)
+    assert body.count("sub_11278(") == 1
+    assert "sub_11278(local_2)" in body
+    assert body.index("while") < body.index("sub_11278(local_2)") < body.index("case 69:")
     assert re.search(r"case 27:\s*return;", body)
     assert "LABEL_10488" not in body
     for case_value in (27, 60, 62, 66, 69, 72, 73, 81, 83, 84):

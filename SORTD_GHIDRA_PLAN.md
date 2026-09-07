@@ -26,13 +26,18 @@ quality-module admission under focused tests. The 2,065-test quality-dev and
 quality-hard gates pass, including full architecture and executable guards;
 non-incremental global MyPy still reports 146 errors. The full census below
 has not been rerun. The [RunMenu flag-summary checkpoint](reference/p0-runmenu-callee-flags.md)
-removes falsely live stack-adjustment flags; RunMenu remains open because its
-pre-existing raw switch selector still fails C recompilation. The checkpoint
-records refusal tests, gate evidence, and the next investigation boundary.
+removes falsely live stack-adjustment flags. The subsequent
+[switch-selector checkpoint](reference/p0-runmenu-switch-selector.md) preserves
+the dispatch SSA value and folded call across repeated structuring. Its live
+sidecar-free validation and recompilation pass. Final quality-hard passes
+2,114 tests and all three executable guards; the default pipeline passes all
+three lanes, including seven MS C tiny round trips. The unit lane remains over
+its time budget. A generic unreachable-selector-call validation shield remains
+open in the checkpoint report; this repair does not close the full audit.
 
 The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
 **10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current
-RunMenu compilation and InitMenu/InitBars/control-flow validation failures mean
+InitMenu/InitBars/control-flow validation failures mean
 the earlier SORTD acceptance below is historical, not a current green claim.
 Follow that report's ordered batches, DoD, and failure conditions for the next
 P0 work. Global MyPy remains red at 146 diagnostic lines. The weighted 75% and

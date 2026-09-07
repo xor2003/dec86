@@ -2,8 +2,9 @@
 
 ## Scope And Status
 
-RunMenu (`0x102e0`) remains **open**. This checkpoint repairs one IR summary
-transport defect, not the function's complete acceptance contract.
+At this checkpoint, RunMenu (`0x102e0`) remained **open**. It repaired one IR
+summary transport defect, not the function's complete acceptance contract.
+See the subsequent [switch-selector closure](p0-runmenu-switch-selector.md).
 
 Investigation began around 2026-09-07 14:11 +02:00. The implementation and
 focused checks ran from approximately 14:23 to 14:34; broader gate time is
