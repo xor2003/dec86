@@ -79,7 +79,7 @@ class _FactoryProjectBoundary8616(Protocol):
     factory: _FactoryBoundary8616
 
 
-_COMPLETE_RELIFT_CACHE_8616 = ConditionReliftArtifactCache8616[ConditionCacheReliftArtifact8616](max_entries=32)
+_EXACT_RELIFT_CACHE_8616 = ConditionReliftArtifactCache8616[ConditionCacheReliftArtifact8616](max_entries=32)
 
 
 def has_typed_condition_cache_evidence_8616(
@@ -233,7 +233,7 @@ def relift_function_condition_cache_8616(
     lifted_blocks: set[int] = set()
 
     if not failures:
-        cached = _COMPLETE_RELIFT_CACHE_8616.lookup(arch, cache_request)
+        cached = _EXACT_RELIFT_CACHE_8616.lookup(arch, cache_request)
         if cached is not None:
             return cached
     with isolated_condition_lift_session_8616() as capture:
@@ -284,6 +284,9 @@ def relift_function_condition_cache_8616(
         failures=tuple(failures),
         stats=stats,
     )
-    if artifact.stats.complete:
-        _COMPLETE_RELIFT_CACHE_8616.publish(arch, cache_request, artifact)
+    if all(
+        failure.reason is ConditionCacheReliftFailureReason8616.EXPECTED_CONDITION_MISSING
+        for failure in artifact.failures
+    ):
+        _EXACT_RELIFT_CACHE_8616.publish(arch, cache_request, artifact)
     return artifact

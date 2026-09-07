@@ -1,8 +1,9 @@
 """Bounded cache for immutable exact-byte condition-relift artifacts.
 
 Layer: IR.
-Responsibility: reuse complete relift artifacts only when architecture identity
-and every exact input byte and request field are unchanged.
+Responsibility: reuse exact relift artifacts only when architecture identity
+and every exact input byte and request field are unchanged. Callers decide
+which typed outcomes are safe to publish without weakening their verdicts.
 Owns typed Value, Address, Condition, instruction facts, and lossless normalization.
 Do not perform alias-state ownership, widening, lowering/materialization,
 structuring, rewrite, postprocess, or CLI/reporting work here.
@@ -62,7 +63,7 @@ class _ConditionReliftCacheEntry8616[ArtifactT]:
 
 
 class ConditionReliftArtifactCache8616[ArtifactT]:
-    """Keep a fixed number of most-recent complete relift artifacts."""
+    """Keep a fixed number of most-recent exact relift artifacts."""
 
     def __init__(self, *, max_entries: int) -> None:
         """Create a bounded cache with an explicit positive capacity."""
@@ -89,7 +90,7 @@ class ConditionReliftArtifactCache8616[ArtifactT]:
         request: ConditionReliftCacheRequest8616,
         artifact: ArtifactT,
     ) -> None:
-        """Publish one complete artifact and evict the oldest excess entry."""
+        """Publish one caller-approved artifact and evict the oldest excess entry."""
         with self._lock:
             self._entries = [
                 entry

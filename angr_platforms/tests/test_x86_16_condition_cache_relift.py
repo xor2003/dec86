@@ -82,7 +82,7 @@ def test_exact_relift_cache_requires_same_bytes_and_architecture(monkeypatch: Mo
     assert lifts == [(b"\x90\x90", arch), (b"\x91\x90", arch), (b"\x91\x90", project.arch)]
 
 
-def test_exact_relift_cache_refuses_incomplete_artifacts(monkeypatch: MonkeyPatch) -> None:
+def test_exact_relift_cache_reuses_typed_missing_condition_refusals(monkeypatch: MonkeyPatch) -> None:
     from angr_platforms.X86_16.ir import condition_cache_relift as relift
 
     lifts: list[int] = []
@@ -97,8 +97,36 @@ def test_exact_relift_cache_refuses_incomplete_artifacts(monkeypatch: MonkeyPatc
     second = relift_function_condition_cache_8616(project, blocks, frozenset({0x2300}))
 
     assert first is not None and not first.stats.complete
+    assert second is first
+    assert first.failures[0].reason is ConditionCacheReliftFailureReason8616.EXPECTED_CONDITION_MISSING
+    assert lifts == [0x2300]
+
+
+def test_exact_relift_cache_refuses_vex_lift_failures(monkeypatch: MonkeyPatch) -> None:
+    from angr_platforms.X86_16.ir import condition_cache_relift as relift
+
+    lifts: list[int] = []
+    project = SimpleNamespace(
+        arch=object(),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _address, size: bytes(size))),
+    )
+    blocks = (ConditionReliftBlock8616(0x2400, 2),)
+
+    def fail_lift(_data: bytes, address: int, _arch: object) -> None:
+        lifts.append(address)
+        msg = "synthetic lift failure"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(relift, "_direct_lift_8616", fail_lift)
+
+    first = relift_function_condition_cache_8616(project, blocks, frozenset({0x2400}))
+    second = relift_function_condition_cache_8616(project, blocks, frozenset({0x2400}))
+
+    assert first is not None and not first.stats.complete
     assert second is not None and not second.stats.complete
-    assert lifts == [0x2300, 0x2300]
+    assert first.failures[0].reason is ConditionCacheReliftFailureReason8616.VEX_LIFT_FAILED
+    assert second.failures[0].reason is ConditionCacheReliftFailureReason8616.VEX_LIFT_FAILED
+    assert lifts == [0x2400, 0x2400]
 
 
 def test_exact_relift_cache_evicts_oldest_entry() -> None:
