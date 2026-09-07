@@ -29,13 +29,14 @@ from ..synthetic_call_stub_evidence import is_synthetic_call_stub_8616
 
 __all__ = (
     "MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616",
+    "MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616",
     "SyntheticCallRegisterEffect8616",
     "SyntheticCallRegisterEffectVerdict8616",
     "classify_synthetic_call_register_effect_8616",
 )
 
 MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616: frozenset[str] = frozenset({"bx", "di", "si"})
-_MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616 = frozenset({"ax", "cx", "dx"})
+MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616: frozenset[str] = frozenset({"ax", "cx", "dx"})
 
 
 class SyntheticCallRegisterEffectVerdict8616(StrEnum):
@@ -158,7 +159,7 @@ def classify_synthetic_call_register_effect_8616(
 
     if normalized_register in MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616:
         verdict = SyntheticCallRegisterEffectVerdict8616.PRESERVED
-    elif normalized_register in _MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616:
+    elif normalized_register in MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616:
         verdict = SyntheticCallRegisterEffectVerdict8616.CLOBBERED
     else:
         return _unknown_effect_8616(

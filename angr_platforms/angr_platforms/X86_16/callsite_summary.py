@@ -70,6 +70,7 @@ from .helper_abi import (
 from .pipeline.errors import PipelineHardError
 from .semantics.call_register_effects import (
     MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616,
+    MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616,
 )
 from .semantics.callsite_summary_request import (
     CallsiteCleanupProjectRole8616,
@@ -84,6 +85,7 @@ from .semantics.register_value_preservation import (
     register_value_family_8616,
 )
 from .semantics.terminal_stack_cleanup import (
+    TerminalReturnFrameKind8616,
     TerminalStackCleanupEvidence8616,
     terminal_stack_cleanup_at_address_8616,
 )
@@ -1173,6 +1175,25 @@ def _callee_stack_cleanup_bytes_8616(
     *,
     request_cache: CallsiteSummaryRequestCache8616 | None = None,
 ) -> int | None:
+    """Return consistent callee cleanup from complete terminal evidence."""
+    evidence = _callee_terminal_stack_evidence_8616(
+        function,
+        insn,
+        request_cache=request_cache,
+    )
+    if evidence is None:
+        return None
+    cleanup = evidence.consistent_cleanup
+    return cleanup if isinstance(cleanup, int) else None
+
+
+def _callee_terminal_stack_evidence_8616(
+    function: object,
+    insn: object,
+    *,
+    request_cache: CallsiteSummaryRequestCache8616 | None = None,
+) -> TerminalStackCleanupEvidence8616 | None:
+    """Return complete terminal stack and return-frame evidence for one call."""
     target = _direct_call_target_for_insn_8616(function, insn)
     if not isinstance(target, int):
         return None
@@ -1180,28 +1201,27 @@ def _callee_stack_cleanup_bytes_8616(
         function,
         target,
     ):
-            def collect_candidate_cleanup(
-                cleanup_project: object = candidate_project,
-                cleanup_address: int = candidate_addr,
-            ) -> TerminalStackCleanupEvidence8616:
-                """Collect one exact project-role/address cleanup result."""
-                return terminal_stack_cleanup_at_address_8616(
-                    cleanup_project,
-                    cleanup_address,
-                )
-
-            evidence = (
-                collect_candidate_cleanup()
-                if request_cache is None
-                else request_cache.terminal_cleanup(
-                    project_role,
-                    candidate_addr,
-                    collect_candidate_cleanup,
-                )
+        def collect_candidate_cleanup(
+            cleanup_project: object = candidate_project,
+            cleanup_address: int = candidate_addr,
+        ) -> TerminalStackCleanupEvidence8616:
+            """Collect one exact project-role/address cleanup result."""
+            return terminal_stack_cleanup_at_address_8616(
+                cleanup_project,
+                cleanup_address,
             )
-            if evidence.complete:
-                cleanup = evidence.consistent_cleanup
-                return cleanup if isinstance(cleanup, int) else None
+
+        evidence = (
+            collect_candidate_cleanup()
+            if request_cache is None
+            else request_cache.terminal_cleanup(
+                project_role,
+                candidate_addr,
+                collect_candidate_cleanup,
+            )
+        )
+        if evidence.complete:
+            return evidence
     return None
 
 
@@ -1361,7 +1381,12 @@ def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
     if not insns:
         return frozenset()
 
-    callee_saved = MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616
+    callee_saved = MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616 | {
+        "ds",
+        "es",
+        "fs",
+        "gs",
+    }
     restored_by_return: list[set[str]] = []
     for ret_index, insn in enumerate(insns):
         if not _mnemonic(insn).startswith("ret"):
@@ -1390,7 +1415,7 @@ def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
             ):
                 scan -= 1
                 continue
-            if mnemonic == "nop":
+            if mnemonic in {"nop", "clc", "cmc", "stc"}:
                 scan -= 1
                 continue
             break
@@ -1416,8 +1441,119 @@ def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
     return frozenset(push_by_register.values())
 
 
+def _cross_call_saved_push_addresses_8616(
+    function: object,
+    callsite_addr: int,
+    candidate_push_addrs: frozenset[int],
+    request_cache: CallsiteSummaryRequestCache8616 | None,
+) -> frozenset[int]:
+    """Return register pushes restored after a second proven returning call."""
+    if not candidate_push_addrs:
+        return frozenset()
+    insns = _function_cfg_instruction_inventory_8616(function)
+    call_idx = _find_call_index(insns, callsite_addr)
+    if call_idx is None or call_idx == 0:
+        return frozenset()
+    frame_push = insns[call_idx - 1]
+    frame_operands = _instruction_operands(frame_push)
+    if (
+        _mnemonic(frame_push) != "push"
+        or len(frame_operands) != 1
+        or _operand_reg_name(frame_push, frame_operands[0]) != "cs"
+    ):
+        return frozenset()
+    call_evidence = _callee_terminal_stack_evidence_8616(
+        function,
+        insns[call_idx],
+        request_cache=request_cache,
+    )
+    if (
+        call_evidence is None
+        or call_evidence.consistent_cleanup != 0
+        or call_evidence.consistent_return_frame_kind
+        is not TerminalReturnFrameKind8616.FAR
+    ):
+        return frozenset()
+
+    saved: set[int] = set()
+    for push_addr in candidate_push_addrs:
+        push_idx = next(
+            (
+                index
+                for index, insn in enumerate(insns[:call_idx])
+                if _instruction_address_8616(insn) == push_addr
+            ),
+            None,
+        )
+        if push_idx is None:
+            continue
+        operands = _instruction_operands(insns[push_idx])
+        register = (
+            _operand_reg_name(insns[push_idx], operands[0])
+            if _mnemonic(insns[push_idx]) == "push" and len(operands) == 1
+            else None
+        )
+        if register not in MSC16_CALLER_SAVED_GENERAL_REGISTERS_8616:
+            continue
+        scan = call_idx + 1
+        crossed_call = False
+        while scan < len(insns):
+            insn = insns[scan]
+            mnemonic = _mnemonic(insn)
+            operands = _instruction_operands(insn)
+            if mnemonic == "push" and len(operands) == 1:
+                pushed_register = _operand_reg_name(insn, operands[0])
+                if (
+                    pushed_register == "cs"
+                    and scan + 1 < len(insns)
+                    and is_x86_16_call_mnemonic_8616(_mnemonic(insns[scan + 1]))
+                ):
+                    nested_evidence = _callee_terminal_stack_evidence_8616(
+                        function,
+                        insns[scan + 1],
+                        request_cache=request_cache,
+                    )
+                    if (
+                        nested_evidence is not None
+                        and nested_evidence.consistent_cleanup == 0
+                        and nested_evidence.consistent_return_frame_kind
+                        is TerminalReturnFrameKind8616.FAR
+                    ):
+                        crossed_call = True
+                        scan += 2
+                        continue
+                break
+            if is_x86_16_call_mnemonic_8616(mnemonic):
+                nested_evidence = _callee_terminal_stack_evidence_8616(
+                    function,
+                    insn,
+                    request_cache=request_cache,
+                )
+                if nested_evidence is None or nested_evidence.consistent_cleanup != 0:
+                    break
+                crossed_call = True
+                scan += 1
+                continue
+            if mnemonic == "pop" and len(operands) == 1:
+                if crossed_call and _operand_reg_name(insn, operands[0]) == register:
+                    saved.add(push_addr)
+                break
+            if (
+                mnemonic.startswith(("push", "pop", "ret", "j", "loop"))
+                or mnemonic in {"enter", "leave", "iret"}
+                or (
+                    operands
+                    and _operand_reg_name(insn, operands[0]) in {"sp", "esp"}
+                )
+            ):
+                break
+            scan += 1
+    return frozenset(saved)
+
+
 def _filter_callee_saved_frame_pushes_8616(
     function: object,
+    callsite_addr: int,
     widths: tuple[int, ...],
     sources: tuple[_CallsiteTuple8616 | None, ...],
     instruction_addrs: tuple[int, ...],
@@ -1434,9 +1570,16 @@ def _filter_callee_saved_frame_pushes_8616(
             lambda: _callee_saved_frame_push_addresses_8616(function),
         )
     )
-    if not frame_push_addrs:
+    cross_call_saved_push_addrs = _cross_call_saved_push_addresses_8616(
+        function,
+        callsite_addr,
+        frozenset(instruction_addrs),
+        request_cache,
+    )
+    saved_push_addrs = frame_push_addrs | cross_call_saved_push_addrs
+    if not saved_push_addrs:
         return widths, sources, instruction_addrs
-    kept = tuple(index for index, address in enumerate(instruction_addrs) if address not in frame_push_addrs)
+    kept = tuple(index for index, address in enumerate(instruction_addrs) if address not in saved_push_addrs)
     return (
         tuple(widths[index] for index in kept),
         tuple(sources[index] for index in kept),
@@ -3575,6 +3718,7 @@ def summarize_x86_16_callsite(
                 )
         raw_arg_widths, raw_arg_sources, raw_push_instruction_addrs = _filter_callee_saved_frame_pushes_8616(
             function,
+            callsite_addr,
             raw_arg_widths,
             raw_arg_sources,
             raw_push_instruction_addrs,

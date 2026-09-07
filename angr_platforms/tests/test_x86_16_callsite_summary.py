@@ -604,6 +604,59 @@ def test_callsite_summary_excludes_push_pop_proven_callee_saved_frame_registers(
     assert summary.stack_cleanup == 0
 
 
+def test_callsite_summary_excludes_register_saves_around_far_return_calls(monkeypatch):
+    """Far-call frame words and cross-call register saves are not C arguments."""
+    reg_names = {1: "ds", 2: "dx", 3: "cs", 4: "ax"}
+    caller_insns = (
+        _Insn(0x1000, "push", [_Operand(reg=1, size=2)], reg_names=reg_names, size=1),
+        _Insn(0x1001, "push", [_Operand(reg=2, size=2)], reg_names=reg_names, size=1),
+        _Insn(0x1002, "push", [_Operand(reg=3, size=2)], reg_names=reg_names, size=1),
+        _Insn(0x1003, "call", [_Operand(imm=0x2000, size=2)], size=3),
+        _Insn(0x1006, "push", [_Operand(reg=3, size=2)], reg_names=reg_names, size=1),
+        _Insn(0x1007, "call", [_Operand(imm=0x3000, size=2)], size=3),
+        _Insn(0x100A, "pop", [_Operand(reg=2, size=2)], reg_names=reg_names, size=1),
+        _Insn(0x100B, "mov", [_Operand(reg=4), _Operand(imm=1)], reg_names=reg_names, size=3),
+        _Insn(0x100E, "pop", [_Operand(reg=1, size=2)], reg_names=reg_names, size=1),
+        _Insn(0x100F, "stc", size=1),
+        _Insn(0x1010, "retf", size=1),
+    )
+    caller_block = SimpleNamespace(capstone=SimpleNamespace(insns=caller_insns))
+    far_return_blocks = {
+        address: SimpleNamespace(
+            capstone=SimpleNamespace(insns=(_Insn(address, "retf", size=1),))
+        )
+        for address in (0x2000, 0x3000)
+    }
+
+    def block_for_addr(addr, **_kwargs):
+        return far_return_blocks.get(addr, caller_block)
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(block=block_for_addr),
+    )
+    function = SimpleNamespace(
+        project=project,
+        blocks=(caller_block,),
+        block_addrs_set={0x1000},
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(0x1003, 0x2000, 0x1006, "direct_near")
+        ],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1003)
+
+    assert summary is not None
+    assert summary.arg_count == 0
+    assert summary.arg_widths == ()
+    assert summary.push_arg_sources == ()
+    assert summary.push_arg_instruction_addrs == ()
+    assert summary.stack_cleanup == 0
+
+
 def test_callsite_summary_counts_pushes_separated_by_register_setup(monkeypatch):
     function = _function_with_block(
         [

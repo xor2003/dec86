@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from angr.errors import SimEngineError
 from angr_platforms.X86_16.semantics.terminal_stack_cleanup import (
+    TerminalReturnFrameKind8616,
     collect_terminal_stack_cleanup_evidence_8616,
     terminal_stack_cleanup_at_address_8616,
 )
@@ -73,6 +74,7 @@ def test_terminal_stack_cleanup_accepts_consistent_return_paths() -> None:
 
     assert evidence.complete is True
     assert evidence.consistent_cleanup == 4
+    assert evidence.consistent_return_frame_kind is TerminalReturnFrameKind8616.NEAR
     assert evidence.raw_fact_count == evidence.materialized_count == 2
 
 
@@ -106,6 +108,25 @@ def test_bodyless_stack_cleanup_requires_direct_terminal_block() -> None:
 
     assert terminal_stack_cleanup_at_address_8616(direct_project, 0x2000).consistent_cleanup == 8
     assert terminal_stack_cleanup_at_address_8616(branch_project, 0x2000).complete is False
+
+
+def test_bodyless_stack_cleanup_preserves_far_return_frame_kind() -> None:
+    """A complete RETF body publishes its far machine-frame contract."""
+    project = SimpleNamespace(
+        factory=_Factory(
+            {
+                0x2000: SimpleNamespace(
+                    capstone=SimpleNamespace(insns=(_insn(0x2000, "retf"),))
+                )
+            }
+        )
+    )
+
+    evidence = terminal_stack_cleanup_at_address_8616(project, 0x2000)
+
+    assert evidence.complete is True
+    assert evidence.consistent_cleanup == 0
+    assert evidence.consistent_return_frame_kind is TerminalReturnFrameKind8616.FAR
 
 
 def test_complete_bodyless_stack_cleanup_is_cached_per_project() -> None:
