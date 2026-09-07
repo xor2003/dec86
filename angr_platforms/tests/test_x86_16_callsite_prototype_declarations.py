@@ -283,6 +283,70 @@ def test_call_target_identity_uses_exact_far_summary_over_offset_only_callee() -
     assert codegen._inertia_call_target_identity_stats_8616.failure_count == 0
 
 
+def test_call_target_identity_materializes_constant_register_call_branch() -> None:
+    """A proven 16-bit constant AX branch becomes one linked near-call name."""
+    codegen = _Codegen()
+
+    class _NoFunctions:
+        @staticmethod
+        def function(*, addr: int, create: bool) -> object | None:
+            assert create is False
+            assert addr == 0x100BD
+            return None
+
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x10000, max_addr=0xFFFF),
+        ),
+        kb=SimpleNamespace(functions=_NoFunctions()),
+    )
+    target = CConstant(
+        0xBD,
+        SimTypePointer(SimTypeShort(False)),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        target,
+        None,
+        [],
+        tags={"ins_addr": 0x10069},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x10069,
+            target_addr=None,
+            return_addr=0x1006B,
+            kind=None,
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=None,
+            return_register=None,
+            return_used=False,
+            return_shape="ax",
+            target_source=("reg", "ax"),
+        )
+    }
+
+    assert canonicalize_callsite_target_identities_8616(project, codegen) is True
+    assert call.callee_func is None
+    assert call.callee_target == "sub_100bd"
+    stats = codegen._inertia_call_target_identity_stats_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 1, 1, 0)
+
+    assert materialize_callsite_prototype_declarations_8616(project, codegen) is True
+    assert codegen._inertia_callsite_prototype_decls == ("int sub_100bd(void);",)
+
+
 def test_reconcile_call_shape_preserves_complete_binary_push_widths() -> None:
     summary = replace(
         _summary(0x1010),

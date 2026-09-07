@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
-from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CUnaryOp
+from angr.analyses.decompiler.structured_codegen.c import CConstant, CFunctionCall, CUnaryOp
 from angr.knowledge_plugins.functions import Function
 from angr.sim_type import (
     SimStruct,
@@ -343,6 +343,40 @@ def _callee_addr_8616(node: CFunctionCall) -> int | None:
     return addr if isinstance(addr, int) else None
 
 
+def _constant_register_indirect_target_addr_8616(
+    project: object,
+    node: CFunctionCall,
+    summary: CallsiteSummary8616,
+) -> int | None:
+    """Return a proven near address from one constant register-call branch."""
+    target = node.callee_target
+    target_source = summary.target_source
+    target_value = target.value if isinstance(target, CConstant) else None
+    if (
+        summary.target_addr is not None
+        or not isinstance(target_source, tuple)
+        or len(target_source) != 2
+        or target_source[0] != "reg"
+        or not isinstance(target_source[1], str)
+        or not isinstance(target, CConstant)
+        or not isinstance(target.type, SimTypePointer)
+        or not isinstance(target_value, int)
+        or not 0 <= target_value <= 0xFFFF
+        or not isinstance(summary.arg_count, int)
+        or summary.arg_count
+        != len(tuple(cast(Sequence[object], node.args or ())))
+    ):
+        return None
+    try:
+        register_shape = cast(_ProjectSurface8616, project).arch.registers[target_source[1]]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if len(register_shape) < 2 or register_shape[1] != 2:
+        return None
+    normalized_target = normalize_x86_16_call_target_addr_8616(project, target_value)
+    return normalized_target if isinstance(normalized_target, int) else None
+
+
 def canonicalize_callsite_target_identities_8616(
     project: object,
     codegen: object,
@@ -370,42 +404,54 @@ def canonicalize_callsite_target_identities_8616(
         if not isinstance(node, CFunctionCall):
             continue
         summary = _summary_for_call_8616(project, node, summaries)
-        if summary is None or not isinstance(summary.target_addr, int):
+        if summary is None:
+            continue
+        constant_target_addr = _constant_register_indirect_target_addr_8616(
+            project,
+            node,
+            summary,
+        )
+        authoritative_target_addr = (
+            summary.target_addr
+            if isinstance(summary.target_addr, int)
+            else constant_target_addr
+        )
+        if not isinstance(authoritative_target_addr, int):
             continue
         stats.raw_fact_count += 1
         if not _callsite_matches_summary_8616(project, node, summary):
             stats.failure_count += 1
             decisions.append(
-                (_callee_addr_8616(node), summary.target_addr, "callsite-mismatch")
+                (_callee_addr_8616(node), authoritative_target_addr, "callsite-mismatch")
             )
             continue
         current_addr = _callee_addr_8616(node)
-        if current_addr != summary.target_addr:
+        if constant_target_addr is None and current_addr != authoritative_target_addr:
             exact_far_target = (
                 callsite_machine_frame_kind_8616(summary)
                 is CallsiteMachineFrameKind8616.FAR
             )
             canonical_addr = (
-                summary.target_addr
+                authoritative_target_addr
                 if exact_far_target
                 else normalize_x86_16_call_target_addr_8616(project, current_addr)
             )
-            if canonical_addr != summary.target_addr:
+            if canonical_addr != authoritative_target_addr:
                 stats.failure_count += 1
-                decisions.append((current_addr, summary.target_addr, "target-mismatch"))
+                decisions.append((current_addr, authoritative_target_addr, "target-mismatch"))
                 continue
         stats.normalized_fact_count += 1
         try:
             canonical_function = functions.function(
-                addr=summary.target_addr,
+                addr=authoritative_target_addr,
                 create=False,
             )
         except (KeyError, TypeError):
             canonical_function = None
         if canonical_function is None:
-            if current_addr == summary.target_addr:
+            if current_addr == authoritative_target_addr:
                 canonical_function = node.callee_func
-            canonical_name: object = f"sub_{summary.target_addr:x}"
+            canonical_name: object = f"sub_{authoritative_target_addr:x}"
             decision = "materialized-generic"
         else:
             try:
@@ -421,16 +467,16 @@ def canonicalize_callsite_target_identities_8616(
             or _C_IDENTIFIER_RE_8616.fullmatch(canonical_name) is None
         ):
             stats.failure_count += 1
-            decisions.append((current_addr, summary.target_addr, "name-missing"))
+            decisions.append((current_addr, authoritative_target_addr, "name-missing"))
             continue
         if node.callee_func is canonical_function and node.callee_target == canonical_name:
-            decisions.append((current_addr, summary.target_addr, "already-canonical"))
+            decisions.append((current_addr, authoritative_target_addr, "already-canonical"))
             continue
         stats.classified_fact_count += 1
         node.callee_func = canonical_function
         node.callee_target = canonical_name
         stats.materialized_count += 1
-        decisions.append((current_addr, summary.target_addr, decision))
+        decisions.append((current_addr, authoritative_target_addr, decision))
         changed = True
 
     if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
