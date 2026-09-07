@@ -85,6 +85,8 @@ class _InstructionSite8616(Protocol):
 class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic frontend base contract
     """Frontend access surface that keeps execution and semantic addresses separate."""
 
+    active_instruction: object | None
+
     def __init__(self, size: int = 0) -> None:
         """Initialize TLB state and owned semantic access logs."""
         super().__init__(size)
@@ -240,9 +242,10 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
     def read_mem32_seg(self, seg: object, addr: object) -> object:
         """Read 32 bits from segmented memory while recording semantic evidence."""
         addresses = self._segment_byte_addresses(seg, addr, 32, MODE_READ)
-        result = cast(VexValue, self.read_mem8(cast(int | VexValue, addresses[0]))).cast_to(Type.int_32)
+        # PyVEX's vvifyresults decorator returns VexValue, not the wrapped RdTmp.
+        result = cast(VexValue, cast(VexValue, self.read_mem8(cast(int | VexValue, addresses[0]))).cast_to(Type.int_32))
         for index, address in enumerate(addresses[1:], start=1):
-            byte = cast(VexValue, self.read_mem8(cast(int | VexValue, address))).cast_to(Type.int_32)
+            byte = cast(VexValue, cast(VexValue, self.read_mem8(cast(int | VexValue, address))).cast_to(Type.int_32))
             result = result | (byte << (index * 8))
         return result
 
@@ -250,7 +253,7 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
         """Read one typed word as independently wrapped segmented bytes."""
         low_address, high_address = self._segment_byte_addresses(seg, addr, 16, MODE_READ)
         low = cast(VexValue, self.read_mem8(cast(int | VexValue, low_address))).cast_to(Type.int_16)
-        high = cast(VexValue, self.read_mem8(cast(int | VexValue, high_address))).cast_to(Type.int_16)
+        high = cast(VexValue, cast(VexValue, self.read_mem8(cast(int | VexValue, high_address))).cast_to(Type.int_16))
         return low | (high << 8)
 
     def read_mem8_seg(self, seg: object, addr: object) -> object:
@@ -263,15 +266,15 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
         addresses = self._segment_byte_addresses(seg, addr, 32, MODE_WRITE)
         value32 = self.constant(value, Type.int_32) if isinstance(value, int) else cast(VexValue, value)
         for index, address in enumerate(addresses):
-            byte = cast(VexValue, value32 >> (index * 8)).cast_to(Type.int_8)
+            byte = cast(VexValue, cast(VexValue, value32 >> (index * 8)).cast_to(Type.int_8))
             self.write_mem8(cast(int | VexValue, address), byte)
 
     def write_mem16_seg(self, seg: object, addr: object, value: object) -> None:
         """Write one typed word as independently wrapped segmented bytes."""
         low_address, high_address = self._segment_byte_addresses(seg, addr, 16, MODE_WRITE)
-        value16 = self.constant(value, Type.int_16) if isinstance(value, int) else cast(VexValue, value)
-        low = value16.cast_to(Type.int_8)
-        high = cast(VexValue, value16 >> 8).cast_to(Type.int_8)
+        value16 = cast(VexValue, self.constant(value, Type.int_16) if isinstance(value, int) else value)
+        low = cast(VexValue, value16.cast_to(Type.int_8))
+        high = cast(VexValue, cast(VexValue, value16 >> 8).cast_to(Type.int_8))
         self.write_mem8(cast(int | VexValue, low_address), low)
         self.write_mem8(cast(int | VexValue, high_address), high)
 

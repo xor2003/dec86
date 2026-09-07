@@ -43,4 +43,18 @@ changes and is not a clean-commit or remote full-suite acceptance result.
   result substituted for remote CI success.
 
 Status: open. The configuration correction does not resolve existing typing
-debt, and the modified workflow has not yet been verified on GitHub.
+debt. Run 34133441640 on 704dc5688 confirms the changed execution conditions:
+Ruff and Lizard passed, Pyright and Vulture failed, and pytest subsequently
+started. Its final result is not yet collected. Run 34133444219 is a separate
+Dependabot job, not the focused test workflow.
+
+The next local typing repair preserves the segmented-byte access methods and
+declares their existing active-instruction field and PyVEX decorated result
+types. The decorator returns VexValue even when the wrapped implementation
+returns RdTmp. `access.py` now passes Pyright, MyPy, and Ruff, with no new
+suppression; 34 access/emulator/stack-helper tests pass in 9.00s. The current
+first Make Pyright batch has 30 errors. Remaining batches are still uncounted.
+The default test pipeline passes all three lanes on this shared tree, with
+2,119 unit tests in 105.02s and successful external compiler round trips
+(`/tmp/inertia-ci-access-pipeline.log`). This does not close named InitMenu or
+the source-stable full audit.
