@@ -1,0 +1,995 @@
+;	Static Name Aliases
+;
+	TITLE   c:\COMP32.C
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__aNchkstk:NEAR
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** long select_max(long a, long b)
+; Line 1
+;|*** {
+; Line 2
+	PUBLIC	_select_max
+_select_max	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 00 00 		mov	ax,0
+	*** 000006	e8 00 00 		call	__aNchkstk
+	*** 000009	57 			push	di
+	*** 00000a	56 			push	si
+;	b = 8
+;	a = 4
+;|***     if (a >= b) {
+; Line 3
+	*** 00000b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 00000e	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000011	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 000014	7e 03 			jle	$JCC20
+	*** 000016	e9 16 00 		jmp	$I104
+					$JCC20:
+	*** 000019	7d 03 			jge	$JCC25
+	*** 00001b	e9 08 00 		jmp	$L20001
+					$JCC25:
+	*** 00001e	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 000021	76 03 			jbe	$JCC33
+	*** 000023	e9 09 00 		jmp	$I104
+					$JCC33:
+					$L20001:
+;|***         return a;
+; Line 4
+	*** 000026	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 000029	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 00002c	e9 09 00 		jmp	$EX103
+;|***     }
+; Line 5
+;|***     return b;
+; Line 6
+					$I104:
+	*** 00002f	8b 46 08 		mov	ax,WORD PTR [bp+8]	;b
+	*** 000032	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 000035	e9 00 00 		jmp	$EX103
+;|*** }
+; Line 7
+					$EX103:
+	*** 000038	5e 			pop	si
+	*** 000039	5f 			pop	di
+	*** 00003a	8b e5 			mov	sp,bp
+	*** 00003c	5d 			pop	bp
+	*** 00003d	c3 			ret	
+
+_select_max	ENDP
+;|*** 
+;|*** int compare_signed(long a, long b)
+;|*** {
+; Line 10
+	PUBLIC	_compare_signed
+_compare_signed	PROC NEAR
+	*** 00003e	55 			push	bp
+	*** 00003f	8b ec 			mov	bp,sp
+	*** 000041	b8 00 00 		mov	ax,0
+	*** 000044	e8 00 00 		call	__aNchkstk
+	*** 000047	57 			push	di
+	*** 000048	56 			push	si
+;	b = 8
+;	a = 4
+;|***     if (a < b) {
+; Line 11
+	*** 000049	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 00004c	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 00004f	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 000052	7d 03 			jge	$JCC82
+	*** 000054	e9 13 00 		jmp	$I109
+					$JCC82:
+	*** 000057	7e 03 			jle	$JCC87
+	*** 000059	e9 08 00 		jmp	$L20002
+					$JCC87:
+	*** 00005c	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 00005f	77 03 			ja	$JCC95
+	*** 000061	e9 06 00 		jmp	$I109
+					$JCC95:
+					$L20002:
+;|***         return -1;
+; Line 12
+	*** 000064	b8 ff ff 		mov	ax,-1
+	*** 000067	e9 43 00 		jmp	$EX108
+;|***     }
+; Line 13
+;|***     if (a > b) {
+; Line 14
+					$I109:
+	*** 00006a	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 00006d	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000070	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 000073	7e 03 			jle	$JCC115
+	*** 000075	e9 13 00 		jmp	$I110
+					$JCC115:
+	*** 000078	7d 03 			jge	$JCC120
+	*** 00007a	e9 08 00 		jmp	$L20003
+					$JCC120:
+	*** 00007d	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 000080	72 03 			jb	$JCC128
+	*** 000082	e9 06 00 		jmp	$I110
+					$JCC128:
+					$L20003:
+;|***         return 1;
+; Line 15
+	*** 000085	b8 01 00 		mov	ax,1
+	*** 000088	e9 22 00 		jmp	$EX108
+;|***     }
+; Line 16
+;|***     if (a == b) {
+; Line 17
+					$I110:
+	*** 00008b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 00008e	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000091	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 000094	74 03 			je	$JCC148
+	*** 000096	e9 0e 00 		jmp	$I111
+					$JCC148:
+	*** 000099	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 00009c	74 03 			je	$JCC156
+	*** 00009e	e9 06 00 		jmp	$I111
+					$JCC156:
+;|***         return 0;
+; Line 18
+	*** 0000a1	b8 00 00 		mov	ax,0
+	*** 0000a4	e9 06 00 		jmp	$EX108
+;|***     }
+; Line 19
+;|***     return 2;
+; Line 20
+					$I111:
+	*** 0000a7	b8 02 00 		mov	ax,2
+	*** 0000aa	e9 00 00 		jmp	$EX108
+;|*** }
+; Line 21
+					$EX108:
+	*** 0000ad	5e 			pop	si
+	*** 0000ae	5f 			pop	di
+	*** 0000af	8b e5 			mov	sp,bp
+	*** 0000b1	5d 			pop	bp
+	*** 0000b2	c3 			ret	
+
+_compare_signed	ENDP
+;|*** 
+;|*** int compare_unsigned(unsigned long a, unsigned long b)
+;|*** {
+; Line 24
+	PUBLIC	_compare_unsigned
+_compare_unsigned	PROC NEAR
+	*** 0000b3	55 			push	bp
+	*** 0000b4	8b ec 			mov	bp,sp
+	*** 0000b6	b8 00 00 		mov	ax,0
+	*** 0000b9	e8 00 00 		call	__aNchkstk
+	*** 0000bc	57 			push	di
+	*** 0000bd	56 			push	si
+;	b = 8
+;	a = 4
+;|***     if (a < b) {
+; Line 25
+	*** 0000be	8b 46 08 		mov	ax,WORD PTR [bp+8]	;b
+	*** 0000c1	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 0000c4	39 56 06 		cmp	WORD PTR [bp+6],dx
+	*** 0000c7	76 03 			jbe	$JCC199
+	*** 0000c9	e9 13 00 		jmp	$I116
+					$JCC199:
+	*** 0000cc	73 03 			jae	$JCC204
+	*** 0000ce	e9 08 00 		jmp	$L20004
+					$JCC204:
+	*** 0000d1	39 46 04 		cmp	WORD PTR [bp+4],ax	;a
+	*** 0000d4	72 03 			jb	$JCC212
+	*** 0000d6	e9 06 00 		jmp	$I116
+					$JCC212:
+					$L20004:
+;|***         return -1;
+; Line 26
+	*** 0000d9	b8 ff ff 		mov	ax,-1
+	*** 0000dc	e9 43 00 		jmp	$EX115
+;|***     }
+; Line 27
+;|***     if (a > b) {
+; Line 28
+					$I116:
+	*** 0000df	8b 46 08 		mov	ax,WORD PTR [bp+8]	;b
+	*** 0000e2	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 0000e5	39 56 06 		cmp	WORD PTR [bp+6],dx
+	*** 0000e8	73 03 			jae	$JCC232
+	*** 0000ea	e9 13 00 		jmp	$I117
+					$JCC232:
+	*** 0000ed	76 03 			jbe	$JCC237
+	*** 0000ef	e9 08 00 		jmp	$L20005
+					$JCC237:
+	*** 0000f2	39 46 04 		cmp	WORD PTR [bp+4],ax	;a
+	*** 0000f5	77 03 			ja	$JCC245
+	*** 0000f7	e9 06 00 		jmp	$I117
+					$JCC245:
+					$L20005:
+;|***         return 1;
+; Line 29
+	*** 0000fa	b8 01 00 		mov	ax,1
+	*** 0000fd	e9 22 00 		jmp	$EX115
+;|***     }
+; Line 30
+;|***     if (a == b) {
+; Line 31
+					$I117:
+	*** 000100	8b 46 08 		mov	ax,WORD PTR [bp+8]	;b
+	*** 000103	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 000106	39 46 04 		cmp	WORD PTR [bp+4],ax	;a
+	*** 000109	74 03 			je	$JCC265
+	*** 00010b	e9 0e 00 		jmp	$I118
+					$JCC265:
+	*** 00010e	39 56 06 		cmp	WORD PTR [bp+6],dx
+	*** 000111	74 03 			je	$JCC273
+	*** 000113	e9 06 00 		jmp	$I118
+					$JCC273:
+;|***         return 0;
+; Line 32
+	*** 000116	b8 00 00 		mov	ax,0
+	*** 000119	e9 06 00 		jmp	$EX115
+;|***     }
+; Line 33
+;|***     return 2;
+; Line 34
+					$I118:
+	*** 00011c	b8 02 00 		mov	ax,2
+	*** 00011f	e9 00 00 		jmp	$EX115
+;|*** }
+; Line 35
+					$EX115:
+	*** 000122	5e 			pop	si
+	*** 000123	5f 			pop	di
+	*** 000124	8b e5 			mov	sp,bp
+	*** 000126	5d 			pop	bp
+	*** 000127	c3 			ret	
+
+_compare_unsigned	ENDP
+;|*** 
+;|*** long clamp_window(long value, long low, long high)
+;|*** {
+; Line 38
+	PUBLIC	_clamp_window
+_clamp_window	PROC NEAR
+	*** 000128	55 			push	bp
+	*** 000129	8b ec 			mov	bp,sp
+	*** 00012b	b8 00 00 		mov	ax,0
+	*** 00012e	e8 00 00 		call	__aNchkstk
+	*** 000131	57 			push	di
+	*** 000132	56 			push	si
+;	high = 12
+;	low = 8
+;	value = 4
+;|***     if (value < low) {
+; Line 39
+	*** 000133	8b 46 04 		mov	ax,WORD PTR [bp+4]	;value
+	*** 000136	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000139	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 00013c	7d 03 			jge	$JCC316
+	*** 00013e	e9 16 00 		jmp	$I124
+					$JCC316:
+	*** 000141	7e 03 			jle	$JCC321
+	*** 000143	e9 08 00 		jmp	$L20006
+					$JCC321:
+	*** 000146	39 46 08 		cmp	WORD PTR [bp+8],ax	;low
+	*** 000149	77 03 			ja	$JCC329
+	*** 00014b	e9 09 00 		jmp	$I124
+					$JCC329:
+					$L20006:
+;|***         return low;
+; Line 40
+	*** 00014e	8b 46 08 		mov	ax,WORD PTR [bp+8]	;low
+	*** 000151	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 000154	e9 2d 00 		jmp	$EX123
+;|***     }
+; Line 41
+;|***     if (value > high) {
+; Line 42
+					$I124:
+	*** 000157	8b 46 04 		mov	ax,WORD PTR [bp+4]	;value
+	*** 00015a	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 00015d	39 56 0e 		cmp	WORD PTR [bp+14],dx
+	*** 000160	7e 03 			jle	$JCC352
+	*** 000162	e9 16 00 		jmp	$I125
+					$JCC352:
+	*** 000165	7d 03 			jge	$JCC357
+	*** 000167	e9 08 00 		jmp	$L20007
+					$JCC357:
+	*** 00016a	39 46 0c 		cmp	WORD PTR [bp+12],ax	;high
+	*** 00016d	72 03 			jb	$JCC365
+	*** 00016f	e9 09 00 		jmp	$I125
+					$JCC365:
+					$L20007:
+;|***         return high;
+; Line 43
+	*** 000172	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;high
+	*** 000175	8b 56 0e 		mov	dx,WORD PTR [bp+14]
+	*** 000178	e9 09 00 		jmp	$EX123
+;|***     }
+; Line 44
+;|***     return value;
+; Line 45
+					$I125:
+	*** 00017b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;value
+	*** 00017e	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000181	e9 00 00 		jmp	$EX123
+;|*** }
+; Line 46
+					$EX123:
+	*** 000184	5e 			pop	si
+	*** 000185	5f 			pop	di
+	*** 000186	8b e5 			mov	sp,bp
+	*** 000188	5d 			pop	bp
+	*** 000189	c3 			ret	
+
+_clamp_window	ENDP
+;|*** 
+;|*** int rel_signed32(long a, long b)
+;|*** {
+; Line 49
+	PUBLIC	_rel_signed32
+_rel_signed32	PROC NEAR
+	*** 00018a	55 			push	bp
+	*** 00018b	8b ec 			mov	bp,sp
+	*** 00018d	b8 02 00 		mov	ax,2
+	*** 000190	e8 00 00 		call	__aNchkstk
+	*** 000193	57 			push	di
+	*** 000194	56 			push	si
+;	mask = -2
+;	b = 8
+;	a = 4
+;|***     int mask;
+;|*** 
+;|***     mask = 0;
+; Line 52
+	*** 000195	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;mask
+;|***     if (a < b) {
+; Line 53
+	*** 00019a	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 00019d	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0001a0	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 0001a3	7d 03 			jge	$JCC419
+	*** 0001a5	e9 11 00 		jmp	$I131
+					$JCC419:
+	*** 0001a8	7e 03 			jle	$JCC424
+	*** 0001aa	e9 08 00 		jmp	$L20008
+					$JCC424:
+	*** 0001ad	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 0001b0	77 03 			ja	$JCC432
+	*** 0001b2	e9 04 00 		jmp	$I131
+					$JCC432:
+					$L20008:
+;|***         mask |= 1;
+; Line 54
+	*** 0001b5	83 4e fe 01 		or	WORD PTR [bp-2],1	;mask
+;|***     }
+; Line 55
+;|***     if (a <= b) {
+; Line 56
+					$I131:
+	*** 0001b9	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0001bc	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0001bf	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 0001c2	7d 03 			jge	$JCC450
+	*** 0001c4	e9 11 00 		jmp	$I132
+					$JCC450:
+	*** 0001c7	7e 03 			jle	$JCC455
+	*** 0001c9	e9 08 00 		jmp	$L20009
+					$JCC455:
+	*** 0001cc	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 0001cf	73 03 			jae	$JCC463
+	*** 0001d1	e9 04 00 		jmp	$I132
+					$JCC463:
+					$L20009:
+;|***         mask |= 2;
+; Line 57
+	*** 0001d4	83 4e fe 02 		or	WORD PTR [bp-2],2	;mask
+;|***     }
+; Line 58
+;|***     if (a > b) {
+; Line 59
+					$I132:
+	*** 0001d8	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0001db	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0001de	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 0001e1	7e 03 			jle	$JCC481
+	*** 0001e3	e9 11 00 		jmp	$I133
+					$JCC481:
+	*** 0001e6	7d 03 			jge	$JCC486
+	*** 0001e8	e9 08 00 		jmp	$L20010
+					$JCC486:
+	*** 0001eb	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 0001ee	72 03 			jb	$JCC494
+	*** 0001f0	e9 04 00 		jmp	$I133
+					$JCC494:
+					$L20010:
+;|***         mask |= 4;
+; Line 60
+	*** 0001f3	83 4e fe 04 		or	WORD PTR [bp-2],4	;mask
+;|***     }
+; Line 61
+;|***     if (a >= b) {
+; Line 62
+					$I133:
+	*** 0001f7	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0001fa	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0001fd	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 000200	7e 03 			jle	$JCC512
+	*** 000202	e9 11 00 		jmp	$I134
+					$JCC512:
+	*** 000205	7d 03 			jge	$JCC517
+	*** 000207	e9 08 00 		jmp	$L20011
+					$JCC517:
+	*** 00020a	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 00020d	76 03 			jbe	$JCC525
+	*** 00020f	e9 04 00 		jmp	$I134
+					$JCC525:
+					$L20011:
+;|***         mask |= 8;
+; Line 63
+	*** 000212	83 4e fe 08 		or	WORD PTR [bp-2],8	;mask
+;|***     }
+; Line 64
+;|***     if (a == b) {
+; Line 65
+					$I134:
+	*** 000216	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 000219	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 00021c	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 00021f	74 03 			je	$JCC543
+	*** 000221	e9 0c 00 		jmp	$I135
+					$JCC543:
+	*** 000224	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 000227	74 03 			je	$JCC551
+	*** 000229	e9 04 00 		jmp	$I135
+					$JCC551:
+;|***         mask |= 16;
+; Line 66
+	*** 00022c	83 4e fe 10 		or	WORD PTR [bp-2],16	;mask
+;|***     }
+; Line 67
+;|***     if (a != b) {
+; Line 68
+					$I135:
+	*** 000230	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 000233	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000236	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 000239	74 03 			je	$JCC569
+	*** 00023b	e9 08 00 		jmp	$L20012
+					$JCC569:
+	*** 00023e	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 000241	75 03 			jne	$JCC577
+	*** 000243	e9 04 00 		jmp	$I136
+					$JCC577:
+					$L20012:
+;|***         mask |= 32;
+; Line 69
+	*** 000246	83 4e fe 20 		or	WORD PTR [bp-2],32	;mask
+;|***     }
+; Line 70
+;|***     return mask;
+; Line 71
+					$I136:
+	*** 00024a	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;mask
+	*** 00024d	e9 00 00 		jmp	$EX129
+;|*** }
+; Line 72
+					$EX129:
+	*** 000250	5e 			pop	si
+	*** 000251	5f 			pop	di
+	*** 000252	8b e5 			mov	sp,bp
+	*** 000254	5d 			pop	bp
+	*** 000255	c3 			ret	
+
+_rel_signed32	ENDP
+;|*** 
+;|*** int rel_unsigned32(unsigned long a, unsigned long b)
+;|*** {
+; Line 75
+	PUBLIC	_rel_unsigned32
+_rel_unsigned32	PROC NEAR
+	*** 000256	55 			push	bp
+	*** 000257	8b ec 			mov	bp,sp
+	*** 000259	b8 02 00 		mov	ax,2
+	*** 00025c	e8 00 00 		call	__aNchkstk
+	*** 00025f	57 			push	di
+	*** 000260	56 			push	si
+;	mask = -2
+;	b = 8
+;	a = 4
+;|***     int mask;
+;|*** 
+;|***     mask = 0;
+; Line 78
+	*** 000261	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;mask
+;|***     if (a < b) {
+; Line 79
+	*** 000266	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 000269	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 00026c	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 00026f	73 03 			jae	$JCC623
+	*** 000271	e9 11 00 		jmp	$I142
+					$JCC623:
+	*** 000274	76 03 			jbe	$JCC628
+	*** 000276	e9 08 00 		jmp	$L20013
+					$JCC628:
+	*** 000279	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 00027c	77 03 			ja	$JCC636
+	*** 00027e	e9 04 00 		jmp	$I142
+					$JCC636:
+					$L20013:
+;|***         mask |= 1;
+; Line 80
+	*** 000281	83 4e fe 01 		or	WORD PTR [bp-2],1	;mask
+;|***     }
+; Line 81
+;|***     if (a <= b) {
+; Line 82
+					$I142:
+	*** 000285	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 000288	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 00028b	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 00028e	73 03 			jae	$JCC654
+	*** 000290	e9 11 00 		jmp	$I143
+					$JCC654:
+	*** 000293	76 03 			jbe	$JCC659
+	*** 000295	e9 08 00 		jmp	$L20014
+					$JCC659:
+	*** 000298	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 00029b	73 03 			jae	$JCC667
+	*** 00029d	e9 04 00 		jmp	$I143
+					$JCC667:
+					$L20014:
+;|***         mask |= 2;
+; Line 83
+	*** 0002a0	83 4e fe 02 		or	WORD PTR [bp-2],2	;mask
+;|***     }
+; Line 84
+;|***     if (a > b) {
+; Line 85
+					$I143:
+	*** 0002a4	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0002a7	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0002aa	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 0002ad	76 03 			jbe	$JCC685
+	*** 0002af	e9 11 00 		jmp	$I144
+					$JCC685:
+	*** 0002b2	73 03 			jae	$JCC690
+	*** 0002b4	e9 08 00 		jmp	$L20015
+					$JCC690:
+	*** 0002b7	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 0002ba	72 03 			jb	$JCC698
+	*** 0002bc	e9 04 00 		jmp	$I144
+					$JCC698:
+					$L20015:
+;|***         mask |= 4;
+; Line 86
+	*** 0002bf	83 4e fe 04 		or	WORD PTR [bp-2],4	;mask
+;|***     }
+; Line 87
+;|***     if (a >= b) {
+; Line 88
+					$I144:
+	*** 0002c3	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0002c6	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0002c9	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 0002cc	76 03 			jbe	$JCC716
+	*** 0002ce	e9 11 00 		jmp	$I145
+					$JCC716:
+	*** 0002d1	73 03 			jae	$JCC721
+	*** 0002d3	e9 08 00 		jmp	$L20016
+					$JCC721:
+	*** 0002d6	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 0002d9	76 03 			jbe	$JCC729
+	*** 0002db	e9 04 00 		jmp	$I145
+					$JCC729:
+					$L20016:
+;|***         mask |= 8;
+; Line 89
+	*** 0002de	83 4e fe 08 		or	WORD PTR [bp-2],8	;mask
+;|***     }
+; Line 90
+;|***     if (a == b) {
+; Line 91
+					$I145:
+	*** 0002e2	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0002e5	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0002e8	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 0002eb	74 03 			je	$JCC747
+	*** 0002ed	e9 0c 00 		jmp	$I146
+					$JCC747:
+	*** 0002f0	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 0002f3	74 03 			je	$JCC755
+	*** 0002f5	e9 04 00 		jmp	$I146
+					$JCC755:
+;|***         mask |= 16;
+; Line 92
+	*** 0002f8	83 4e fe 10 		or	WORD PTR [bp-2],16	;mask
+;|***     }
+; Line 93
+;|***     if (a != b) {
+; Line 94
+					$I146:
+	*** 0002fc	8b 46 04 		mov	ax,WORD PTR [bp+4]	;a
+	*** 0002ff	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000302	39 46 08 		cmp	WORD PTR [bp+8],ax	;b
+	*** 000305	74 03 			je	$JCC773
+	*** 000307	e9 08 00 		jmp	$L20017
+					$JCC773:
+	*** 00030a	39 56 0a 		cmp	WORD PTR [bp+10],dx
+	*** 00030d	75 03 			jne	$JCC781
+	*** 00030f	e9 04 00 		jmp	$I147
+					$JCC781:
+					$L20017:
+;|***         mask |= 32;
+; Line 95
+	*** 000312	83 4e fe 20 		or	WORD PTR [bp-2],32	;mask
+;|***     }
+; Line 96
+;|***     return mask;
+; Line 97
+					$I147:
+	*** 000316	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;mask
+	*** 000319	e9 00 00 		jmp	$EX140
+;|*** }
+; Line 98
+					$EX140:
+	*** 00031c	5e 			pop	si
+	*** 00031d	5f 			pop	di
+	*** 00031e	8b e5 			mov	sp,bp
+	*** 000320	5d 			pop	bp
+	*** 000321	c3 			ret	
+
+_rel_unsigned32	ENDP
+;|*** 
+;|*** int main(void)
+;|*** {
+; Line 101
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000322	55 			push	bp
+	*** 000323	8b ec 			mov	bp,sp
+	*** 000325	b8 14 00 		mov	ax,20
+	*** 000328	e8 00 00 		call	__aNchkstk
+	*** 00032b	57 			push	di
+	*** 00032c	56 			push	si
+;	a = -8
+;	b = -12
+;	ua = -16
+;	ub = -20
+;	clipped = -4
+;|***     long a;
+;|***     long b;
+;|***     unsigned long ua;
+;|***     unsigned long ub;
+;|***     long clipped;
+;|*** 
+;|***     a = 100000L;
+; Line 108
+	*** 00032d	c7 46 f8 a0 86 		mov	WORD PTR [bp-8],-31072	;a
+	*** 000332	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1
+;|***     b = -2000L;
+; Line 109
+	*** 000337	c7 46 f4 30 f8 		mov	WORD PTR [bp-12],-2000	;b
+	*** 00033c	c7 46 f6 ff ff 		mov	WORD PTR [bp-10],-1
+;|***     ua = 300000UL;
+; Line 110
+	*** 000341	c7 46 f0 e0 93 		mov	WORD PTR [bp-16],-27680	;ua
+	*** 000346	c7 46 f2 04 00 		mov	WORD PTR [bp-14],4
+;|***     ub = 300001UL;
+; Line 111
+	*** 00034b	c7 46 ec e1 93 		mov	WORD PTR [bp-20],-27679	;ub
+	*** 000350	c7 46 ee 04 00 		mov	WORD PTR [bp-18],4
+;|***     clipped = clamp_window(a, -100L, 50000L);
+; Line 112
+	*** 000355	b8 50 c3 		mov	ax,-15536
+	*** 000358	ba 00 00 		mov	dx,0
+	*** 00035b	52 			push	dx
+	*** 00035c	50 			push	ax
+	*** 00035d	b8 9c ff 		mov	ax,-100
+	*** 000360	ba ff ff 		mov	dx,-1
+	*** 000363	52 			push	dx
+	*** 000364	50 			push	ax
+	*** 000365	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 000368	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 00036b	e8 ba fd 		call	_clamp_window
+	*** 00036e	83 c4 0c 		add	sp,12
+	*** 000371	89 46 fc 		mov	WORD PTR [bp-4],ax	;clipped
+	*** 000374	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     if (select_max(a, b) != a) {
+; Line 113
+	*** 000377	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 00037a	ff 76 f4 		push	WORD PTR [bp-12]	;b
+	*** 00037d	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 000380	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 000383	e8 7a fc 		call	_select_max
+	*** 000386	83 c4 08 		add	sp,8
+	*** 000389	3b 46 f8 		cmp	ax,WORD PTR [bp-8]	;a
+	*** 00038c	74 03 			je	$JCC908
+	*** 00038e	e9 08 00 		jmp	$L20018
+					$JCC908:
+	*** 000391	3b 56 fa 		cmp	dx,WORD PTR [bp-6]
+	*** 000394	75 03 			jne	$JCC916
+	*** 000396	e9 06 00 		jmp	$I155
+					$JCC916:
+					$L20018:
+;|***         return 1;
+; Line 114
+	*** 000399	b8 01 00 		mov	ax,1
+	*** 00039c	e9 97 01 		jmp	$EX149
+;|***     }
+; Line 115
+;|***     if (compare_signed(a, b) != 1) {
+; Line 116
+					$I155:
+	*** 00039f	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 0003a2	ff 76 f4 		push	WORD PTR [bp-12]	;b
+	*** 0003a5	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 0003a8	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 0003ab	e8 90 fc 		call	_compare_signed
+	*** 0003ae	83 c4 08 		add	sp,8
+	*** 0003b1	48 			dec	ax
+	*** 0003b2	75 03 			jne	$JCC946
+	*** 0003b4	e9 06 00 		jmp	$I156
+					$JCC946:
+;|***         return 2;
+; Line 117
+	*** 0003b7	b8 02 00 		mov	ax,2
+	*** 0003ba	e9 79 01 		jmp	$EX149
+;|***     }
+; Line 118
+;|***     if (compare_signed(b, a) != -1) {
+; Line 119
+					$I156:
+	*** 0003bd	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 0003c0	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 0003c3	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 0003c6	ff 76 f4 		push	WORD PTR [bp-12]	;b
+	*** 0003c9	e8 72 fc 		call	_compare_signed
+	*** 0003cc	83 c4 08 		add	sp,8
+	*** 0003cf	40 			inc	ax
+	*** 0003d0	75 03 			jne	$JCC976
+	*** 0003d2	e9 06 00 		jmp	$I157
+					$JCC976:
+;|***         return 3;
+; Line 120
+	*** 0003d5	b8 03 00 		mov	ax,3
+	*** 0003d8	e9 5b 01 		jmp	$EX149
+;|***     }
+; Line 121
+;|***     if (compare_signed(a, a) != 0) {
+; Line 122
+					$I157:
+	*** 0003db	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 0003de	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 0003e1	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 0003e4	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 0003e7	e8 54 fc 		call	_compare_signed
+	*** 0003ea	83 c4 08 		add	sp,8
+	*** 0003ed	3d 00 00 		cmp	ax,0
+	*** 0003f0	75 03 			jne	$JCC1008
+	*** 0003f2	e9 06 00 		jmp	$I158
+					$JCC1008:
+;|***         return 4;
+; Line 123
+	*** 0003f5	b8 04 00 		mov	ax,4
+	*** 0003f8	e9 3b 01 		jmp	$EX149
+;|***     }
+; Line 124
+;|***     if (compare_unsigned(ua, ub) != -1) {
+; Line 125
+					$I158:
+	*** 0003fb	ff 76 ee 		push	WORD PTR [bp-18]
+	*** 0003fe	ff 76 ec 		push	WORD PTR [bp-20]	;ub
+	*** 000401	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 000404	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 000407	e8 a9 fc 		call	_compare_unsigned
+	*** 00040a	83 c4 08 		add	sp,8
+	*** 00040d	40 			inc	ax
+	*** 00040e	75 03 			jne	$JCC1038
+	*** 000410	e9 06 00 		jmp	$I159
+					$JCC1038:
+;|***         return 5;
+; Line 126
+	*** 000413	b8 05 00 		mov	ax,5
+	*** 000416	e9 1d 01 		jmp	$EX149
+;|***     }
+; Line 127
+;|***     if (compare_unsigned(ub, ua) != 1) {
+; Line 128
+					$I159:
+	*** 000419	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 00041c	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 00041f	ff 76 ee 		push	WORD PTR [bp-18]
+	*** 000422	ff 76 ec 		push	WORD PTR [bp-20]	;ub
+	*** 000425	e8 8b fc 		call	_compare_unsigned
+	*** 000428	83 c4 08 		add	sp,8
+	*** 00042b	48 			dec	ax
+	*** 00042c	75 03 			jne	$JCC1068
+	*** 00042e	e9 06 00 		jmp	$I160
+					$JCC1068:
+;|***         return 6;
+; Line 129
+	*** 000431	b8 06 00 		mov	ax,6
+	*** 000434	e9 ff 00 		jmp	$EX149
+;|***     }
+; Line 130
+;|***     if (compare_unsigned(ua, ua) != 0) {
+; Line 131
+					$I160:
+	*** 000437	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 00043a	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 00043d	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 000440	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 000443	e8 6d fc 		call	_compare_unsigned
+	*** 000446	83 c4 08 		add	sp,8
+	*** 000449	3d 00 00 		cmp	ax,0
+	*** 00044c	75 03 			jne	$JCC1100
+	*** 00044e	e9 06 00 		jmp	$I161
+					$JCC1100:
+;|***         return 7;
+; Line 132
+	*** 000451	b8 07 00 		mov	ax,7
+	*** 000454	e9 df 00 		jmp	$EX149
+;|***     }
+; Line 133
+;|***     if (rel_signed32(b, a) != (1 | 2 | 32)) {
+; Line 134
+					$I161:
+	*** 000457	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 00045a	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 00045d	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 000460	ff 76 f4 		push	WORD PTR [bp-12]	;b
+	*** 000463	e8 24 fd 		call	_rel_signed32
+	*** 000466	83 c4 08 		add	sp,8
+	*** 000469	3d 23 00 		cmp	ax,35
+	*** 00046c	75 03 			jne	$JCC1132
+	*** 00046e	e9 06 00 		jmp	$I162
+					$JCC1132:
+;|***         return 8;
+; Line 135
+	*** 000471	b8 08 00 		mov	ax,8
+	*** 000474	e9 bf 00 		jmp	$EX149
+;|***     }
+; Line 136
+;|***     if (rel_signed32(a, b) != (4 | 8 | 32)) {
+; Line 137
+					$I162:
+	*** 000477	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 00047a	ff 76 f4 		push	WORD PTR [bp-12]	;b
+	*** 00047d	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 000480	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 000483	e8 04 fd 		call	_rel_signed32
+	*** 000486	83 c4 08 		add	sp,8
+	*** 000489	3d 2c 00 		cmp	ax,44
+	*** 00048c	75 03 			jne	$JCC1164
+	*** 00048e	e9 06 00 		jmp	$I163
+					$JCC1164:
+;|***         return 9;
+; Line 138
+	*** 000491	b8 09 00 		mov	ax,9
+	*** 000494	e9 9f 00 		jmp	$EX149
+;|***     }
+; Line 139
+;|***     if (rel_signed32(a, a) != (2 | 8 | 16)) {
+; Line 140
+					$I163:
+	*** 000497	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 00049a	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 00049d	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 0004a0	ff 76 f8 		push	WORD PTR [bp-8]	;a
+	*** 0004a3	e8 e4 fc 		call	_rel_signed32
+	*** 0004a6	83 c4 08 		add	sp,8
+	*** 0004a9	3d 1a 00 		cmp	ax,26
+	*** 0004ac	75 03 			jne	$JCC1196
+	*** 0004ae	e9 06 00 		jmp	$I164
+					$JCC1196:
+;|***         return 10;
+; Line 141
+	*** 0004b1	b8 0a 00 		mov	ax,10
+	*** 0004b4	e9 7f 00 		jmp	$EX149
+;|***     }
+; Line 142
+;|***     if (rel_unsigned32(ua, ub) != (1 | 2 | 32)) {
+; Line 143
+					$I164:
+	*** 0004b7	ff 76 ee 		push	WORD PTR [bp-18]
+	*** 0004ba	ff 76 ec 		push	WORD PTR [bp-20]	;ub
+	*** 0004bd	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 0004c0	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 0004c3	e8 90 fd 		call	_rel_unsigned32
+	*** 0004c6	83 c4 08 		add	sp,8
+	*** 0004c9	3d 23 00 		cmp	ax,35
+	*** 0004cc	75 03 			jne	$JCC1228
+	*** 0004ce	e9 06 00 		jmp	$I165
+					$JCC1228:
+;|***         return 11;
+; Line 144
+	*** 0004d1	b8 0b 00 		mov	ax,11
+	*** 0004d4	e9 5f 00 		jmp	$EX149
+;|***     }
+; Line 145
+;|***     if (rel_unsigned32(ub, ua) != (4 | 8 | 32)) {
+; Line 146
+					$I165:
+	*** 0004d7	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 0004da	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 0004dd	ff 76 ee 		push	WORD PTR [bp-18]
+	*** 0004e0	ff 76 ec 		push	WORD PTR [bp-20]	;ub
+	*** 0004e3	e8 70 fd 		call	_rel_unsigned32
+	*** 0004e6	83 c4 08 		add	sp,8
+	*** 0004e9	3d 2c 00 		cmp	ax,44
+	*** 0004ec	75 03 			jne	$JCC1260
+	*** 0004ee	e9 06 00 		jmp	$I166
+					$JCC1260:
+;|***         return 12;
+; Line 147
+	*** 0004f1	b8 0c 00 		mov	ax,12
+	*** 0004f4	e9 3f 00 		jmp	$EX149
+;|***     }
+; Line 148
+;|***     if (rel_unsigned32(ua, ua) != (2 | 8 | 16)) {
+; Line 149
+					$I166:
+	*** 0004f7	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 0004fa	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 0004fd	ff 76 f2 		push	WORD PTR [bp-14]
+	*** 000500	ff 76 f0 		push	WORD PTR [bp-16]	;ua
+	*** 000503	e8 50 fd 		call	_rel_unsigned32
+	*** 000506	83 c4 08 		add	sp,8
+	*** 000509	3d 1a 00 		cmp	ax,26
+	*** 00050c	75 03 			jne	$JCC1292
+	*** 00050e	e9 06 00 		jmp	$I167
+					$JCC1292:
+;|***         return 13;
+; Line 150
+	*** 000511	b8 0d 00 		mov	ax,13
+	*** 000514	e9 1f 00 		jmp	$EX149
+;|***     }
+; Line 151
+;|***     if (clipped != 50000L) {
+; Line 152
+					$I167:
+	*** 000517	81 7e fc 50 c3 		cmp	WORD PTR [bp-4],-15536	;clipped
+	*** 00051c	74 03 			je	$JCC1308
+	*** 00051e	e9 09 00 		jmp	$L20019
+					$JCC1308:
+	*** 000521	83 7e fe 00 		cmp	WORD PTR [bp-2],0
+	*** 000525	75 03 			jne	$JCC1317
+	*** 000527	e9 06 00 		jmp	$I168
+					$JCC1317:
+					$L20019:
+;|***         return 14;
+; Line 153
+	*** 00052a	b8 0e 00 		mov	ax,14
+	*** 00052d	e9 06 00 		jmp	$EX149
+;|***     }
+; Line 154
+;|***     return 255;
+; Line 155
+					$I168:
+	*** 000530	b8 ff 00 		mov	ax,255
+	*** 000533	e9 00 00 		jmp	$EX149
+;|*** }
+; Line 156
+					$EX149:
+	*** 000536	5e 			pop	si
+	*** 000537	5f 			pop	di
+	*** 000538	8b e5 			mov	sp,bp
+	*** 00053a	5d 			pop	bp
+	*** 00053b	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

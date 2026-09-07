@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -10,8 +12,16 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CMP32_EXE = REPO_ROOT / "examples" / "build_msc6" / "COMP32.EXE"
+FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "msc6" / "compare32"
+CMP32_EXE = FIXTURE_ROOT / "COMP32.EXE"
 CLI_PATH = REPO_ROOT / "decompile.py"
+
+
+@pytest.mark.parametrize("artifact", ("COMP32.C", "COMP32.EXE", "COMP32.COD", "COMP32.MAP"))
+def test_compare32_fixture_identity(artifact: str) -> None:
+    """Keep fixed-address regression inputs independent of local build outputs."""
+    expected = json.loads((FIXTURE_ROOT / "sha256.json").read_text(encoding="utf-8"))
+    assert hashlib.sha256((FIXTURE_ROOT / artifact).read_bytes()).hexdigest() == expected[artifact]
 
 
 @pytest.mark.parametrize(

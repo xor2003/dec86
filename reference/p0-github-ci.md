@@ -115,3 +115,14 @@ assertions: one failed/four passed before, five passed after in 7.72s.
 These three CI failure cases are fixed under focused checks; remote acceptance
 is not yet rerun. The Vulture findings are protocol parameter declarations,
 not established dead runtime code.
+
+COMP32 fixture follow-up: preserved the existing 4,187-byte executable, matching
+C source and COD/MAP files under `angr_platforms/tests/fixtures/msc6/compare32`.
+The address-specific tests now use this versioned input instead of the ignored
+build directory. Four SHA-256 checks protect its identity; the original four
+decompiler assertions are unchanged. Before: four passed in 11.83s. After:
+eight passed in 5.40s (warm caches; not a performance comparison). Ruff passes.
+This removes the clean-checkout missing-input dependency, not the separate
+requirement to run the MS C compiler round-trip pipeline. Exact historical
+binary rebuild reproducibility is not claimed. Broad/remote gates have not
+yet been repeated for this fixture-only change.
