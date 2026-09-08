@@ -34,9 +34,11 @@ Block iteration still supports generators, not just lists and tuples.
 - After: 50 focused tests passed in 9.65s, including nine new controls.
   Both runs reported seven dependency warnings and no test duration above 1s.
 - Scoped Ruff `check --fix`, MyPy and Pyright pass.
-- The global CI-mode Pyright command reports eight remaining errors, down
-  from 31. Return compatibility has no remaining diagnostics. Structuring,
-  function evidence inventory and helper ABI remain open.
+- At this checkpoint the CI-mode Pyright command's first failing batch
+  reported eight errors, down from 31. Return compatibility had no remaining
+  diagnostics. These were not repository totals: Make stops at the first
+  failing batch. After those eight were fixed, the next batch exposed another
+  29 diagnostics; later scopes require their own audit.
 - The first architecture check correctly refused the new unregistered module.
   It was added to the ordinary promoted inventory and both Make source lists,
   without an exemption. Its regression module is now in the routine pipeline

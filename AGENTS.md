@@ -121,6 +121,7 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 - On success, do not load the full log. On failure, search or tail only the relevant failure section before widening the read.
 - Prefer scoped `git diff --stat`, changed-path filters, and narrow file ranges over dumping the shared worktree or large inventories.
 - Output reduction must never suppress diagnostics, skip checks, weaken gates, or replace exact test evidence.
+- For fail-fast batched checks, report which batches actually ran; the first failing batch's count is not a repository total. Use `CI=1 make pyright-all PYRIGHT_WATCH=0` for the configured whole-scope audit, state its scope, and separate static diagnostics from failing pytest counts.
 
 Regular local gate: `make quality-fast PYTHON=./.venv/bin/python`.
 `make test-pipeline PYTHON=./.venv/bin/python` before claiming semantic decompiler improvements.

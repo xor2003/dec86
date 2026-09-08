@@ -1183,6 +1183,16 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
     ),
     TestOwnershipRule(
+        owner="helper-abi-projection",
+        paths=("angr_platforms/angr_platforms/X86_16/helper_abi.py",),
+        tests=("angr_platforms/tests/test_x86_16_helper_abi.py",),
+    ),
+    TestOwnershipRule(
+        owner="fixed-stack-probe-callsite-replay",
+        paths=("angr_platforms/angr_platforms/X86_16/lowering/stack_probe_callsite_lowering.py",),
+        tests=("angr_platforms/tests/test_x86_16_fixed_stack_probe_frames.py",),
+    ),
+    TestOwnershipRule(
         owner="msc6-toolchain-lock",
         paths=(
             "scripts/build_msc6_examples.py",

@@ -215,7 +215,8 @@ def known_helper_prototype_8616(
         return None
     if not isinstance(prototype, SimTypeFunction):
         return None
-    return prototype.with_arch(arch)
+    bound_prototype = prototype.with_arch(arch)
+    return bound_prototype if isinstance(bound_prototype, SimTypeFunction) else None
 
 
 def known_helper_signature_declarations_8616() -> dict[str, str]:

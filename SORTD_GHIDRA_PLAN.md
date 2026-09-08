@@ -23,11 +23,23 @@ they must not become recovery evidence.
 Latest Make global MyPy phase: **0 diagnostics**, down from four; `mypy-dev`
 also passes after preserving two typed provider imports in `pyproject.toml`.
 `quality-fast`, `quality-dev` and `quality-hard` pass; the final hard unit lane
-passes 2,632 tests. Global Vulture also passes.
+passes 2,736 tests. Global Vulture also passes.
 Validation summaries now retain their canonical type through configuration
 and transaction state. See the [validation contract report](reference/p0-validation-type-contracts.md).
-The refreshed CI-mode Pyright audit reports **8 errors**, down from 31 after
-preserving checked native AIL field contracts. Fifty focused tests pass;
+Pyright's first two root-module batches now pass. The next batch reports
+**29 errors**; later batches were not reached. Earlier counts of 31 and eight
+were the first failing batch, not repository totals: `make pyright` stops on
+failure. The completed `make pyright-all` audit reports **8,031 errors and
+37 warnings: 153 X86_16, 28 CLI, 7,850 test errors**. Its configured scope does
+not include auxiliary scripts. These are static diagnostics, not pytest
+failures. Prioritize the 181 non-test errors; no diagnostics were suppressed.
+See the [batch closure and complete audit report](reference/p0-pyright-batch-closure.md).
+The bounded eight-error repair and stale final-callsite fixture are verified:
+94 focused tests pass, and the default pipeline passes 2,736 unit tests,
+QuickC and all seven MS C tiny round trips, with no skips or timeouts.
+This adds 91 tests to the routine selection; numeric-frame semantics and
+full-suite/CI closure remain open.
+Checked native AIL field contracts closed the earlier 23-error subset. Fifty focused tests pass;
 `quality-hard` and `quality-fast` pass with 2,645 tests and three executable
 quality guards each. The default pipeline also passes: 2,645 unit tests,
 QuickC and all seven MS C tiny round trips, no skips or timeouts. See the

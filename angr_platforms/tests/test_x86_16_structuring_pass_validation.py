@@ -600,17 +600,33 @@ def test_final_structuring_callsite_closure_requires_published_inventory(monkeyp
     assert stage._close_final_structuring_callsites_8616(project, codegen) is False
 
 
-def test_final_structuring_callsite_closure_replays_published_inventory(monkeypatch):
+@pytest.mark.parametrize("materialized,pruned", [(False, False), (False, True), (True, False), (True, True)])
+def test_final_structuring_callsite_closure_replays_published_inventory(monkeypatch, materialized, pruned):
+    from angr_platforms.X86_16.lowering import consumed_stack_address_setup
+
     project = SimpleNamespace()
-    codegen = SimpleNamespace(_inertia_callsite_summary_inventory_8616={0x4012: object()})
+    inventory = {0x4012: object()}
+    statements = object()
+    codegen = SimpleNamespace(
+        _inertia_callsite_summary_inventory_8616=inventory,
+        cfunc=SimpleNamespace(statements=statements),
+    )
     calls: list[tuple[object, object]] = []
     monkeypatch.setattr(
         stage,
         "_materialize_structuring_callsite_prototypes_8616",
-        lambda actual_project, actual_codegen: calls.append((actual_project, actual_codegen)) or True,
+        lambda actual_project, actual_codegen: calls.append((actual_project, actual_codegen)) or materialized,
     )
 
-    assert stage._close_final_structuring_callsites_8616(project, codegen) is True
+    def prune(actual_project, actual_codegen, actual_statements, actual_inventory):
+        assert calls == [(project, codegen)]
+        assert (actual_project, actual_codegen) == (project, codegen)
+        assert actual_statements is statements
+        assert actual_inventory is inventory
+        return pruned
+
+    monkeypatch.setattr(consumed_stack_address_setup, "prune_consumed_stack_address_setup_8616", prune)
+    assert stage._close_final_structuring_callsites_8616(project, codegen) is (materialized or pruned)
     assert calls == [(project, codegen)]
 
 
@@ -2732,10 +2748,12 @@ def test_structuring_call_return_store_bridge_accepts_exact_register_alias_proje
 
 def test_structuring_validation_accepts_evidenced_direct_stack_update_delta():
     project = SimpleNamespace(kb=SimpleNamespace(functions=None))
+    previous_delta = {"stage": "earlier"}
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x4010),
         _inertia_direct_stack_update_lowering_8616={"materialized_count": 1},
         _inertia_direct_stack_update_evidence_8616=((("offset", -4),),),
+        _inertia_structuring_direct_stack_update_validation_deltas_8616=(previous_delta,),
     )
     validation = {
         "changed": True,
@@ -2765,6 +2783,9 @@ def test_structuring_validation_accepts_evidenced_direct_stack_update_delta():
     assert validation["status"] == "stable"
     assert "delta" not in validation
     assert codegen._inertia_structuring_direct_stack_update_validation_accepts_8616 == 1
+    records = codegen._inertia_structuring_direct_stack_update_validation_deltas_8616
+    assert len(records) == 2 and records[0] is previous_delta
+    assert records[1]["stage"] == "structuring:final"
 
 
 def test_structuring_validation_accepts_exact_loop_header_duplicate_guard_removal():
@@ -3207,9 +3228,11 @@ def test_structuring_validation_accepts_evidenced_dword_zero_test_precision_delt
 
 def test_structuring_validation_accepts_cfg_proven_void_tail_suffix_diamond_regrouping():
     project = SimpleNamespace(kb=SimpleNamespace(functions=None))
+    previous_delta = {"stage": "earlier"}
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x4010),
         _inertia_void_tail_call_guard_materialized_8616=1,
+        _inertia_structuring_void_tail_call_guard_validation_deltas_8616=(previous_delta,),
         _inertia_void_tail_call_guard_decision_8616=_VoidTailCallGuardDecision8616.MATERIALIZE_SUFFIX_DIAMOND.value,
     )
     validation = {
@@ -3242,6 +3265,9 @@ def test_structuring_validation_accepts_cfg_proven_void_tail_suffix_diamond_regr
     assert validation["status"] == "stable"
     assert "delta" not in validation
     assert codegen._inertia_structuring_void_tail_call_guard_validation_accepts_8616 == 1
+    records = codegen._inertia_structuring_void_tail_call_guard_validation_deltas_8616
+    assert len(records) == 2 and records[0] is previous_delta
+    assert records[1]["stage"] == "structuring:_void_tail_call_guard_repair_8616"
 
 
 def test_structuring_validation_refuses_void_tail_suffix_diamond_call_loss():

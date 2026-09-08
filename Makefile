@@ -3135,6 +3135,9 @@ QA_PYTEST_TARGETS := \
 
 # Focused owner tests are appended while the legacy QA lists remain curated.
 QA_RUFF_TARGETS += \
+	angr_platforms/tests/test_x86_16_structuring_pass_validation.py \
+	angr_platforms/tests/test_x86_16_helper_abi.py \
+	angr_platforms/tests/test_x86_16_fixed_stack_probe_frames.py \
 	angr_platforms/tests/test_x86_16_stack_projection_renaming.py \
 	angr_platforms/tests/test_x86_16_tail_validation_projection_coordinates.py \
 	angr_platforms/tests/test_x86_16_validation_identical_return_guards.py \
@@ -3201,6 +3204,9 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_validation_call_return_storage.py
 
 QA_PYTEST_TARGETS += \
+	angr_platforms/tests/test_x86_16_structuring_pass_validation.py \
+	angr_platforms/tests/test_x86_16_helper_abi.py \
+	angr_platforms/tests/test_x86_16_fixed_stack_probe_frames.py \
 	angr_platforms/tests/test_x86_16_register_source_memory_dependencies.py \
 	angr_platforms/tests/test_x86_16_tail_callsite_inventory.py \
 	angr_platforms/tests/test_x86_16_register_source_wide_clobbers.py \

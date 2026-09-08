@@ -15,8 +15,26 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
-from angr_platforms.X86_16.lowering import fixed_stack_probe_frames
+from angr_platforms.X86_16.lowering import fixed_stack_probe_frames, stack_probe_callsite_lowering
 from angr_platforms.X86_16.lowering.fixed_stack_probe_frames import lower_fixed_stack_probe_frames_8616
+
+
+def test_stack_probe_replay_uses_supplied_codegen_current_project(monkeypatch) -> None:
+    """The bound replay must not capture an obsolete project or codegen."""
+    first_project, second_project = object(), object()
+    codegen = SimpleNamespace(project=first_project)
+    calls = []
+
+    def lower(project, actual_codegen):
+        calls.append((project, actual_codegen))
+        return project is second_project
+
+    monkeypatch.setattr(stack_probe_callsite_lowering, "lower_fixed_stack_probe_callsite_artifacts_8616", lower)
+    replay = stack_probe_callsite_lowering.replay_fixed_stack_probe_callsite_artifacts_8616
+    assert replay(codegen) is False
+    codegen.project = second_project
+    assert replay(codegen) is True
+    assert calls == [(first_project, codegen), (second_project, codegen)]
 
 
 def _fixed_probe_codegen(

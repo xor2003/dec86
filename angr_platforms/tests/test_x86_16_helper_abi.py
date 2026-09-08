@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import CConstant, CFunctionCall, CStatements
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
+from angr_platforms.X86_16 import helper_abi
 from angr_platforms.X86_16.analysis_helpers import (
     known_helper_signature_decl,
     preferred_known_helper_signature_decl,
@@ -95,6 +96,19 @@ def test_helper_abi_catalog_projects_variadic_pointer_prototype() -> None:
     assert len(prototype.args) == 1
     assert isinstance(prototype.args[0], SimTypePointer)
     assert isinstance(prototype.args[0].pts_to, SimTypeChar)
+
+
+def test_helper_prototype_refuses_non_function_architecture_binding(monkeypatch) -> None:
+    """A third-party binding must not replace a function contract with a scalar."""
+    prototype = SimTypeFunction([], SimTypeShort())
+    monkeypatch.setattr(helper_abi, "convert_cproto_to_py", lambda _text: ("ERROR", prototype, ""))
+    monkeypatch.setattr(SimTypeFunction, "with_arch", lambda _self, _arch: SimTypeShort())
+    assert known_helper_prototype_8616("ERROR", Arch86_16()) is None
+
+
+def test_helper_prototype_refuses_non_function_parser_result(monkeypatch) -> None:
+    monkeypatch.setattr(helper_abi, "convert_cproto_to_py", lambda _text: ("ERROR", SimTypeShort(), ""))
+    assert known_helper_prototype_8616("ERROR", Arch86_16()) is None
 
 
 def test_variadic_helper_validation_uses_binary_proven_arity() -> None:

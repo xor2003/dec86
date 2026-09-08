@@ -154,7 +154,7 @@ from .lowering.software_interrupt_status_outputs import (
 )
 from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 from .lowering.stack_memory_ssa import lower_x86_16_stack_memory_ssa_alias_artifact
-from .lowering.stack_probe_callsite_lowering import lower_fixed_stack_probe_callsite_artifacts_8616
+from .lowering.stack_probe_callsite_lowering import replay_fixed_stack_probe_callsite_artifacts_8616
 from .lowering.stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
     reconcile_callsite_interface_declarations_8616,
@@ -1749,7 +1749,7 @@ def _bind_structuring_callsite_consumers_8616(codegen: AngrCodegenSurface) -> No
     )
     _calls._bind_fixed_stack_probe_frame_lowerer_8616(
         codegen,
-        lambda codegen: lower_fixed_stack_probe_callsite_artifacts_8616(codegen.project, codegen),
+        replay_fixed_stack_probe_callsite_artifacts_8616,
     )
     _calls._bind_call_return_frame_argument_lowerer_8616(
         codegen,
@@ -2932,7 +2932,7 @@ def _is_structuring_call_chain_materialization_delta_8616(
             return False
     control_delta = delta.get("control_flow_effects")
     if isinstance(control_delta, dict):
-        effects = tuple(control_delta.get("added") or ()) + tuple(control_delta.get("removed") or ())
+        effects: tuple[object, ...] = tuple(control_delta.get("added") or ()) + tuple(control_delta.get("removed") or ())
         allowed_prefixes = (
             "for-body-calls:",
             "if-body-calls:",
@@ -3187,7 +3187,7 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
         )
         delta = validation.get("delta")
         if isinstance(delta, dict):
-            accepted_deltas = list(
+            accepted_deltas: list[object] = list(
                 getattr(codegen, "_inertia_structuring_selector_return_validation_deltas_8616", ()) or ()
             )
             accepted_deltas.append(

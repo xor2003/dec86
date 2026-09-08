@@ -75,12 +75,15 @@ class _FunctionBoundary8616(Protocol):
 
     def get_call_sites(self) -> Iterable[int]:
         """Return machine callsite addresses known by the recovered CFG."""
+        ...
 
     def get_call_target(self, callsite_addr: int) -> int | None:
         """Return the recovered target for one machine callsite."""
+        ...
 
     def get_call_return(self, callsite_addr: int) -> int | None:
         """Return the recovered continuation for one machine callsite."""
+        ...
 
 
 class _ProjectInventoryBoundary8616(Protocol):
