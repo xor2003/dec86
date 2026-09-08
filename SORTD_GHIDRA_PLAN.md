@@ -20,7 +20,14 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
-Latest global `quality-fast`: **4 MyPy diagnostics remain**, down from 11.
+Latest Make global MyPy phase: **0 diagnostics**, down from four; `mypy-dev`
+also passes after preserving two typed provider imports in `pyproject.toml`.
+`quality-fast`, `quality-dev` and `quality-hard` pass; the final hard unit lane
+passes 2,632 tests. Global Vulture also passes.
+Validation summaries now retain their canonical type through configuration
+and transaction state. See the [validation contract report](reference/p0-validation-type-contracts.md).
+The refreshed CI-mode Pyright audit still reports 31 errors; MyPy closure is
+not full typing, CI, or P0 closure.
 Segmented reload replay now refuses missing boundary provenance without
 crashing and still checks addressless intermediate-block effects. All 54
 focused tests and scoped tools pass; see the
@@ -41,18 +48,18 @@ rendering tests, and 109 admission tests pass. The preceding tail-fingerprint
 cast cleanup passed 408 validation tests. Scoped tools pass. See the
 [type-contract report](reference/p0-type-contract-closure.md).
 
-Remote checkpoint CI `34281763397` completed: 4,764 tests passed and 42 failed;
-34 failure sections mention missing kvikdos. Pyright's second batch has 40
-errors, reproduced locally. An approved private DOS toolchain provisioning
+Remote checkpoint CI `34287484156` on `8f5bdd05a` completed: 4,846 selected
+tests passed and 42 failed in 536.13s. Pyright reported 32 errors remotely,
+versus 31 in the current local audit. Missing kvikdos remains; a private DOS toolchain provisioning
 source has been requested; no tests or validation are disabled. See the
 [CI report](reference/p0-github-ci.md) for scope and remaining failure groups.
 
-Latest default pipeline: **2,610 unit tests passed in 102.44s**, plus
+Latest default pipeline: **2,630 unit tests passed in 147.30s**, plus
 QuickC and all MS C tiny round trips; three lanes passed, none failed/skipped/
 timed out. This follows rejection and reversal of the standalone entry-BP
 origin filter described below. Existing stack-compatibility tests are now in
 the routine lane, alongside the new interrupt-call boundary regression. These
-results do not close global MyPy, the full
+results do not close full typing, the full
 suite, CI, or the numeric-frame defect.
 
 The [tail-transfer origin repair](reference/p0-tail-transfer-origin.md) fixes

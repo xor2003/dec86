@@ -2601,6 +2601,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
 	angr_platforms/tests/test_frame_carrier_type_contracts.py \
 	angr_platforms/tests/test_makefile_inventory.py \
+	angr_platforms/tests/test_mypy_import_contracts.py \
 	angr_platforms/tests/test_x86_16_layer_boundaries.py \
 	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
 	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
@@ -2892,6 +2893,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
 	angr_platforms/tests/test_frame_carrier_type_contracts.py \
 	angr_platforms/tests/test_makefile_inventory.py \
+	angr_platforms/tests/test_mypy_import_contracts.py \
 	angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py \
 	angr_platforms/tests/test_x86_16_near_pointer_argument_evidence.py \
 	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
@@ -3061,6 +3063,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_postprocess_bootstrap_orchestration.py \
 	angr_platforms/tests/test_x86_16_postprocess_pass_transaction.py \
 	angr_platforms/tests/test_x86_16_postprocess_rollback_snapshot_cache.py \
+	angr_platforms/tests/test_x86_16_postprocess_runtime_config.py \
 	angr_platforms/tests/test_x86_16_control_flow_ast_index.py \
 	angr_platforms/tests/test_x86_16_runtime_memory_helpers.py \
 	angr_platforms/tests/test_x86_16_indexed_stack_frame_terms.py \

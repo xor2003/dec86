@@ -14,7 +14,10 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
+
+if TYPE_CHECKING:
+    from ..tail_validation import X86_16TailValidationSummary
 
 from .pass_validation_policy import PASS_REJECT_BUDGET_DEFAULT_8616
 
@@ -54,7 +57,7 @@ class PostprocessRuntimeConfig8616(NamedTuple):
     validation_enabled: bool
     per_pass_validation_enabled: bool
     skip_names: set[str]
-    baseline_summary: object | None
+    baseline_summary: X86_16TailValidationSummary | None
 
 
 def _environment(env: Mapping[str, str] | None) -> Mapping[str, str]:
@@ -82,7 +85,7 @@ def build_postprocess_runtime_config_8616(
     per_pass_validation_requested: bool,
     large_function_for_per_pass_validation: bool,
     fact_backed_stack_normalize_enabled: bool,
-    baseline_summary: object | None,
+    baseline_summary: X86_16TailValidationSummary | None,
     env: Mapping[str, str] | None = None,
 ) -> PostprocessRuntimeConfig8616:
     """Build deterministic validation, skip, and timeout policy."""

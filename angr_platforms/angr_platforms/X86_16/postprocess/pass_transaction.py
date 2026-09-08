@@ -15,7 +15,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from ..tail_validation import X86_16TailValidationSummary
 
 from .pass_validation_policy import (
     FORCE_PER_PASS_VALIDATION_NAMES_8616,
@@ -177,7 +180,7 @@ class PostprocessMutationWitnessCache8616[T]:
 class PostprocessPassTransactionState8616:
     """Own mutable state shared by all guarded passes in one rewrite request."""
 
-    baseline_summary: object | None
+    baseline_summary: X86_16TailValidationSummary | None
     known_cycle_path: tuple[str, ...] | None
     accepted_changed: bool = False
     last_changed_pass: str | None = None
@@ -196,7 +199,7 @@ class PostprocessPassTransactionState8616:
             last_changed_pass=self.last_changed_pass,
         )
 
-    def replace_baseline(self, summary: object) -> None:
+    def replace_baseline(self, summary: X86_16TailValidationSummary) -> None:
         """Advance validation baseline after an explicitly accepted delta."""
         self.baseline_summary = summary
 

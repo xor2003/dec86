@@ -170,7 +170,7 @@ def _interrupt_wrapper_call_signature(node: object) -> InterruptWrapperCall | No
         if callee_func is not None:
             # Dynamic codegen boundary: angr callee function names are optional.
             callee_name = getattr(callee_func, "name", None)
-        elif isinstance(callee_target := getattr(node, "callee_target", None), str):
+        elif isinstance(callee_target := getattr(node, "callee_target", None), str):  # Dynamic codegen boundary: optional synthetic call target.
             callee_name = callee_target
 
         # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.

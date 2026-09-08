@@ -2,14 +2,48 @@
 
 from types import SimpleNamespace
 
+import pytest
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.postprocess.pass_runtime import (
     build_postprocess_runtime_config_8616,
     postprocess_optional_reject_budget_8616,
 )
+from angr_platforms.X86_16.postprocess.pass_transaction import PostprocessPassTransactionState8616
+from angr_platforms.X86_16.postprocess.runtime_configuration import configure_postprocess_runtime_8616
 from angr_platforms.X86_16.postprocess.validation_contracts import (
     PostprocessFunctionComplexity8616,
 )
+from angr_platforms.X86_16.tail_validation import X86_16TailValidationSummary
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_runtime_to_transaction_preserves_exact_validation_baseline(cached: bool, enabled: bool) -> None:
+    summary = X86_16TailValidationSummary(("callee",), (), (), (), (), (), (), ())
+    project = SimpleNamespace(_inertia_tail_validation_enabled=enabled)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000),
+        _inertia_postprocess_pre_validation_summary=summary if cached else None,
+    )
+    collected = []
+
+    def collect(active_project: object, active_codegen: object) -> X86_16TailValidationSummary:
+        assert active_project is project and active_codegen is codegen
+        collected.append(summary)
+        return summary
+
+    config = configure_postprocess_runtime_8616(
+        project, codegen, (),
+        complexity_resolver=lambda *_args: PostprocessFunctionComplexity8616(),
+        baseline_summary_collector=collect,
+        fact_backed_stack_normalize_enabled=True,
+    )
+    state = PostprocessPassTransactionState8616(config.baseline_summary, None)
+
+    assert config.validation_enabled is enabled
+    assert state.baseline_summary is (summary if enabled else None)
+    assert collected == ([summary] if enabled and not cached else [])
+    assert state.accepted_mutation_count == 0
 
 
 def test_large_function_disables_requested_per_pass_validation() -> None:

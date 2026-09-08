@@ -1,6 +1,22 @@
 # P0 GitHub CI Closure
 
-## Current Checkpoint (2026-09-08)
+## Current Checkpoint (2026-09-09)
+
+Completed run `34287484156` on `8f5bdd05a` reports **42 failed, 4,846 passed,
+10 warnings in 536.13s** for its selected tests. Remote Pyright reported 32
+errors. After the current validation-contract repair, local CI-mode Pyright
+reports **31 errors** in return compatibility, structuring, function evidence
+inventory and helper ABI. Missing `kvikdos` still appears in the failed run;
+the approved private DOS-toolchain provisioning question remains unresolved.
+
+Make's global and development MyPy scopes now pass; `quality-fast` and
+`quality-dev` and `quality-hard` also pass. This does not establish whole-repository typing,
+full-suite success or remote CI closure. See
+[the validation-contract checkpoint](p0-validation-type-contracts.md).
+Fresh logs: `/tmp/inertia-ci-34287484156-failed.log` and
+`/tmp/inertia-validation-contract-global-pyright.log`.
+
+## Previous Checkpoint (2026-09-08)
 
 Checkpoint `89531dc57` was pushed to master. Run `34281763397` is now completed
 with failure: Pyright and Pytest failed; Ruff, Vulture, and Lizard passed.
@@ -26,7 +42,7 @@ typed boundaries after actual native variant checks; do not cast to unchecked
 Any or weaken diagnostics. Other failures include instruction-value unions,
 structuring collection inference, and optional/unknown validation summaries.
 
-Latest local MyPy (2026-09-09): **14 diagnostics**; the default pipeline passes 2,550
+Local MyPy at that checkpoint: **14 diagnostics**; the default pipeline passed 2,550
 tests plus QuickC and MS C tiny lanes. Logs:
 `/tmp/inertia-ci-34281763397-failed.log`, `/tmp/inertia-pyright-ci-repro.log`.
 

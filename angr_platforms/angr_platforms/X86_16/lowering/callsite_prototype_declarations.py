@@ -653,7 +653,7 @@ def _joined_return_type_8616(
             evidence.materialized_count if evidence is not None else 0,
             evidence.failure_count if evidence is not None else 0,
         )
-    if evidence is not None and caller_return_use_evidence_proves_unused_8616(evidence):
+    if evidence is not None and isinstance(summary.target_addr, int) and caller_return_use_evidence_proves_unused_8616(evidence):
         void_evidence = collect_unobserved_callee_void_evidence_8616(project, summary.target_addr)
         return "void" if void_evidence.proves_void else "int"
 
@@ -947,9 +947,9 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
             and declaration == known_helper_declaration
             and isinstance(call_name, str)
             and call_name
-            and _declaration_name_8616(declaration) != call_name
+            and _declaration_name_8616(known_helper_declaration) != call_name
         ):
-            declaration = _declaration_with_call_name_8616(declaration, call_name)
+            declaration = _declaration_with_call_name_8616(known_helper_declaration, call_name)
         if declaration is None and return_type is not None:
             declaration = inferred_declaration if summary.logical_arg_widths else None
             if declaration is None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from angr_platforms.X86_16 import decompiler_postprocess_stage as stage
@@ -13,6 +14,12 @@ from angr_platforms.X86_16.postprocess.pass_transaction import (
     PostprocessPassTransactionState8616,
     decide_postprocess_pass_preflight_8616,
 )
+from angr_platforms.X86_16.tail_validation import X86_16TailValidationSummary
+
+
+def _summary() -> X86_16TailValidationSummary:
+    """Build one complete immutable validation baseline."""
+    return X86_16TailValidationSummary((), (), (), (), (), (), (), ())
 
 
 def _request(
@@ -119,16 +126,19 @@ def test_optimization_pass_always_keeps_snapshot_and_validation() -> None:
 
 
 def test_transaction_state_owns_baseline_cycle_and_accepted_change() -> None:
+    baseline = _summary()
+    accepted = replace(baseline, register_writes=("ax",))
     state = PostprocessPassTransactionState8616(
-        baseline_summary="before",
+        baseline_summary=baseline,
         known_cycle_path=None,
     )
 
-    state.replace_baseline("after")
+    state.replace_baseline(accepted)
     state.record_cycle_path(("root", "child"))
     state.accept_change("cleanup")
 
-    assert state.baseline_summary == "after"
+    assert state.baseline_summary is accepted
+    assert baseline.register_writes == ()
     assert state.known_cycle_path == ("root", "child")
     assert state.accepted_changed is True
     assert state.last_changed_pass == "cleanup"
@@ -163,12 +173,12 @@ def test_completion_publishes_only_accepted_transaction_mutations() -> None:
 def test_rejected_or_restored_state_does_not_advance_generation() -> None:
     """Keep rollback bookkeeping outside the accepted mutation generation."""
     state = PostprocessPassTransactionState8616(
-        baseline_summary="before",
+        baseline_summary=_summary(),
         known_cycle_path=None,
     )
 
     state.record_cycle_path(("root", "changed"))
-    state.replace_baseline("restored")
+    state.replace_baseline(_summary())
     state.record_cycle_path(("root", "restored"))
 
     assert state.mutation_generation() == PostprocessMutationGeneration8616(0, None)

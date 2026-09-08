@@ -556,6 +556,7 @@ from .structuring.return_chains import (
     tail_call_payload_from_statement_8616 as _structuring_tail_call_payload_from_statement_8616,
 )
 from .tail_validation import (
+    X86_16TailValidationSummary,
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
     callsite_consumed_stack_store_prune_delta_8616,
@@ -9738,8 +9739,10 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(
     mode: str,
     boundary_fingerprint: str | None = None,
     force_baseline_canonicalization: bool = False,
-) -> StructuredAstValue:
-    def _impl() -> StructuredAstValue:
+) -> X86_16TailValidationSummary:
+    """Collect the canonical typed baseline without erasing validation evidence."""
+    def _impl() -> X86_16TailValidationSummary:
+        """Choose the existing clone or direct collection policy."""
         canonicalization_setting = os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "1").strip().lower()
         if canonicalization_setting in {"0", "false", "no", "off"}:
             return collect_x86_16_tail_validation_summary(
@@ -12041,8 +12044,8 @@ def _is_proven_surplus_empty_guard_cleanup_delta_8616(
         noop_pruned = artifact.noop_materialized_count
         empty_return_pruned = artifact.empty_return_materialized_count
         identical_arms_collapsed = artifact.identical_arms_materialized_count
-        branch_count = artifact.branch_count
-        total_if_count = artifact.total_if_count
+        branch_count: object = artifact.branch_count
+        total_if_count: object = artifact.total_if_count
     else:
         if (
             getattr(codegen, "_inertia_void_empty_return_guard_decision_8616", None)

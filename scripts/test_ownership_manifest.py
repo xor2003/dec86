@@ -66,6 +66,11 @@ class ManifestViolation:
 
 TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
+        owner="mypy-import-contracts",
+        paths=("pyproject.toml",),
+        tests=("angr_platforms/tests/test_mypy_import_contracts.py",),
+    ),
+    TestOwnershipRule(
         owner="makefile-inventory",
         paths=("Makefile", "scripts/makefile_inventory.py", "scripts/check_decompiler_architecture.py"),
         tests=("angr_platforms/tests/test_makefile_inventory.py",),
@@ -1393,6 +1398,18 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "test_materialize_direct_stack_mov_signed_half_inserts_before_first_stack_use_without_tagged_stmt",
             "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
             "test_materialize_direct_stack_mov_arg_copy_inserts_inside_else_after_prior_stack_assignment",
+        ),
+    ),
+    TestOwnershipRule(
+        owner="postprocess-validation-baseline",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/postprocess/pass_runtime.py",
+            "angr_platforms/angr_platforms/X86_16/postprocess/pass_transaction.py",
+            "angr_platforms/angr_platforms/X86_16/postprocess/runtime_configuration.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_postprocess_pass_transaction.py",
+            "angr_platforms/tests/test_x86_16_postprocess_runtime_config.py",
         ),
     ),
     TestOwnershipRule(

@@ -13,7 +13,10 @@ Dynamic boundary: project, codegen, and CFunction are third-party angr objects.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from ..tail_validation import X86_16TailValidationSummary
 
 from .pass_runtime import (
     DecompilerPostprocessPassSpec,
@@ -30,7 +33,7 @@ type ComplexityResolver8616 = Callable[
     [object, object, int | None],
     PostprocessFunctionComplexity8616,
 ]
-type BaselineSummaryCollector8616 = Callable[[object, object], object]
+type BaselineSummaryCollector8616 = Callable[[object, object], X86_16TailValidationSummary]
 
 
 class _CodegenRuntimeBoundary8616(Protocol):
@@ -39,7 +42,7 @@ class _CodegenRuntimeBoundary8616(Protocol):
     cfunc: object
     _inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616: bool
     _inertia_postprocess_pre_validation_cost_ms_8616: int
-    _inertia_postprocess_pre_validation_summary: object
+    _inertia_postprocess_pre_validation_summary: X86_16TailValidationSummary | None
     _inertia_skip_per_pass_validation_large_function: bool
     _inertia_postprocess_function_complexity_8616: dict[str, object]
     _inertia_postprocess_passes: tuple[str, ...]
@@ -127,7 +130,7 @@ def configure_postprocess_runtime_8616(
         "expensive_validation_baseline": expensive_validation_baseline,
     }
 
-    baseline_summary: object | None = None
+    baseline_summary: X86_16TailValidationSummary | None = None
     if validation_enabled:
         try:
             baseline_summary = surface._inertia_postprocess_pre_validation_summary
