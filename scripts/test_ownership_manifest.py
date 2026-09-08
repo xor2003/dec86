@@ -1327,6 +1327,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/tests/test_x86_16_gp_register_state.py",
             "angr_platforms/tests/test_x86_16_gp_partial_live_in.py",
             "angr_platforms/tests/test_x86_16_ir_segmented_load_carriers.py",
+            "angr_platforms/tests/test_x86_16_reload_provenance_boundaries.py",
             "angr_platforms/tests/test_x86_16_register_indirect_call_targets.py",
             "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
             "angr_platforms/tests/test_x86_16_stack_pointer_snapshot.py",

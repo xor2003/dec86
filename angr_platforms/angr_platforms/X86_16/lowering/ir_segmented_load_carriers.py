@@ -13,7 +13,6 @@ from __future__ import annotations
 import copy
 import logging
 import os
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -21,6 +20,7 @@ from angr.ailment.expression import VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimTemporaryVariable
+from archinfo import Arch
 
 from ..c_ast_utils import (
     _iter_c_nodes_deep_8616,
@@ -55,16 +55,10 @@ from .segment_register_state import runtime_segment_state_cvar_8616
 __all__ = ["IRSegmentedLoadCarrierStats8616", "materialize_ir_segmented_load_carriers_8616"]
 
 
-class _ArchRegisters8616(Protocol):
-    """Architecture register map consumed at the third-party boundary."""
-
-    registers: Mapping[str, tuple[int, int]]
-
-
 class _Project8616(Protocol):
-    """Project fields consumed by carrier replay."""
+    """Angr project architecture consumed by register and SimType construction."""
 
-    arch: _ArchRegisters8616
+    arch: Arch
 
 
 class _CFunction8616(Protocol):
@@ -365,9 +359,7 @@ def _constant_segment_offset_expr_8616(
                 )
             continue
         offset_terms.append((sign, term))
-    if not offset_terms:
-        return structured_c.CConstant(0, SimTypeShort(False), codegen=codegen)
-    result: object | None = None
+    result: object | None = structured_c.CConstant(0, SimTypeShort(False), codegen=codegen) if not offset_terms else None
     for sign, term in offset_terms:
         if result is None:
             result = (
@@ -747,30 +739,16 @@ def _register_ssa_identity_8616(node: object) -> _RegisterSSAIdentity8616 | None
     """Return the same exact structured register identity used by validation."""
     if not isinstance(node, structured_c.CVariable):
         return None
-    variables = tuple(
-        variable
-        for variable in (node.unified_variable, node.variable)
-        if isinstance(variable, SimRegisterVariable)
-    )
-    variable = next(
-        (
-            candidate
-            for candidate in variables
-            if isinstance(candidate.reg, int)
-            and isinstance(candidate.size, int)
-            and isinstance(candidate.region, int)
-            and isinstance(candidate.ident, (int, str))
-        ),
-        None,
-    )
-    if variable is None:
-        return None
-    return _RegisterSSAIdentity8616(
-        variable.reg,
-        variable.size,
-        variable.region,
-        variable.ident,
-    )
+    for variable in (node.unified_variable, node.variable):
+        if (
+            isinstance(variable, SimRegisterVariable)
+            and isinstance(variable.reg, int)
+            and isinstance(variable.size, int)
+            and isinstance(variable.region, int)
+            and isinstance(variable.ident, (int, str))
+        ):
+            return _RegisterSSAIdentity8616(variable.reg, variable.size, variable.region, variable.ident)
+    return None
 
 
 def _same_block_reload_for_read_8616(
@@ -779,7 +757,7 @@ def _same_block_reload_for_read_8616(
     use_addr: int,
     logical_facts: dict[tuple[str, int], _LogicalRegisterWriteFact8616],
 ) -> _LogicalRegisterWriteFact8616 | None:
-    """Prove one same-block reload remains stable until one exact SSA read."""
+    """Prove a stable same-block reload; refuse absent ordering provenance."""
     project = codegen.project
     cfunc = codegen.cfunc
     if project is None or cfunc is None:
@@ -819,6 +797,8 @@ def _same_block_reload_for_read_8616(
         if value.space is MemSpace.REG and isinstance(value.name, str)
     }
     for instruction in block.instrs:
+        if instruction.addr is None:
+            return None
         if not (candidate.instruction_addr < instruction.addr < use_addr):
             continue
         destination = instruction.dst
@@ -895,7 +875,7 @@ def _nearest_linear_logical_fact_8616(
     use_addr: int,
     logical_facts: dict[tuple[str, int], _LogicalRegisterWriteFact8616],
 ) -> _LogicalRegisterWriteFact8616 | None:
-    """Select one nearest reload on a mutation-free unique predecessor chain."""
+    """Select a dominating reload on proven mutation-free paths; refuse unknown boundaries."""
     project = codegen.project
     cfunc = codegen.cfunc
     if project is None or cfunc is None:
@@ -987,10 +967,13 @@ def _nearest_linear_logical_fact_8616(
         if block is None:
             return None
         for instruction in block.instrs:
-            if block_addr == candidate.block_addr and instruction.addr <= candidate.instruction_addr:
-                continue
-            if block_addr == use_block_addr and instruction.addr >= use_addr:
-                continue
+            if instruction.addr is None and block_addr in (candidate.block_addr, use_block_addr):
+                return None
+            if instruction.addr is not None:
+                if block_addr == candidate.block_addr and instruction.addr <= candidate.instruction_addr:
+                    continue
+                if block_addr == use_block_addr and instruction.addr >= use_addr:
+                    continue
             destination = instruction.dst
             if instruction.op in {"CALL", "STORE"}:
                 return None
@@ -1156,9 +1139,9 @@ def _materialize_missing_logical_assignments_8616(
             continue
         lhs_ids.add(id(node.lhs))
         identity = _register_ssa_identity_8616(node.lhs)
-        addresses = instruction_addrs_from_node_8616(node)
-        if identity is not None and len(addresses) == 1:
-            definitions.setdefault(identity, set()).add(next(iter(addresses)))
+        definition_addresses = instruction_addrs_from_node_8616(node)
+        if identity is not None and len(definition_addresses) == 1:
+            definitions.setdefault(identity, set()).add(next(iter(definition_addresses)))
     for node in _iter_c_nodes_deep_8616(cfunc.statements):
         if id(node) in lhs_ids or not isinstance(node, structured_c.CVariable):
             continue
@@ -1249,10 +1232,10 @@ def _read_side_logical_replacements_8616(
     inherited_addresses = _inherited_instruction_addresses_8616(cfunc.statements)
     replacements: dict[int, _LogicalRegisterWriteFact8616] = {}
     for node in _iter_c_nodes_deep_8616(cfunc.statements):
-        if id(node) in lhs_nodes:
+        if id(node) in lhs_nodes or not isinstance(node, structured_c.CVariable):
             continue
         identity = _register_ssa_identity_8616(node)
-        variable = node.variable if isinstance(node, structured_c.CVariable) else None
+        variable = node.variable
         display_name = variable.name if isinstance(variable, SimRegisterVariable) else None
         if identity is None:
             if (

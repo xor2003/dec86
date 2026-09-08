@@ -180,6 +180,8 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
     "angr_platforms/tests/test_x86_16_segmented_lowering.py",
     "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py",
+    "angr_platforms/tests/test_x86_16_ir_segmented_load_carriers.py",
+    "angr_platforms/tests/test_x86_16_reload_provenance_boundaries.py",
     "angr_platforms/tests/test_x86_16_pointer_store_fold_safety.py",
     "angr_platforms/tests/test_generic_annotation_contracts.py",
     "angr_platforms/tests/test_access_trait_runtime_factory.py",

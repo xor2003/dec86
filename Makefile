@@ -2595,6 +2595,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
 	angr_platforms/tests/test_x86_16_segmented_global_loads.py \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
+	angr_platforms/tests/test_x86_16_ir_segmented_load_carriers.py \
+	angr_platforms/tests/test_x86_16_reload_provenance_boundaries.py \
 	angr_platforms/tests/test_generic_annotation_contracts.py \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
 	angr_platforms/tests/test_frame_carrier_type_contracts.py \
@@ -3021,6 +3023,8 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_safety.py \
 	angr_platforms/tests/test_x86_16_unused_void_return_types.py \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
+	angr_platforms/tests/test_x86_16_ir_segmented_load_carriers.py \
+	angr_platforms/tests/test_x86_16_reload_provenance_boundaries.py \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
