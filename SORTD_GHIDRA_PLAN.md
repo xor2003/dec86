@@ -20,7 +20,11 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
-Latest global `quality-fast`: **14 MyPy diagnostics remain**, down from 22.
+Latest global `quality-fast`: **11 MyPy diagnostics remain**, down from 14.
+Return witness materialization now refuses absent instruction addresses;
+split returns consume validated Alias domains in physical output order.
+All 85 focused tests, 118 gate-admission tests, and scoped tools pass. See the
+[return witness report](reference/p0-return-witness-addresses.md).
 Checked symbolic instruction values preserve the lifting-only contract and
 refuse unsupported LOOP values before mutation. The instruction corpus passes
 1,209 tests (one existing opt-in audit skipped); the edge run passes 182 tests.
@@ -39,7 +43,7 @@ errors, reproduced locally. An approved private DOS toolchain provisioning
 source has been requested; no tests or validation are disabled. See the
 [CI report](reference/p0-github-ci.md) for scope and remaining failure groups.
 
-Latest default pipeline: **2,550 unit tests passed in 148.59s**, plus
+Latest default pipeline: **2,556 unit tests passed in 146.48s**, plus
 QuickC and all MS C tiny round trips; three lanes passed, none failed/skipped/
 timed out. This follows rejection and reversal of the standalone entry-BP
 origin filter described below. Existing stack-compatibility tests are now in

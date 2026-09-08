@@ -16,6 +16,7 @@ from ..alias.domains import (
     AX,
     DX,
     FULL16,
+    DomainKey,
     register_domain_for_name,
     register_view_for_name,
 )
@@ -74,16 +75,16 @@ def _refused_result_8616(
 
 def _output_pieces_8616(
     storages: tuple[StorageIdentity8616, ...],
-) -> dict[object, StorageIdentity8616] | None:
+) -> dict[DomainKey, StorageIdentity8616] | None:
     """Resolve exactly one full-word AX piece and one full-word DX piece."""
     if len(storages) != 2:
         return None
-    pieces: dict[object, StorageIdentity8616] = {}
+    pieces: dict[DomainKey, StorageIdentity8616] = {}
     for storage in storages:
         domain = register_domain_for_name(storage.register)
         view = register_view_for_name(storage.register)
         if (
-            not storage.is_exact
+            domain is None or not storage.is_exact
             or storage.kind is not StorageIdentityKind8616.REGISTER
             or storage.width != 2
             or domain not in {AX, DX}
@@ -106,7 +107,7 @@ def _piece_use_8616(
     if not isinstance(producer, int):
         return None, False
     candidates = tuple(
-        (block.addr, index, instruction.addr)
+        (block.addr, index, producer)
         for block in artifact.blocks
         for index, instruction in enumerate(block.instrs)
         if instruction.addr == producer
@@ -214,8 +215,7 @@ def classify_split_return_storage_8616(
         AX: candidate.low_condition,
     }
     piece_evidence: list[ReturnSplitPieceUse8616] = []
-    for storage in output_storages:
-        domain = register_domain_for_name(storage.register)
+    for domain, storage in pieces.items():
         condition = condition_by_domain[domain]
         use, conflicting = _piece_use_8616(
             artifact,

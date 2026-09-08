@@ -537,6 +537,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/tests/test_x86_16_interprocedural_storage_return_pointer_stack.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_return_split.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_return_trial_collection.py",
+            "angr_platforms/tests/test_x86_16_return_witness_addresses.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_caller_context.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_return_types.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_simtypes.py",

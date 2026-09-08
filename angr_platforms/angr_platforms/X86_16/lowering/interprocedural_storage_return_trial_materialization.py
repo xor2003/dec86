@@ -175,7 +175,7 @@ def _witness_use_8616(
         (block.addr, instr_index, instruction.addr)
         for block in artifact.blocks
         for instr_index, instruction in enumerate(block.instrs)
-        if instruction.addr == fact.witness_instruction_addr
+        if isinstance(instruction.addr, int) and instruction.addr == fact.witness_instruction_addr
         and any(_reads_output(argument) for argument in instruction.args)
     )
     if len(candidates) != 1:

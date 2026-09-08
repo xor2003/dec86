@@ -207,6 +207,7 @@ def test_split_condition_refuses_nonadjacent_comparison_pieces() -> None:
 def _lifted_classification(
     code: bytes,
     block_addrs: set[int],
+    registers: tuple[str, str] = ("ax", "dx"),
 ) -> object:
     """Classify one real-lifter split CALL return with exact function bounds."""
     caller_addr = 0x1000
@@ -251,7 +252,7 @@ def _lifted_classification(
         kind=CallsiteReturnUseKind8616.CONDITION,
         witness_instruction_addr=0x1003,
     )
-    output_storages = (_storage("ax"), _storage("dx"))
+    output_storages = tuple(_storage(register) for register in registers)
     definitions = resolve_call_output_definitions_8616(
         artifact,
         fact,
@@ -284,24 +285,26 @@ def _lifted_classification(
         ),
     ],
 )
+@pytest.mark.parametrize("registers", [("ax", "dx"), ("dx", "ax")])
 def test_real_lifter_strict_split_relations_materialize_exact_piece_uses(
     machine_hex: str,
     relation: SplitReturnRelation8616,
     signedness: StorageTrialSignedness8616,
+    registers: tuple[str, str],
 ) -> None:
     result = _lifted_classification(
         bytes.fromhex(machine_hex),
         {0x1000, 0x1003, 0x1008, 0x100A, 0x100F, 0x1010},
+        registers,
     )
 
     assert result.complete
     assert result.signedness is signedness
     assert result.split_condition_use is not None
     assert result.split_condition_use.relation is relation
-    assert tuple(piece.use.instr_addr for piece in result.split_condition_use.pieces) == (
-        0x100A,
-        0x1003,
-    )
+    assert tuple(piece.storage.register for piece in result.split_condition_use.pieces) == registers
+    expected = {"ax": 0x100A, "dx": 0x1003}
+    assert tuple(piece.use.instr_addr for piece in result.split_condition_use.pieces) == tuple(expected[reg] for reg in registers)
 
 
 @pytest.mark.parametrize(

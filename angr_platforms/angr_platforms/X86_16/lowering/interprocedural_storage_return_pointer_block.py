@@ -277,7 +277,7 @@ def scan_pointer_carriers_in_block_8616(
             if destination_domain in live and copy is None:
                 saw_clobber = True
             live.pop(destination_domain, None)
-        if destination is not None and copy is not None and isinstance(destination.version, int):
+        if destination is not None and copy is not None and isinstance(destination.version, int) and isinstance(instr_addr, int):
             source, source_carrier = copy
             alias = ReturnPointerAliasStep8616(
                 block_addr=block.addr,

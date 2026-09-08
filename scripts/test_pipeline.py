@@ -113,6 +113,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_interprocedural_storage_reaching_defs.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_return_passthrough.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_return_trial_collection.py",
+    "angr_platforms/tests/test_x86_16_return_witness_addresses.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_simtypes.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_trial_collection.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_trials.py",
