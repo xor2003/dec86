@@ -1,6 +1,36 @@
 # P0 GitHub CI Closure
 
-## Current Checkpoint (2026-09-07)
+## Current Checkpoint (2026-09-08)
+
+Checkpoint `89531dc57` was pushed to master. Run `34281763397` is now completed
+with failure: Pyright and Pytest failed; Ruff, Vulture, and Lizard passed.
+Pytest reports **42 failed, 4,764 passed, 11 warnings in 490.87s** for its
+selected set, not the whole repository. Pyright reports zero errors in its
+first batch and **40 errors in its second batch**, also reproduced locally
+with `CI=1 make pyright PYTHON=./.venv/bin/python PYRIGHT_WATCH=0`.
+
+Of 42 failure sections, **34 mention `kvikdos not found`**. Eight others are:
+the DOS LoadProgram wrapper, MSC6 signed-long comparison at 65614, three
+InitMenu tests, two PercolateDown tests, and caller-cleanup loop preservation.
+Missing kvikdos does not prove those 34 tests otherwise pass. For example,
+sidecar-free InitBars passes its tail stages remotely but fails the mandatory
+MS C syntax check because kvikdos is absent. The workflow installs Python
+dependencies only; an approved private DOS-toolchain provisioning source has
+been requested. Do not publish proprietary compiler files or skip validation.
+
+Return compatibility contributes 23 of the locally reproduced Pyright errors.
+Installed AIL marker classes alias their static types to native Rust classes,
+but this installation lacks their `.pyi` files. Merely replacing `Expr`/`Stmt`
+module aliases did not improve diagnostics and was reverted. Next use precise
+typed boundaries after actual native variant checks; do not cast to unchecked
+Any or weaken diagnostics. Other failures include instruction-value unions,
+structuring collection inference, and optional/unknown validation summaries.
+
+Latest local MyPy (2026-09-09): **14 diagnostics**; the default pipeline passes 2,550
+tests plus QuickC and MS C tiny lanes. Logs:
+`/tmp/inertia-ci-34281763397-failed.log`, `/tmp/inertia-pyright-ci-repro.log`.
+
+## Previous Checkpoint (2026-09-07)
 
 Fresh local Vulture execution found five diagnostics, not the historical remote
 two. One exposed an unreachable exact-BP identity guard in the legacy call

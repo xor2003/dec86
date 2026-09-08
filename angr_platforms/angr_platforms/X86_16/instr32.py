@@ -25,7 +25,7 @@ from .debug import ERROR, INFO
 from .emulator import Emulator
 from .exception import EXP_UD
 from .exec import OpcodeExecHandler
-from .instr_base import InstrBase, VexExpr, _vex_expr
+from .instr_base import InstrBase, VexExpr, _require_vex_value, _vex_expr
 from .instruction import CHK_IMM8, CHK_IMM16, CHK_IMM32, CHK_MODRM, CHK_MOFFS, CHK_PTR16, InstrData, InstrFlags
 from .jcc_condition import _consume_last_condition_branch_8616
 from .regs import coerce_reg32_t, reg8_t, reg16_t, reg32_t, sgreg_t
@@ -527,7 +527,8 @@ class Instr32(InstrBase):
         operand = self._resolved_rm_operand(32)
         step_type = Type.int_32 if self.instr.address_bits == 32 else Type.int_16
         lower = _vex_expr(self.emu.get_data32(operand.segment, operand.offset)).signed
-        upper_offset = operand.offset + self.emu.constant(4, step_type)
+        base_offset = operand.offset if isinstance(operand.offset, int) else _require_vex_value(operand.offset)
+        upper_offset = base_offset + self.emu.constant(4, step_type)
         upper = _vex_expr(self.emu.get_data32(operand.segment, upper_offset)).signed
         out_of_range = (reg < lower) | (reg > upper)
         lifter_instruction = self.emu.lifter_instruction
@@ -536,16 +537,16 @@ class Instr32(InstrBase):
         lifter_instruction.jump(out_of_range, 0xFF005, JumpKind.Call)
 
     def _loop_counter_nonzero(self) -> VexExpr:
-        """Decrement the address-size-selected loop counter and return its nonzero condition."""
+        """Decrement the address-sized lifted counter; refuse concrete values before mutation."""
         if self.instr.address_bits == 32:
-            counter = self.emu.get_gpreg(reg32_t.ECX) - self.emu.constant(1, Type.int_32)
+            counter = _require_vex_value(self.emu.get_gpreg(reg32_t.ECX)) - self.emu.constant(1, Type.int_32)
             self.emu.set_gpreg(reg32_t.ECX, counter)
             nonzero = counter != self.emu.constant(0, Type.int_32)
         else:
-            counter = self.emu.get_gpreg(reg16_t.CX) - self.emu.constant(1, Type.int_16)
+            counter = _require_vex_value(self.emu.get_gpreg(reg16_t.CX)) - self.emu.constant(1, Type.int_16)
             self.emu.set_gpreg(reg16_t.CX, counter)
             nonzero = counter != self.emu.constant(0, Type.int_16)
-        return _vex_expr(nonzero.cast_to(Type.int_1))
+        return _require_vex_value(nonzero).cast_to(Type.int_1)
 
     def loop(self) -> None:
         """Execute LOOP using CX or ECX according to the effective address size."""
@@ -585,7 +586,7 @@ class Instr32(InstrBase):
             condition = self.emu.get_gpreg(reg16_t.CX) == self.emu.constant(0, Type.int_16)
         branch_rel8(
             self._active_stack_emulator(),
-            condition.cast_to(Type.int_1),
+            _require_vex_value(condition).cast_to(Type.int_1),
             self.instr.imm8,
             self.instr.size,
         )
@@ -1716,8 +1717,8 @@ class Instr32(InstrBase):
         remainder = val_s - quotient * rm32_s
         signed_quotient = quotient.signed
         self._divide_error_if(
-            (signed_quotient < self.emu.constant(0xFFFFFFFF80000000, Type.int_64).signed)
-            | (signed_quotient > self.emu.constant(0x000000007FFFFFFF, Type.int_64).signed)
+            (signed_quotient < _require_vex_value(self.emu.constant(0xFFFFFFFF80000000, Type.int_64)).signed)
+            | (signed_quotient > _require_vex_value(self.emu.constant(0x000000007FFFFFFF, Type.int_64)).signed)
         )
         self.emu.set_gpreg(reg32_t.EAX, quotient.cast_to(Type.int_32))
         self.emu.set_gpreg(reg32_t.EDX, remainder.cast_to(Type.int_32))

@@ -161,17 +161,17 @@ def _interrupt_wrapper_call_kind(name: str | None, args: tuple[object, ...] | No
 
 
 def _interrupt_wrapper_call_signature(node: object) -> InterruptWrapperCall | None:
+    """Read a dynamic call boundary once and classify its existing wrapper name."""
     def _impl() -> InterruptWrapperCall | None:
+        """Preserve function-name precedence and consume the checked target value."""
         callee_name: str | None = None
         # Dynamic codegen boundary: CFunctionCall may carry either callee_func or callee_target.
         callee_func = getattr(node, "callee_func", None)
         if callee_func is not None:
             # Dynamic codegen boundary: angr callee function names are optional.
             callee_name = getattr(callee_func, "name", None)
-        # Dynamic codegen boundary: CFunctionCall may carry a string callee_target.
-        elif isinstance(getattr(node, "callee_target", None), str):
-            # Dynamic codegen boundary: CFunctionCall may carry a string callee_target.
-            callee_name = node.callee_target
+        elif isinstance(callee_target := getattr(node, "callee_target", None), str):
+            callee_name = callee_target
 
         # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
         args = tuple(getattr(node, "args", ()) or ())

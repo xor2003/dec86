@@ -2425,6 +2425,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_generated_c_indexed_argument_contract.py \
 	angr_platforms/tests/test_project_loading_cache.py \
 	angr_platforms/tests/test_project_loading_diagnostics.py \
+	angr_platforms/tests/test_cli_interrupt_call_boundary.py \
 	angr_platforms/tests/test_function_work_item_contract.py \
 	angr_platforms/tests/test_pytest_profile.py \
 	angr_platforms/tests/test_parallel_job_defaults.py \
@@ -2881,6 +2882,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_generated_c_indexed_argument_contract.py \
 	angr_platforms/tests/test_project_loading_cache.py \
 	angr_platforms/tests/test_project_loading_diagnostics.py \
+	angr_platforms/tests/test_cli_interrupt_call_boundary.py \
 	angr_platforms/tests/test_pytest_profile.py \
 	angr_platforms/tests/test_generic_annotation_contracts.py \
 	angr_platforms/tests/test_access_trait_runtime_factory.py \
@@ -3139,6 +3141,7 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \
 	angr_platforms/tests/test_x86_16_alu_effect_order.py \
 	angr_platforms/tests/test_x86_16_simple_incdec_value_provenance.py \
+	angr_platforms/tests/test_x86_16_concrete_loop_conditions.py \
 	angr_platforms/tests/test_x86_16_lifting_opcode_tables.py \
 	angr_platforms/tests/test_x86_16_callsite_completeness_validation.py \
 	angr_platforms/tests/test_x86_16_direct_global_call_return_materialization.py \
@@ -3207,6 +3210,7 @@ QA_PYTEST_TARGETS += \
 	angr_platforms/tests/test_x86_16_msc_caller_cleanup.py \
 	angr_platforms/tests/test_x86_16_alu_effect_order.py \
 	angr_platforms/tests/test_x86_16_simple_incdec_value_provenance.py \
+	angr_platforms/tests/test_x86_16_concrete_loop_conditions.py \
 	angr_platforms/tests/test_x86_16_lifting_opcode_tables.py \
 	angr_platforms/tests/test_x86_16_callsite_completeness_validation.py \
 	angr_platforms/tests/test_x86_16_borrow_verification.py \

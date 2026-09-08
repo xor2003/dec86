@@ -4816,7 +4816,9 @@ def _format_known_helper_calls(
     cod_metadata: CODProcMetadata | None = None,
     codegen: object | None = None,
 ) -> str:
+    """Preserve legacy helper rendering; new semantic recovery belongs to X86_16."""
     def _impl() -> str:
+        """Keep the existing helper replacement and declaration order unchanged."""
         nonlocal c_text
         mappings: dict[str, str] = {}
         for addr in _dynamic_text_attr(project, "_sim_procedures", {}):
@@ -4857,10 +4859,10 @@ def _format_known_helper_calls(
                     break
 
         interrupt_replacements = _interrupt_call_replacement_map(project, function, api_style, binary_path)
-        for source_name, replacements in sorted(
+        for source_name, source_replacements in sorted(
             interrupt_replacements.items(), key=lambda item: len(item[0]), reverse=True
         ):
-            for replacement in replacements:
+            for replacement in source_replacements:
                 c_text, count = re.subn(
                     rf"(?<![A-Za-z_]){re.escape(source_name)}\s*\(\s*\)",
                     replacement,

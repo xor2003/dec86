@@ -15,6 +15,7 @@ from types import MethodType
 from typing import TYPE_CHECKING, Any, cast
 
 from pyvex.lifting.util import JumpKind
+from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import Type
 
 from .addressing_helpers import load_resolved_operand, store_resolved_operand
@@ -62,6 +63,13 @@ type VexExpr = Any
 def _vex_expr(value: object) -> VexExpr:
     """Expose one concrete-or-PyVEX runtime value at the third-party boundary."""
     return cast(VexExpr, value)
+
+
+def _require_vex_value(value: object) -> VexValue:
+    """Require a symbolic PyVEX value for a lifting-only operation."""
+    if not isinstance(value, VexValue):
+        raise TypeError("symbolic instruction operation requires a VexValue")
+    return value
 
 
 def _unbound_opcode_handler(func: OpcodeRegistrationHandler) -> OpcodeExecHandler:
@@ -1467,8 +1475,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         remainder = ax_s - quotient * rm8_s
         signed_quotient = quotient.signed
         self._divide_error_if(
-            (signed_quotient < self.emu.constant(0xFF80, Type.int_16).signed)
-            | (signed_quotient > self.emu.constant(0x007F, Type.int_16).signed)
+            (signed_quotient < _require_vex_value(self.emu.constant(0xFF80, Type.int_16)).signed)
+            | (signed_quotient > _require_vex_value(self.emu.constant(0x007F, Type.int_16)).signed)
         )
         self.emu.set_gpreg(reg8_t.AL, quotient)
         self.emu.set_gpreg(reg8_t.AH, remainder)
@@ -1478,7 +1486,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         lifter_instruction = self.emu.lifter_instruction
         if lifter_instruction is None:
             raise RuntimeError("divide-error lifting requires an active lifter instruction")
-        target = self.emu.constant(0, Type.int_32)
+        target = _require_vex_value(self.emu.constant(0, Type.int_32))
         guard = condition.cast_to(Type.int_1)
         lifter_instruction.irsb_c.add_exit(
             guard.rdt,

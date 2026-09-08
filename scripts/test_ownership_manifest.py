@@ -293,6 +293,14 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
     ),
     TestOwnershipRule(
+        owner="cli-interrupt-call-boundary",
+        paths=("inertia_decompiler/cli_interrupt_modeling.py",),
+        tests=(
+            "angr_platforms/tests/test_cli_interrupt_call_boundary.py",
+            "angr_platforms/tests/test_x86_16_helper_modeling.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="cli-dead-local-prune",
         paths=(
             "inertia_decompiler/cli_dead_local_prune.py",
@@ -638,6 +646,24 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(owner="x86-16-semantics-condition-recovery",
         paths=("angr_platforms/angr_platforms/X86_16/semantics/condition_recovery.py",),
         tests=("angr_platforms/tests/test_x86_16_condition_ir.py",),
+    ),
+    TestOwnershipRule(
+        owner="x86-16-symbolic-instruction-values",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/instr_base.py",
+            "angr_platforms/angr_platforms/X86_16/instr32.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_concrete_loop_conditions.py",
+            "angr_platforms/tests/test_x86_16_compare_semantics.py",
+            "angr_platforms/tests/test_x86_16_borrow_80386_lifter_corpus.py::"
+            "test_borrow_80386_real_mode_sample_whole_instruction_lifts",
+            "angr_platforms/tests/test_x86_16_borrow_80386_lifter_corpus.py::"
+            "test_80386_width_forms_lift_exactly_one_complete_instruction",
+            "angr_platforms/tests/test_x86_16_borrow_80386_lifter_corpus.py::"
+            "test_division_emits_guarded_zero_and_overflow_fault_exits",
+            "angr_platforms/tests/test_x86_16_80386_stack_imul_edges.py",
+        ),
     ),
     TestOwnershipRule(
         owner="x86-16-frontend-condition-evidence",

@@ -221,7 +221,9 @@ from .stack_storage_evidence import alias_proves_stack_range_8616
 from .stack_value_projection import (
     StackValueOwnerHint8616,
     StackValueProjectionStatus8616,
-    project_stack_value_range_8616,
+)
+from .stack_value_projection import (
+    project_stack_value_range_8616 as project_stack_value_range_8616,
 )
 from .stack_variable_binding import (
     StackBaseBpBiasEvidence8616,

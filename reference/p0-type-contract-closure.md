@@ -500,3 +500,56 @@ Logs: `/tmp/inertia-tail-fingerprint-types-tests.log` and
 `/tmp/inertia-tail-fingerprint-types-quality.log`. The preceding restored
 default pipeline passed 2,530 tests and both DOS lanes; no new full-suite or
 remote CI result is claimed by this typing-only change.
+
+## CLI Checked Values And Collection Names (2026-09-08)
+
+The interrupt-call boundary now uses the `callee_target` value it checked
+instead of reading a potentially dynamic attribute twice. Function-name
+precedence and wrapper argument classes are unchanged. A regression failed
+before (one failed, five passed) and passes after; all 29 related tests pass
+in 9.70s. The new test module is admitted to Make, the default lane, and the
+source-to-test ownership manifest. Admission checks pass 109 tests in 2.80s.
+
+A separate local-name collision in legacy helper rendering assigned a tuple
+to a name already inferred as a list. Naming that tuple `source_replacements`
+preserves its type and iteration order without conversion. Four rendering
+tests pass in 19.67s. Both touched functions retain annotations and now have
+docstrings; no semantic recovery was added to the CLI.
+
+Reason: checked dynamic values and distinct collection contracts must survive
+the compatibility boundary. DoD: retain name precedence, refuse non-string
+targets, read dynamic targets once, preserve rendering, and pass scoped
+tools/regressions. Met. Definition of failure: unchecked second lookup,
+guessed wrapper arguments, collection coercion, or new text-based recovery.
+Ruff `check --fix`, scoped MyPy, and venv Pyright pass. Global `quality-fast`
+remains red with **23 MyPy diagnostics**, down from 25.
+
+Logs: `/tmp/inertia-interrupt-boundary-before.log`,
+`/tmp/inertia-interrupt-boundary-after.log`,
+`/tmp/inertia-interrupt-boundary-admission.log`,
+`/tmp/inertia-helper-render-types-tests.log`, and
+`/tmp/inertia-cli-boundary-types-quality.log`.
+
+The default pipeline also passes: 2,536 unit tests in 126.53s, QuickC, and all
+MS C tiny round trips; three lanes passed, none failed/skipped/timed out.
+Lane wall times: 126.923s, 38.350s, and 57.517s. Evidence:
+`/tmp/inertia-interrupt-boundary-pipeline.log`. These checks do not close the
+numeric-frame defect or full-suite/CI acceptance.
+
+## Explicit Stack Projection Compatibility Export (2026-09-08)
+
+The existing `real_mode_linear` re-export of `project_stack_value_range_8616`
+is now explicit. JCC retains its admitted import path and calls the same
+canonical Lowering function. A direct import from its owner was rejected by
+the architecture guard and reverted; no new compatibility exception was added.
+
+Reason: the existing API must be visible to strict type checking without
+expanding postprocess dependencies. DoD: unchanged function identity, JCC
+regressions, architecture gate, and scoped tools pass. Met: 98 JCC tests pass
+in 9.16s; Ruff `check --fix`, MyPy, venv Pyright, and startup architecture pass.
+Definition of failure: duplicate recovery, unchecked casts, or weakening the
+protected-import gate. Global `quality-fast` still fails with **22 MyPy
+diagnostics**, down from 23. This import declaration changes no function body;
+the preceding 2,536-test/default DOS pipeline is not a new run for this change.
+Logs: `/tmp/inertia-jcc-export-tests.log`,
+`/tmp/inertia-jcc-export-architecture.log`, `/tmp/inertia-jcc-export-quality.log`.
