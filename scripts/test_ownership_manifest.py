@@ -1173,8 +1173,14 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     ),
     TestOwnershipRule(
         owner="x86-16-return-compat-counters",
-        paths=("angr_platforms/angr_platforms/X86_16/decompiler_return_compat.py",),
-        tests=("angr_platforms/tests/test_x86_16_return_compat_counters.py",),
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/decompiler_return_compat.py",
+            "angr_platforms/angr_platforms/X86_16/ailment_variant_access.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_return_compat_counters.py",
+            "angr_platforms/tests/test_x86_16_return_stack_address_compat.py",
+        ),
     ),
     TestOwnershipRule(
         owner="msc6-toolchain-lock",

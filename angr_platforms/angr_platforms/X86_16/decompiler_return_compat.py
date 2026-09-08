@@ -15,7 +15,7 @@ import os
 import struct
 import sys
 import typing
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -40,6 +40,23 @@ from angr.sim_type import (
 )
 from angr.sim_variable import SimStackVariable
 
+from .ailment_variant_access import (
+    AilBasePointerOffset8616,
+    AilBinaryOp8616,
+    AilLoad8616,
+    AilOperands8616,
+    AilRegister8616,
+    AilStackBaseOffset8616,
+)
+from .ailment_variant_access import (
+    ail_const_value_8616 as _ail_const_value_8616,
+)
+from .ailment_variant_access import (
+    register_assignment_source_8616 as _register_assignment_source_8616,
+)
+from .ailment_variant_access import (
+    tmp_assignment_source_8616 as _tmp_assignment_source_8616,
+)
 from .calling_convention_compat import collect_wide_stack_argument_width_evidence_8616
 from .callsite_summary import (
     CallerReturnUseEvidence8616,
@@ -303,30 +320,6 @@ def _make_return_register_expr_8616(self: object, stmt: object, reg_arg: SimRegA
     return reg_expr
 
 
-def _register_assignment_source_8616(stmt: object, *, reg_offset: int, reg_size: int) -> object | None:
-    if not isinstance(stmt, ailment.Stmt.Assignment):
-        return None
-    dst = stmt.dst
-    if not isinstance(dst, ailment.Expr.Register):
-        return None
-    if dst.reg_offset != reg_offset:
-        return None
-    if dst.bits != reg_size * 8:
-        return None
-    return cast(object, stmt.src)
-
-
-def _tmp_assignment_source_8616(stmt: object, *, tmp_idx: int) -> object | None:
-    if not isinstance(stmt, ailment.Stmt.Assignment):
-        return None
-    dst = stmt.dst
-    if not isinstance(dst, ailment.Expr.Tmp):
-        return None
-    if dst.tmp_idx != tmp_idx:
-        return None
-    return cast(object, stmt.src)
-
-
 def _resolve_same_block_tmp_source_8616(
     expr: object,
     statements: Sequence[object],
@@ -379,8 +372,9 @@ def _resolve_same_block_tmps_in_expr_8616(
             pass
     if hasattr(copy, "operands"):
         try:
-            operands = copy.operands
-            typing.cast(typing.Any, copy).operands = [
+            operand_view = cast(AilOperands8616, copy)
+            operands = operand_view.operands
+            operand_view.operands = [
                 _resolve_same_block_tmps_in_expr_8616(child, statements, before_index=before_index, depth=depth + 1)
                 for child in operands
             ]
@@ -423,19 +417,14 @@ def _copy_ail_expr_8616(expr: object) -> object:
     return expr
 
 
-def _ail_const_value_8616(expr: object) -> int | None:
-    if isinstance(expr, ailment.Expr.Const):
-        value = expr.value
-        return int(value) if isinstance(value, int) else None
-    return None
-
-
 def _ail_register_name_8616(self: object, expr: object) -> str | None:
+    """Translate the offset and width of a checked native register."""
     self_dynamic = cast(Any, self)
     if not isinstance(expr, ailment.Expr.Register):
         return None
-    reg_offset = expr.reg_offset
-    size_bits = expr.bits
+    register = cast(AilRegister8616, expr)
+    reg_offset = register.reg_offset
+    size_bits = register.bits
     if not isinstance(reg_offset, int) or not isinstance(size_bits, int):
         return None
     size_bytes = max(size_bits // self_dynamic.arch.byte_width, 1)
@@ -452,11 +441,13 @@ def _bp_offset_expr_8616(self: object, expr: object) -> int | None:
     """Return the BP-relative offset represented by one canonical AIL address."""
     expr = _strip_ail_convert_8616(expr)
     if isinstance(expr, BasePointerOffset):
-        offset = expr.offset
-        return offset if expr.base == "bp" and isinstance(offset, int) else None
+        base_pointer = cast(AilBasePointerOffset8616, expr)
+        offset = base_pointer.offset
+        return offset if base_pointer.base == "bp" and isinstance(offset, int) else None
     if isinstance(expr, StackBaseOffset):
-        variable = expr.tags.get("variable")
-        offset = expr.offset
+        stack_base = cast(AilStackBaseOffset8616, expr)
+        variable = stack_base.tags.get("variable")
+        offset = stack_base.offset
         return (
             offset
             if isinstance(variable, SimStackVariable)
@@ -468,8 +459,9 @@ def _bp_offset_expr_8616(self: object, expr: object) -> int | None:
         return 0
     if not isinstance(expr, ailment.Expr.BinaryOp):
         return None
-    op = expr.op
-    operands = _object_tuple_8616(expr.operands)
+    binary = cast(AilBinaryOp8616, expr)
+    op = binary.op
+    operands = _object_tuple_8616(binary.operands)
     if len(operands) != 2 or op not in {"Add", "Sub"}:
         return None
     lhs, rhs = operands
@@ -485,11 +477,13 @@ def _bp_offset_expr_8616(self: object, expr: object) -> int | None:
 
 
 def _is_ss_segment_scale_8616(self: object, expr: object) -> bool:
+    """Recognize an explicit SS segment scale in a native binary expression."""
     expr = _strip_ail_convert_8616(expr)
     if not isinstance(expr, ailment.Expr.BinaryOp):
         return False
-    op = expr.op
-    operands = _object_tuple_8616(expr.operands)
+    binary = cast(AilBinaryOp8616, expr)
+    op = binary.op
+    operands = _object_tuple_8616(binary.operands)
     if len(operands) != 2 or op not in {"Shl", "Mul"}:
         return False
     scale = 4 if op == "Shl" else 16
@@ -502,13 +496,17 @@ def _is_ss_segment_scale_8616(self: object, expr: object) -> bool:
 
 
 def _bp_offset_from_linear_stack_addr_8616(self: object, addr_expr: object) -> int | None:
+    """Read a BP displacement only from canonical stack-address evidence."""
     addr_expr = _strip_ail_convert_8616(addr_expr)
     direct = _bp_offset_expr_8616(self, addr_expr)
     if direct is not None:
         return direct
-    if not isinstance(addr_expr, ailment.Expr.BinaryOp) or getattr(addr_expr, "op", None) != "Add":
+    if not isinstance(addr_expr, ailment.Expr.BinaryOp):
         return None
-    operands = _object_tuple_8616(getattr(addr_expr, "operands", ()))
+    binary = cast(AilBinaryOp8616, addr_expr)
+    if binary.op != "Add":
+        return None
+    operands = _object_tuple_8616(binary.operands)
     if len(operands) != 2:
         return None
     lhs, rhs = operands
@@ -520,12 +518,14 @@ def _bp_offset_from_linear_stack_addr_8616(self: object, addr_expr: object) -> i
 
 
 def _materialize_return_stack_load_8616(self: object, expr: object) -> object:
+    """Attach proven BP-relative storage to a native return load copy."""
     self_dynamic = cast(Any, self)
     if isinstance(expr, ailment.Expr.Load):
-        offset = _bp_offset_from_linear_stack_addr_8616(self, expr.addr)
+        load = cast(AilLoad8616, expr)
+        offset = _bp_offset_from_linear_stack_addr_8616(self, load.addr)
         if not isinstance(offset, int):
             return expr
-        bits = expr.bits
+        bits = load.bits
         size = max(bits // self_dynamic.arch.byte_width, 1) if isinstance(bits, int) and bits > 0 else 2
         region = getattr(getattr(self, "function", None), "addr", None)
         variable = SimStackVariable(offset, size, base="bp", region=region)
@@ -534,9 +534,9 @@ def _materialize_return_stack_load_8616(self: object, expr: object) -> object:
             size * self_dynamic.arch.byte_width,
             offset,
             variable=variable,
-            ins_addr=expr.tags.get("ins_addr", None),
+            ins_addr=load.tags.get("ins_addr", None),
         )
-        result = cast(Any, _copy_ail_expr_8616(expr))
+        result = cast(AilLoad8616, _copy_ail_expr_8616(expr))
         try:
             result.addr = materialized_addr
         except Exception:
@@ -1050,7 +1050,8 @@ def _return_compat_unknown_caller_reaching_register_proven_8616(
             return False
         if isinstance(source, ailment.Expr.BinaryOp):
             # Dynamic AIL compatibility boundary: BinaryOp children are exposed as operands.
-            return all(_source_is_explicit_scalar_return(child) for child in _object_tuple_8616(source.operands))
+            binary = cast(AilBinaryOp8616, source)
+            return all(_source_is_explicit_scalar_return(child) for child in _object_tuple_8616(binary.operands))
         # Dynamic AIL compatibility boundary: UnaryOp is version-dependent in ailment.
         unary_op_type = getattr(ailment.Expr, "UnaryOp", None)
         if unary_op_type is not None and isinstance(source, unary_op_type):
@@ -1660,10 +1661,11 @@ def _infer_x86_16_c_return_value_from_ax_8616(codegen: object) -> object | None:
     for source in sources:
         if not isinstance(source, ailment.Expr.Load):
             continue
-        bp_disp = _bp_offset_from_linear_stack_addr_8616(ctx, source.addr)
+        load = cast(AilLoad8616, source)
+        bp_disp = _bp_offset_from_linear_stack_addr_8616(ctx, load.addr)
         if not isinstance(bp_disp, int):
             continue
-        bits = source.bits
+        bits = load.bits
         size = max(bits // getattr(arch, "byte_width", 8), 1) if isinstance(bits, int) and bits > 0 else reg_size
         offsets.add(bp_disp)
         sizes.add(size)
@@ -1689,9 +1691,10 @@ def _terminal_ax_stack_load_from_instructions_8616(function: object) -> tuple[in
     terminal_facts: list[tuple[int, int]] = []
     # Dynamic angr Function and capstone boundary. Typed instruction effects
     # below own the semantic classification.
-    for block in tuple(getattr(function, "blocks", ()) or ()):
+    blocks: Iterable[object] = getattr(function, "blocks", ()) or ()
+    for block in tuple(blocks):
         capstone = getattr(block, "capstone", None)
-        wrappers = tuple(getattr(capstone, "insns", ()) or ())
+        wrappers: tuple[object, ...] = tuple(getattr(capstone, "insns", ()) or ())
         if not wrappers:
             continue
         instructions = tuple(getattr(wrapper, "insn", wrapper) for wrapper in wrappers)

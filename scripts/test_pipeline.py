@@ -213,6 +213,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_direct_stack_move_pretest_body.py",
     "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py",
     "angr_platforms/tests/test_x86_16_return_compat_counters.py",
+    "angr_platforms/tests/test_x86_16_return_stack_address_compat.py",
 )
 
 MSC6_TINY_CONSTRUCTS: tuple[str, ...] = (

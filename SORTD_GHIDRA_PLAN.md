@@ -26,8 +26,13 @@ also passes after preserving two typed provider imports in `pyproject.toml`.
 passes 2,632 tests. Global Vulture also passes.
 Validation summaries now retain their canonical type through configuration
 and transaction state. See the [validation contract report](reference/p0-validation-type-contracts.md).
-The refreshed CI-mode Pyright audit still reports 31 errors; MyPy closure is
-not full typing, CI, or P0 closure.
+The refreshed CI-mode Pyright audit reports **8 errors**, down from 31 after
+preserving checked native AIL field contracts. Fifty focused tests pass;
+`quality-hard` and `quality-fast` pass with 2,645 tests and three executable
+quality guards each. The default pipeline also passes: 2,645 unit tests,
+QuickC and all seven MS C tiny round trips, no skips or timeouts. See the
+[native AIL report](reference/p0-native-ail-contracts.md).
+MyPy closure is not full typing, CI, or P0 closure.
 Segmented reload replay now refuses missing boundary provenance without
 crashing and still checks addressless intermediate-block effects. All 54
 focused tests and scoped tools pass; see the

@@ -1563,6 +1563,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py",
     "angr_platforms/angr_platforms/X86_16/decompiler_postprocess_typed_conditions.py",
     "angr_platforms/angr_platforms/X86_16/decompiler_return_compat.py",
+    "angr_platforms/angr_platforms/X86_16/ailment_variant_access.py",
     "angr_platforms/angr_platforms/X86_16/tail_validation.py",
     "angr_platforms/angr_platforms/X86_16/validation_manifest.py",
     "angr_platforms/angr_platforms/X86_16/validation_helper_report.py",
