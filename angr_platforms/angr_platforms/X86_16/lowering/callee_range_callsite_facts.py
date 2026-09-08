@@ -132,6 +132,8 @@ def _range_direct_calls_by_target_8616(
                 project,
                 direct_target,
             )
+            if target_addr is None:
+                continue
             calls.setdefault(target_addr, []).append((caller_range, instruction))
     indexed = {target: tuple(items) for target, items in calls.items()}
     surface._inertia_range_direct_call_ranges_8616 = function_ranges
@@ -174,6 +176,8 @@ def collect_range_callsite_facts_8616(
                 project,
                 direct_target,
             )
+            if target_addr is None:
+                continue
             if (target_addr, instruction.address) in excluded_fact_keys:
                 continue
             summary = (

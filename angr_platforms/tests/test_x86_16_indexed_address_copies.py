@@ -5,6 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
+import pytest
 from angr_platforms.X86_16.alias.indexed_address_access_classification import (
     classify_indexed_alias_accesses_8616,
 )
@@ -39,6 +40,7 @@ from angr_platforms.X86_16.ir import (
     logical_memory_register_transfer,
 )
 from angr_platforms.X86_16.ir.indexed_address_access_normalization import (
+    _normalize_group_8616,
     normalize_indexed_address_accesses_8616,
 )
 from angr_platforms.X86_16.ir.indexed_address_pipeline import (
@@ -134,7 +136,8 @@ def test_logical_register_transfer_batch_builds_one_scalar_index(monkeypatch) ->
     assert index_builds == [artifact]
 
 
-def test_normalization_retains_both_word_store_members() -> None:
+@pytest.mark.parametrize("invalid_site", [None, "missing", "different"])
+def test_normalization_retains_both_word_store_members(invalid_site) -> None:
     artifact = _lift(GLOBAL_WORD_COPY)
 
     result = normalize_indexed_address_accesses_8616(artifact)
@@ -143,6 +146,13 @@ def test_normalization_retains_both_word_store_members() -> None:
     assert store.raw_fact_count == 2
     assert len(store.member_instr_indices) == 2
     assert store.instr_index == store.member_instr_indices[0]
+    if invalid_site is not None:
+        block = next(block for block in artifact.blocks if block.addr == store.block_addr)
+        entries = tuple((i, block.instrs[i], block.instrs[i].args[0]) for i in store.member_instr_indices)
+        index, instruction, address = entries[0]
+        bad = replace(instruction, addr=None if invalid_site == "missing" else store.instr_addr + 1)
+        with pytest.raises(ValueError, match="one known machine instruction"):
+            _normalize_group_8616(block.addr, ((index, bad, address), *entries[1:]))
 
 
 def test_real_word_copy_proves_both_lanes_to_one_indexed_load() -> None:

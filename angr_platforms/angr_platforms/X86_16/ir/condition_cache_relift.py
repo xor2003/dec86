@@ -253,6 +253,7 @@ def relift_function_condition_cache_8616(
             capture.record_successful_block(block.address)
 
         conditions_by_block = capture.conditions_by_block(block_addresses)
+        failures.extend(capture.failures_by_block(block_addresses))
         materialized_blocks = {
             address
             for address, conditions in conditions_by_block

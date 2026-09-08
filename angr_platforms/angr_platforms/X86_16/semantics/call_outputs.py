@@ -330,7 +330,7 @@ def materialize_call_outputs_8616(
         materialized_count=len(facts),
         failure_count=failure_count,
     )
-    summary = {
+    function_summary = {
         **artifact.summary,
         "call_output_raw_fact_count": stats.raw_fact_count,
         "call_output_normalized_fact_count": stats.normalized_fact_count,
@@ -342,7 +342,7 @@ def materialize_call_outputs_8616(
         replace(
             artifact,
             blocks=rewritten_blocks,
-            summary=summary,
+            summary=function_summary,
             logical_memory=logical_memory,
         ),
         tuple(facts),

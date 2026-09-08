@@ -49,10 +49,10 @@ class MultiArmConditionOwnershipResult8616:
 
 
 @dataclass(frozen=True, slots=True)
-class MultiArmConditionMaterializationResult8616:
-    """Return replacement arms and closed materialization counters."""
+class MultiArmConditionMaterializationResult8616[BodyT]:
+    """Return replacement predicates with unchanged, precisely typed arm bodies."""
 
-    condition_and_nodes: tuple[tuple[CExpression, object], ...]
+    condition_and_nodes: tuple[tuple[CExpression, BodyT], ...]
     raw_fact_count: int
     normalized_fact_count: int
     classified_fact_count: int
@@ -141,11 +141,11 @@ def select_multi_arm_condition_owners_8616(
     )
 
 
-def materialize_multi_arm_condition_owners_8616(
-    condition_and_nodes: tuple[tuple[CExpression, object], ...],
+def materialize_multi_arm_condition_owners_8616[BodyT](
+    condition_and_nodes: tuple[tuple[CExpression, BodyT], ...],
     ownership: MultiArmConditionOwnershipResult8616,
     materialize: Callable[[ConditionIR], CExpression | None],
-) -> MultiArmConditionMaterializationResult8616:
+) -> MultiArmConditionMaterializationResult8616[BodyT]:
     """Materialize selected facts while preserving third-party AST tags."""
     raw_count = len(condition_and_nodes)
     if not ownership.selected or len(ownership.facts) != raw_count:
@@ -157,7 +157,7 @@ def materialize_multi_arm_condition_owners_8616(
             materialized_count=0,
             failure_count=1,
         )
-    replacements: list[tuple[CExpression, object]] = []
+    replacements: list[tuple[CExpression, BodyT]] = []
     for (condition, body), fact in zip(
         condition_and_nodes,
         ownership.facts,

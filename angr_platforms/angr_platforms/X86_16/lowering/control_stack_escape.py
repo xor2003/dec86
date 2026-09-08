@@ -23,6 +23,8 @@ from typing import Any, Protocol, cast
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from capstone.x86_const import X86_INS_POP, X86_INS_PUSH, X86_INS_RET, X86_OP_REG
 
+from ..structured_tags import copy_structured_tags_8616
+
 
 class _Operand8616(Protocol):
     """Decoded operand fields required by escape classification."""
@@ -147,19 +149,22 @@ def materialize_control_stack_escape_8616(
         """Rewrite the exact terminal RET while preserving all prior effects."""
         nonlocal changed, matched_return
         for statement in statements:
-            tags = getattr(statement, "tags", None)
-            tag_get = getattr(tags, "get", None)
+            tags = (
+                copy_structured_tags_8616(statement.tags)
+                if isinstance(statement, structured_c.CReturn)
+                else None
+            )
             if (
                 isinstance(statement, structured_c.CReturn)
-                and callable(tag_get)
-                and tag_get("ins_addr") == fact.terminal_ret_addr
+                and tags is not None
+                and tags.get("ins_addr") == fact.terminal_ret_addr
             ):
                 matched_return = True
                 if statement.retval is not None:
                     statement.retval = None
                     changed = True
                 statement.tags = {
-                    **dict(tags),
+                    **tags,
                     "inertia_x86_16_control_stack_escape": fact,
                 }
             for attribute in ("statements", "body", "else_node"):

@@ -18,7 +18,167 @@ Numeric function and global names are acceptable when the executable has no
 debug information. Source names below identify addresses for this report only;
 they must not become recovery evidence.
 
-## Current Checkpoint (2026-09-07)
+## Current Checkpoint (2026-09-08)
+
+Latest global `quality-fast`: **25 MyPy diagnostics remain**, down from 29.
+Four redundant tail-fingerprint casts were removed without changing types or
+validation behavior; 408 validation tests and scoped tools pass. See the
+[type-contract report](reference/p0-type-contract-closure.md).
+
+Latest restored default pipeline: **2,530 unit tests passed in 98.28s**, plus
+QuickC and all MS C tiny round trips; three lanes passed, none failed/skipped/
+timed out. This follows rejection and reversal of the standalone entry-BP
+origin filter described below. Existing stack-compatibility tests are now in
+the routine lane. These warm-cache results do not close global MyPy, the full
+suite, CI, or the numeric-frame defect.
+
+The [tail-transfer origin repair](reference/p0-tail-transfer-origin.md) fixes
+generic CFG entries suppressing proven tail evidence. Near/far/stored tail
+kind and absent return address now survive duplicate merging; 79 focused
+tests pass. All default lanes pass (2,507 unit tests in 130.63s, four QuickC,
+seven MS C tiny round trips). Routine gate admission was separately verified
+with 68 tests. Global MyPy remains at 29 diagnostics; full-suite/CI and InitMenu
+remain open.
+
+The refreshed [InitMenu numeric-frame investigation](reference/p0-initmenu-nested-call-boundary.md)
+still finds stable tail stages but failed GCC and no accepted hashes. BP/SP
+runtime lanes already exist; the unresolved task is preserving the proven
+numeric frame definition separately from the host object view. The attempted
+stderr observer was hidden by direct-worker output capture. A file-backed
+observer now confirms that frame pruning receives an already pointer-valued
+BP definition and removes it. The rejected C is byte-identical with observation.
+The next fix point is upstream numeric provenance, not merely retaining or
+casting that host pointer. No speculative pruning change was made.
+The [16-byte numeric-frame reproducer](reference/p0-numeric-frame-reproducer.md)
+now isolates the scalar LEA-store defect without calls. Its executable oracle
+covers ordinary and wrapped SP, distinct SS/DS, and BP/SP restoration; 12
+focused tests pass. The added SSA regression now evaluates the exact numeric
+definition path at all three entry-SP values; 22 related tests pass in 8.84s.
+Owned IR arithmetic is correct. The upstream SP/BP-to-StackBaseOffset
+replacement is now confirmed live. An entry-BP origin filter was tried and
+reverted: despite 35 focused passes it broke MS C tiny `add_sc` tail validation.
+Reverting restored `add_sc` to validation passed with a clean whole tail.
+Do not repeat that filter without coherent downstream frame handling. Existing
+stack compatibility tests are now admitted to the default pipeline.
+Global MyPy remains at 29 diagnostics.
+The scalar LEA store is still pointer-valued, so generated-C repair stays open.
+
+The [historical failure replay](reference/p0-failure-replay-20260908.md) ran
+47 surviving old failure nodes: **44 failed, 3 passed in 315.27s**. Architecture,
+MSC6 signed-long comparison, and sidecar-free InitBars now pass. Three obsolete
+CLI stream assertions were separately corrected and pass; all selected InitMenu
+tests still fail. This is not a refreshed full-suite census or an overall
+completion percentage. The same report now records the two runtime switch
+fixture repairs: both bridges require actual SSA selector proof, with positive
+and missing/mismatched-evidence regressions; 50 focused tests pass. Production
+semantics are unchanged, and global MyPy remains at 29 diagnostics.
+Four BP-based DOS-call fixture expectations now preserve explicit SS and load
+width instead of requiring obsolete assembly placeholders; the sample module
+reports eight passed and 15 missing-optional-fixture skips. See the replay
+report for scope and skip reasons; this is not whole-function acceptance.
+
+The [split-return type-contract closure](reference/p0-type-contract-closure.md)
+removes 19 repeated optional-coordinate diagnostics without changing CFG proof.
+The same report records frontend-boundary contract closure with 25 tests passing.
+Latest `quality-fast`: still red, **29 MyPy diagnostics**. The
+[wide-return proof contract](reference/p0-wide-return-proof-contract.md) now
+accepts immutable evidence through read-only properties; 11 focused tests and
+scoped tools pass without changing folding semantics. Call-condition
+indexing keeps optional lookup types separate, and bridge removal requires a
+stack destination; 25 focused tests and scoped tools pass. IR width/effect
+consumers now use their owners' return types without redundant casts; 45 focused
+tests and scoped tools pass. Unobserved call-result
+view contracts now retain explicit width proof; all 14 focused tests pass,
+including unknown-view assignment preservation. Binary loop-update
+RHS values now use a shared Structuring-owned composer instead of crashing in
+the scalar API. Unknown RHS refuses before carrier mutation; 43 focused tests,
+full architecture checks and scoped tools pass. The control-register
+read contract now describes concrete and VEX values consistently; the write
+adapter retains exact 32-bit casts with checked raw expressions. 1,084 focused
+frontend tests pass, one existing exhaustive-corpus case is skipped. Condition-view
+validation now refuses missing/untyped operands instead of crashing; 40 focused
+tests and all three default pipeline lanes pass. The logical-word
+write tracer now short-circuits malformed address operands into typed refusal
+instead of crashing; both failing-before lane regressions pass. Call-output metadata
+and the caller-use enum compatibility export close six diagnostics; 29 focused
+tests and scoped Ruff/MyPy/Pyright pass. Stack-memory SSA
+projection closes ten typing diagnostics without changing Alias proof; 31
+focused Alias/Lowering tests pass, including every overlap/phi refusal position.
+Control-stack escape
+lowering now uses the existing native/Python tag adapter; five focused tests
+and scoped Ruff/MyPy/Pyright pass. Refreshed default pipeline: **2,507 unit
+tests passed in 142.40s**, four QuickC fixtures validated, all seven MS C tiny
+round trips passed; no failed/skipped/timed-out lanes. The unit lane still
+exceeds its advisory budget. This is not a new full-suite census. The unused, unsafe
+postprocess condition-strengthening prototype is retired with coherent inventories.
+Carry/borrow placement
+contracts and replay pass twelve focused tests. The INC/DEC test
+contract is reconciled with the established live-flag execution repair; 56
+context/execution tests pass, including signed-overflow and carry boundaries.
+
+The [condition-capture repair](reference/p0-condition-capture-refusals.md) preserves
+typed recovery refusals through both fast capture and exact-byte relifting.
+Updated default unit lane: 2,456 passed in 124.36s; all seven MS C tiny round
+trips passed at that checkpoint. The global diagnostic count above supersedes
+the historical 92 recorded with that repair.
+
+The [live aggregate replay repair](reference/p0-live-aggregate-replay.md) restores
+the exact tracked buffer after coordinate loss, avoiding a second allocation.
+All seven InitMenu setup arguments now resolve to registered storage. Four
+still fail the bounded machine proof at nested calls; InitMenu remains unaccepted.
+The [nested-call investigation](reference/p0-initmenu-nested-call-boundary.md)
+finds an indirect call on a conditional path before AX overwrite. Nested-call
+traversal alone cannot close this proof. Resolve target/effect evidence or
+repair the retained numeric stack-address representation; do not broaden deletion.
+The same report records the preceding target/site contract checks: 94 MyPy
+diagnostics at that checkpoint; compiled imports passed 39 modules.
+
+The [InitMenu address-projection repair](reference/p0-initmenu-address-projection.md)
+prevents Widening from replacing address-of objects with masked value reads.
+Three InitMenu setup carriers are proven and removed. Its initial missing
+array-identity blocker is superseded by the replay repair above; InitMenu is
+still unaccepted at the nested-call evidence boundary.
+
+The [consumed stack-setup repair](reference/p0-consumed-stack-setup.md) closes
+the sidecar-free InitBars LEA compilation blocker through generic machine
+liveness proof and a Lowering consumer. The normal worker is accepted with
+stable whole-tail checks and matching validation/GCC hashes. The named-output
+regression, InitMenu, global typing and full-suite/CI closure remain open.
+
+The [validation-site checkpoint](reference/p0-validation-site-contracts.md)
+replaces missing-address reload-proof crashes with explicit refusal and closes
+scoped IR/Validation typing gaps. Known-site proofs and call-clobber tests pass.
+
+The [worker-evidence codec checkpoint](reference/p0-worker-evidence-codec-types.md)
+adds checked schema/enum inputs and closes scoped transport typing diagnostics.
+Its focused tests pass; global gate results are tracked separately in the report.
+
+The [register-argument provenance investigation](reference/p0-register-argument-provenance.md)
+documents why early GP publication preceded call recovery and later PUSH
+cleanup missed the InitBars LEA producer. Its formerly open producer-removal
+work is superseded by the proof-backed repair above, not a pointer cast or
+classifier-only change. Other InitBars quality requirements and InitMenu remain open.
+
+The [recovered-payload proof repair](reference/p0-recovery-payload-proofs.md)
+fixes the CMP32 signed-long acceptance failure: both direct recovery branches
+now transport hashes together with their newly accepted C. The focused corpus
+and integrity tests pass; no validation gate was relaxed.
+
+The [September 8 full-suite refresh](reference/p0-full-suite-20260908.md)
+reports **10,351 passed, 48 failed, 170 skipped in 753.15s**. This supersedes
+the older census below. InitMenu is not currently accepted: sidecar-free cases
+fail pointer/register compilation and its named case fails whole-tail checks.
+Follow the refreshed ordered failure batches; do not infer completion from
+historical focused passes.
+
+The [partial-register live-in repair](reference/p0-partial-register-live-ins.md)
+moves bit-aware must-reaching analysis into IR: AL/SI writes no longer hide
+untouched AH/ESI bits. Focused tests and the default MS C pipeline pass;
+InitBars numeric LEA projection and global typing remain open.
+
+The [compatibility-hook checkpoint](reference/p0-compatibility-hook-contracts.md)
+closes the local Vulture findings and scoped hook typing errors with 25 focused
+tests passing. Full-suite, global typing and remote CI closure remain open.
 
 Scheduling decision (2026-09-07): **defer performance optimization, Step 10,
 until the other remaining steps are complete**. Finish correctness, full-suite
@@ -27,6 +187,11 @@ mechanisms first. Keep accepted optimizations and required compiled-import
 checks; do not start profiling campaigns or new speed experiments during those
 steps. Fixing DCE that deletes live code remains correctness work, not deferred
 performance work. The revised priority section below overrides older schedules.
+
+The [accepted-payload contract repair](reference/p0-accepted-payload-contract.md)
+makes the verifier consume read-only result fields, matching the frozen worker
+result. Eight acceptance tests and scoped Ruff/MyPy/Pyright pass; `cli_core.py`
+passes scoped MyPy. No global typing or remote CI closure is claimed.
 
 The [gate-inventory checkpoint](reference/p0-gate-inventory-coherence.md)
 closes the four audit failures in Make inventory, ownership expectations, and
@@ -45,17 +210,79 @@ open in the checkpoint report; this repair does not close the full audit.
 
 The [InitMenu local-read repair](reference/p0-initmenu-local-reads.md) preserves
 its zero initializer by consuming the shared AST child inventory during
-dead-local read collection. Named InitMenu still fails buffer storage/argument
-validation; sidecar-free passes. This is partial correctness progress, not
-function closure or deferred performance work. [Remote CI closure](reference/p0-github-ci.md)
+dead-local read collection. Its follow-up fixes buffer coordinate rebinding
+and high-word guard loss through SSA-proven shared-exit normalization in
+Structuring. Named and sidecar-free regressions now pass, including strict
+recompilation and executable high-word behavior. The default pipeline passes
+2179 unit tests and all three lanes, including seven MS C tiny round trips.
+Global quality-fast still fails on 129 MyPy diagnostic lines; this is not full
+goal closure or deferred performance work. [Remote CI closure](reference/p0-github-ci.md)
 is also required: local focused passes do not replace a green pushed CI run.
+
+The [InitBars replay investigation](reference/p0-initbars-call-replay.md) now
+isolates its duplicate to cached return-call replay after a masked producer
+assignment is missed by standalone-call matching. Proven runtime-register
+result reads now address that case: the live InitBars
+duplicate-call diagnostic is gone, while storage/initialization validation
+still fails. Its early uninitialized local read is traced to a later register reload
+being inserted at the first same-register use. Exact instruction-origin
+placement in Lowering removes that failure. Call-output object projection now
+corrects a proven two-byte configuration-field coordinate mismatch, with 36
+focused tests and scoped Ruff/MyPy/Pyright passing. Live InitBars still fails
+on two array reads and a forbidden flattened-segment expression. Next trace
+the array's typed reads/writes; do not infer initialization from object layout.
+Follow-up tracing identifies generated read helpers incorrectly invalidating
+the existing initialized-prefix proof. Tagged helper-effect consumption fixes
+that loss (26 focused tests pass); sidecar-free whole-tail validation is now
+clean, but the final payload still fails the forbidden `ss << 4` contract.
+Next fix indexed stack-address materialization in Lowering, not rendered text.
+The subsequent frame-coordinate repair consumes the proven SS/BP-zero anchor
+instead of duplicating it beside a C local pointer; a regression also prevents
+DS-to-stack conversion. Live whole-tail remains clean and the forbidden SS
+flattening is gone, but unresolved byte carriers still prevent final C
+acceptance. Next bind indexed carriers to the canonical aggregate object.
+The [aggregate binding follow-up](reference/p0-initbars-aggregate-bind.md)
+now reconciles proven AST aliases and requires addressable pointer bases.
+A compiled regression exposed and fixes hidden casts changing byte stride.
+The latest declaration-cache repair keeps the configuration struct in the
+rendered C: scoped Lowering publication updates exact declaration entries
+without globally rebuilding other objects. Its 32 focused tests and scoped
+Ruff/MyPy/Pyright pass. Live whole-tail remains clean; strict GCC now reports
+the remaining pointer-to-register conversion error. InitBars is not accepted;
+whole-tail alone is insufficient. See the same report for the rejected global
+refresh experiment and current gate evidence.
+The [LEA/register boundary investigation](reference/p0-initbars-lea-register.md)
+traces the remaining expression to binary `LEA AX,[BP-0x70]`: GP Lowering
+receives a casted host stack reference, not a proven numeric machine offset.
+Repair the typed address/register projection or prove setup liveness before
+removal; forcing a C cast is not sufficient. No production fix is claimed yet.
+The latest default pipeline passes 2,241 tests and all seven MS C tiny round
+trips. Global quality-fast still fails with 121 MyPy diagnostic lines; startup
+architecture and scoped Ruff/MyPy/Pyright pass. This is not full-suite or CI
+closure.
+Frame-repair gates pass 2,231 default unit tests, all seven MS C round trips,
+and quality-dev including its three executable guards. Global quality-fast
+still reports 121 MyPy errors. This does not close InitBars, the full audit,
+or remote CI.
+Fresh helper-effect gates: `quality-dev` passes 2,228 tests and all executable
+guards; the default pipeline passes 2,228 tests and seven MS C round trips.
+Global `quality-fast` remains red with 121 MyPy errors.
+A separate replay branch crash is repaired with 181 focused tests passing;
+this is not InitBars acceptance or P0 closure.
+Prior local gates after runtime result-read binding: `quality-dev` passes
+2,196 unit tests and its executable guards; default `test-pipeline` passes
+2,196 unit tests and all seven MS C tiny round trips. Global MyPy remains red
+with 125 diagnostic lines. After coordinate publication, the fresh default
+pipeline passes 2,202 unit tests and seven MS C round trips; global
+`quality-fast` still fails with 121 MyPy errors. Full-suite and remote CI
+closure remain open.
 
 The [source-stable full audit](reference/p0-full-suite-20260907.md) reports
 **10,166 passed, 49 failed, 170 skipped out of 10,385 in 901.38s**. Current
-InitMenu/InitBars/control-flow validation failures mean
+InitBars and other control-flow validation failures mean
 the earlier SORTD acceptance below is historical, not a current green claim.
 Follow that report's ordered batches, DoD, and failure conditions for the next
-P0 work. Global MyPy remains red at 146 diagnostic lines. The weighted 75% and
+P0 work. Global MyPy remains red; see the latest checkpoint above. The weighted 75% and
 80-115h figures are historical estimates, not a revalidated forecast.
 
 Current sidecar-free command:

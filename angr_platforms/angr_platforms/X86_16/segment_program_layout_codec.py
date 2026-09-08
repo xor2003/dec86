@@ -71,18 +71,21 @@ def _strings_8616(value: object, *, field_name: str) -> tuple[str, ...]:
     return parsed
 
 
-def _optional_string_8616(value: object, *, field_name: str) -> str | None:
-    """Parse a strict optional nonempty string field."""
-    if value is None:
-        return None
+def _string_8616(value: object, *, field_name: str) -> str:
+    """Parse a required nonempty string before enum or contract construction."""
     if not isinstance(value, str) or not value:
         raise ValueError(f"segment program evidence has invalid {field_name}")
     return value
 
 
+def _optional_string_8616(value: object, *, field_name: str) -> str | None:
+    """Parse a strict optional nonempty string field."""
+    return None if value is None else _string_8616(value, field_name=field_name)
+
+
 def segment_program_function_evidence_from_record_8616(record: object) -> SegmentProgramFunctionEvidence8616:
     """Validate one clean-worker program-function evidence record."""
-    if not isinstance(record, dict) or record.get("schema") != 1:
+    if not isinstance(record, dict) or _int_8616(record.get("schema"), field_name="schema") != 1:
         raise ValueError("segment program function evidence has an unsupported schema")
     raw_accesses = record.get("accesses")
     raw_transfers = record.get("control_transfers")
@@ -100,7 +103,7 @@ def segment_program_function_evidence_from_record_8616(record: object) -> Segmen
                 item.get("physical_source"),
                 field_name="access physical source",
             ),
-            verdict=SegmentFactVerdict(item.get("verdict")),
+            verdict=SegmentFactVerdict(_string_8616(item.get("verdict"), field_name="access verdict")),
         )
         for item in raw_accesses
         if isinstance(item, dict)
@@ -110,11 +113,11 @@ def segment_program_function_evidence_from_record_8616(record: object) -> Segmen
     transfers = tuple(
         SegmentControlTransferFact8616(
             instruction_addr=cast(int, _int_8616(item.get("instruction_addr"), field_name="transfer instruction")),
-            kind=SegmentControlTransferKind8616(item.get("kind")),
-            distance=SegmentControlTransferDistance8616(item.get("distance")),
+            kind=SegmentControlTransferKind8616(_string_8616(item.get("kind"), field_name="transfer kind")),
+            distance=SegmentControlTransferDistance8616(_string_8616(item.get("distance"), field_name="transfer distance")),
             target_addr=_int_8616(item.get("target_addr"), field_name="transfer target", optional=True),
             return_addr=_int_8616(item.get("return_addr"), field_name="transfer return", optional=True),
-            verdict=SegmentFactVerdict(item.get("verdict")),
+            verdict=SegmentFactVerdict(_string_8616(item.get("verdict"), field_name="transfer verdict")),
         )
         for item in raw_transfers
         if isinstance(item, dict)

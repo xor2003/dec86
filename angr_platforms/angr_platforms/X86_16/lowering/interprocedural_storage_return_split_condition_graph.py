@@ -168,6 +168,14 @@ def _transparent_branch_path_8616(
     return tuple(visited)
 
 
+def _condition_edges_8616(condition: ConditionIR) -> tuple[int, int, int] | None:
+    """Project a known block and both branch targets without optional fields."""
+    block, taken, fallthrough = condition.block_addr, condition.taken_target, condition.fallthrough_target
+    if not isinstance(block, int) or not isinstance(taken, int) or not isinstance(fallthrough, int):
+        return None
+    return block, taken, fallthrough
+
+
 def _ordering_candidate_8616(
     artifact: SSAFunctionArtifact,
     pattern: _OrderingPattern8616,
@@ -187,33 +195,27 @@ def _ordering_candidate_8616(
         return None, ReturnStorageTypeFailure8616.SPLIT_OPERAND_CONFLICT
     if not _other_pieces_compatible_8616(first_norm[1], low_norm[1]):
         return None, ReturnStorageTypeFailure8616.SPLIT_OPERAND_CONFLICT
-    targets = (
-        first.block_addr, first.taken_target, first.fallthrough_target,
-        second.block_addr, second.taken_target, second.fallthrough_target,
-        low.block_addr, low.taken_target, low.fallthrough_target,
-    )
-    if not all(isinstance(target, int) for target in targets):
+    first_edges, second_edges, low_edges = map(_condition_edges_8616, (first, second, low))
+    if first_edges is None or second_edges is None or low_edges is None:
         return None, ReturnStorageTypeFailure8616.SPLIT_CFG_INCOMPLETE
-    first_block = int(first.block_addr)
-    second_block = int(second.block_addr)
-    low_block = int(low.block_addr)
-    true_sink = int(low.taken_target)
-    false_sink = int(low.fallthrough_target)
+    first_block, first_taken, first_fallthrough = first_edges
+    second_block, second_taken, second_fallthrough = second_edges
+    low_block, true_sink, false_sink = low_edges
     if true_sink == false_sink:
         return None, ReturnStorageTypeFailure8616.SPLIT_CFG_INCOMPLETE
     if pattern.strict:
         paths = (
-            _transparent_branch_path_8616(artifact, first_block, int(first.fallthrough_target), second_block),
-            _transparent_branch_path_8616(artifact, second_block, int(second.fallthrough_target), low_block),
-            _transparent_branch_path_8616(artifact, first_block, int(first.taken_target), true_sink),
-            _transparent_branch_path_8616(artifact, second_block, int(second.taken_target), false_sink),
+            _transparent_branch_path_8616(artifact, first_block, first_fallthrough, second_block),
+            _transparent_branch_path_8616(artifact, second_block, second_fallthrough, low_block),
+            _transparent_branch_path_8616(artifact, first_block, first_taken, true_sink),
+            _transparent_branch_path_8616(artifact, second_block, second_taken, false_sink),
         )
     else:
         paths = (
-            _transparent_branch_path_8616(artifact, first_block, int(first.taken_target), second_block),
-            _transparent_branch_path_8616(artifact, second_block, int(second.taken_target), low_block),
-            _transparent_branch_path_8616(artifact, second_block, int(second.fallthrough_target), true_sink),
-            _transparent_branch_path_8616(artifact, first_block, int(first.fallthrough_target), false_sink),
+            _transparent_branch_path_8616(artifact, first_block, first_taken, second_block),
+            _transparent_branch_path_8616(artifact, second_block, second_taken, low_block),
+            _transparent_branch_path_8616(artifact, second_block, second_fallthrough, true_sink),
+            _transparent_branch_path_8616(artifact, first_block, first_fallthrough, false_sink),
         )
     low_paths = (
         _transparent_branch_path_8616(artifact, low_block, true_sink, true_sink),
@@ -252,25 +254,20 @@ def _equality_candidate_8616(
         return None, None
     if not _other_pieces_compatible_8616(first_norm[1], low_norm[1]):
         return None, ReturnStorageTypeFailure8616.SPLIT_OPERAND_CONFLICT
-    targets = (
-        first.block_addr, first.taken_target, first.fallthrough_target,
-        low.block_addr, low.taken_target, low.fallthrough_target,
-    )
-    if not all(isinstance(target, int) for target in targets):
+    first_edges, low_edges = map(_condition_edges_8616, (first, low))
+    if first_edges is None or low_edges is None:
         return None, ReturnStorageTypeFailure8616.SPLIT_CFG_INCOMPLETE
-    first_block = int(first.block_addr)
-    low_block = int(low.block_addr)
-    true_sink = int(low.taken_target)
-    false_sink = int(low.fallthrough_target)
+    first_block, first_taken, first_fallthrough = first_edges
+    low_block, true_sink, false_sink = low_edges
     if true_sink == false_sink:
         return None, ReturnStorageTypeFailure8616.SPLIT_CFG_INCOMPLETE
     first_is_equal = first_norm[0] == "eq"
-    continue_target = first.taken_target if first_is_equal else first.fallthrough_target
-    outside_target = first.fallthrough_target if first_is_equal else first.taken_target
+    continue_target = first_taken if first_is_equal else first_fallthrough
+    outside_target = first_fallthrough if first_is_equal else first_taken
     outside_sink = false_sink if relation is SplitReturnRelation8616.EQ else true_sink
     paths = (
-        _transparent_branch_path_8616(artifact, first_block, int(continue_target), low_block),
-        _transparent_branch_path_8616(artifact, first_block, int(outside_target), outside_sink),
+        _transparent_branch_path_8616(artifact, first_block, continue_target, low_block),
+        _transparent_branch_path_8616(artifact, first_block, outside_target, outside_sink),
         _transparent_branch_path_8616(artifact, low_block, true_sink, true_sink),
         _transparent_branch_path_8616(artifact, low_block, false_sink, false_sink),
     )

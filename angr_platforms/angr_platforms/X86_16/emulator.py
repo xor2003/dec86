@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Protocol, cast
 
-from pyvex.expr import Const, RdTmp
+from pyvex.expr import Const, IRExpr, RdTmp
 from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import IRSBCustomizer, Type
 from pyvex.stmt import Put
@@ -106,7 +106,7 @@ class Emulator(Interrupt):
         # should not block instructions like HLT inside the verification harness.
         return True
 
-    def get_crn(self, n: int) -> object:
+    def get_crn(self, n: int) -> int | VexValue:
         """Read an 80386 control register in concrete or VEX lifting mode."""
         if n not in (0, 2, 3):
             raise ValueError(f"Invalid 80386 CR index: {n}")
@@ -127,7 +127,9 @@ class Emulator(Interrupt):
         if isinstance(value, int):
             value = self.constant(value, Type.int_32)
         if isinstance(value, VexValue):
-            value = value.cast_to(Type.int_32).rdt
+            value = self.lifter_instruction.cast_to(value.rdt, Type.int_32)
+        if not isinstance(value, IRExpr):
+            raise TypeError("lifted control-register writes require a VEX expression")
         self.lifter_instruction._append_stmt(Put(value, self.vex_offsets[f"cr{n}"]))
 
     def _vv(self, value: object, ty: object | None = None) -> object:

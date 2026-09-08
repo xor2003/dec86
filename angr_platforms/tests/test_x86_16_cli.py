@@ -1411,7 +1411,8 @@ def test_decompile_function_with_stats_skips_same_family_retry_without_new_proof
     captured = capsys.readouterr()
 
     assert status == "empty"
-    assert "stop: same failure family" in captured.out
+    assert "stop: same failure family" in captured.err
+    assert "stop: same failure family" not in captured.out
     assert calls == [1]
     assert partial_payload is None
     assert block_count == 0
@@ -4036,7 +4037,9 @@ def test_function_attempt_status_reports_uncollected_when_tail_validation_disabl
         validation_snapshot=None,
     )
 
-    assert "attempt=decompiled validation=uncollected" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "attempt=decompiled validation=uncollected" in captured.err
+    assert captured.out == ""
 
 
 def test_function_attempt_status_reports_failed_for_changed_tail_validation(capsys):
@@ -4055,7 +4058,9 @@ def test_function_attempt_status_reports_failed_for_changed_tail_validation(caps
         },
     )
 
-    assert "attempt=decompiled validation=failed" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "attempt=decompiled validation=failed" in captured.err
+    assert captured.out == ""
 
 
 def test_emit_function_result_does_not_fabricate_passed_tail_validation_when_disabled(

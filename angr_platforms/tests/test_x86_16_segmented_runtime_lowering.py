@@ -659,7 +659,8 @@ def test_materialize_direct_stack_mov_reload_preserves_stack_slot_identity():
         ],
         codegen=codegen,
     )
-    guard.tags = {"ins_addr": 0x401A}
+    # This guard models the folded reload, not an unproven later register use.
+    guard.tags = {"ins_addr": 0x4017}
     codegen.cfunc.statements.statements.extend((tagged_store, guard))
 
     load_byte = SimpleNamespace(

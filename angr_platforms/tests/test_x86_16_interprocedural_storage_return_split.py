@@ -175,6 +175,18 @@ def test_split_condition_refuses_semantically_active_trampoline() -> None:
     assert failure is ReturnStorageTypeFailure8616.SPLIT_CFG_INCOMPLETE
 
 
+@pytest.mark.parametrize("index", range(3))
+@pytest.mark.parametrize("field", ["block_addr", "taken_target", "fallthrough_target"])
+def test_split_condition_refuses_each_missing_graph_coordinate(index, field) -> None:
+    conditions = list(_conditions())
+    conditions[index] = replace(conditions[index], **{field: None})
+    candidate, failure = select_split_return_condition_8616(
+        _artifact(), 0x1003, conditions, _storage("dx"), _storage("ax"),
+    )
+    assert candidate is None
+    assert failure is ReturnStorageTypeFailure8616.SPLIT_CFG_INCOMPLETE
+
+
 def test_split_condition_refuses_nonadjacent_comparison_pieces() -> None:
     first, equal, low = _conditions()
     assert isinstance(low.rhs, IRValue)

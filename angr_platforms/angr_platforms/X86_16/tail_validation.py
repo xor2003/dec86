@@ -1597,7 +1597,7 @@ def _compact_tail_validation_observable_8616(field_name: str, value: str) -> str
                 f"{field_name}:sha256:{prefix_digest}:len:{len(prefix)}:"
                 f"loop-body-writes:{','.join(locations)}"
             )
-    return cast(str, compacted)
+    return compacted
 
 
 def _compact_tail_validation_observables_8616(field_name: str, values: set[str]) -> set[str]:
@@ -1879,7 +1879,7 @@ def _canonicalize_additive_fingerprint_for_compare_8616(value: str) -> str:
 
 def _canonicalize_linear_ds_deref_condition_fingerprint_8616(value: str) -> str:
     """Compatibility wrapper for the Condition IR storage owner."""
-    return cast(str, canonicalize_condition_storage_fingerprint_8616(value))
+    return canonicalize_condition_storage_fingerprint_8616(value)
 
 
 def _canonicalize_segmented_write_fingerprint_for_compare_8616(value: str) -> str:
@@ -2189,13 +2189,14 @@ def _do_while_post_body_condition_fingerprint_8616(
     occurrence_count = 0
 
     def _fingerprint(node: TailValidationValue) -> str:
+        """Substitute the proven iterator update at its unique guard use."""
         nonlocal occurrence_count
         if isinstance(node, CVariable) and _expr_fingerprint(node, project) == target:
             occurrence_count += 1
-            return cast(str, replacement)
+            return replacement
         if isinstance(node, CBinaryOp):
             return f"{node.op}({_fingerprint(node.lhs)},{_fingerprint(node.rhs)})"
-        return cast(str, _expr_fingerprint(node, project))
+        return _expr_fingerprint(node, project)
 
     fingerprint = _fingerprint(loop.condition)
     return fingerprint if occurrence_count == 1 else None

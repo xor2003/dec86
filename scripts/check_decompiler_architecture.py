@@ -14,8 +14,9 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-if __package__:
+if TYPE_CHECKING or __package__:
     from .makefile_inventory import makefile_variable_words as _makefile_variable_words
     from .pytest_source_index import load_pytest_source_index
 else:
@@ -55,6 +56,9 @@ _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST: dict[str, frozenset[str]] = {
             # Compatibility-only edge: exact live callsite presence is owned
             # by Types/Lowering; the legacy bridge only consumes its result.
             ".lowering.callsite_inventory_presence",
+            # Compatibility-only edge: Lowering proves whether an existing GP
+            # call result can be read; the bridge must not clone a live call.
+            ".lowering.runtime_call_results",
             # Cache-only edge: the legacy call bridge compares materialized
             # argument tokens owned by Lowering; it must not produce proof.
             ".lowering.call_argument_semantic_token",
@@ -1280,6 +1284,7 @@ _PIPELINE_TIER_CONTRACT = {
 }
 
 _PROMOTED_TYPED_FILES = (
+    "angr_platforms/angr_platforms/X86_16/ir/register_live_in.py",
     "monkeytype_config.py",
     "angr_platforms/angr_platforms/X86_16/capstone_memory_segment.py",
     "angr_platforms/angr_platforms/X86_16/lowering/pointer_store_consumption.py",
@@ -1601,6 +1606,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_shape.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_arity_ownership.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_expression.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/runtime_call_results.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_semantic_token.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_state.py",
     "angr_platforms/angr_platforms/X86_16/callsite_argument_value_sources.py",
@@ -1611,6 +1617,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_output_stack_objects.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_output_object_projection.py",
     "angr_platforms/angr_platforms/X86_16/lowering/authoritative_function_prototypes.py",
     "angr_platforms/angr_platforms/X86_16/lowering/near_return_address_arguments.py",
     "angr_platforms/angr_platforms/X86_16/lowering/direct_stack_replay.py",
@@ -1797,6 +1804,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_calls.py",
     "angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_aggregate_objects.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_aggregate_projection.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_c_ast_matching.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
@@ -1839,7 +1847,6 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/pipeline/__init__.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/__init__.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/call_argument_transaction.py",
-    "angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/cleanup.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/flags_cleanup.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/simplify.py",
@@ -1872,6 +1879,9 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_contracts.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_pipeline.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effects.py",
+    "angr_platforms/angr_platforms/X86_16/callsite_setup_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/consumed_stack_address_setup.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/register_entry_overwrite.py",
     "angr_platforms/angr_platforms/X86_16/semantics/register_value_preservation.py",
     "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py",
     "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py",
@@ -1918,6 +1928,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/stored_call_return_operands.py",
     "angr_platforms/angr_platforms/X86_16/structuring/control_flow.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/condition_exit_normalization.py",
     "angr_platforms/angr_platforms/X86_16/structuring/single_branch_return_orientation.py",
     "angr_platforms/angr_platforms/X86_16/structuring/shared_call_occurrence_finalization.py",
     "angr_platforms/angr_platforms/X86_16/structuring/shared_call_result_aliases.py",
@@ -1941,6 +1952,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_predicate_graphs.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_return_predicates.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/condition_binary_value.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py",
     "angr_platforms/angr_platforms/X86_16/structuring/unused_call_result_self_xor.py",
     "angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py",
@@ -2518,6 +2530,9 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_pipeline.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effects.py",
+        "angr_platforms/angr_platforms/X86_16/callsite_setup_evidence.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/consumed_stack_address_setup.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/register_entry_overwrite.py",
         "angr_platforms/angr_platforms/X86_16/semantics/register_value_preservation.py",
         "angr_platforms/angr_platforms/X86_16/synthetic_call_stub_evidence.py",
     ),

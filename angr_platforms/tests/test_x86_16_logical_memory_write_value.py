@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from angr_platforms.X86_16.ir import IRInstr, IRValue, MemSpace, SSAFunctionArtifact
 from angr_platforms.X86_16.ir.logical_memory_contracts import (
     IRLogicalMemoryAccess8616,
@@ -138,6 +139,22 @@ def test_mixed_logical_access_instruction_refuses() -> None:
     )
 
     _assert_single_refusal(mixed, LogicalWordWriteValueFailureKind8616.MIXED_INSTRUCTION)
+
+
+@pytest.mark.parametrize("lane", (0, 1))
+def test_non_address_store_operand_refuses_without_address_matching(lane: int) -> None:
+    """Malformed execution operands must remain counted refusals, not crashes."""
+    artifact = _lift("c7 07 00 00 c3")
+    execution_slice = _word_write(artifact).execution_slices[lane]
+    block = artifact.blocks[0]
+    index = execution_slice.instr_index
+    store = block.instrs[index]
+    invalid_address = IRValue(execution_slice.address.space, size=1)
+    damaged_store = replace(store, args=(invalid_address, store.args[1]))
+    instructions = (*block.instrs[:index], damaged_store, *block.instrs[index + 1:])
+    damaged = replace(artifact, blocks=(replace(block, instrs=instructions),))
+
+    _assert_single_refusal(damaged, LogicalWordWriteValueFailureKind8616.LOGICAL_ACCESS_CONFLICT)
 
 
 def test_unknown_store_value_expression_refuses_with_partial_proof() -> None:

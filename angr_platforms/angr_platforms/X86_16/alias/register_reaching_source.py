@@ -98,17 +98,20 @@ _UNKNOWN_8616 = _FlowState8616(_FlowKind8616.UNKNOWN)
 
 
 def callsite_source_reads_memory_8616(source: CallsiteSource8616 | None) -> bool:
-    """Return whether re-evaluating a source reads mutable memory."""
+    """Find memory reads through source, operation and operand tuple layers.
+
+    Expression operations carry nested sources independently of the base
+    source. Their grouping tuples must not hide a mutable-memory dependency.
+    Address-only sources remain independent of the pointed-to contents.
+    """
     if not source:
         return False
     kind = source[0]
     if kind in {"bp", "global", "global_index", "seg_indirect"}:
         return True
-    if kind != "expr":
-        return False
     return any(
         callsite_source_reads_memory_8616(item)
-        for item in source[1:]
+        for item in source
         if isinstance(item, tuple)
     )
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+import pytest
+from angr_platforms.X86_16.ir.condition_ir import ConditionFailure, ConditionIR
 from angr_platforms.X86_16.ir.condition_lift_capture import (
     isolated_condition_lift_session_8616,
 )
@@ -32,6 +33,12 @@ SLEEP_BLOCK_ADDRS = frozenset(
         0x10F6D,
     }
 )
+
+
+def test_default_pipeline_includes_condition_capture_refusals() -> None:
+    from scripts.test_pipeline import FOCUSED_PYTEST_TARGETS
+
+    assert "angr_platforms/tests/test_x86_16_condition_lift_capture.py" in FOCUSED_PYTEST_TARGETS
 
 
 def test_condition_lift_capture_closes_typed_evidence_and_restores_state() -> None:
@@ -78,6 +85,45 @@ def test_condition_lift_capture_refuses_missing_expected_owner() -> None:
         )
 
     assert artifact is None
+
+
+@pytest.mark.parametrize("failure_block", [0x1000, 0x1010, 0x2000])
+def test_condition_capture_does_not_hide_owned_failure(failure_block: int) -> None:
+    with isolated_condition_lift_session_8616() as capture:
+        capture.condition_cache[0x1000] = [ConditionIR("ne", "ax", 0, block_addr=0x1000)]
+        capture.condition_cache.setdefault(failure_block, []).append(ConditionFailure("unsupported"))
+        capture.record_successful_block(0x1000)
+        artifact = capture.complete_artifact(frozenset({0x1000, 0x1010}), frozenset({0x1000}))
+    if failure_block == 0x2000:
+        assert artifact is not None
+    else:
+        assert artifact is None
+
+
+def test_exact_relift_preserves_mixed_condition_failure(monkeypatch: MonkeyPatch) -> None:
+    from angr_platforms.X86_16.ir import condition_cache_relift as relift
+
+    project = SimpleNamespace(
+        arch=object(), loader=SimpleNamespace(memory=SimpleNamespace(load=lambda addr, size: bytes(size))),
+    )
+    lifts = []
+
+    def lift(data, address, arch):
+        lifts.append(address)
+        Instruction_ANY._inertia_module_condition_cache[address] = [
+            ConditionIR("ne", "ax", 0, block_addr=address), ConditionFailure("unsupported"),
+        ]
+
+    monkeypatch.setattr(relift, "_direct_lift_8616", lift)
+    for _ in range(2):
+        artifact = relift.relift_function_condition_cache_8616(
+            project, (relift.ConditionReliftBlock8616(0x3000, 2),), frozenset({0x3000}),
+        )
+        assert artifact is not None and not artifact.stats.complete
+        assert artifact.stats.failure_count == 1
+        assert artifact.failures[0].block_addr == 0x3000
+        assert artifact.failures[0].reason is relift.ConditionCacheReliftFailureReason8616.CONDITION_RECOVERY_FAILED
+    assert lifts == [0x3000, 0x3000]
 
 
 def test_sortd_ir_build_reuses_complete_frontend_condition_capture(

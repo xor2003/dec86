@@ -187,7 +187,7 @@ def _candidate_for_component_8616(
         )
     if owner_storage is None or any(
         member.storage is None
-        or (member.address != owner.address and not owner_storage.contains(cast(AliasStorageFacts, member.storage)))
+        or (member.address != owner.address and not owner_storage.contains(member.storage))
         for member in (evidence[key] for key in component)
     ):
         return _component_refusal_8616(

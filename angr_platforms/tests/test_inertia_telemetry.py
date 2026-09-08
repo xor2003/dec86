@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
+import pytest
+
 import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.telemetry as telemetry
 from inertia_decompiler.telemetry import (
@@ -291,12 +293,14 @@ def test_span_records_error_without_swallowing_exception(monkeypatch):
     reset_telemetry_for_tests()
 
 
-def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
+@pytest.mark.parametrize("timeout_millis", [0, -10, 1, 1234])
+def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path, timeout_millis):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
     monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "1")
     monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
     monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
+    monkeypatch.setenv("INERTIA_OTEL_FORCE_FLUSH_MS", str(timeout_millis))
 
     class _Provider:
         def __init__(self):
@@ -304,7 +308,7 @@ def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
             self.shutdown_called = False
 
         def force_flush(self, *, timeout_millis):
-            self.flushed = timeout_millis > 0
+            self.flushed = timeout_millis
 
         def shutdown(self):
             self.shutdown_called = True
@@ -320,7 +324,7 @@ def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
     assert summary["otel_export"] == "configured"
 
     emit_compact_summary()
-    assert provider.flushed
+    assert provider.flushed == max(1, timeout_millis)
     assert provider.shutdown_called
 
     reset_telemetry_for_tests()

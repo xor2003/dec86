@@ -211,7 +211,6 @@ def test_prototype_quality_modules_are_test_only_until_pipeline_admission() -> N
     modules = (
         "angr_platforms.X86_16.ir.ir_canonicalize_8616",
         "angr_platforms.X86_16.structuring.loop_recovery",
-        "angr_platforms.X86_16.postprocess.condition_patterns",
     )
     unexpected = {module: _production_importers_for_module(module) for module in modules}
 
@@ -245,7 +244,6 @@ def test_flagged_layer_modules_have_explicit_admission_status() -> None:
         "angr_platforms.X86_16.semantics.evidence_cache",
         "angr_platforms.X86_16.postprocess.simplify",
         "angr_platforms.X86_16.quality",
-        "angr_platforms.X86_16.postprocess.condition_patterns",
         "angr_platforms.X86_16.postprocess.cleanup",
         "angr_platforms.X86_16.lowering.segmented_lowering",
         "angr_platforms.X86_16.ir.ir_canonicalize_8616",

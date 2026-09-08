@@ -80,6 +80,7 @@ class _FactoryBoundary8616(Protocol):
 
     def block(self, address: int, *, opt_level: int = 0) -> _BlockBoundary8616:
         """Lift and disassemble one exact basic block."""
+        ...
 
 
 class _FunctionManagerBoundary8616(Protocol):
@@ -87,6 +88,7 @@ class _FunctionManagerBoundary8616(Protocol):
 
     def function(self, *, addr: int, create: bool = False) -> object | None:
         """Return an existing function at an exact canonical address."""
+        ...
 
 
 class _KnowledgeBaseBoundary8616(Protocol):
@@ -340,12 +342,9 @@ class _StatusFlagFunctionSummaryResolver8616:
             blocks = self.blocks_for(function)
             if not blocks:
                 return None
-            effect = cast(
-                StatusFlagEffect8616,
-                summarize_status_flag_cfg_effect_8616(
-                    blocks,
-                    entry_address=function_address,
-                ),
+            effect = summarize_status_flag_cfg_effect_8616(
+                blocks,
+                entry_address=function_address,
             )
             self._effect_cache[function_address] = effect
             return effect

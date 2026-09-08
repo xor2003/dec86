@@ -131,9 +131,12 @@ or acceptance based only on disappearance of the equations.
 The [InitMenu local-read repair](p0-initmenu-local-reads.md) records the current
 focused evidence and rejected diagnostic hypotheses. Late dead-local pruning
 omitted structured child reads; the generic cleanup-owner repair restores the
-zero initializer. Named InitMenu still fails stack-buffer identity and argument
-validation, while its sidecar-free regression passes. This is not full function
-closure and does not replace the complete-suite census.
+zero initializer. Subsequent repairs preserve the buffer's exact coordinate
+identity and the high-word pause guard. Named and sidecar-free InitMenu now
+pass their focused acceptance tests, including executable high-word behavior.
+This does not replace the complete-suite census or close the other functions
+in this batch. The [InitBars replay investigation](p0-initbars-call-replay.md)
+reproduces the duplicate call and uninitialized local in both variants.
 
 Reason: validation detects missing data/control effects, not cosmetic issues.
 DoD: InitMenu/InitBars/ExchangeSort/PercolateDown and TIDShowRange regressions

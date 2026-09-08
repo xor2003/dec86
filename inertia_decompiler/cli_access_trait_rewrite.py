@@ -211,6 +211,7 @@ def _attach_pointer_member_names(
                 assigned_names[id(variable)] = field_name
 
         def rename_member_variable(cvar: object) -> object | None:
+            """Apply an artifact-backed member name, refusing unrelated variables."""
             nonlocal changed
             if not isinstance(cvar, structured_c.CVariable):
                 return None
@@ -243,7 +244,6 @@ def _attach_pointer_member_names(
                     changed = True
             renamed_cvar = typing.cast(object, cvar)
             return renamed_cvar
-            return None
 
         def transform(node: object) -> object:
             if isinstance(node, structured_c.CVariable):

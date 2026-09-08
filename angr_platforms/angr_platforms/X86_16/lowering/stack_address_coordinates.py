@@ -11,6 +11,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -90,7 +91,48 @@ def absolute_machine_bp_offset_from_wrapped_anchor_8616(
     return displacement if displacement in known_bp_offsets else None
 
 
+def consume_indexed_stack_frame_terms_8616(
+    codegen: object,
+    terms: tuple[tuple[int, object], ...],
+    *,
+    segment_name: Callable[[object], str | None],
+) -> tuple[tuple[int, object], ...] | None:
+    """Remove one proven SS/BP-zero frame from an indexed linear address.
+
+    A local C pointer already embodies its frame. Preserve index/lane terms,
+    but refuse foreign segments and ambiguous or unproven frame anchors.
+    Offset-only input remains owned by the caller's existing indexed proof.
+    """
+    segments = [(index, sign, segment_name(term)) for index, (sign, term) in enumerate(terms)]
+    segments = [entry for entry in segments if entry[2] is not None]
+    if not segments:
+        return terms
+    if len(segments) != 1 or segments[0][1:] != (1, "ss"):
+        return None
+    anchors: list[int] = []
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    for index, (sign, term) in enumerate(terms):
+        if not isinstance(term, structured_c.CUnaryOp) or term.op != "Reference":
+            continue
+        operand = term.operand
+        if not isinstance(operand, structured_c.CVariable) or not isinstance(operand.variable, SimStackVariable):
+            continue
+        projection = registry.for_variable(operand.variable)
+        offset = (
+            projection.bp_offset if projection is not None
+            else machine_bp_offset_for_entry_sp_anchor_8616(codegen, term)
+        )
+        if sign != 1 or offset != 0:
+            return None
+        anchors.append(index)
+    if len(anchors) != 1:
+        return None
+    consumed = {segments[0][0], anchors[0]}
+    return tuple(term for index, term in enumerate(terms) if index not in consumed)
+
+
 __all__ = [
     "absolute_machine_bp_offset_from_wrapped_anchor_8616",
+    "consume_indexed_stack_frame_terms_8616",
     "machine_bp_offset_for_entry_sp_anchor_8616",
 ]

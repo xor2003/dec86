@@ -57,6 +57,7 @@ from ..ir.condition_ir import (
     JCC_TO_COND_8616,
     ConditionEdgeEvidence,
     ConditionIR,
+    ConditionResult,
     ConditionSource,
     build_condition_from_cmp_8616,
     build_condition_from_test_8616,
@@ -189,7 +190,7 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
         if isinstance(block_size, int) and block_size > 0:
             relift_blocks_by_addr[block_addr] = ConditionReliftBlock8616(block_addr, block_size)
         capstone = _dynamic_boundary_attr_8616(block, "capstone", None)
-        wrappers = tuple(_dynamic_boundary_attr_8616(capstone, "insns", ()) or ())
+        wrappers: tuple[object, ...] = tuple(_dynamic_boundary_attr_8616(capstone, "insns", ()) or ())
         if not wrappers:
             continue
         decoded_block_addrs.add(block_addr)
@@ -208,6 +209,7 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
         ):
             continue
         operands = tuple(_dynamic_boundary_attr_8616(terminal, "operands", ()) or ())
+        target: int | None
         if mnemonic != "loop" and _direct_counter_condition_op_8616(mnemonic) is not None:
             target = terminal_addr
         else:
@@ -641,6 +643,7 @@ def _collect_typed_condition_artifacts_8616(
         ownership = _current_function_condition_ownership_8616(func)
 
         # Seed loader-less fixtures from the ambient lifter compatibility cache.
+        module_cache: typing.Mapping[int, typing.Sequence[ConditionResult]]
         try:
             from ..lift_86_16 import Instruction_ANY
 

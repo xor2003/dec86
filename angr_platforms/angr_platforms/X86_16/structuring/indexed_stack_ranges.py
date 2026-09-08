@@ -52,6 +52,7 @@ from ..lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from ..lowering.runtime_memory_helpers import proven_memory_pointer_helper_8616
 from ..lowering.stack_variable_coordinates import (
     machine_bp_offset_for_stack_variable_8616,
 )
@@ -1004,6 +1005,8 @@ def collect_indexed_stack_read_proofs_8616(
             if isinstance(node, CFunctionCall)
         )
         for call in calls:
+            if proven_memory_pointer_helper_8616(call) is not None:
+                continue
             if segmented_load_identity_8616(call) is not None:
                 continue
             if (

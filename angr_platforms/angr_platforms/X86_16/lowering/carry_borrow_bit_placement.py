@@ -59,7 +59,8 @@ def normalize_carry_borrow_bit_fact_8616(
     high_addr = source.provenance.high_final_arithmetic.instruction.addr
     low_block_addr = source.provenance.low_arithmetic.block_addr
     high_block_addr = source.provenance.high_final_arithmetic.block_addr
-    if not all(isinstance(value, int) for value in (low_block_addr, low_addr, high_block_addr, high_addr)):
+    if (not isinstance(low_block_addr, int) or not isinstance(low_addr, int)
+            or not isinstance(high_block_addr, int) or not isinstance(high_addr, int)):
         return CarryBorrowBitLoweringFailure8616.PROVENANCE_MISSING
     return CarryBorrowBitLoweringFact8616(
         function_addr=function_addr,
@@ -76,6 +77,7 @@ def _already_materialized_8616(root: object, fact: CarryBorrowBitLoweringFact861
     return any(
         node.tags.get(_EVIDENCE_TAG_8616) == fact and node.tags.get("ins_addr") == fact.high_ins_addr
         for node in _iter_c_node_occurrences_8616(root)
+        if isinstance(node, CBinaryOp)
     )
 
 

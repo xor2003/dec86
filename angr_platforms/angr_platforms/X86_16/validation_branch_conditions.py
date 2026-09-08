@@ -27,8 +27,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
+from .caller_return_use_contracts import CallsiteReturnUseKind8616
 from .callsite_summary import (
-    CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     structured_callsite_addr_8616,
 )
@@ -303,7 +303,7 @@ def _proven_stored_call_return_condition_8616(
         return False
     surface = cast(_TypedConditionCodegen8616, codegen)
     stack_nodes = tuple(
-        node
+        node.variable
         for node in _iter_c_nodes_deep_8616(candidate)
         if isinstance(node, CVariable)
         and isinstance(node.variable, SimStackVariable)
@@ -311,7 +311,7 @@ def _proven_stored_call_return_condition_8616(
     )
     if len(stack_nodes) != 1:
         return False
-    variable = stack_nodes[0].variable
+    variable = stack_nodes[0]
     offset = variable.offset
     size = variable.size
     if not isinstance(offset, int) or not isinstance(size, int):
@@ -445,6 +445,9 @@ def _proven_logical_reload_condition_fingerprints_8616(
     context: _LogicalReloadValidationContext8616 | None = None,
 ) -> frozenset[str]:
     """Project exact versioned register operands through proven logical reloads."""
+    condition_block, condition_insn = fact.block_addr, fact.src_insn
+    if condition_block is None or condition_insn is None:
+        return frozenset()
     register_operands = _condition_register_operands_8616(fact)
     if not register_operands:
         return frozenset()
@@ -457,17 +460,20 @@ def _proven_logical_reload_condition_fingerprints_8616(
         return frozenset()
     replacements: dict[str, str] = {}
     for operand in register_operands:
+        if operand.name is None:
+            continue
+        register_name = operand.name.lower()
         candidates = tuple(
             transfer
             for transfer in active_context.transfers_by_register.get(
-                (operand.name.lower(), operand.size),
+                (register_name, operand.size),
                 (),
             )
             if transfer.register.size == operand.size
-            and dominators.dominates(transfer.register_site.block_addr, fact.block_addr) is True
+            and dominators.dominates(transfer.register_site.block_addr, condition_block) is True
             and (
-                transfer.register_site.block_addr != fact.block_addr
-                or transfer.register_site.instr_addr < fact.src_insn
+                transfer.register_site.block_addr != condition_block
+                or transfer.register_site.instr_addr < condition_insn
             )
         )
         if not candidates:
@@ -494,14 +500,14 @@ def _proven_logical_reload_condition_fingerprints_8616(
         pending = [candidate.register_site.block_addr]
         while pending:
             block_addr = pending.pop()
-            if block_addr == fact.block_addr:
+            if block_addr == condition_block:
                 continue
             for successor in snapshot.successors(block_addr) or ():
                 if successor not in forward:
                     forward.add(successor)
                     pending.append(successor)
-        reverse = {fact.block_addr}
-        pending = [fact.block_addr]
+        reverse = {condition_block}
+        pending = [condition_block]
         while pending:
             block_addr = pending.pop()
             if block_addr == candidate.register_site.block_addr:
@@ -511,7 +517,7 @@ def _proven_logical_reload_condition_fingerprints_8616(
                     reverse.add(predecessor)
                     pending.append(predecessor)
         path_blocks = forward & reverse
-        if candidate.register_site.block_addr not in path_blocks or fact.block_addr not in path_blocks:
+        if candidate.register_site.block_addr not in path_blocks or condition_block not in path_blocks:
             continue
         stable = True
         for block_addr in path_blocks:
@@ -525,8 +531,12 @@ def _proven_logical_reload_condition_fingerprints_8616(
                     and instr_index <= candidate.register_site.instr_index
                 ):
                     continue
-                if block_addr == fact.block_addr and instruction.addr >= fact.src_insn:
-                    continue
+                if block_addr == condition_block:
+                    if instruction.addr is None:
+                        stable = False
+                        break
+                    if instruction.addr >= condition_insn:
+                        continue
                 destination = instruction.dst
                 if instruction.op in {"CALL", "STORE"}:
                     stable = False
@@ -535,7 +545,7 @@ def _proven_logical_reload_condition_fingerprints_8616(
                     isinstance(destination, IRValue)
                     and destination.space is MemSpace.REG
                     and isinstance(destination.name, str)
-                    and destination.name.lower() in {operand.name.lower(), *base_registers}
+                    and destination.name.lower() in {register_name, *base_registers}
                 ):
                     stable = False
                     break
@@ -544,7 +554,7 @@ def _proven_logical_reload_condition_fingerprints_8616(
         address_fingerprint = _logical_reload_address_fingerprint_8616(candidate)
         if not stable or address_fingerprint is None:
             continue
-        token = f"reg:{operand.name.lower()}"
+        token = f"reg:{register_name}"
         previous = replacements.get(token)
         if previous is not None and previous != address_fingerprint:
             return frozenset()

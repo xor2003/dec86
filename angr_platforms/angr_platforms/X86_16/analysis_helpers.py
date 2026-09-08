@@ -2426,9 +2426,12 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
     We prefer targets already recorded by CFG when they stay inside the loaded
     image, then fall back to block-level decoding for direct near/far calls and
     the narrow startup pointer-slot recovery used by MSC-style startup code.
+    Proven tail transfers refine generic CFG entries for the same site/target;
+    decoded calls retain precedence and repeated evidence does not add edges.
     """
 
     def _impl() -> list[CallTargetSeed]:
+        """Merge machine transfer evidence without losing its decoded origin."""
         project = _x86_16_project_for_function_8616(function)
         if project is None:
             return []
@@ -2437,8 +2440,7 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
 
         linked_base, image_end = _neighbor_image_bounds(project)
 
-        recovered: list[CallTargetSeed] = []
-        seen: set[tuple[int, int]] = set()
+        recovered: dict[tuple[int, int], CallTargetSeed] = {}
         for callsite_addr in _analysis_function_call_sites_8616(function):
             target_addr = None
             kind = CallTargetKind8616.CFG_RESOLVED_CALL
@@ -2464,16 +2466,13 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
             if linked_base is not None and image_end is not None and not (linked_base <= target_addr < image_end):
                 continue
             key = (callsite_addr, target_addr)
-            if key in seen:
+            if key in recovered:
                 continue
-            seen.add(key)
-            recovered.append(
-                CallTargetSeed(
-                    callsite_addr=callsite_addr,
-                    target_addr=target_addr,
-                    return_addr=_analysis_function_call_return_8616(function, callsite_addr),
-                    kind=kind,
-                )
+            recovered[key] = CallTargetSeed(
+                callsite_addr=callsite_addr,
+                target_addr=target_addr,
+                return_addr=_analysis_function_call_return_8616(function, callsite_addr),
+                kind=kind,
             )
 
         block_addrs = sorted(_dynamic_analysis_getattr_8616(function, "block_addrs_set", ()))
@@ -2495,19 +2494,17 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
             if linked_base is not None and image_end is not None and not (linked_base <= jump_target < image_end):
                 continue
             key = (block_addr, jump_target)
-            if key in seen:
+            existing = recovered.get(key)
+            if existing is not None and existing.kind is not CallTargetKind8616.CFG_RESOLVED_CALL:
                 continue
-            seen.add(key)
-            recovered.append(
-                CallTargetSeed(
-                    callsite_addr=block_addr,
-                    target_addr=jump_target,
-                    return_addr=None,
-                    kind=tail_kind,
-                )
+            recovered[key] = CallTargetSeed(
+                callsite_addr=block_addr,
+                target_addr=jump_target,
+                return_addr=None,
+                kind=tail_kind,
             )
 
-        return recovered
+        return list(recovered.values())
 
     def _build_cached_evidence(
         _project: object | None,

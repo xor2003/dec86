@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from scripts import test_ownership_manifest
 
 EXISTING_SOURCE_PATH = "scripts/test_ownership_manifest.py"
+
+
+@pytest.mark.parametrize("invocation", [("-m", "scripts.test_ownership_manifest"), ("scripts/test_ownership_manifest.py",)])
+def test_manifest_execution_modes_select_identical_tests(invocation):
+    source = "angr_platforms/angr_platforms/X86_16/ir/register_live_in.py"
+    result = subprocess.run(
+        [sys.executable, *invocation, source], cwd=test_ownership_manifest.REPO_ROOT,
+        capture_output=True, text=True, check=False, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == list(test_ownership_manifest.select_tests_for_files((source,)))
 
 
 def test_selects_manifest_tests_for_implementation_file():
@@ -51,6 +65,7 @@ def test_selects_real_mode_linear_focused_tests_for_implementation_file():
     )
 
     assert selected == (
+        "angr_platforms/tests/test_x86_16_stack_reload_instruction_ownership.py",
         "angr_platforms/tests/test_x86_16_direct_stack_replay.py",
         "angr_platforms/tests/test_x86_16_direct_stack_reload_idempotence.py",
         "angr_platforms/tests/test_x86_16_linear_global_decomposition_cache.py",
@@ -276,6 +291,8 @@ def test_selects_postprocess_callsite_argument_tests_for_implementation_file():
         "angr_platforms/tests/test_x86_16_jcc_instruction_reuse.py",
         "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
+        "angr_platforms/tests/test_x86_16_runtime_call_results.py",
+        "angr_platforms/tests/test_x86_16_recorded_return_argument_replay.py",
         "angr_platforms/tests/test_x86_16_callsite_replay_safety.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
         "test_conservative_call_arg_seed_uses_known_default_for_zero_arg_helper_summary",
@@ -284,6 +301,14 @@ def test_selects_postprocess_callsite_argument_tests_for_implementation_file():
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
         "test_materialize_callsite_stack_arguments_prunes_keep_existing_scalar_byte_pair_stores",
     )
+
+
+def test_selects_partial_register_regressions_for_ir_live_in_analysis():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/ir/register_live_in.py",)
+    )
+    assert "angr_platforms/tests/test_x86_16_gp_partial_live_in.py" in selected
+    assert "angr_platforms/tests/test_x86_16_gp_register_state.py" in selected
 
 
 def test_selects_cli_direct_fallback_focused_tests_for_legacy_cli_file():

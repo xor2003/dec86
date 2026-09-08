@@ -19,9 +19,11 @@ from dataclasses import dataclass, field
 
 from .condition_cache_relift_contracts import (
     ConditionCacheReliftArtifact8616,
+    ConditionCacheReliftFailure8616,
+    ConditionCacheReliftFailureReason8616,
     ConditionCacheReliftStats8616,
 )
-from .condition_ir import ConditionIR, ConditionSource
+from .condition_ir import ConditionFailure, ConditionIR, ConditionResult, ConditionSource
 
 __all__ = (
     "ConditionLiftCaptureSession8616",
@@ -36,8 +38,8 @@ _CONDITION_LIFT_LOCK_8616 = threading.RLock()
 class ConditionLiftCaptureSession8616:
     """Retain one isolated frontend lift's conditions and completed blocks."""
 
-    condition_cache: dict[int, list[object]]
-    pending_sources: dict[int, object]
+    condition_cache: dict[int, list[ConditionResult]]
+    pending_sources: dict[int, ConditionSource]
     _successful_blocks: set[int] = field(default_factory=set, repr=False)
 
     def record_successful_block(self, block_addr: int) -> None:
@@ -69,6 +71,19 @@ class ConditionLiftCaptureSession8616:
             if isinstance(address, int) and isinstance(source, ConditionSource)
         )
 
+    def failures_by_block(
+        self, block_addresses: frozenset[int],
+    ) -> tuple[ConditionCacheReliftFailure8616, ...]:
+        """Retain explicit recovery refusals within the current function only."""
+        return tuple(
+            ConditionCacheReliftFailure8616(
+                block_addr=address,
+                reason=ConditionCacheReliftFailureReason8616.CONDITION_RECOVERY_FAILED,
+            )
+            for address in sorted(block_addresses)
+            if any(isinstance(item, ConditionFailure) for item in self.condition_cache.get(address, ()))
+        )
+
     def complete_artifact(
         self,
         block_addresses: frozenset[int],
@@ -84,12 +99,13 @@ class ConditionLiftCaptureSession8616:
             if address in expected_condition_blocks and conditions
         }
         classified_blocks = expected_condition_blocks & self._successful_blocks
+        failures = self.failures_by_block(block_addresses)
         stats = ConditionCacheReliftStats8616(
             raw_fact_count=len(expected_condition_blocks),
             normalized_fact_count=len(expected_condition_blocks),
             classified_fact_count=len(classified_blocks),
             materialized_count=len(materialized_blocks),
-            failure_count=0,
+            failure_count=len(failures),
         )
         if not stats.complete:
             return None
@@ -113,8 +129,8 @@ def isolated_condition_lift_session_8616() -> Iterator[ConditionLiftCaptureSessi
         original_affine_snapshots = Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616
         original_index_state = Instruction_ANY._inertia_condition_index_reg_state_8616
         original_value_state = Instruction_ANY._inertia_condition_reg_value_state_8616
-        condition_cache: dict[int, list[object]] = {}
-        pending_sources: dict[int, object] = {}
+        condition_cache: dict[int, list[ConditionResult]] = {}
+        pending_sources: dict[int, ConditionSource] = {}
         Instruction_ANY._inertia_module_condition_cache = condition_cache
         Instruction_ANY._inertia_pending_condition_sources_by_addr = pending_sources
         Instruction_ANY._inertia_condition_reg_affine_state_8616 = {}

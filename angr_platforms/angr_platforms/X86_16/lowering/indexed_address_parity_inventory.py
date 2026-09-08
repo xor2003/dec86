@@ -108,14 +108,14 @@ def classify_indexed_address_mismatches_8616(
     alias_keys_by_site = _keys_by_site_8616((*parity.matched, *parity.alias_only))
     legacy_keys_by_site = _keys_by_site_8616((*parity.matched, *parity.legacy_only))
     ir_failures_by_addr: defaultdict[int, list[IndexedAddressFailureKind8616]] = defaultdict(list)
-    for refusal in alias_evidence.source.refusals:
-        ir_failures_by_addr[refusal.instr_addr].append(refusal.failure)
+    for ir_refusal in alias_evidence.source.refusals:
+        ir_failures_by_addr[ir_refusal.instr_addr].append(ir_refusal.failure)
     alias_failures_by_addr: defaultdict[
         int, list[IndexedAddressAliasFailureKind8616]
     ] = defaultdict(list)
-    for refusal in alias_evidence.refusals:
-        if refusal.source_fact is not None:
-            alias_failures_by_addr[refusal.source_fact.instr_addr].append(refusal.failure)
+    for alias_refusal in alias_evidence.refusals:
+        if alias_refusal.source_fact is not None:
+            alias_failures_by_addr[alias_refusal.source_fact.instr_addr].append(alias_refusal.failure)
 
     mismatches: list[IndexedAddressCollectorMismatch8616] = []
     for side, unmatched, counterparts_by_site in (

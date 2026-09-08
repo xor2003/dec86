@@ -85,12 +85,6 @@ LAYER_MODULE_RECORDS: tuple[LayerModuleRecord, ...] = (
         "Historical quality exports; implementation lives in inertia_decompiler.acceptance_scorecard.",
     ),
     LayerModuleRecord(
-        "angr_platforms.X86_16.postprocess.condition_patterns",
-        LayerModuleAdmission.TEST_ONLY_PROTOTYPE,
-        "semantics",
-        "Condition-strengthening prototype; misplaced under postprocess until formal migration/admission.",
-    ),
-    LayerModuleRecord(
         "angr_platforms.X86_16.postprocess.cleanup",
         LayerModuleAdmission.COMPATIBILITY_WRAPPER,
         "postprocess",

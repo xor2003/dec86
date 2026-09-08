@@ -392,6 +392,12 @@ def _materialize_bound_loop_register_update_8616(
         if isinstance(initializer_variable.region, int)
         else function_region
     )
+    rhs = lower_ir_value_to_c_expr_8616(
+        update.rhs, project, codegen, resolve_register_name=True,
+    )
+    op = {"add": "Add", "and": "And", "or": "Or", "sub": "Sub", "xor": "Xor"}.get(update.op)
+    if not isinstance(rhs, CExpression) or op is None:
+        return _RegisterUpdateMaterialization8616()
     shared = SimRegisterVariable(
         target_offset,
         target_size,
@@ -413,23 +419,6 @@ def _materialize_bound_loop_register_update_8616(
             initializer.rhs.type or SimTypeShort(False),
             codegen=codegen,
         )
-    rhs = lower_ir_value_to_c_expr_8616(
-        update.rhs,
-        project,
-        codegen,
-        resolve_register_name=True,
-    )
-    if not isinstance(rhs, CExpression):
-        return _RegisterUpdateMaterialization8616()
-    op = {
-        "add": "Add",
-        "and": "And",
-        "or": "Or",
-        "sub": "Sub",
-        "xor": "Xor",
-    }.get(update.op)
-    if op is None:
-        return _RegisterUpdateMaterialization8616()
     marker = "inertia_typed_loop_register_update_8616"
     for statement in loop.body.statements or ():
         if not isinstance(statement, CAssignment):
@@ -464,7 +453,8 @@ def _bind_materialized_update_target_8616(
     target: CVariable,
 ) -> int:
     """Bind full-register leaves in a lowered condition to the loop carrier."""
-    if not isinstance(target.variable, SimRegisterVariable):
+    target_variable = target.variable
+    if not isinstance(target_variable, SimRegisterVariable):
         return 0
     replacements = 0
 
@@ -474,8 +464,8 @@ def _bind_materialized_update_target_8616(
         if not isinstance(node, CVariable) or not isinstance(node.variable, SimRegisterVariable):
             return node
         if (
-            node.variable.reg != target.variable.reg
-            or node.variable.size != target.variable.size
+            node.variable.reg != target_variable.reg
+            or node.variable.size != target_variable.size
         ):
             return node
         replacements += 1
@@ -632,8 +622,8 @@ def _consume_owned_pretest_guard_8616(
     )
 
 
-def _expression_tags_8616(expression: CExpression) -> dict[str, object]:
-    """Copy tags from one dynamic angr C expression."""
+def _expression_tags_8616(expression: CExpression | CAssignment) -> dict[str, object]:
+    """Copy tags from one dynamic angr expression or assignment."""
     boundary = cast(_TaggedExpressionBoundary8616, expression)
     try:
         return dict(boundary.tags)
@@ -868,7 +858,7 @@ def materialize_typed_loop_continuation_conditions_8616(
         if edge is LoopContinuationEdge8616.FALLTHROUGH:
             replacement = _invert_condition_8616(replacement, codegen)
         pretest_consumed = composite_ownership.owned_pretest_guard is not None
-        if pretest_consumed and not _consume_owned_pretest_guard_8616(
+        if composite_ownership.owned_pretest_guard is not None and not _consume_owned_pretest_guard_8616(
             loop,
             composite_ownership.owned_pretest_guard,
             codegen,

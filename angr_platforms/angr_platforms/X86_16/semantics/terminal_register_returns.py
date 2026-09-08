@@ -125,7 +125,7 @@ def _preserves_terminal_return_storage_8616(insn: object, mnemonic: str) -> bool
     if mnemonic != "mov":
         return False
     inner = cast(Any, _inner_instruction_8616(insn))
-    operands = tuple(inner.operands or ())
+    operands: tuple[Any, ...] = tuple(inner.operands or ())
     if len(operands) != 2 or any(int(cast(Any, operand).type) != 1 for operand in operands):
         return False
     names = tuple(_register_name_8616(insn, int(cast(Any, operand).reg or 0)) for operand in operands)
@@ -174,7 +174,7 @@ def _decoded_instructions_by_block_8616(
 ) -> dict[int, tuple[object, ...]]:
     """Return complete direct evidence or rebuild the legacy exact fallback."""
     if direct_decode.complete:
-        return cast(dict[int, tuple[object, ...]], direct_decode.instructions_by_block())
+        return direct_decode.instructions_by_block()
     decoded: dict[int, tuple[object, ...]] = {}
     for block_addr in sorted(block_addrs):
         try:

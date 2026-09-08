@@ -75,7 +75,7 @@ def call_clobbered_load_ranges_8616(
                     continue
                 address = stack_memory_access_8616(instruction)
                 range_key = memory_range_key_8616(address) if address is not None else None
-                if range_key not in range_addresses:
+                if range_key is None or range_key not in range_addresses:
                     continue
                 cells = cells_by_range[range_key]
                 if instruction.op == "STORE":

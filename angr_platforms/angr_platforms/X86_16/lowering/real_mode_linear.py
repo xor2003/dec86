@@ -206,6 +206,7 @@ from .semantic_cast import (
 )
 from .stack_address_coordinates import (
     absolute_machine_bp_offset_from_wrapped_anchor_8616,
+    consume_indexed_stack_frame_terms_8616,
     machine_bp_offset_for_entry_sp_anchor_8616,
 )
 from .stack_aggregate_objects import StackAggregateObjectFact8616, materialize_stack_aggregate_objects_8616
@@ -8118,14 +8119,15 @@ def _function_pointer_stack_slot_type_8616(cvar: StructuredAstValue) -> SimTypeP
 
 
 def _default_near_function_pointer_type_8616(codegen: StructuredCodegenValue, width: int) -> SimTypePointer:
+    """Build an architecture-bound near pointer while preserving its concrete type."""
     word_type = _type_for_access_width_8616(width)
     prototype = SimTypeFunction([word_type], word_type, variadic=False)
     project = getattr(codegen, "project", None)
     arch = getattr(project, "arch", None)
-    if arch is not None and hasattr(prototype, "with_arch"):
+    if arch is not None:
         prototype = prototype.with_arch(arch)
     pointer_type = SimTypePointer(prototype)
-    return pointer_type.with_arch(arch) if arch is not None and hasattr(pointer_type, "with_arch") else pointer_type
+    return cast(SimTypePointer, pointer_type.with_arch(arch)) if arch is not None else pointer_type
 
 
 def _c_decl_type_for_function_pointer_target_8616(type_: StructuredAstValue) -> str | None:
@@ -14725,12 +14727,6 @@ def _is_same_register_move_assignment_8616(
     )
 
 
-def _list_has_register_move_assignment_8616(
-    statements: list[StructuredAstValue], reg_name: str, source_expr: StructuredAstValue
-) -> bool:
-    return any(_is_same_register_move_assignment_8616(stmt, reg_name, source_expr) for stmt in statements)
-
-
 def _insertion_point_has_register_move_assignment_8616(
     statements: list[StructuredAstValue],
     insert_index: int,
@@ -14743,21 +14739,20 @@ def _insertion_point_has_register_move_assignment_8616(
 
 
 def _insert_before_first_register_cvar_use_8616(
-    root: StructuredAstValue, reg_name: str, source_expr: StructuredAstValue, codegen: StructuredAstValue
+    root: StructuredAstValue, reg_name: str, source_expr: StructuredAstValue, codegen: StructuredAstValue,
+    *, project: AngrProjectValue, ins_addr: int,
 ) -> bool:
+    """Place a proven reload only at a consumer carrying its instruction origin."""
     seen: set[int] = set()
     read_memo: dict[int, bool] = {}
 
     def visit(node: StructuredAstValue) -> bool:
-        """Insert a register assignment before the first visible register read."""
+        """Keep unrelated earlier reads intact when a register name is reused."""
         if node is None or id(node) in seen:
             return False
         seen.add(id(node))
         statements = getattr(node, "statements", None)
         if isinstance(statements, list):
-            if _list_has_register_move_assignment_8616(statements, reg_name, source_expr):
-                root._inertia_stack_mov_assignment_already_present_8616 = True
-                return True
             for index, stmt in enumerate(tuple(statements)):
                 nested_statements = getattr(stmt, "statements", None)
                 if (
@@ -14765,14 +14760,14 @@ def _insert_before_first_register_cvar_use_8616(
                     or isinstance(nested_statements, list)
                 ) and visit(stmt):
                     return True
-                if _node_reads_register_name_8616(stmt, reg_name, memo=read_memo):
+                if _node_has_instruction_address_8616(stmt, project, ins_addr) and _node_reads_register_name_8616(stmt, reg_name, memo=read_memo):
                     if _insertion_point_has_register_move_assignment_8616(statements, index, reg_name, source_expr):
                         root._inertia_stack_mov_assignment_already_present_8616 = True
                         return True
                     cvar = _find_first_register_cvar_use_8616(stmt, reg_name)
                     if cvar is None:
                         return False
-                    assignment = structured_c.CAssignment(cvar, source_expr, codegen=codegen)
+                    assignment = structured_c.CAssignment(cvar, source_expr, codegen=codegen, tags={"ins_addr": ins_addr})
                     statements.insert(index, assignment)
                     return True
                 if visit(stmt):
@@ -17160,6 +17155,8 @@ def _materialize_direct_stack_mov_instructions_impl_8616(
                         reload_fact.dst_reg_name,
                         reload_expr,
                         codegen,
+                        project=project,
+                        ins_addr=reload_fact.ins_addr,
                     )
                     register_use_insert_elapsed += time.perf_counter() - reload_step_started
                 if inserted_reload:
@@ -17497,6 +17494,13 @@ def lower_stable_ss_linear_stack_dereferences_8616(
             return None
 
         residual_terms = tuple(term for index, term in enumerate(terms) if index != matched_index)
+        normalized_terms = consume_indexed_stack_frame_terms_8616(
+            codegen, residual_terms,
+            segment_name=lambda term: _segment_base_name_8616(term, project, codegen),
+        )
+        if normalized_terms is None:
+            return None
+        residual_terms = normalized_terms
         if width is None:
             constant_residual = 0
             for sign, term in residual_terms:
@@ -17568,14 +17572,16 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         return expr
 
     def _materialize_indexed_bp_stack_pointer_8616(access: RealModeIndexedStackAddress8616) -> StructuredAstValue:
+        """Build an addressable stack pointer whose arithmetic stays byte-scaled."""
         base_cvar = stack_cvar_for_stable_ss_linear_access_8616(
             codegen,
             RealModeLinearStackAccess8616(access.base_displacement, 1),
+            require_lvalue=True,
         )
         if base_cvar is None:
             return None
-        byte_ptr_type = SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
-        addr_expr = structured_c.CTypeCast(
+        byte_ptr_type = SimTypePointer(SimTypeChar(False, label="unsigned char")).with_arch(project.arch)
+        addr_expr = CSemanticCast8616(
             None,
             byte_ptr_type,
             structured_c.CUnaryOp("Reference", base_cvar, codegen=codegen),
@@ -17590,13 +17596,14 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         return addr_expr
 
     def _materialize_indexed_bp_stack_address_8616(access: RealModeIndexedStackAddress8616) -> StructuredAstValue:
+        """Preserve the proven load width even when cosmetic casts are hidden."""
         width = access.width if isinstance(access.width, int) and access.width > 0 else 1
         addr_expr = _materialize_indexed_bp_stack_pointer_8616(access)
         if addr_expr is None:
             return None
-        access_type = _type_for_access_width_8616(width)
+        access_type = SimTypeChar(False, label="unsigned char") if width == 1 else _type_for_access_width_8616(width)
         access_ptr_type = SimTypePointer(access_type).with_arch(project.arch)
-        cast_addr = structured_c.CTypeCast(None, access_ptr_type, addr_expr, codegen=codegen)
+        cast_addr = CSemanticCast8616(None, access_ptr_type, addr_expr, codegen=codegen)
         deref = structured_c.CUnaryOp("Dereference", cast_addr, codegen=codegen)
         with contextlib.suppress(Exception):
             cast(Any, deref).type = access_type

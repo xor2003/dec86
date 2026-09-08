@@ -281,6 +281,11 @@ def test_materialization_resolves_exact_ssa_definition_across_sibling_containers
     assert low_container.statements == []
     assert isinstance(high_assignment.rhs, structured_c.CBinaryOp)
     assert high_assignment.rhs.op == "CmpLT"
+    replay = materialize_carry_borrow_bit_value_8616(
+        root, _source(), _fact(), _ownership(_LOW_ADDR, _HIGH_ADDR),
+    )
+    assert replay.verdict is CarryBorrowBitLoweringVerdict8616.MATERIALIZED
+    assert replay.already_materialized and not replay.changed
 
 
 def test_materialization_refuses_when_nested_arithmetic_lacks_instruction_ownership() -> None:

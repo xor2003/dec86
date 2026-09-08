@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -177,7 +178,13 @@ def test_materialized_branch_condition_accepts_exact_typed_predicate() -> None:
     assert report.materialized_count == 1
 
 
-def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
+@pytest.mark.parametrize("source_addr,block_addr,compare_addr,proven", [
+    (0x108, 0x108, 0x108, True),
+    (None, 0x108, 0x108, False),
+    (0x108, None, 0x108, False),
+    (0x108, 0x108, None, False),
+])
+def test_logical_reload_projection_requires_stable_path(monkeypatch, source_addr, block_addr, compare_addr, proven) -> None:
     """Validation consumes a dominating logical reload without string allowlists."""
     register = IRValue(MemSpace.REG, name="si", size=2, version=1)
     address = IRAddress(
@@ -206,7 +213,7 @@ def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
         function_addr=0x100,
         blocks=(
             SSABlock(0x100, (IRInstr("MOV", register, (), 2, 0x104),), (0x108,)),
-            SSABlock(0x108, (IRInstr("CMP", None, (register,), 2, 0x108),), ()),
+            SSABlock(0x108, (IRInstr("CMP", None, (register,), 2, compare_addr),), ()),
         ),
         predecessor_map={0x100: (), 0x108: (0x100,)},
         logical_memory=SimpleNamespace(closed=True, accesses=(access,)),
@@ -239,8 +246,8 @@ def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
         "eq",
         register,
         IRValue(MemSpace.CONST, const=0xFFFF, size=2),
-        src_insn=0x108,
-        block_addr=0x108,
+        src_insn=source_addr,
+        block_addr=block_addr,
     )
 
     context = validation_branch_conditions._build_logical_reload_validation_context_8616(codegen)
@@ -261,10 +268,10 @@ def test_logical_reload_projection_requires_stable_path(monkeypatch) -> None:
 
     assert repeated == projected
     assert trace_calls == [access]
-    assert (
-        "CmpEQ(Dereference(Add(Mul(reg:ds,const:16),reg:di,const:6149)),const:65535)"
-        in projected
-    )
+    expected = "CmpEQ(Dereference(Add(Mul(reg:ds,const:16),reg:di,const:6149)),const:65535)"
+    assert (expected in projected) is proven
+    if not proven:
+        assert projected == frozenset()
 
 
 def test_branch_validation_builds_one_logical_reload_context(monkeypatch) -> None:

@@ -104,7 +104,13 @@ class LogicalStackMemoryAliasAccess8616:
     @property
     def versions(self) -> tuple[int, ...]:
         """Return every underlying raw execution version in byte order."""
-        return tuple(int(item.raw_slice.address.version) for item in self.slices)
+        versions: list[int] = []
+        for item in self.slices:
+            version = item.raw_slice.address.version
+            if version is None:
+                raise ValueError("logical stack Alias slice requires an SSA version")
+            versions.append(version)
+        return tuple(versions)
 
     def to_dict(self) -> dict[str, object]:
         """Return deterministic logical-owner diagnostics."""

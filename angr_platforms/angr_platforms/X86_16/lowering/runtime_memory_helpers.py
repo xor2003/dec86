@@ -15,6 +15,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Protocol, cast
 
+from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
+
 
 class _NamedFunctionBoundary8616(Protocol):
     """Third-party function metadata exposing a rendered target name."""
@@ -96,6 +98,27 @@ def memory_pointer_helper_8616(node: object) -> MemoryPointerHelper8616 | None:
         return None
     for helper in MemoryPointerHelper8616:
         if normalized == helper.helper_name:
+            return helper
+    return None
+
+
+def proven_memory_pointer_helper_8616(node: object) -> MemoryPointerHelper8616 | None:
+    """Consume an owned generated-read tag, never a machine callee's name alone.
+
+    This proves only the outer read. Consumers must still inspect its argument
+    for calls or other effects before preserving dataflow facts.
+    """
+    if (
+        not isinstance(node, CFunctionCall)
+        or not isinstance(node.tags, dict)
+        or node.callee_func is not None
+        or node.args is None
+        or len(node.args) != 1
+    ):
+        return None
+    identity = node.tags.get("inertia_x86_16_runtime_pointer_helper")
+    for helper in MemoryPointerHelper8616:
+        if identity == helper.value and node.callee_target == helper.value:
             return helper
     return None
 

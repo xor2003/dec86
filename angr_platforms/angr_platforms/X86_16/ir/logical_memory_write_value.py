@@ -158,8 +158,8 @@ def _trace_lane_8616(
     store = block.instrs[index]
     _require_8616(store.op == "STORE" and store.size == 1 and len(store.args) == 2, _Failure.STORE_VALUE_MISSING)
     address, stored = store.args
-    address_matches = isinstance(address, IRAddress) and address.size == execution_slice.address.size == 1
-    address_matches &= logical.logical_memory_execution_address_matches_8616(address, execution_slice.address, 0, 32)
+    address_matches = (isinstance(address, IRAddress) and address.size == execution_slice.address.size == 1
+                       and logical.logical_memory_execution_address_matches_8616(address, execution_slice.address, 0, 32))
     _require_8616(address_matches, _Failure.LOGICAL_ACCESS_CONFLICT)
     _require_8616(isinstance(stored, IRValue) and stored.size == 1, _Failure.STORE_VALUE_MISSING)
     assert isinstance(stored, IRValue)

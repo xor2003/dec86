@@ -47,12 +47,21 @@ class _MemorySurface8616(Protocol):
 
     def load(self, addr: int, size: int) -> bytes | bytearray | memoryview:
         """Load exact binary bytes from one mapped range."""
+        ...
+
+
+class _MainObjectSurface8616(Protocol):
+    """Inclusive loaded-image bounds supplied by the third-party loader."""
+
+    min_addr: int
+    max_addr: int
 
 
 class _LoaderSurface8616(Protocol):
     """Third-party loader fields used by callable-entry matching."""
 
     memory: _MemorySurface8616
+    main_object: _MainObjectSurface8616
 
 
 class _BoundaryProjectSurface8616(Protocol):
@@ -70,7 +79,7 @@ def _range_is_inside_mapped_image_8616(project: object, start: int, end: int) ->
     range into a rebased slice.
     """
     try:
-        main_object = cast(object, project).loader.main_object
+        main_object = cast(_BoundaryProjectSurface8616, project).loader.main_object
         min_addr = main_object.min_addr
         max_addr = main_object.max_addr
     except AttributeError:

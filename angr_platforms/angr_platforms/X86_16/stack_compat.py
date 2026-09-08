@@ -33,8 +33,8 @@ __all__ = [
 
 _PATCHED_STACK_OFFSET_TO_ADDR_NAME = "_stack_offset_to_stack_addr_8616"
 _PATCHED_SPROP_ANALYZE_NAME = "_analyze_8616"
-_StackOffsetToAddr = Callable[["_LiveDefinitionsLike", int], int]
-_SPropAnalyze = Callable[["_SPropagatorLike"], None]
+_StackOffsetToAddr = Callable[[LiveDefinitions, int], int]
+_SPropAnalyze = Callable[[SPropagator], None]
 
 
 class StackPointerPropagationVerdict8616(Enum):
@@ -76,49 +76,23 @@ class StackPointerPropagationNormalization8616:
     stats: StackPointerPropagationStats8616
 
 
-class _StackArch(Protocol):
-    name: str
-    sp_offset: int
-    bp_offset: int
-
-    @property
-    def bits(self) -> int:
-        """Return the angr architecture bit width."""
-        ...
-
-
-class _LiveDefinitionsLike(Protocol):
-    @property
-    def arch(self) -> _StackArch:
-        """Return the angr architecture object attached to live definitions."""
-        ...
-
-
 class _NamedStackOffsetToAddr(Protocol):
-    __name__: str
+    """Expose the patch marker independently of the callable signature."""
 
-    def __call__(self, _: _LiveDefinitionsLike, offset: int) -> int: ...
+    __name__: str
 
 
 class _SPropagatorModelLike(Protocol):
+    """Describe angr replacements and the Inertia metadata published beside them."""
+
     replacements: MutableMapping[AILCodeLocation, MutableMapping[Expression, Expression]]
     _inertia_stack_pointer_propagation_stats_8616: StackPointerPropagationStats8616
 
 
-class _SPropagatorProjectLike(Protocol):
-    arch: _StackArch
-
-
-class _SPropagatorLike(Protocol):
-    project: _SPropagatorProjectLike
-    model: _SPropagatorModelLike
-    _ail_manager: Manager
-
-
 class _NamedSPropAnalyze(Protocol):
-    __name__: str
+    """Name-only patch detection; invocation is typed separately by _SPropAnalyze."""
 
-    def __call__(self, propagator: _SPropagatorLike) -> None: ...
+    __name__: str
 
 
 def normalize_stack_pointer_replacement_8616(
@@ -185,7 +159,8 @@ def apply_x86_16_stack_compatibility() -> None:
     """Patch angr stack offsets and propagated SP/BP values to remain word-sized."""
     original_stack_offset_to_stack_addr = cast(_StackOffsetToAddr, LiveDefinitions.stack_offset_to_stack_addr)
 
-    def _stack_offset_to_stack_addr_8616(self: _LiveDefinitionsLike, offset: int) -> int:
+    def _stack_offset_to_stack_addr_8616(self: LiveDefinitions, offset: int) -> int:
+        """Wrap word-sized stack offsets and delegate other architectures unchanged."""
         if self.arch.bits == 16:
             return (0x7FFE + offset) & 0xFFFF
         return original_stack_offset_to_stack_addr(self, offset)
@@ -199,15 +174,21 @@ def apply_x86_16_stack_compatibility() -> None:
         return
     original_sprop_analyze = cast(_SPropAnalyze, SPropagator._analyze)
 
-    def _analyze_8616(self: _SPropagatorLike) -> None:
+    def _analyze_8616(self: SPropagator) -> None:
+        """Normalize angr replacements and publish the associated evidence counts."""
         original_sprop_analyze(self)
+        model = cast(_SPropagatorModelLike, self.model)
         aggregate = StackPointerPropagationStats8616()
         if self.project.arch.name != "86_16":
-            self.model._inertia_stack_pointer_propagation_stats_8616 = aggregate
+            model._inertia_stack_pointer_propagation_stats_8616 = aggregate
             return
 
-        stack_register_offsets = frozenset((self.project.arch.sp_offset, self.project.arch.bp_offset))
-        for replacements_at_location in self.model.replacements.values():
+        sp_offset = self.project.arch.sp_offset
+        bp_offset = self.project.arch.bp_offset
+        if sp_offset is None or bp_offset is None:
+            raise ValueError("86_16 stack propagation requires registered SP and BP offsets")
+        stack_register_offsets = frozenset((sp_offset, bp_offset))
+        for replacements_at_location in model.replacements.values():
             for replaced, replacement in tuple(replacements_at_location.items()):
                 result = normalize_stack_pointer_replacement_8616(
                     replaced,
@@ -218,6 +199,6 @@ def apply_x86_16_stack_compatibility() -> None:
                 aggregate = aggregate.merged(result.stats)
                 if result.stats.materialized_count:
                     replacements_at_location[replaced] = result.replacement
-        self.model._inertia_stack_pointer_propagation_stats_8616 = aggregate
+        model._inertia_stack_pointer_propagation_stats_8616 = aggregate
 
     SPropagator._analyze = _analyze_8616

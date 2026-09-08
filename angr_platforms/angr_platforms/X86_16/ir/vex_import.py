@@ -466,13 +466,10 @@ def _int_size(
     type_environment: object | None = None,
 ) -> int:
     """Return the byte width advertised by a VEX expression boundary."""
-    return cast(
-        int,
-        vex_expr_size_bytes(
-            expr,
-            type_environment=type_environment,
-            default=default,
-        ),
+    return vex_expr_size_bytes(
+        expr,
+        type_environment=type_environment,
+        default=default,
     )
 
 

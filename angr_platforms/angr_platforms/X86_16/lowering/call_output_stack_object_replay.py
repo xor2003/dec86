@@ -118,10 +118,10 @@ def reapply_call_output_stack_object_types_8616(codegen: object) -> bool:
             isinstance(current_base.variable_type, SimStruct)
             and current_base.variable_type.name == struct_type.name
         )
-        _prepare_object_type_8616(boundary, rebound, struct_type)
+        declarations_changed = _prepare_object_type_8616(boundary, rebound, struct_type)
         if isinstance(current_base.variable_type, SimStruct):
             materialized += 1
-            changed = changed or not was_materialized
+            changed = changed or not was_materialized or declarations_changed
         rebound_facts.append(rebound)
 
     stats = CallOutputStackObjectStats8616(

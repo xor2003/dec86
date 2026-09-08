@@ -71,8 +71,8 @@ class _ExecEmulatorHooks(Protocol):
         """Write a control register."""
         ...
 
-    def get_crn(self, n: int) -> int:
-        """Read a control register."""
+    def get_crn(self, n: int) -> int | VexValue:
+        """Read a concrete or lifted control-register value."""
         ...
 
 
@@ -251,7 +251,7 @@ class ExecInstr(X86Instruction):  # type: ignore[misc, unused-ignore]  # dynamic
         print(f"set CR{self.instr.modrm.reg} = {value:x}")
         self.emu.set_crn(self.instr.modrm.reg, value)
 
-    def get_crn(self) -> object:
+    def get_crn(self) -> int | VexValue:
         """Read the control register selected by the ModR/M register field."""
         return self.emu.get_crn(self.instr.modrm.reg)
 

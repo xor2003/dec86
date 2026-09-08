@@ -94,6 +94,10 @@ class UnconsumedLoopBreakJccStats8616:
     refused_duplicate_guard: int = 0
     removed_loop_header_duplicate_guard: int = 0
     split_loop_header_condition_chain: int = 0
+    ast_query_count: int = 0
+    ast_query_build_count: int = 0
+    ast_query_hit_count: int = 0
+    ast_query_invalidation_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +108,77 @@ class _LoopBreakInitialSurface8616:
     loop_header_jcc_addrs: frozenset[int]
     typed_loop_condition_jcc_addrs: frozenset[int]
     break_nodes_by_key: tuple[tuple[tuple[int, int], tuple[object, ...]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _LoopBreakAstSubtreeSurface8616:
+    """Syntax-only membership projections for one unchanged AST subtree."""
+
+    root: object
+    nodes: tuple[object, ...]
+    node_ids: frozenset[int]
+    instruction_addresses: frozenset[int]
+
+
+@dataclass(slots=True)
+class _LoopBreakAstQuerySession8616:
+    """Reuse syntax-only subtree queries until structuring mutates the AST."""
+
+    _surfaces: dict[int, _LoopBreakAstSubtreeSurface8616] = field(default_factory=dict)
+    query_count: int = 0
+    build_count: int = 0
+    hit_count: int = 0
+    invalidation_count: int = 0
+
+    def _surface(self, root: object) -> _LoopBreakAstSubtreeSurface8616:
+        """Return one current subtree surface with closed query accounting."""
+        self.query_count += 1
+        marker = id(root)
+        cached = self._surfaces.get(marker)
+        if cached is not None and cached.root is root:
+            self.hit_count += 1
+            return cached
+        nodes = tuple(_iter_c_nodes_deep_8616(root))
+        surface = _LoopBreakAstSubtreeSurface8616(
+            root=root,
+            nodes=nodes,
+            node_ids=frozenset(id(node) for node in nodes),
+            instruction_addresses=frozenset(
+                int(address)
+                for node in nodes
+                if isinstance((tags := _dynamic_attr_8616(node, "tags", None)), Mapping)
+                and isinstance((address := tags.get("ins_addr")), int)
+            ),
+        )
+        self._surfaces[marker] = surface
+        self.build_count += 1
+        return surface
+
+    def contains_instruction(self, root: object, target_addr: int) -> bool:
+        """Return whether one unchanged subtree carries an exact instruction tag."""
+        return int(target_addr) in self._surface(root).instruction_addresses
+
+    def contains_node(self, root: object, target: object) -> bool:
+        """Return whether one unchanged subtree contains a node by identity."""
+        return id(target) in self._surface(root).node_ids
+
+    def nodes(self, root: object) -> tuple[object, ...]:
+        """Return current subtree nodes in deterministic traversal order."""
+        return self._surface(root).nodes
+
+    def record_mutation(self) -> None:
+        """Invalidate every cached subtree after a reported AST mutation."""
+        self._surfaces.clear()
+        self.invalidation_count += 1
+
+    def record_stats(self, stats: UnconsumedLoopBreakJccStats8616) -> None:
+        """Publish closed acceleration accounting on the owning pass stats."""
+        if self.query_count != self.build_count + self.hit_count:
+            raise PipelineHardError("loop-break AST query accounting is not closed")
+        stats.ast_query_count += self.query_count
+        stats.ast_query_build_count += self.build_count
+        stats.ast_query_hit_count += self.hit_count
+        stats.ast_query_invalidation_count += self.invalidation_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,11 +253,17 @@ def _dynamic_int_8616(obj: object, default: int = -1) -> int:
     return default
 
 
-def _root_contains_ins_addr_8616(root: object, target_addr: int) -> bool:
+def _root_contains_ins_addr_8616(
+    root: object,
+    target_addr: int,
+    query_session: _LoopBreakAstQuerySession8616 | None = None,
+) -> bool:
     """Return whether a C AST subtree carries the instruction address tag."""
     if root is None:
         return False
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
+    if query_session is not None:
+        return query_session.contains_instruction(root, target_addr)
+    for node in _iter_c_nodes_deep_8616(root):
         tags = _dynamic_attr_8616(node, "tags", None)
         if isinstance(tags, Mapping) and tags.get("ins_addr") == int(target_addr):
             return True
@@ -430,8 +511,14 @@ def _semantic_break_guards_in_loop_8616(
     return tuple(guards)
 
 
-def _root_contains_node_8616(root: object, target: object) -> bool:
+def _root_contains_node_8616(
+    root: object,
+    target: object,
+    query_session: _LoopBreakAstQuerySession8616 | None = None,
+) -> bool:
     """Return whether a dynamic C AST subtree contains a node by identity."""
+    if query_session is not None:
+        return query_session.contains_node(root, target)
     if root is target:
         return True
     return any(node is target for node in _iter_c_nodes_deep_8616(root))
@@ -439,11 +526,17 @@ def _root_contains_node_8616(root: object, target: object) -> bool:
 
 def _loop_nodes_with_body_8616(
     root: object,
+    query_session: _LoopBreakAstQuerySession8616 | None = None,
 ) -> tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...]:
     """Return loop nodes that have a statement-list body."""
     loops: list[CForLoop | CWhileLoop | CDoWhileLoop] = []
     seen: set[int] = set()
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
+    nodes = (
+        query_session.nodes(root)
+        if query_session is not None
+        else tuple(_iter_c_nodes_deep_8616(root))
+    )
+    for node in nodes:
         if not isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop)):
             continue
         marker = id(node)
@@ -474,6 +567,7 @@ def _existing_nonbreak_branch_consumes_jcc_8616(
     false_target: int,
     decoded_condition_fingerprint: str,
     callbacks: UnconsumedLoopBreakJccCallbacks8616,
+    query_session: _LoopBreakAstQuerySession8616,
 ) -> bool:
     """Return whether an exact non-break branch already owns the decoded JCC.
 
@@ -486,7 +580,7 @@ def _existing_nonbreak_branch_consumes_jcc_8616(
         decoded_condition_fingerprint
     )
     matches = 0
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
+    for node in query_session.nodes(root):
         if not isinstance(node, CIfElse):
             continue
         if _break_guard_condition_8616(node) is not None:
@@ -501,9 +595,9 @@ def _existing_nonbreak_branch_consumes_jcc_8616(
             )
             if actual != expected:
                 continue
-            if not _root_contains_ins_addr_8616(body, body_target):
+            if not _root_contains_ins_addr_8616(body, body_target, query_session):
                 continue
-            if _root_contains_ins_addr_8616(body, false_target):
+            if _root_contains_ins_addr_8616(body, false_target, query_session):
                 continue
             matches += 1
     return matches == 1
@@ -518,23 +612,24 @@ def _loop_headers_consuming_jcc_8616(
     exit_target: int | None,
     decoded_condition_fingerprint: str,
     callbacks: UnconsumedLoopBreakJccCallbacks8616,
+    query_session: _LoopBreakAstQuerySession8616,
 ) -> tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...]:
     """Return the unique enclosing loop header that represents the JCC."""
     expected = _normalized_condition_fingerprint_8616(
         decoded_condition_fingerprint
     )
     matches: list[CForLoop | CWhileLoop | CDoWhileLoop] = []
-    for loop_node in _loop_nodes_with_body_8616(root):
+    for loop_node in _loop_nodes_with_body_8616(root, query_session):
         loop_body = _dynamic_attr_8616(loop_node, "body", None)
         if not isinstance(loop_body, CStatements):
             continue
-        if not _root_contains_ins_addr_8616(loop_body, body_target):
+        if not _root_contains_ins_addr_8616(loop_body, body_target, query_session):
             continue
-        if _root_contains_ins_addr_8616(loop_body, false_target):
+        if _root_contains_ins_addr_8616(loop_body, false_target, query_session):
             continue
         if (
             isinstance(exit_target, int)
-            and _root_contains_ins_addr_8616(loop_body, exit_target)
+            and _root_contains_ins_addr_8616(loop_body, exit_target, query_session)
         ):
             continue
         actual = _normalized_condition_fingerprint_8616(
@@ -545,10 +640,14 @@ def _loop_headers_consuming_jcc_8616(
     return tuple(matches) if len(matches) == 1 else ()
 
 
-def _first_statement_index_containing_ins_addr_8616(statements: Sequence[object], target_addr: int) -> int | None:
+def _first_statement_index_containing_ins_addr_8616(
+    statements: Sequence[object],
+    target_addr: int,
+    query_session: _LoopBreakAstQuerySession8616 | None = None,
+) -> int | None:
     """Return the first statement index anchored at an instruction address."""
     for idx, stmt in enumerate(statements):
-        if _root_contains_ins_addr_8616(stmt, int(target_addr)):
+        if _root_contains_ins_addr_8616(stmt, int(target_addr), query_session):
             return idx
     return None
 
@@ -722,6 +821,7 @@ def _split_materialized_loop_header_condition_chains_8616(
     decoded_conditions_by_jcc: Mapping[int, CExpression],
     callbacks: UnconsumedLoopBreakJccCallbacks8616,
     stats: UnconsumedLoopBreakJccStats8616,
+    query_session: _LoopBreakAstQuerySession8616,
 ) -> bool:
     """Move a fully materialized CFG suffix out of a collapsed loop header.
 
@@ -740,7 +840,7 @@ def _split_materialized_loop_header_condition_chains_8616(
     }
     changed = False
     debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
-    for loop_node in _loop_nodes_with_body_8616(root):
+    for loop_node in _loop_nodes_with_body_8616(root, query_session):
         loop_body = cast(CStatements, loop_node.body)
         statements = _dynamic_sequence_8616(loop_body.statements)
         if not statements:
@@ -783,12 +883,24 @@ def _split_materialized_loop_header_condition_chains_8616(
         body_effect_addrs = header_jccs - facts_by_jcc.keys() - {
             first_fact.jcc_addr
         }
-        if not _root_contains_ins_addr_8616(loop_body, first_fact.body_target):
+        if not _root_contains_ins_addr_8616(
+            loop_body,
+            first_fact.body_target,
+            query_session,
+        ):
             continue
-        if _root_contains_ins_addr_8616(loop_body, first_fact.false_target):
+        if _root_contains_ins_addr_8616(
+            loop_body,
+            first_fact.false_target,
+            query_session,
+        ):
             continue
         if any(
-            not _root_contains_ins_addr_8616(loop_body, effect_addr)
+            not _root_contains_ins_addr_8616(
+                loop_body,
+                effect_addr,
+                query_session,
+            )
             for effect_addr in body_effect_addrs
         ):
             continue
@@ -824,6 +936,7 @@ def _split_materialized_loop_header_condition_chains_8616(
         del rebuilt[0]
         loop_body.statements = rebuilt
         loop_node.condition = retained_condition
+        query_session.record_mutation()
         _record_loop_header_duplicate_guard_removal_fact_8616(codegen, fact)
         callbacks.record_condition_evidence(
             project,
@@ -948,6 +1061,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
     existing_break_nodes_by_key = dict(initial_surface.break_nodes_by_key)
     typed_conditions_by_key = _typed_conditions_by_key_8616(codegen)
     decoded_conditions_by_jcc: dict[int, CExpression] = {}
+    query_session = _LoopBreakAstQuerySession8616()
     changed = False
     log = logging.getLogger(__name__)
     debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
@@ -1103,6 +1217,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
             false_target=int(false_target),
             decoded_condition_fingerprint=decoded_condition_fingerprint,
             callbacks=callbacks,
+            query_session=query_session,
         ):
             stats.refused_existing_condition += 1
             continue
@@ -1115,6 +1230,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 exit_target=exit_target,
                 decoded_condition_fingerprint=decoded_condition_fingerprint,
                 callbacks=callbacks,
+                query_session=query_session,
             )
             if not existing_break_nodes
             else ()
@@ -1160,15 +1276,27 @@ def materialize_unconsumed_loop_break_jcc_8616(
             continue
 
         materialized_for_key = False
-        for loop_node in reversed(_loop_nodes_with_body_8616(root)):
+        for loop_node in reversed(_loop_nodes_with_body_8616(root, query_session)):
             loop_body = _dynamic_attr_8616(loop_node, "body", None)
             if not isinstance(loop_body, CStatements):
                 continue
-            if not _root_contains_ins_addr_8616(loop_body, int(body_target)):
+            if not _root_contains_ins_addr_8616(
+                loop_body,
+                int(body_target),
+                query_session,
+            ):
                 continue
-            if _root_contains_ins_addr_8616(loop_body, int(false_target)):
+            if _root_contains_ins_addr_8616(
+                loop_body,
+                int(false_target),
+                query_session,
+            ):
                 continue
-            if isinstance(exit_target, int) and _root_contains_ins_addr_8616(loop_body, int(exit_target)):
+            if isinstance(exit_target, int) and _root_contains_ins_addr_8616(
+                loop_body,
+                int(exit_target),
+                query_session,
+            ):
                 continue
             if not existing_break_nodes:
                 semantic_break_guards = _semantic_break_guards_in_loop_8616(
@@ -1213,6 +1341,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
                     stats.materialized_count += 1
                     stats.removed_loop_header_duplicate_guard += 1
                     changed = True
+                    query_session.record_mutation()
                     materialized_for_key = True
                     existing_break_nodes_by_key = {
                         **existing_break_nodes_by_key,
@@ -1228,7 +1357,11 @@ def materialize_unconsumed_loop_break_jcc_8616(
                         int(false_target),
                     )
                 for break_node in existing_break_nodes:
-                    if not _root_contains_node_8616(loop_body, break_node):
+                    if not _root_contains_node_8616(
+                        loop_body,
+                        break_node,
+                        query_session,
+                    ):
                         if os.environ.get("INERTIA_DEBUG_JCC_REWRITE"):
                             log.warning("[unconsumed-loop-break-jcc] existing break not in loop body key=%r", key)
                         continue
@@ -1272,6 +1405,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
                     callbacks.record_condition_evidence(project, codegen, previous_condition, replacement_condition)
                     stats.materialized_count += 1
                     changed = True
+                    query_session.record_mutation()
                     materialized_for_key = True
                     break
                 if materialized_for_key:
@@ -1279,7 +1413,11 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 continue
 
             body_statements = _dynamic_sequence_8616(_dynamic_attr_8616(loop_body, "statements", ()))
-            insert_idx = _first_statement_index_containing_ins_addr_8616(body_statements, int(body_target))
+            insert_idx = _first_statement_index_containing_ins_addr_8616(
+                body_statements,
+                int(body_target),
+                query_session,
+            )
             if insert_idx is None:
                 continue
             guard = CIfBreak(callbacks.clone_c_value(guard_cond), codegen=codegen, cstyle_ifs=True)
@@ -1290,6 +1428,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
             callbacks.record_condition_evidence(project, codegen, decoded_cond, guard.condition)
             stats.materialized_count += 1
             changed = True
+            query_session.record_mutation()
             materialized_for_key = True
             existing_break_nodes_by_key = {**existing_break_nodes_by_key, key: (guard,)}
             break
@@ -1314,9 +1453,11 @@ def materialize_unconsumed_loop_break_jcc_8616(
             decoded_conditions_by_jcc,
             callbacks,
             stats,
+            query_session,
         )
         or changed
     )
+    query_session.record_stats(stats)
     if stats.raw_fact_count and stats.materialized_count == 0:
         stats.failure_count += 1
     return changed

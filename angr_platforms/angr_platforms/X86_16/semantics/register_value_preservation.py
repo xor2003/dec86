@@ -15,7 +15,10 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Protocol, cast
 
+from capstone import CsError
 from capstone.x86_const import X86_OP_REG
+
+from ..arch_86_16 import Arch86_16
 
 __all__ = (
     "AxValueView8616",
@@ -24,7 +27,9 @@ __all__ = (
     "decoded_byte_return_extension_8616",
     "decoded_instruction_preserves_register_value_8616",
     "decoded_instruction_self_clears_register_8616",
+    "decoded_register_bit_effects_8616",
     "register_value_family_8616",
+    "register_value_projection_8616",
 )
 
 
@@ -42,9 +47,11 @@ class _DecodedInstruction8616(Protocol):
 
     def reg_name(self, reg_id: int) -> str:
         """Return the backend register name for ``reg_id``."""
+        ...
 
     def regs_access(self) -> tuple[Sequence[int], Sequence[int]]:
         """Return exact registers read and written by this instruction."""
+        ...
 
 
 class _Instruction8616(Protocol):
@@ -69,24 +76,78 @@ class ByteReturnExtensionKind8616(StrEnum):
     ZERO_EXTEND_AL_TO_AX = "zero_extend_al_to_ax"
 
 
+_REGISTER_VALUE_VIEWS_8616: dict[str, tuple[str, int, int]] = {
+    name: (register.name, offset, size)
+    for register in Arch86_16.register_list
+    for name, offset, size in ((register.name, 0, register.size), *register.subregisters)
+}
 _REGISTER_VALUE_FAMILIES_8616: dict[str, frozenset[str]] = {
-    "ax": frozenset({"ax", "al", "ah"}),
-    "bx": frozenset({"bx", "bl", "bh"}),
-    "cx": frozenset({"cx", "cl", "ch"}),
-    "dx": frozenset({"dx", "dl", "dh"}),
+    parent: frozenset(name for name, view in _REGISTER_VALUE_VIEWS_8616.items() if view[0] == parent)
+    for parent, _offset, _size in _REGISTER_VALUE_VIEWS_8616.values()
 }
 
 
 def register_value_family_8616(register: str) -> frozenset[str]:
-    """Return all decoded register names sharing one 16-bit value."""
+    """Return names sharing architectural storage, including 80386 parents."""
     normalized = register.lower()
-    direct = _REGISTER_VALUE_FAMILIES_8616.get(normalized)
-    if direct is not None:
-        return direct
-    for family in _REGISTER_VALUE_FAMILIES_8616.values():
-        if normalized in family:
-            return family
-    return frozenset({normalized})
+    view = _REGISTER_VALUE_VIEWS_8616.get(normalized)
+    return _REGISTER_VALUE_FAMILIES_8616[view[0]] if view is not None else frozenset({normalized})
+
+
+def register_value_projection_8616(writer: str, reader: str) -> tuple[int, int] | None:
+    """Return bit shift and width when a writer completely covers a reader.
+
+    Storage-family membership alone is not coverage: AL excludes AH, and AX
+    excludes the upper EAX word. Layout comes from the Frontend register owner.
+    """
+    written = _REGISTER_VALUE_VIEWS_8616.get(writer.lower())
+    requested = _REGISTER_VALUE_VIEWS_8616.get(reader.lower())
+    if written is None or requested is None:
+        return None
+    parent, offset, size = written
+    read_parent, read_offset, read_size = requested
+    if parent != read_parent or read_offset < offset or read_offset + read_size > offset + size:
+        return None
+    return (read_offset - offset) * 8, read_size * 8
+
+
+def _register_overlap_mask_8616(tracked: str, other: str) -> int | None:
+    """Return overlapping bits relative to the tracked architectural view."""
+    left = _REGISTER_VALUE_VIEWS_8616.get(tracked.lower())
+    right = _REGISTER_VALUE_VIEWS_8616.get(other.lower())
+    if left is None or right is None:
+        return None
+    if left[0] != right[0]:
+        return 0
+    start = max(left[1], right[1])
+    end = min(left[1] + left[2], right[1] + right[2])
+    return ((1 << ((end - start) * 8)) - 1) << ((start - left[1]) * 8) if end > start else 0
+
+
+def decoded_register_bit_effects_8616(instruction: object, register: str) -> tuple[int, int] | None:
+    """Return incoming read and written bit masks, or refuse missing detail.
+
+    Masks are relative to the requested view. Zero idioms consume no incoming
+    value even though Capstone reports their repeated register as a read.
+    """
+    decoded = _decoded_instruction_surface_8616(instruction)
+    if decoded is None or register_value_projection_8616(register, register) is None:
+        return None
+    try:
+        read_ids, write_ids = decoded.regs_access()
+        masks = [0, 0]
+        for index, register_ids in enumerate((read_ids, write_ids)):
+            for register_id in register_ids:
+                name = decoded.reg_name(register_id)
+                mask = _register_overlap_mask_8616(register, name)
+                if mask is None:
+                    return None
+                if index == 0 and decoded_instruction_self_clears_register_8616(instruction, name):
+                    continue
+                masks[index] |= mask
+    except (AttributeError, TypeError, ValueError, CsError):
+        return None
+    return masks[0], masks[1]
 
 
 def _decoded_instruction_surface_8616(
@@ -97,13 +158,13 @@ def _decoded_instruction_surface_8616(
     candidates: tuple[_DecodedInstruction8616, ...]
     try:
         candidates = (wrapped.insn, cast(_DecodedInstruction8616, instruction))
-    except AttributeError:
+    except (AttributeError, CsError):
         candidates = (cast(_DecodedInstruction8616, instruction),)
     for decoded in candidates:
         try:
             tuple(decoded.operands)
             _ = decoded.reg_name
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError, CsError):
             continue
         return decoded
     return None
@@ -186,11 +247,17 @@ def decoded_instruction_self_clears_register_8616(
     instruction: object,
     register: str,
 ) -> bool:
-    """Prove that exact ``sub reg, reg`` or ``xor reg, reg`` clears a register."""
+    """Prove a zero idiom clears every bit of the requested register view.
+
+    A word clear covers its byte views; a byte clear neither clears the other
+    byte nor the parent word. Register-family overlap alone is insufficient.
+    """
     decoded = cast(_Instruction8616, instruction)
     try:
         mnemonic = decoded.mnemonic.lower()
     except AttributeError:
         return False
     repeated = _same_decoded_register_pair_8616(decoded)
-    return mnemonic in {"sub", "xor"} and repeated in register_value_family_8616(register)
+    normalized = register.lower()
+    covers_view = register_value_projection_8616(repeated or "", normalized) is not None
+    return mnemonic in {"sub", "xor"} and covers_view

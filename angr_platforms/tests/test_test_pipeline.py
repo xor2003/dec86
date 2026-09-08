@@ -99,6 +99,7 @@ def test_unit_lane_promotes_ultradecompiler_borrow_contracts():
     assert "angr_platforms/tests/test_omf_pat_lidata.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
     assert "angr_platforms/tests/test_x86_16_alias_register_mvp.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
     assert "angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_stack_compat.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
 
 
 def test_default_tier_keeps_full_msc6_tiny_pipeline():

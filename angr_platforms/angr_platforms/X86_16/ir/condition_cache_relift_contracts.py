@@ -39,6 +39,7 @@ class ConditionCacheReliftFailureReason8616(StrEnum):
     BYTE_READ_FAILED = "byte_read_failed"
     VEX_LIFT_FAILED = "vex_lift_failed"
     EXPECTED_CONDITION_MISSING = "expected_condition_missing"
+    CONDITION_RECOVERY_FAILED = "condition_recovery_failed"
 
 
 @dataclass(frozen=True, slots=True)

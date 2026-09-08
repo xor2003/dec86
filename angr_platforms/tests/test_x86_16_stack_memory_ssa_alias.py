@@ -163,17 +163,21 @@ def test_stack_memory_ssa_alias_preserves_contained_byte_view() -> None:
     assert alias_overlap.right_storage == alias_overlap.intersection_storage
 
 
-def test_stack_memory_ssa_alias_refuses_inconsistent_overlap_relation() -> None:
+@pytest.mark.parametrize("unclassifiable_position", (None, 0, 1, 2))
+def test_stack_memory_ssa_alias_refuses_inconsistent_overlap_relation(unclassifiable_position) -> None:
     word = _bp_slot(-4, 2)
     byte = _bp_slot(-3, 1)
+    addresses = [word, byte, byte]
+    if unclassifiable_position is not None:
+        addresses[unclassifiable_position] = replace(
+            addresses[unclassifiable_position], status=AddressStatus.PROVISIONAL,
+        )
     function_ssa = SSAFunctionArtifact(
         function_addr=0x1000,
         blocks=(),
         memory_overlaps=(
             SSAMemoryOverlap8616(
-                word,
-                byte,
-                byte,
+                *addresses,
                 SSAMemoryOverlapRelation8616.RIGHT_CONTAINS_LEFT,
             ),
         ),
@@ -185,7 +189,11 @@ def test_stack_memory_ssa_alias_refuses_inconsistent_overlap_relation() -> None:
     assert artifact.complete is True
     assert artifact.overlaps == ()
     assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 1
-    assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCONSISTENT_OVERLAP_STORAGE
+    if unclassifiable_position is None:
+        assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCONSISTENT_OVERLAP_STORAGE
+    else:
+        assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.ALIAS_FAILURE
+        assert artifact.refusals[0].address is addresses[unclassifiable_position]
 
 
 def test_stack_memory_ssa_alias_refuses_incomplete_composed_access() -> None:
@@ -213,7 +221,8 @@ def test_stack_memory_ssa_alias_refuses_incomplete_composed_access() -> None:
     assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCOMPLETE_ACCESS_SLICES
 
 
-def test_stack_memory_ssa_alias_refuses_phi_with_mixed_storage_identity() -> None:
+@pytest.mark.parametrize("provisional_position", (None, 0, 1, 2))
+def test_stack_memory_ssa_alias_refuses_phi_with_mixed_storage_identity(provisional_position) -> None:
     target = _bp_slot(-2, 2, version=3)
     function_ssa = SSAFunctionArtifact(
         function_addr=0x1000,
@@ -231,12 +240,22 @@ def test_stack_memory_ssa_alias_refuses_phi_with_mixed_storage_identity() -> Non
         ),
     )
 
+    if provisional_position is not None:
+        phi = function_ssa.memory_phi_nodes[0]
+        addresses = [phi.target, *(item.address for item in phi.incoming)]
+        addresses[provisional_position] = replace(addresses[provisional_position], status=AddressStatus.PROVISIONAL)
+        phi = replace(phi, target=addresses[0], incoming=tuple(
+            replace(item, address=address) for item, address in zip(phi.incoming, addresses[1:], strict=True)
+        ))
+        function_ssa = replace(function_ssa, memory_phi_nodes=(phi,))
     artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
 
     assert artifact.complete is True
     assert artifact.facts == ()
     assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 1
-    assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCONSISTENT_PHI_STORAGE
+    expected = (StackMemoryAliasRefusalKind8616.INCONSISTENT_PHI_STORAGE
+                if provisional_position is None else StackMemoryAliasRefusalKind8616.ALIAS_FAILURE)
+    assert artifact.refusals[0].kind is expected
 
 
 def test_stack_memory_ssa_alias_refuses_all_inputs_when_upstream_is_incomplete() -> None:

@@ -9,6 +9,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CFunctionCall,
     CStatements,
+    CUnaryOp,
     CVariable,
 )
 from angr.sim_type import SimTypeShort
@@ -274,13 +275,15 @@ def test_stack_subview_projection_does_not_rewrite_assignment_lvalue() -> None:
     assert codegen._inertia_stack_subview_last_stats_8616.raw_fact_count == 0
 
 
-def test_stack_subview_projection_materializes_direct_low_and_high_reads() -> None:
+@pytest.mark.parametrize("context", ["read", "Reference", "AddressOf"])
+def test_stack_subview_projection_distinguishes_value_and_address(context: str) -> None:
     for relative_offset in (0, 1):
         codegen = _DummyCodegen()
         word = _stack_var(-4, 2, "local_4", codegen)
         byte = _stack_var(-4 + relative_offset, 1, "byte_view", codegen)
         destination = CVariable(SimpleNamespace(name="inertia_ax"), codegen=codegen)
-        assignment = CAssignment(destination, byte, codegen=codegen)
+        rhs = byte if context == "read" else CUnaryOp(context, byte, codegen=codegen)
+        assignment = CAssignment(destination, rhs, codegen=codegen)
         codegen.cfunc = SimpleNamespace(
             addr=FUNCTION_ADDR,
             statements=CStatements([assignment], codegen=codegen),
@@ -288,7 +291,13 @@ def test_stack_subview_projection_materializes_direct_low_and_high_reads() -> No
         )
         _attach_word_proof(codegen, -4, view_offsets=(relative_offset,))
 
-        assert materialize_contained_stack_subviews_8616(codegen) is True
+        changed = materialize_contained_stack_subviews_8616(codegen)
+        if context != "read":
+            assert changed is False
+            assert assignment.rhs.operand is byte
+            assert codegen._inertia_stack_subview_last_stats_8616.raw_fact_count == 0
+            continue
+        assert changed is True
         assert isinstance(assignment.rhs, CBinaryOp) and assignment.rhs.op == "And"
         if relative_offset:
             assert isinstance(assignment.rhs.lhs, CBinaryOp) and assignment.rhs.lhs.op == "Shr"

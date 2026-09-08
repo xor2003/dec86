@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -150,7 +151,8 @@ def test_lowers_typed_clobbered_wide_projection_to_standalone_call() -> None:
     assert statement.expr is call
 
 
-def test_lowers_typed_void_masked_subregister_projection() -> None:
+@pytest.mark.parametrize("recognized_view", (True, False))
+def test_lowers_typed_void_masked_subregister_projection(monkeypatch, recognized_view) -> None:
     """A void call cannot remain as the value operand of an angr byte merge."""
     codegen, root, call, assignment = _call_result_codegen(
         return_used=False,
@@ -197,10 +199,16 @@ def test_lowers_typed_void_masked_subregister_projection() -> None:
         codegen=codegen,
     )
 
-    assert lower_unobserved_call_result_assignments_8616(codegen) is True
-    [statement] = root.statements
-    assert isinstance(statement, CExpressionStatement)
-    assert statement.expr is call
+    if not recognized_view:
+        monkeypatch.setattr(unobserved_module, "physical_register_view_8616", lambda _node: None)
+        monkeypatch.setattr(unobserved_module, "runtime_gp_expression_view_8616", lambda _node: None)
+        assert lower_unobserved_call_result_assignments_8616(codegen) is False
+        assert root.statements == [assignment]
+    else:
+        assert lower_unobserved_call_result_assignments_8616(codegen) is True
+        [statement] = root.statements
+        assert isinstance(statement, CExpressionStatement)
+        assert statement.expr is call
 
 
 def test_splits_clobbered_insert_base_call_from_retained_inserted_value() -> None:

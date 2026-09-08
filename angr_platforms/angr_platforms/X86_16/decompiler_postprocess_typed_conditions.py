@@ -76,6 +76,7 @@ from .structuring.condition_lowering import (
     attach_condition_segment_access_provenance_8616,
     condition_origin_tags_8616,
     condition_segment_access_tags_8616,
+    materialize_binary_ir_value_8616,
     materialize_condition_stack_declaration_view_8616,
     materialize_indexed_segmented_condition_value_8616,
     materialize_typed_condition_stack_operand_8616,
@@ -350,31 +351,9 @@ def _build_c_expr_for_operand(
     def _impl() -> object | None:
         """Convert a ConditionIR operand (reg name string or int) to a C AST node."""
         if isinstance(operand, IRBinaryValue):
-            lhs = _build_c_expr_for_operand(
-                project,
-                operand.lhs,
-                codegen,
-                cond,
-                apply_condition_value_view=apply_condition_value_view,
-            )
-            rhs = _build_c_expr_for_operand(
-                project,
-                operand.rhs,
-                codegen,
-                cond,
-                apply_condition_value_view=apply_condition_value_view,
-            )
-            structured_op = {
-                "add": "Add",
-                "and": "And",
-                "or": "Or",
-                "shr": "Shr",
-                "sub": "Sub",
-                "xor": "Xor",
-            }.get(operand.op)
-            if lhs is None or rhs is None or structured_op is None:
-                return None
-            return cast(object, CBinaryOp(structured_op, lhs, rhs, codegen=codegen))
+            return materialize_binary_ir_value_8616(operand, codegen, lambda value: _build_c_expr_for_operand(
+                project, value, codegen, cond, apply_condition_value_view=apply_condition_value_view,
+            ))
         if isinstance(operand, IRValue):
             if operand.space == MemSpace.CONST:
                 return cast(object, CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen))

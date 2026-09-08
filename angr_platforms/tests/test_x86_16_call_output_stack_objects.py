@@ -208,11 +208,12 @@ def test_call_output_stack_fields_use_typed_call_ir_and_aggregate_boundary():
     assert isinstance(codegen.cfunc.variable_manager.variable_types[fact.base_variable], SimStruct)
     assert codegen.show_local_types is True
 
+    refresh_count_before_pruning = codegen.cfunc.refresh_count
     removed = prune_materialized_call_output_stack_carriers_8616(codegen)
 
     assert removed == 2
     assert all(variable not in codegen.cfunc.variables_in_use for variable in carrier_variables)
-    assert codegen.cfunc.refresh_count == 1
+    assert codegen.cfunc.refresh_count == refresh_count_before_pruning + 1
 
 
 def test_call_output_stack_fields_use_machine_bp_coordinate_registry():

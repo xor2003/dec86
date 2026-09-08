@@ -229,8 +229,14 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
         return node
 
     def should_process_child(parent: object, attr: str) -> bool:
-        """Keep assignment lvalues outside this rvalue materialization pass."""
-        return not (isinstance(parent, structured_c.CAssignment) and attr == "lhs")
+        """Keep assignment lvalues and address operands outside value projection."""
+        if isinstance(parent, structured_c.CAssignment) and attr == "lhs":
+            return False
+        return not (
+            isinstance(parent, structured_c.CUnaryOp)
+            and parent.op in {"Reference", "AddressOf"}
+            and attr == "operand"
+        )
 
     changed = _replace_c_children_8616(root, transform, should_process_child=should_process_child)
     _increment_codegen_counter_8616(

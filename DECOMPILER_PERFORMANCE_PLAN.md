@@ -10,6 +10,11 @@ compiled-import gates continue; fixing an optimization pass that deletes live
 code is correctness work and is not deferred. On resumption, re-profile the
 current HEAD before relying on the historical measurements below.
 
+Compiler policy update: retain accepted mypyc work. Cython is a possible later
+kernel experiment, not an active migration task. Do not add Cython dependencies,
+build targets, annotations, or rewrite modules now. Revisit it only after the
+performance work is resumed and a current profile justifies the experiment.
+
 ## Objective
 
 Reduce cold and incremental decompilation time without changing recovered
@@ -309,11 +314,31 @@ Definition of Failure:
 - completion order changes rendered output or diagnostics;
 - utilization changes without a repeatable full-run improvement.
 
-### 5. Compile Only Residual Measured Kernels With mypyc
+### 5. Compile Only Residual Measured Kernels
 
 Reason: broad native-compilation candidates have already failed the acceptance
 threshold. Native compilation is justified only after algorithmic reuse removes
 duplicated work and a remaining owned Python kernel still dominates CPU time.
+
+Keep ordinary typed Python for orchestration and dynamic angr integration.
+Retain mypyc for owned, object-heavy analysis where measured results justify
+it. A later Cython experiment may target compact-array, bitset, numeric, or
+graph/dataflow kernels, but these are candidates, not established hotspots.
+
+Python-style Cython with equivalent C-level types and declarations can produce
+comparable native code to traditional `.pyx` syntax. The important distinction
+is native operations versus Python-object operations, not the file extension.
+Neither Cython nor mypyc is universally faster. Compiling wrappers does not
+remove repeated analysis, Python-object allocation, solver time, or external
+compiler/subprocess costs. See [Cython pure-Python mode](https://docs.cython.org/en/latest/src/tutorial/pure.html)
+and [mypyc performance guidance](https://mypyc.readthedocs.io/en/stable/performance_tips_and_tricks.html).
+
+If Cython is later justified, compare one isolated kernel against interpreted
+Python and mypyc on the same workload before expanding adoption. Use one
+compiler per module, with small Python-callable interfaces between modules;
+do not compile a module with both. Batch inputs rather than crossing the
+boundary once per AST node, and keep compiler-specific internal classes private
+where practical. Do not translate the whole decompiler as a speed experiment.
 
 Definition of Done:
 
@@ -327,14 +352,38 @@ Definition of Done:
 - the representative end-to-end benchmark improves by at least 10% without a
   cold-start outlier;
 - interpreted development remains usable without a native rebuild.
+- a second compiler repays its build, packaging, typing, debugging, and CI cost;
+- integer widths, overflow, shifts, division, and exception behavior remain
+  explicit and correct in both interpreted and compiled modes; Python `int`
+  must not be silently replaced by a fixed-width C integer;
+- types, docstrings, layer ownership, and mandatory checks remain intact.
 
 Definition of Failure:
 
 - only a microbenchmark improves;
 - conversion or dynamic-object traffic consumes the native gain;
-- architecture or typed contracts are distorted to satisfy mypyc;
+- architecture or typed contracts are distorted to satisfy either compiler;
 - output, evidence, validation, or deterministic behavior differs;
 - ordinary interpreted development requires rebuilding native extensions.
+
+## Development Feedback
+
+Reason: slow diagnosis and repeated test setup also extend delivery time;
+runtime compilation alone cannot resolve them. On resumption, prioritize
+current profiling and elimination of repeated work before compiler expansion.
+Use ownership-based focused tests during development, retain mandatory broad
+and DOS round-trip gates, and share expensive immutable fixtures only when
+test isolation and coverage are demonstrably preserved.
+
+Definition of Done: measure edit-to-result latency, collection/setup time,
+repeated decompilation work, and slowest tests separately; preserve all required
+coverage. Stage probes must demonstrate that they ran in the actual worker,
+and captured diagnostics must remain available outside redirected streams.
+
+Definition of Failure: remove non-duplicate behavioral tests, weaken gates,
+share mutable analysis state between tests, confuse a silent probe with a
+non-executed pass, or call faster microbenchmarks faster development without
+measuring the complete feedback loop. No new speedup is claimed by this policy.
 
 ## Benchmark Protocol
 

@@ -61,6 +61,7 @@ from ..callsite_summary import callsite_machine_frame_kind_8616
 from ..condition_call_effects import classify_condition_call_effects_8616
 from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue, MemSpace
+from ..ir.function_ssa_registry import registered_function_ssa_artifact_8616
 from ..lowering.call_execution_frame_carriers import (
     CallExecutionFrameCarrierStats8616,
     prune_consumed_call_execution_frame_carriers_8616,
@@ -92,6 +93,7 @@ from .condition_evidence_closure import (
     ConditionEvidenceClosure8616,
     classify_condition_evidence_closure_8616,
 )
+from .condition_exit_normalization import transparent_condition_exit_8616
 from .condition_lowering import (
     SameBlockRegisterAssignmentIndex8616,
     build_same_block_register_assignment_index_8616,
@@ -883,6 +885,16 @@ def _materialize_cfg_condition_chain_expr_8616(
     required_conditions: tuple[ConditionIR, ...] = (),
 ) -> CExpression | None:
     """Materialize one target-directed predicate from typed conditions and CFG."""
+    metadata = cast(_ConditionMaterializationCodegen8616, codegen)
+    try:
+        function_addr = cast(_ConditionMaterializationCFunction8616, metadata.cfunc).addr
+    except AttributeError:
+        function_addr = None
+    if isinstance(function_addr, int):
+        resolution = registered_function_ssa_artifact_8616(project, function_addr)
+        false_target = transparent_condition_exit_8616(
+            resolution.artifact, false_target, successors, stop_at=true_target
+        )
     consumed_conditions: list[ConditionIR] = []
     assignment_index = build_same_block_register_assignment_index_8616(codegen)
 
@@ -1043,7 +1055,7 @@ def _materialize_cfg_condition_chain_expr_8616(
 
     root_addr = root_condition.block_addr
     root_added = isinstance(root_addr, int) and root_addr not in active_addresses
-    if root_added:
+    if root_added and isinstance(root_addr, int):
         active_addresses.add(root_addr)
     try:
         result = build_from_condition(root_condition)
@@ -1531,6 +1543,12 @@ def _materialize_cfg_single_branch_expr_8616(
                 true_target = body_target
                 break
     if replacement is None:
+        # Root-edge orientation does not prove every guard in a compound body.
+        if any(
+            isinstance(node, CBinaryOp) and node.op in {"LogicalAnd", "LogicalOr"}
+            for node in _iter_c_nodes_deep_8616(structured_condition)
+        ):
+            return None
         materialized = materialize_condition_ir_expression_8616(
             project,
             codegen,
@@ -1867,6 +1885,8 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 semantic_root_fact = conditions_by_src.get(key[0]) if key is not None else None
                 if (
                     semantic_root_fact is not None
+                    and isinstance(semantic_root_fact.taken_target, int)
+                    and isinstance(semantic_root_fact.fallthrough_target, int)
                     and key == (semantic_root_fact.src_insn, semantic_root_fact.block_addr)
                     and node.else_node is not None
                 ):
@@ -1969,10 +1989,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 )
                 if ownership.selected:
                     owned_arms = materialize_multi_arm_condition_owners_8616(
-                        cast(
-                            tuple[tuple[CExpression, object], ...],
-                            condition_and_nodes,
-                        ),
+                        condition_and_nodes,
                         ownership,
                         lambda fact: materialize_condition_ir_expression_8616(
                             project,

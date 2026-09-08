@@ -238,7 +238,7 @@ def test_cfg_context_emits_only_live_shift_status_bit(opcode: str) -> None:
     assert session.stats.complete
 
 
-def test_cfg_context_consumes_incdec_flags_materialized_as_typed_jcc() -> None:
+def test_cfg_context_retains_live_incdec_flags_for_typed_jcc() -> None:
     project, function = _project_function(
         bytes.fromhex("48 7d00 39d8 c3"),
         function_starts=(0x1000,),
@@ -252,7 +252,8 @@ def test_cfg_context_consumes_incdec_flags_materialized_as_typed_jcc() -> None:
         assert candidate.dead_writes == INCDEC_STATUS_FLAG_WRITES_8616 & ~(
             StatusFlag8616.SIGN | StatusFlag8616.OVERFLOW
         )
-        assert _flags_puts(project, 0x1000) == ()
+        # A typed branch does not prove its architectural SF/OF outputs dead.
+        assert _flags_puts(project, 0x1000)
         assert session.materialized_addresses == frozenset({0x1000})
 
     assert session.stats.complete

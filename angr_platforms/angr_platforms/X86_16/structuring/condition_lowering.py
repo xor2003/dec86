@@ -33,6 +33,7 @@ from ..ir.core import (
 from ..lowering.condition_stack_operands import materialize_typed_condition_stack_operand_8616
 from ..lowering.stack_variable_binding import StackVariableBinding, stable_stack_binding_tags_8616
 from ..widening.segmented_load_identity import segmented_load_identity_8616
+from .condition_binary_value import materialize_binary_ir_value_8616
 from .condition_stack_views import materialize_condition_stack_declaration_view_8616
 from .indexed_condition_values import materialize_indexed_segmented_condition_value_8616
 
@@ -52,6 +53,7 @@ __all__ = [
     "condition_segment_access_tags_8616",
     "lower_ir_value_to_c_expr_8616",
     "lower_typed_condition_to_c_expr_8616",
+    "materialize_binary_ir_value_8616",
     "materialize_condition_stack_declaration_view_8616",
     "materialize_indexed_segmented_condition_value_8616",
     "materialize_same_block_register_projection_8616",
@@ -219,13 +221,17 @@ def build_same_block_register_assignment_index_8616(
 
 
 def lower_ir_value_to_c_expr_8616(
-    value: IRValue,
+    value: IRValue | IRBinaryValue,
     project: object,
     codegen: object,
     *,
     resolve_register_name: bool = False,
 ) -> object | None:
     """Convert typed IR value evidence into a structured-codegen C expression."""
+    if isinstance(value, IRBinaryValue):
+        return materialize_binary_ir_value_8616(value, codegen, lambda operand: lower_ir_value_to_c_expr_8616(
+            operand, project, codegen, resolve_register_name=resolve_register_name,
+        ))
     return _ir_value_to_cvar_8616(value, project, codegen, resolve_register_name=resolve_register_name)
 
 

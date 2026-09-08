@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import inspect
 import subprocess
@@ -14,7 +15,9 @@ import pytest
 import inertia_decompiler.cli_core as cli_core
 from inertia_decompiler.accepted_payload_integrity import (
     AcceptedPayloadIntegrityVerdict8616,
+    AcceptedPayloadWorkResult8616,
     verify_accepted_payload_integrity_8616,
+    verify_function_work_result_payload_integrity_8616,
 )
 from inertia_decompiler.direct_addr_failure_family import build_failure_family_snapshot
 from inertia_decompiler.work_items import FunctionWorkResult
@@ -57,6 +60,69 @@ def test_accepted_payload_integrity_rejects_post_validation_replacement() -> Non
 
     assert report.verdict is AcceptedPayloadIntegrityVerdict8616.VALIDATED_PAYLOAD_MISMATCH
     assert not report.passed
+
+
+@pytest.mark.parametrize("acceptance_name", [
+    "evidence_acceptance", "partial_acceptance", "robust_acceptance",
+    "retry_acceptance", "checked_acceptance", "helper_acceptance",
+])
+def test_direct_recovery_replaces_payload_and_proofs_together(acceptance_name):
+    """Exercise the actual nested promotion expression without constructing a DOS project."""
+    tree = ast.parse(inspect.getsource(cli_core._run_direct_addr_cli_8616))
+    promotions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "replace"
+        and any(
+            keyword.arg == "payload" and (
+                (isinstance(keyword.value, ast.Attribute)
+                and isinstance(keyword.value.value, ast.Name) and keyword.value.value.id == acceptance_name)
+                or (acceptance_name == "helper_acceptance" and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "helper_payload")
+            )
+            for keyword in node.keywords
+        )
+    ]
+    assert len(promotions) == 1
+    previous = _accepted_result("int sub_1000(void) { return 0; }\n")
+    accepted = _accepted_result("int sub_1000(void) { return 1; }\n")
+    acceptance = SimpleNamespace(
+        gcc_checked_payload=accepted.payload,
+        validated_payload_hash=accepted.validated_payload_hash,
+        gcc_checked_payload_hash=accepted.gcc_checked_payload_hash,
+    )
+    result = eval(compile(ast.Expression(promotions[0]), "<direct-promotion>", "eval"), {
+        "replace": replace, "direct_result": previous,
+        acceptance_name: acceptance, "evidence_snapshot": accepted.tail_validation,
+        "robust_result": previous, "retry_result": previous,
+        "robust_snapshot": accepted.tail_validation, "func": previous.function, "cfg": None,
+        "helper_status": "ok", "helper_payload": accepted.payload,
+        "helper_tail_validation_snapshot": accepted.tail_validation,
+    })
+    assert result.payload == accepted.payload
+    assert verify_function_work_result_payload_integrity_8616(result).passed
+    assert previous.payload != result.payload
+
+
+@pytest.mark.parametrize("missing_proof, expected", [
+    (None, AcceptedPayloadIntegrityVerdict8616.PASSED),
+    ("validation", AcceptedPayloadIntegrityVerdict8616.MISSING_VALIDATED_HASH),
+    ("compiler", AcceptedPayloadIntegrityVerdict8616.MISSING_COMPILER_HASH),
+])
+def test_verifier_consumes_immutable_result_without_changing_proofs(
+    missing_proof: str | None, expected: AcceptedPayloadIntegrityVerdict8616,
+) -> None:
+    result = _accepted_result("int sub_1000(void) { return 1; }\n")
+    if missing_proof == "validation":
+        result = replace(result, validated_payload_hash=None)
+    elif missing_proof == "compiler":
+        result = replace(result, gcc_checked_payload_hash=None)
+    original = replace(result)
+    contract: AcceptedPayloadWorkResult8616 = result
+
+    report = verify_function_work_result_payload_integrity_8616(contract)
+
+    assert report.verdict is expected
+    assert result == original
 
 
 def test_accepted_payload_integrity_import_stays_outside_work_item_graph() -> None:

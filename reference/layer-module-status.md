@@ -25,7 +25,6 @@ Current audit of the modules that previously looked unused:
 | `semantics.evidence_cache` | `PRODUCTION_WIRED` | semantics | Raw semantic access cache. |
 | `postprocess.simplify` | `COMPATIBILITY_WRAPPER` | postprocess | Re-export wrapper for cleanup-only simplification. |
 | `quality` | `PRODUCTION_WIRED` | diagnostics | Metrics used by the MSC6 example harness. |
-| `postprocess.condition_patterns` | `TEST_ONLY_PROTOTYPE` | semantics | Condition-strengthening prototype; not admitted under postprocess. |
 | `postprocess.cleanup` | `COMPATIBILITY_WRAPPER` | postprocess | Re-export wrapper for existing cleanup stage. |
 | `lowering.segmented_lowering` | `PRODUCTION_WIRED` | lowering | Typed segmented-address classifier. |
 | `ir.ir_canonicalize_8616` | `TEST_ONLY_PROTOTYPE` | IR | Local expression canonicalizer prototype only. |

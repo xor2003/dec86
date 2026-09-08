@@ -339,10 +339,7 @@ def published_status_flag_lift_artifact_8616(
         info = cast(_FunctionBoundary8616, function).info
     except AttributeError:
         return None
-    return cast(
-        StatusFlagLiftArtifact8616 | None,
-        decode_status_flag_lift_artifact_8616(info.get("status_flag_lift_artifact_8616")),
-    )
+    return decode_status_flag_lift_artifact_8616(info.get("status_flag_lift_artifact_8616"))
 
 
 @contextmanager

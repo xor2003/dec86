@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from angr_platforms.X86_16 import caller_return_use_contracts, callsite_summary
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.ir import (
     IRAddress,
@@ -28,6 +29,12 @@ from angr_platforms.X86_16.semantics.call_output_contracts import (
     CallOutputShape8616,
 )
 from angr_platforms.X86_16.semantics.call_outputs import materialize_call_outputs_8616
+
+
+def test_callsite_summary_exports_authoritative_return_use_kind() -> None:
+    """Keep compatibility imports bound to the owned caller-use enum."""
+    assert "CallsiteReturnUseKind8616" in callsite_summary.__all__
+    assert callsite_summary.CallsiteReturnUseKind8616 is caller_return_use_contracts.CallsiteReturnUseKind8616
 
 
 def _artifact(*, extra_predecessor: bool = False) -> IRFunctionArtifact:
@@ -110,11 +117,21 @@ def test_dx_ax_call_outputs_are_definitions_on_exact_return_edge() -> None:
 
 def test_call_output_projection_preserves_logical_memory_artifact() -> None:
     marker = empty_ir_logical_memory_artifact_8616(0x1000)
-    source = replace(_artifact(), logical_memory=marker)
+    evidence = object()
+    source = replace(_artifact(), logical_memory=marker, summary={"prior_evidence": evidence})
 
     result = materialize_call_outputs_8616(source, {0x1003: _summary()})
 
     assert result.function.logical_memory is marker
+    assert source.summary == {"prior_evidence": evidence}
+    assert result.function.summary == {
+        "prior_evidence": evidence,
+        "call_output_raw_fact_count": 1,
+        "call_output_normalized_fact_count": 1,
+        "call_output_classified_fact_count": 1,
+        "call_output_materialized_count": 1,
+        "call_output_failure_count": 0,
+    }
 
 
 def test_call_output_projection_rebases_logical_memory_execution_slice() -> None:

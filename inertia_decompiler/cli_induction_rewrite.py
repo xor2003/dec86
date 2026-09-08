@@ -104,6 +104,7 @@ def _condition_index_key(node: object) -> BaseKey | None:
 
 
 def _unwrap_boolified_condition(node: object) -> structured_c.CBinaryOp | None:
+    """Extract a comparison from supported boolean wrappers without changing it."""
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Not":
         return None
     operand = node.operand
@@ -125,7 +126,6 @@ def _unwrap_boolified_condition(node: object) -> structured_c.CBinaryOp | None:
     if not isinstance(ite_cond, structured_c.CBinaryOp):
         return None
     return ite_cond
-    return None
 
 
 def _induction_candidate_index_key(candidate: object) -> object | None:

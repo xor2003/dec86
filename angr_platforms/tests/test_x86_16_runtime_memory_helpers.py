@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import CConstant, CFunctionCall, CUnaryOp
 from angr.sim_type import SimTypeShort
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -57,6 +58,43 @@ def test_consumed_push_purity_keeps_ordinary_calls() -> None:
     assert _pure_consumed_push_carrier_expression_8616(ordinary_call) is False
 
 
+@pytest.mark.parametrize("tag,nested_call,expected", [
+    ("MEM_U16", False, 2),
+    (None, False, 0),
+    ("MEM_U8", False, 0),
+    ("MEM_U16", True, 0),
+])
+def test_indexed_prefix_survives_only_proven_read_helper(tag, nested_call, expected):
+    """A generated read preserves bounds, but its unknown argument call does not."""
+    from angr_platforms.X86_16.structuring.indexed_stack_ranges import (
+        collect_indexed_stack_read_proofs_8616,
+    )
+    from test_x86_16_indexed_stack_ranges import (
+        _Codegen as RangeCodegen,
+    )
+    from test_x86_16_indexed_stack_ranges import (
+        _const,
+        _signed_remainder_fact,
+        _two_loop_fixture,
+    )
+
+    root, random_read, high_read = _two_loop_fixture()
+    codegen = RangeCodegen()
+    pointer = (
+        CFunctionCall("unknown", None, [], codegen=codegen)
+        if nested_call else _const(0, codegen)
+    )
+    helper = CFunctionCall(
+        "MEM_U16", None, [pointer], codegen=codegen,
+        tags={"inertia_x86_16_runtime_pointer_helper": tag},
+    )
+    root.statements[-1].body.statements.insert(1, helper)
+    report = collect_indexed_stack_read_proofs_8616(
+        root, direct_stack_move_facts=(_signed_remainder_fact(),),
+    )
+    assert report.materialized_count == expected
+    if expected:
+        assert {proof.read_node_id for proof in report.proofs} == {id(random_read), id(high_read)}
 def test_consumed_push_purity_accepts_value_only_dereference() -> None:
     """An exact consumed PUSH may discard its duplicate pure memory read."""
     codegen = _Codegen()

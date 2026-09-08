@@ -193,3 +193,30 @@ def test_transport_refuses_classified_evidence_without_materialization() -> None
 
     with pytest.raises(PipelineHardError, match="not fully materialized"):
         segment_program_function_evidence_from_record_8616(record)
+
+
+@pytest.mark.parametrize("schema", [True, 1.0, "1", None, 2])
+def test_transport_requires_integer_schema_version(schema) -> None:
+    record = _function(0x100).to_dict()
+    record["schema"] = schema
+    with pytest.raises(ValueError, match="schema"):
+        segment_program_function_evidence_from_record_8616(record)
+
+
+@pytest.mark.parametrize("container,field,label", [
+    ("accesses", "verdict", "access verdict"),
+    ("control_transfers", "kind", "transfer kind"),
+    ("control_transfers", "distance", "transfer distance"),
+    ("control_transfers", "verdict", "transfer verdict"),
+])
+@pytest.mark.parametrize("value", [None, 1, ""])
+def test_transport_identifies_invalid_enum_field(container, field, label, value) -> None:
+    evidence = _function(
+        0x100,
+        transfers=(_transfer(0x110, 0x200),),
+        accesses=(SegmentProgramAccessEvidence8616(0x100, 0x106, "ds", "entry:ds", SegmentFactVerdict.PROVEN),),
+    )
+    record = evidence.to_dict()
+    record[container][0][field] = value
+    with pytest.raises(ValueError, match=label):
+        segment_program_function_evidence_from_record_8616(record)

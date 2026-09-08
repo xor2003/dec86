@@ -939,13 +939,14 @@ def emit_compact_summary() -> None:
 
 
 def _flush_and_shutdown_otel() -> None:
+    """Flush and shut down once, passing the provider a positive millisecond limit."""
     provider = _STATE.otel_provider
     if provider is None or _STATE.otel_shutdown:
         return
     _STATE.otel_shutdown = True
-    timeout_ms = max(1, _env_int(TRACE_FORCE_FLUSH_MS_ENV, 3000))
+    timeout_millis = max(1, _env_int(TRACE_FORCE_FLUSH_MS_ENV, 3000))
     try:
-        provider.force_flush(timeout_millis=timeout_ms)
+        provider.force_flush(timeout_millis=timeout_millis)
     except Exception as ex:
         _STATE.otel_export_status = f"flush_failed:{type(ex).__name__}"
     try:

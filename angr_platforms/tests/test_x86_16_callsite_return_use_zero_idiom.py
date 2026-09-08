@@ -66,6 +66,21 @@ def test_different_register_subtraction_does_not_self_clear_ax() -> None:
     assert decoded_instruction_self_clears_register_8616(instruction, "ax") is False
 
 
+@pytest.mark.parametrize("written,queried,expected", [
+    ("al", "ax", False), ("ah", "ax", False),
+    ("al", "ah", False), ("ah", "al", False),
+    ("ax", "al", True), ("ax", "ah", True),
+])
+@pytest.mark.parametrize("mnemonic", ("sub", "xor"))
+def test_self_clear_requires_coverage_of_queried_register(written, queried, expected, mnemonic):
+    instruction = _Instruction(
+        0x1000, mnemonic,
+        (_Operand(X86_OP_REG, reg=2), _Operand(X86_OP_REG, reg=2)),
+        reg_names={2: written},
+    )
+    assert decoded_instruction_self_clears_register_8616(instruction, queried) is expected
+
+
 def test_direct_capstone_high_byte_clear_is_zero_extension() -> None:
     disassembler = Cs(CS_ARCH_X86, CS_MODE_16)
     disassembler.detail = True
@@ -76,6 +91,19 @@ def test_direct_capstone_high_byte_clear_is_zero_extension() -> None:
         decoded_byte_return_extension_8616(instruction)
         is ByteReturnExtensionKind8616.ZERO_EXTEND_AL_TO_AX
     )
+
+
+def test_partial_low_byte_clear_does_not_discard_full_return_value():
+    instructions = (
+        _Instruction(0x1000, "call", size=3),
+        _Instruction(0x1003, "xor", (_Operand(X86_OP_REG, reg=2), _Operand(X86_OP_REG, reg=2)),
+                     reg_names={2: "al"}, size=2),
+        _Instruction(0x1005, "push", (_Operand(X86_OP_REG, reg=3),), reg_names={3: "ax"}),
+    )
+    register, used, kind = _return_use_after_call(SimpleNamespace(), instructions, 0, 0x1000)
+    assert register == "ax"
+    assert used is True
+    assert kind is CallsiteReturnUseKind8616.VALUE
 
 
 def test_post_call_sub_ax_ax_is_clobber_not_return_value_use() -> None:

@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from x86_16_initmenu_execution import assert_initmenu_pause_guard_behavior
+from x86_16_reinitbars_execution import assert_reinitbars_loop_behavior
 from x86_16_timeout_support import scaled_decompile_timeout as _scaled_timeout
 
 from inertia_decompiler.acceptance_scorecard import build_acceptance_scorecard
@@ -175,7 +177,7 @@ def test_sortd_sidecar_free_initbars_preserves_binary_stack_array(tmp_path: Path
     )
     typed_pause_store = (
         "g_0132 = g_0132 & 0xffff0000 | 30;" in result.stdout
-        and "g_0132 = g_0132 & 65535;" in result.stdout
+        and any(f"g_0132 = g_0132 & {mask};" in result.stdout for mask in ("65535", "0xffff"))
     )
     assert raw_pause_store or typed_pause_store or "g_0132 = 30;" in result.stdout
     assert result.stdout.count("sub_10678();") == 1
@@ -327,7 +329,7 @@ def test_sortdemo_sleep_proc_pipeline_declares_lowered_runtime_calls() -> None:
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
 
-def test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract():
+def test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract(tmp_path):
     result = _run_decompile_addr(
         SORTDEMO_EXE,
         0x10678,
@@ -343,8 +345,9 @@ def test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract(
     assert "gcc syntax check failed:" not in combined
     assert "void ReInitBars(void)" in result.stdout
     assert "clStart = clock();" in result.stdout
-    assert result.stdout.count("for (iRow = 0;") == 1
-    assert "cRow > iRow" in result.stdout or "SEG_U16(inertia_ds, 2978) > iRow" in result.stdout
+    assert_reinitbars_loop_behavior(
+        _function_body_from_stdout(result.stdout, "void ReInitBars"), tmp_path,
+    )
     assert "abarWork[iRow] = abarPerm[iRow];" in result.stdout
     assert "DrawBar(iRow);" in result.stdout
     assert "local_3" not in result.stdout
@@ -1614,7 +1617,7 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
 
 
 @pytest.mark.xdist_group("sortd-initmenu")
-def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
+def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier(tmp_path):
     result = _run_decompile_addr(
         SORTDEMO_EXE,
         0x10060,
@@ -1647,7 +1650,7 @@ def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
     assert 'strcpy(ach, "ON ");' in body
     assert 'strcpy(ach, "OFF");' in body
     assert 'strcpy(ach, "            ");' in body
-    assert body.count("if (i >= cszMenu)") == 1
+    assert "if (i >= cszMenu)" not in body
     iterator_lines = tuple(line.strip() for line in body.splitlines() if line.lstrip().startswith("for ("))
     assert iterator_lines == ("for (i = 0; i < cszMenu; i += 1)",)
     assert "DrawFrame(1, 45, 35, cszMenu + 2);" in body
@@ -1656,9 +1659,14 @@ def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
     assert 'sprintf(ach, "%3.3u", aNldiv(clPause, 30));' in body
     assert "& 64" not in tail_after_pause_text
     assert "SEG_U" not in tail_after_pause_text
-    assert "if (!clPause)" in tail_after_pause_text
-    assert "if (clPause)" not in tail_after_pause_text
+    zero_output = r"settextposition\(cszMenu - 3, 48\);\s*outtext\(ach\);"
+    assert re.search(
+        rf"if \(!clPause\)\s*\{{\s*{zero_output}\s*\}}|"
+        rf"if \(clPause\)\s*\{{\s*return;\s*\}}\s*{zero_output}\s*return;",
+        tail_after_pause_text,
+    )
     assert "outtext(ach);" in tail_after_pause_text
+    assert_initmenu_pause_guard_behavior(body, tmp_path)
 
 
 def test_drawframe_stack_array_and_memset_calls_survive_regeneration():

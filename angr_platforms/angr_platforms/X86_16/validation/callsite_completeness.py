@@ -20,7 +20,10 @@ _MISSING_CALLSITE_PREFIX_8616 = "missing-callsite:"
 class TailValidationCallsiteSummary8616(Protocol):
     """Summary surface required for typed callsite-completeness classification."""
 
-    helper_calls: tuple[str, ...]
+    @property
+    def helper_calls(self) -> tuple[str, ...]:
+        """Read collected call fingerprints without permitting summary mutation."""
+        ...
 
 
 class CallsiteCompletenessDeltaVerdict8616(Enum):

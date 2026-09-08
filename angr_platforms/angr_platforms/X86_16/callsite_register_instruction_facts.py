@@ -15,7 +15,7 @@ from capstone import CS_AC_WRITE
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
 from .alias.callsite_stack_merge import CallsiteSource8616
-from .semantics.register_value_preservation import register_value_family_8616
+from .semantics.register_value_preservation import decoded_register_bit_effects_8616, register_value_projection_8616
 
 __all__ = (
     "DecodedInstructionFactSurface8616",
@@ -83,18 +83,9 @@ def instruction_writes_register_8616(
     instruction: DecodedInstructionFactSurface8616,
     register: str,
 ) -> bool:
-    """Return whether Capstone proves an overlapping register write."""
-    family = register_value_family_8616(register)
-    try:
-        _reads, writes = instruction.insn.regs_access()
-    except (AttributeError, ValueError):
-        return True
-    names = {
-        name.lower()
-        for reg_id in writes
-        if isinstance((name := instruction.insn.reg_name(reg_id)), str) and name
-    }
-    return bool(names & family)
+    """Return whether an overlapping write is possible; unknown detail clobbers."""
+    effects = decoded_register_bit_effects_8616(instruction, register)
+    return effects is None or effects[1] != 0
 
 
 def instruction_writes_memory_8616(
@@ -127,6 +118,10 @@ def register_replacement_source_8616(
     mnemonic = instruction.mnemonic.lower()
     rhs = operands[1]
     if destination_name != register:
+        projection = register_value_projection_8616(destination_name, register)
+        if mnemonic == "mov" and rhs.type == X86_OP_IMM and projection is not None:
+            shift, bits = projection
+            return ("imm", (int(rhs.imm) >> shift) & ((1 << bits) - 1))
         byte_views = {
             "al": ("ax", 0),
             "ah": ("ax", 8),

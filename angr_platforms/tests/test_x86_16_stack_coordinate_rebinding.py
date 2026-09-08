@@ -2,8 +2,9 @@
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeFunction, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeFixedSizeArray, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
@@ -34,6 +35,36 @@ def _codegen() -> SimpleNamespace:
         next_node_idx=lambda: 1,
         next_ident=lambda name: name,
     )
+
+
+@pytest.mark.parametrize("backing_offset", [-18, -20])
+@pytest.mark.parametrize("matching_ident", [False, True])
+def test_restored_aggregate_rebinds_exact_narrow_backing_view(backing_offset, matching_ident):
+    """A wide projection retains its proven narrow backing identity across clones."""
+    codegen = _codegen()
+    array = SimTypeFixedSizeArray(SimTypeChar(False), 16).with_arch(codegen.project.arch)
+    stale = SimStackVariable(backing_offset, 1, base="bp", ident="buffer-view")
+    restored = SimStackVariable(
+        backing_offset, 1, base="bp", ident="buffer-view" if matching_ident else "other-view",
+    )
+    stale_cvar = structured_c.CVariable(stale, variable_type=array, codegen=codegen)
+    restored_cvar = structured_c.CVariable(restored, variable_type=array, codegen=codegen)
+    record_stack_variable_coordinate_projection_8616(
+        codegen, variable=stale, cvar=stale_cvar, bp_offset=-18,
+        entry_sp_offset=-20, size=16,
+    )
+    root = structured_c.CStatements([restored_cvar], codegen=codegen)
+
+    report = rebind_restored_stack_coordinate_registry_8616(codegen, root)
+
+    assert report.materialized_count == int(matching_ident)
+    projection = stack_variable_coordinate_registry_8616(codegen).for_bp_range(-18, 16)
+    assert projection is not None
+    assert projection.cvar is (restored_cvar if matching_ident else stale_cvar)
+    assert projection.size == 16
+    assert projection.value_size == 16
+    if matching_ident:
+        assert machine_bp_offset_for_stack_variable_8616(codegen, restored) == -18
 
 
 def test_restored_ast_rebinds_projection_away_from_stale_cvar() -> None:

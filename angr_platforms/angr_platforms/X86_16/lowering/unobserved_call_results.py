@@ -266,11 +266,12 @@ def _masked_subregister_call_result_8616(
             )
         ):
             continue
-        destination_width = (
-            destination_view.width
-            if destination_view is not None
-            else runtime_destination_view.width
-        )
+        if destination_view is not None:
+            destination_width = destination_view.width
+        elif runtime_destination_view is not None:
+            destination_width = runtime_destination_view.width
+        else:
+            continue
         full_mask = (1 << (destination_width * 8)) - 1
         preserved_bits = int(preserved_mask.value) & full_mask
         projected_bits = int(projected_mask.value) & full_mask
@@ -374,7 +375,7 @@ def lower_unobserved_call_result_assignments_8616(codegen: object) -> bool:
     for container in tuple(
         node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CStatements)
     ):
-        statements = list(container.statements or ())
+        statements: list[object] = list(container.statements or ())
         changed = False
         for index, statement in enumerate(statements):
             if not isinstance(statement, CAssignment):

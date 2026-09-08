@@ -65,13 +65,34 @@ def _numeric_projection_candidates_8616(
     projection: StackVariableCoordinateProjection8616,
     cvars: tuple[structured_c.CVariable, ...],
 ) -> tuple[structured_c.CVariable, ...]:
-    """Return live C variables in the projection's entry-SP byte range."""
+    """Return full entry-SP views or exact recorded narrow-backing clones."""
     return tuple(
         cvar
         for cvar in cvars
         if isinstance(cvar.variable, SimStackVariable)
-        and cvar.variable.offset == projection.entry_sp_offset
-        and cvar.variable.size == projection.size
+        and (
+            (
+                cvar.variable.offset == projection.entry_sp_offset
+                and cvar.variable.size == projection.size
+            )
+            or _matches_recorded_backing_view_8616(projection, cvar.variable)
+        )
+    )
+
+
+def _matches_recorded_backing_view_8616(
+    projection: StackVariableCoordinateProjection8616,
+    variable: SimStackVariable,
+) -> bool:
+    """Match a clone to one explicit backing view without inventing coordinates."""
+    return any(
+        isinstance(recorded.ident, (int, str))
+        and recorded.ident != ""
+        and variable.ident == recorded.ident
+        and variable.base == recorded.base
+        and variable.offset == recorded.offset
+        and variable.size == recorded.size
+        for recorded in (projection.variable, *projection.equivalent_variables)
     )
 
 

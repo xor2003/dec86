@@ -16,6 +16,7 @@ from ..ir.core import IRAddress, IRInstr, IRRefusal, MemSpace
 from ..ir.ssa_function import SSAFunctionArtifact
 from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
+from .alias_model_impl import AliasStorageFacts
 from .logical_stack_memory_projection import project_logical_stack_memory_alias_8616
 from .logical_stack_storage_identity import (
     project_logical_stack_storage_identities_8616,
@@ -72,10 +73,12 @@ def _alias_overlap_8616(
     """Project and verify one IR byte-overlap relation through Alias."""
     addresses = (overlap.left, overlap.right, overlap.intersection)
     storages = tuple(alias_stack_memory_storage_8616(address) for address in addresses)
+    accepted: list[AliasStorageFacts] = []
     for address, storage in zip(addresses, storages, strict=True):
         if isinstance(storage, tuple):
             return StackMemoryAliasRefusal8616(storage[0], None, None, storage[1], address)
-    left, right, intersection = storages
+        accepted.append(storage)
+    left, right, intersection = accepted
     left_contains_right = left.contains(right)
     right_contains_left = right.contains(left)
     if overlap.relation is SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT:
@@ -233,7 +236,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         if failed is not None:
             refusals.append(StackMemoryAliasRefusal8616(failed[0], phi.block_addr, None, failed[1], phi.target))
             continue
-        typed_storages = storages
+        typed_storages = tuple(storage for storage in storages if not isinstance(storage, tuple))
         if any(storage != typed_storages[0] for storage in typed_storages[1:]):
             refusals.append(
                 StackMemoryAliasRefusal8616(

@@ -203,19 +203,21 @@ def collect_unobserved_callee_void_evidence_8616(
         has_blocks = bool(cast(_FunctionBlocksSurface8616, function).block_addrs_set)
     except AttributeError:
         has_blocks = False
+    boundary = None
     if not has_blocks:
         try:
             ranges = cast(_ProjectFunctionRangesSurface8616, project)._inertia_caller_function_ranges_8616
         except AttributeError:
             ranges = ()
-        function = exact_function_entry_boundary_8616(project, function_addr, ranges)
+        boundary = exact_function_entry_boundary_8616(project, function_addr, ranges)
+    evidence_function = function if has_blocks else boundary
     try:
-        evidence_project = cast(_FunctionProjectSurface8616, function).project
+        evidence_project = cast(_FunctionProjectSurface8616, evidence_function).project
     except AttributeError:
         evidence_project = project
     terminal_storage = (
-        terminal_return_storage_8616(evidence_project, function)
-        if function is not None
+        terminal_return_storage_8616(evidence_project, evidence_function)
+        if evidence_function is not None
         else None
     )
     normalized_count = int(observation is not None) + int(terminal_storage is not None)

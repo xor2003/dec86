@@ -5873,6 +5873,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     payload=evidence_acceptance.gcc_checked_payload,
                     partial_payload=None,
                     tail_validation=evidence_snapshot,
+                    validated_payload_hash=evidence_acceptance.validated_payload_hash,
+                    gcc_checked_payload_hash=evidence_acceptance.gcc_checked_payload_hash,
                 )
     if (
         direct_result.status == "empty"
@@ -5894,6 +5896,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 status="ok",
                 payload=partial_acceptance.gcc_checked_payload,
                 partial_payload=None,
+                validated_payload_hash=partial_acceptance.validated_payload_hash,
+                gcc_checked_payload_hash=partial_acceptance.gcc_checked_payload_hash,
             )
     if (
         canonical_direct_addr is not None
@@ -5951,6 +5955,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     payload=helper_payload,
                     partial_payload=None,
                     tail_validation=helper_tail_validation_snapshot,
+                    validated_payload_hash=helper_acceptance.validated_payload_hash,
+                    gcc_checked_payload_hash=helper_acceptance.gcc_checked_payload_hash,
                 )
     if os.environ.get(_SERIAL_CLEAN_WORKER_RESULT_ENV_8616):
         direct_result = replace(direct_result, failure_family_snapshot=_direct_failure_snapshot(direct_result))
@@ -6022,6 +6028,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     function_cfg=cfg,
                     payload=robust_acceptance.gcc_checked_payload,
                     tail_validation=robust_snapshot,
+                    validated_payload_hash=robust_acceptance.validated_payload_hash,
+                    gcc_checked_payload_hash=robust_acceptance.gcc_checked_payload_hash,
                 )
     direct_failure_family_snapshot = _direct_failure_snapshot(direct_result)
     budget_fallback_addr = function_original_addr(func)
@@ -6142,6 +6150,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         retry_result = replace(
                             retry_result,
                             payload=retry_acceptance.gcc_checked_payload,
+                            validated_payload_hash=retry_acceptance.validated_payload_hash,
+                            gcc_checked_payload_hash=retry_acceptance.gcc_checked_payload_hash,
                         )
                     retry_rank = _candidate_rank(retry_result)
                     if retry_result.status == "ok":
@@ -6269,6 +6279,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         status="ok",
                         payload=checked_acceptance.gcc_checked_payload,
                         partial_payload=None,
+                        validated_payload_hash=checked_acceptance.validated_payload_hash,
+                        gcc_checked_payload_hash=checked_acceptance.gcc_checked_payload_hash,
                     )
                 else:
                     _dump_validation_failed_payload_if_requested_8616(

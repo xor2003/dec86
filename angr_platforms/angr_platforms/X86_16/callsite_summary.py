@@ -96,6 +96,7 @@ __all__ = [
     "CallerReturnUseVerdict8616",
     "CallsiteArgumentClass8616",
     "CallsiteMachineFrameKind8616",
+    "CallsiteReturnUseKind8616",
     "CallsiteStackCleanupEvidence8616",
     "CallsiteSummary8616",
     "CallsiteTargetInventory8616",

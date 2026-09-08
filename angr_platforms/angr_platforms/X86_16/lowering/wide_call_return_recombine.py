@@ -31,13 +31,32 @@ DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616: str = "inertia_x86_16_direct_call_re
 
 
 class WideCallReturnStoreEvidence8616(Protocol):
-    """Fields required from the authoritative Semantics call/store proof."""
+    """Read-only view of the authoritative immutable call/store proof."""
 
-    offset: int
-    width: int
-    source_call_name: str
-    source_call_target: int | None
-    source_call_ins_addr: int
+    @property
+    def offset(self) -> int:
+        """Return the proven destination offset."""
+        ...
+
+    @property
+    def width(self) -> int:
+        """Return the proven destination width in bytes."""
+        ...
+
+    @property
+    def source_call_name(self) -> str:
+        """Return the recorded call label."""
+        ...
+
+    @property
+    def source_call_target(self) -> int | None:
+        """Return the target address when known."""
+        ...
+
+    @property
+    def source_call_ins_addr(self) -> int:
+        """Return the instruction address identifying the source call."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,8 +104,11 @@ def _normalized_call_name_8616(call: CFunctionCall) -> str | None:
     """Read a call name at the dynamic third-party codegen boundary."""
     raw_name = call.callee_target
     if not isinstance(raw_name, str):
+        callee = call.callee_func
+        if callee is None:
+            return None
         try:
-            raw_name = call.callee_func.name
+            raw_name = callee.name
         except AttributeError:
             return None
     name = raw_name.strip().lstrip("_")

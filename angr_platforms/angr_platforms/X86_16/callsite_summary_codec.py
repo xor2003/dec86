@@ -9,7 +9,6 @@ This module transports existing facts; it does not discover or classify calls.
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import cast
 
 from .alias.callsite_stack_merge import (
     CallsitePredecessorStackMerge8616,
@@ -235,7 +234,7 @@ def callsite_summary_record_8616(summary: CallsiteSummary8616) -> dict[str, obje
     """Return a complete JSON-friendly record for one callsite summary."""
     if not isinstance(summary, CallsiteSummary8616):
         raise TypeError("callsite summary transport requires CallsiteSummary8616")
-    return cast(dict[str, object], summary.to_dict())
+    return summary.to_dict()
 
 
 def callsite_summary_from_record_8616(value: object) -> CallsiteSummary8616:

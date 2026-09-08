@@ -519,7 +519,10 @@ def _remove_redundant_return_bridge_8616(
     register_slice: tuple[int, int],
     call_assignment: CAssignment,
 ) -> None:
-    """Remove a stale stack-to-register bridge after binding a call return."""
+    """Remove a redundant register-to-stack bridge only for a stack destination."""
+    destination_variable = destination.variable
+    if not isinstance(destination_variable, SimStackVariable):
+        return
     for container in (root, *_iter_c_nodes_deep_8616(root)):
         if not isinstance(container, CStatements):
             continue
@@ -535,9 +538,9 @@ def _remove_redundant_return_bridge_8616(
             lhs_variable = statement.lhs.variable
             if (
                 not isinstance(lhs_variable, SimStackVariable)
-                or lhs_variable.base != destination.variable.base
-                or lhs_variable.offset != destination.variable.offset
-                or lhs_variable.size != destination.variable.size
+                or lhs_variable.base != destination_variable.base
+                or lhs_variable.offset != destination_variable.offset
+                or lhs_variable.size != destination_variable.size
             ):
                 filtered.append(statement)
                 continue
@@ -571,9 +574,9 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         if isinstance(condition.src_insn, int) and isinstance(condition.block_addr, int)
     }
     conditions_by_block_candidates: dict[int, list[ConditionIR]] = {}
-    for condition in conditions:
-        if isinstance(condition.block_addr, int):
-            conditions_by_block_candidates.setdefault(condition.block_addr, []).append(condition)
+    for recorded_condition in conditions:
+        if isinstance(recorded_condition.block_addr, int):
+            conditions_by_block_candidates.setdefault(recorded_condition.block_addr, []).append(recorded_condition)
     conditions_by_block = {
         block_addr: candidates[0]
         for block_addr, candidates in conditions_by_block_candidates.items()

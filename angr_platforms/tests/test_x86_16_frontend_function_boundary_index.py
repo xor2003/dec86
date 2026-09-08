@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr_platforms.X86_16 import frontend_function_boundary_index as index_module
 from angr_platforms.X86_16.frontend_function_boundary import (
     ExactFunctionRangeBoundary8616,
@@ -75,7 +76,11 @@ def test_exact_function_range_inventory_keeps_failed_ranges_closed(monkeypatch) 
     assert inventory.boundaries == ()
 
 
-def test_exact_function_range_inventory_refuses_ranges_outside_rebased_image(monkeypatch) -> None:
+@pytest.mark.parametrize("start,end,accepted", [
+    (0x1000, 0x1020, True), (0x1000, 0x1100, True),
+    (0xFFF, 0x1020, False), (0x1000, 0x1101, False), (0x1000, 0x1000, False),
+])
+def test_exact_function_range_inventory_refuses_ranges_outside_rebased_image(monkeypatch, start, end, accepted) -> None:
     project = SimpleNamespace(
         loader=SimpleNamespace(main_object=SimpleNamespace(min_addr=0x1000, max_addr=0x10FF))
     )
@@ -89,11 +94,11 @@ def test_exact_function_range_inventory_refuses_ranges_outside_rebased_image(mon
 
     inventory = exact_function_range_inventory_8616(
         project,
-        ((0x1000, 0x1020), (0x10000, 0x10020)),
+        ((start, end), (0x10000, 0x10020)),
     )
 
-    assert calls == [(0x1000, 0x1020)]
-    assert tuple(boundary.addr for boundary in inventory.boundaries) == (0x1000,)
+    assert calls == ([(start, end)] if accepted else [])
+    assert tuple(boundary.addr for boundary in inventory.boundaries) == ((start,) if accepted else ())
 
 
 def test_exact_function_entry_boundary_accepts_only_padding_to_prologue(monkeypatch) -> None:

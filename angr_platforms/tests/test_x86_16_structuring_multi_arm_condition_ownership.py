@@ -130,6 +130,8 @@ def test_multi_arm_materialization_replaces_copied_tags_with_fact_owners() -> No
     assert result.classified_fact_count == 2
     assert result.materialized_count == 2
     assert result.failure_count == 0
+    assert result.condition_and_nodes[0][1] is first_body
+    assert result.condition_and_nodes[1][1] is second_body
     replacements = tuple(condition for condition, _body in result.condition_and_nodes)
     assert replacements[0].tags["ins_addr"] == 0x1012
     assert replacements[1].tags["ins_addr"] == 0x1021

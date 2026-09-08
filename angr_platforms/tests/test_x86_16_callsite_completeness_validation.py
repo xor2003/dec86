@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16 import decompiler_structuring_stage as stage
+from angr_platforms.X86_16.tail_validation import X86_16TailValidationSummary
 from angr_platforms.X86_16.validation.callsite_completeness import (
     CallsiteCompletenessDeltaReason8616,
     CallsiteCompletenessDeltaVerdict8616,
@@ -10,8 +11,18 @@ from angr_platforms.X86_16.validation.callsite_completeness import (
 )
 
 
-def _summary(*helper_calls: str) -> SimpleNamespace:
-    return SimpleNamespace(helper_calls=helper_calls)
+def _summary(*helper_calls: str) -> X86_16TailValidationSummary:
+    """Exercise the immutable production summary at the validation boundary."""
+    return X86_16TailValidationSummary(
+        helper_calls=helper_calls,
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=(),
+        control_flow_effects=(),
+    )
 
 
 def _missing_callsite_delta(*removed: str) -> dict[str, object]:

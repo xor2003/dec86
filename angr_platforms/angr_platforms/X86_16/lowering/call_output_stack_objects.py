@@ -53,9 +53,9 @@ from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..call_target_identity import (
     resolve_x86_16_canonical_call_target_function_8616,
 )
+from ..caller_return_use_contracts import CallsiteReturnUseKind8616
 from ..callsite_summary import (
     CallsiteReturnShape8616,
-    CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     build_callsite_summary_inventory_8616,
     callsite_summary_inventory_8616,
@@ -63,6 +63,10 @@ from ..callsite_summary import (
 from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue, MemSpace
 from ..pipeline.errors import PipelineHardError
+from .call_output_object_projection import (
+    publish_call_output_object_projection_8616,
+    synchronize_call_output_object_declaration_8616,
+)
 from .condition_stack_projection_contracts import (
     ConditionStackProjectionFact8616,
     condition_stack_projection_fact_8616,
@@ -705,10 +709,7 @@ def _callsite_inventory_8616(
     codegen: _CallOutputCodegen8616,
 ) -> dict[int, CallsiteSummary8616]:
     """Return or build typed binary callsite summaries before AST arguments exist."""
-    inventory = cast(
-        dict[int, CallsiteSummary8616],
-        callsite_summary_inventory_8616(codegen),
-    )
+    inventory = callsite_summary_inventory_8616(codegen)
     if inventory:
         return inventory
     try:
@@ -725,10 +726,7 @@ def _callsite_inventory_8616(
     if not isinstance(raw_callsites, Iterable):
         return {}
     callsite_addrs = tuple(item for item in raw_callsites if isinstance(item, int))
-    inventory = cast(
-        dict[int, CallsiteSummary8616],
-        build_callsite_summary_inventory_8616(function_value, callsite_addrs),
-    )
+    inventory = build_callsite_summary_inventory_8616(function_value, callsite_addrs)
     codegen._inertia_callsite_summary_inventory_8616 = inventory
     return inventory
 
@@ -1027,8 +1025,12 @@ def _prepare_object_type_8616(
     codegen: _CallOutputCodegen8616,
     fact: CallOutputStackObjectFact8616,
     struct_type: SimStruct,
-) -> None:
-    """Register one struct type and apply it to the recovered base variable."""
+) -> bool:
+    """Publish the object type and report changes to its declaration cache."""
+    publish_call_output_object_projection_8616(
+        codegen, fact.base_cvar, bp_offset=fact.base_offset,
+        byte_size=fact.boundary_offset - fact.base_offset,
+    )
     cfunc = codegen.cfunc
     cfunc.variable_manager.types[struct_type.name] = TypeRef(struct_type.name, struct_type)
     cfunc.variable_manager.set_variable_type(fact.base_variable, struct_type, override_bot=True)
@@ -1040,7 +1042,9 @@ def _prepare_object_type_8616(
     base_in_use = cfunc.variables_in_use.get(fact.base_variable)
     if base_in_use is not None:
         base_in_use.variable_type = arch_type
+    declarations_changed = synchronize_call_output_object_declaration_8616(codegen, fact.base_cvar, arch_type)
     codegen.show_local_types = True
+    return declarations_changed
 
 
 def _replace_stack_fields_8616(
@@ -1070,7 +1074,8 @@ def _replace_stack_fields_8616(
     if isinstance(expression, CVariable):
         variable = expression.variable
         if isinstance(variable, SimStackVariable):
-            match = field_map.get(machine_bp_offset_for_stack_variable_8616(codegen, variable))
+            bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            match = field_map.get(bp_offset) if bp_offset is not None else None
             if match is not None:
                 fact, field, struct_type = match
                 base = CVariable(

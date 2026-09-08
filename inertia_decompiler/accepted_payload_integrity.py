@@ -15,11 +15,22 @@ from typing import Protocol
 
 
 class AcceptedPayloadWorkResult8616(Protocol):
-    """Minimal accepted-result surface needed for payload identity checks."""
+    """Read-only accepted-result surface; verification must not rewrite proofs."""
 
-    payload: str
-    validated_payload_hash: str | None
-    gcc_checked_payload_hash: str | None
+    @property
+    def payload(self) -> str:
+        """Return the exact generated C selected for emission."""
+        ...
+
+    @property
+    def validated_payload_hash(self) -> str | None:
+        """Return the hash independently recorded by semantic validation."""
+        ...
+
+    @property
+    def gcc_checked_payload_hash(self) -> str | None:
+        """Return the hash independently recorded by the compiler check."""
+        ...
 
 
 class AcceptedPayloadIntegrityVerdict8616(StrEnum):

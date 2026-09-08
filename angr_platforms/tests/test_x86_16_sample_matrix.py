@@ -501,10 +501,10 @@ def test_synthetic_bp_based_dos_open_call_recovers_argument_shapes(tmp_path):
 
     assert len(calls) == 1
     assert calls[0].ah == 0x3D
-    assert calls[0].al_expr == "[bp+6]"
-    assert calls[0].dx_expr == "[bp+4]"
-    assert modern == ["open((const char *)[bp+4], [bp+6])"]
-    assert dos == ["_dos_open((const char far *)[bp+4], [bp+6])"]
+    assert calls[0].al_expr == "SEG_U8(inertia_ss, bp+6)"
+    assert calls[0].dx_expr == "SEG_U16(inertia_ss, bp+4)"
+    assert modern == ["open((const char *)(SEG_U16(inertia_ss, bp+4)), SEG_U8(inertia_ss, bp+6))"]
+    assert dos == ["_dos_open((const char far *)(SEG_U16(inertia_ss, bp+4)), SEG_U8(inertia_ss, bp+6))"]
 
 
 def test_synthetic_dos_read_write_seek_helpers_map_to_named_calls(tmp_path):
@@ -654,12 +654,12 @@ def test_synthetic_bp_based_dos_seek_call_recovers_argument_shapes(tmp_path):
 
     assert len(calls) == 1
     assert calls[0].ah == 0x42
-    assert calls[0].al_expr == "[bp+0xa]"
-    assert calls[0].bx_expr == "[bp+4]"
-    assert calls[0].cx_expr == "[bp+6]"
-    assert calls[0].dx_expr == "[bp+8]"
-    assert modern == ["lseek([bp+4], MK_LONG([bp+8], [bp+6]), [bp+0xa])"]
-    assert dos == ["_dos_seek([bp+4], MK_LONG([bp+8], [bp+6]), [bp+0xa])"]
+    assert calls[0].al_expr == "SEG_U8(inertia_ss, bp+0xa)"
+    assert calls[0].bx_expr == "SEG_U16(inertia_ss, bp+4)"
+    assert calls[0].cx_expr == "SEG_U16(inertia_ss, bp+6)"
+    assert calls[0].dx_expr == "SEG_U16(inertia_ss, bp+8)"
+    assert modern == ["lseek(SEG_U16(inertia_ss, bp+4), MK_LONG(SEG_U16(inertia_ss, bp+8), SEG_U16(inertia_ss, bp+6)), SEG_U8(inertia_ss, bp+0xa))"]
+    assert dos == ["_dos_seek(SEG_U16(inertia_ss, bp+4), MK_LONG(SEG_U16(inertia_ss, bp+8), SEG_U16(inertia_ss, bp+6)), SEG_U8(inertia_ss, bp+0xa))"]
 
 
 def test_synthetic_dos_filesystem_helpers_map_to_named_calls(tmp_path):
@@ -794,9 +794,9 @@ def test_synthetic_bp_based_dos_unlink_call_recovers_argument_shape(tmp_path):
 
     assert len(calls) == 1
     assert calls[0].ah == 0x41
-    assert calls[0].dx_expr == "[bp+4]"
-    assert modern == ["unlink((const char *)[bp+4])"]
-    assert dos == ["_dos_unlink((const char far *)[bp+4])"]
+    assert calls[0].dx_expr == "SEG_U16(inertia_ss, bp+4)"
+    assert modern == ["unlink((const char *)(SEG_U16(inertia_ss, bp+4)))"]
+    assert dos == ["_dos_unlink((const char far *)(SEG_U16(inertia_ss, bp+4)))"]
 
 
 def test_synthetic_dos_drive_and_cwd_helpers_map_to_named_calls(tmp_path):
@@ -900,7 +900,7 @@ def test_synthetic_bp_based_dos_getcwd_call_recovers_argument_shapes(tmp_path):
 
     assert len(calls) == 1
     assert calls[0].ah == 0x47
-    assert calls[0].dl_expr == "[bp+4]"
-    assert calls[0].si_expr == "[bp+6]"
-    assert modern == ["get_current_directory([bp+4], (char *)[bp+6])"]
-    assert dos == ["_dos_getcwd([bp+4], (char far *)[bp+6])"]
+    assert calls[0].dl_expr == "SEG_U8(inertia_ss, bp+4)"
+    assert calls[0].si_expr == "SEG_U16(inertia_ss, bp+6)"
+    assert modern == ["get_current_directory(SEG_U8(inertia_ss, bp+4), (char *)SEG_U16(inertia_ss, bp+6))"]
+    assert dos == ["_dos_getcwd(SEG_U8(inertia_ss, bp+4), (char far *)SEG_U16(inertia_ss, bp+6))"]

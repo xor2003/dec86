@@ -13,7 +13,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import cast
 
 from inertia_decompiler.cache_file_digest import (
     cache_content_fingerprint_8616,
@@ -252,10 +251,8 @@ def _cache_json_path(namespace: str, key: dict[str, object]) -> Path:
 
 
 def _load_cache_json(namespace: str, key: dict[str, object]) -> dict[str, object] | None:
-    return cast(
-        dict[str, object] | None,
-        load_cache_json_path(namespace, _cache_json_path(namespace, key), key_context=key),
-    )
+    """Load one cache record through the checked JSON I/O owner."""
+    return load_cache_json_path(namespace, _cache_json_path(namespace, key), key_context=key)
 
 
 @contextmanager

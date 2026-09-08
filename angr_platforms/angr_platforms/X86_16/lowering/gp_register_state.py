@@ -17,13 +17,14 @@ from angr.ailment.expression import VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeLong
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
+from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
-from ..ir.core import IRAddress, IRBinaryValue, IRCondition, IRValue, MemSpace
 from ..ir.function_ssa_registry import (
     FunctionSSAArtifactVerdict8616,
     registered_function_ssa_artifact_8616,
 )
+from ..ir.register_live_in import register_live_in_names_8616
 from ..ir.ssa_function import SSAFunctionArtifact
 from .global_declarations import (
     GlobalDeclarationCType8616,
@@ -261,16 +262,10 @@ def runtime_gp_state_assignment_8616(
     )
 
 
-class _ArchGPRegisters8616(Protocol):
-    """Third-party architecture register maps used for exact identities."""
-
-    registers: Mapping[str, tuple[int, int]]
-
-
 class _ProjectGPRegisters8616(Protocol):
     """Project boundary consumed by GP-state lowering."""
 
-    arch: _ArchGPRegisters8616
+    arch: Arch
 
 
 class _CFunctionGPRegisters8616(Protocol):
@@ -293,7 +288,7 @@ def _runtime_gp_lane_type_8616(codegen: object) -> SimTypeLong:
     """Return the architecture-bound 32-bit type for one coherent GP lane."""
     project = cast(_CodegenGPRegisters8616, codegen).project
     lane_type = SimTypeLong(False)
-    return lane_type.with_arch(project.arch) if project is not None else lane_type
+    return cast(SimTypeLong, lane_type.with_arch(project.arch)) if project is not None else lane_type
 
 
 def _bind_gp_write_value_type_8616(
@@ -320,75 +315,9 @@ class GPRegisterStateLoweringStats8616:
     failure_count: int
 
 
-def _ir_register_names_8616(atom: object) -> tuple[str, ...]:
-    """Return supported register names recursively referenced by one IR atom."""
-    if isinstance(atom, IRValue):
-        names: list[str] = []
-        if atom.space is MemSpace.REG and isinstance(atom.name, str):
-            view = _GP_REGISTER_VIEWS_8616.get(atom.name.lower())
-            if view is not None:
-                names.append(view[0])
-        if atom.index is not None:
-            names.extend(_ir_register_names_8616(atom.index))
-        return tuple(names)
-    if isinstance(atom, IRBinaryValue):
-        return (*_ir_register_names_8616(atom.lhs), *_ir_register_names_8616(atom.rhs))
-    if isinstance(atom, IRAddress):
-        return tuple(name for value in atom.base_values for name in _ir_register_names_8616(value))
-    if isinstance(atom, IRCondition):
-        return tuple(name for arg in atom.args for name in _ir_register_names_8616(arg))
-    return ()
-
-
 def gp_live_in_names_from_ssa_8616(artifact: SSAFunctionArtifact) -> frozenset[str]:
-    """Return GP names read on a path before any must-reaching definition."""
-    supported = frozenset(_RUNTIME_GP_STATE_SYMBOLS_8616)
-    uses_before_def: dict[int, set[str]] = {}
-    definitions: dict[int, set[str]] = {}
-    for block in artifact.blocks:
-        seen_defs: set[str] = set()
-        exposed: set[str] = set()
-        for instruction in block.instrs:
-            for argument in instruction.args:
-                exposed.update(set(_ir_register_names_8616(argument)) - seen_defs)
-            destination = instruction.dst
-            if (
-                isinstance(destination, IRValue)
-                and destination.space is MemSpace.REG
-                and isinstance(destination.name, str)
-            ):
-                view = _GP_REGISTER_VIEWS_8616.get(destination.name.lower())
-                if view is not None:
-                    seen_defs.add(view[0])
-        uses_before_def[block.addr] = exposed
-        definitions[block.addr] = seen_defs
-
-    block_addrs = {block.addr for block in artifact.blocks}
-    entry = artifact.function_addr
-    must_in = {addr: (set() if addr == entry else set(supported)) for addr in block_addrs}
-    changed = True
-    while changed:
-        changed = False
-        for addr in sorted(block_addrs):
-            if addr == entry:
-                incoming: set[str] = set()
-            else:
-                predecessors = tuple(
-                    pred for pred in artifact.predecessor_map.get(addr, ()) if pred in block_addrs
-                )
-                incoming = (
-                    set.intersection(*(must_in[pred] | definitions[pred] for pred in predecessors))
-                    if predecessors
-                    else set()
-                )
-            if incoming != must_in[addr]:
-                must_in[addr] = incoming
-                changed = True
-    return frozenset(
-        name
-        for addr, names in uses_before_def.items()
-        for name in names - must_in.get(addr, set())
-    )
+    """Return GP parents with upward-exposed bits using the owned view inventory."""
+    return register_live_in_names_8616(artifact, _GP_REGISTER_VIEWS_8616)
 
 
 def _c_register_identity_8616(
@@ -741,7 +670,8 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
             if isinstance(lhs, structured_c.CDirtyExpression):
                 dirty = lhs.dirty
                 if (
-                    dirty.category is VirtualVariableCategory.REGISTER
+                    # Dynamic angr boundary: opaque dirty expressions may omit category.
+                    getattr(dirty, "category", None) is VirtualVariableCategory.REGISTER
                     and isinstance(dirty.oident, int)
                     # Dynamic angr AIL boundary: compatibility nodes may omit size.
                     and isinstance(getattr(dirty, "size", None), int)
@@ -783,7 +713,8 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
         projection: tuple[str, int, int] | None = None
         if isinstance(node, structured_c.CDirtyExpression):
             dirty = node.dirty
-            if dirty.category is VirtualVariableCategory.REGISTER:
+            # Dynamic angr boundary: opaque dirty expressions may omit category.
+            if getattr(dirty, "category", None) is VirtualVariableCategory.REGISTER:
                 offset = dirty.oident
                 # Dynamic angr AIL boundary: compatibility nodes may omit size.
                 size = getattr(dirty, "size", None)
@@ -810,7 +741,7 @@ def lower_architectural_gp_register_state_8616(codegen: object) -> bool:
             register_name,
             bit_shift,
             view_width,
-            node,
+            cast(structured_c.CVariable | structured_c.CDirtyExpression, node),
             cfunc.addr,
         )
 

@@ -11,7 +11,6 @@ through getattr when translating them into owned alias facts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -427,7 +426,8 @@ def _canonical_stack_offset(offset: object) -> object:
     return offset
 
 
-def _stack_slot_identity_for_variable(variable: SimStackVariable) -> _StackSlotIdentity | None:
+def _stack_slot_identity_for_variable(variable: object) -> _StackSlotIdentity | None:
+    """Classify an exact stack variable, refusing other boundary objects."""
     if not isinstance(variable, SimStackVariable):
         return None
     base = _canonical_stack_base(_simvariable_optional_str_attr_8616(variable, "base"))
@@ -523,9 +523,10 @@ def _derived_stack_high_byte_follows_slot(
 
 
 def _storage_domain_for_expr(expr: object) -> _StorageDomainSignature:
+    """Delegate storage-domain classification to the typed query owner."""
     from ..semantics.alias_query import _storage_domain_for_expr as _impl
 
-    return cast(_StorageDomainSignature, _impl(expr))
+    return _impl(expr)
 
 
 @dataclass(frozen=True)
@@ -630,7 +631,7 @@ def describe_alias_storage(expr: object) -> AliasStorageFacts:
     """Describe alias storage for a decompiler expression."""
     from ..semantics.alias_query import describe_alias_storage as _impl
 
-    return cast(AliasStorageFacts, _impl(expr))
+    return _impl(expr)
 
 
 def same_alias_storage_domain(lhs: object, rhs: object) -> bool:

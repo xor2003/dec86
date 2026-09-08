@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
 from angr import ailment
 from angr.ailment.expression import BasePointerOffset
 from angr.analyses.decompiler.block_simplifier import BlockSimplifier
 from angr.analyses.decompiler.structurer_nodes import BreakNode, LoopNode
+from angr.analyses.decompiler.structurer_nodes import ConditionNode as AngrConditionNode
 from angr.analyses.decompiler.structurer_nodes import SequenceNode as AngrSequenceNode
 
 from inertia_decompiler.runtime_support import (
@@ -491,11 +493,33 @@ def test_seqnode_switch_artifact_mapping_prefers_small_case_body_sequence_over_e
     assert case_mapping["path"] == [0]
 
 
-def test_loop_break_default_switch_materializer_replaces_only_in_loop_ladder() -> None:
+@pytest.mark.parametrize("materializer", [
+    _materialize_loop_break_default_switch_8616,
+    _maybe_materialize_pre_codegen_typed_switch_8616,
+])
+@pytest.mark.parametrize("selector_proof", ["valid", "missing_definition", "mismatched_use"])
+def test_loop_break_default_switch_materializer_replaces_only_in_loop_ladder(materializer, selector_proof) -> None:
     case_a = AngrSequenceNode(0x2100, [_Block(0x2100)])
     case_b = AngrSequenceNode(0x2200, [_Block(0x2200)])
     default_break = BreakNode(0x4451, 0x4523)
-    ladder = AngrSequenceNode(0x4400, [case_a, case_b, default_break])
+    definition = ailment.Expr.VirtualVariable(
+        101, 74, 16, ailment.Expr.VirtualVariableCategory.REGISTER, oident=0,
+    )
+    selector = ailment.Expr.VirtualVariable(
+        111, 75 if selector_proof == "mismatched_use" else 74, 16,
+        ailment.Expr.VirtualVariableCategory.REGISTER, oident=0,
+    )
+    condition = ailment.Expr.BinaryOp(
+        110, "CmpEQ", (selector, ailment.Expr.Const(112, 1, 16)), False, bits=1,
+    )
+    second_condition = ailment.Expr.BinaryOp(
+        120, "CmpEQ", (selector, ailment.Expr.Const(122, 2, 16)), False, bits=1,
+    )
+    remainder = AngrConditionNode(0x4402, None, second_condition, case_b, default_break)
+    ladder = AngrConditionNode(0x4400, None, condition, case_a, remainder)
+    prefix = ailment.Block(0x3006, 4, statements=[] if selector_proof == "missing_definition" else [
+        ailment.Stmt.Assignment(102, definition, ailment.Expr.Const(103, 1, 16)),
+    ])
     loop_sequence = AngrSequenceNode(
         0x4107,
         [
@@ -505,7 +529,7 @@ def test_loop_break_default_switch_materializer_replaces_only_in_loop_ladder() -
             AngrSequenceNode(0x3003, []),
             AngrSequenceNode(0x3004, []),
             AngrSequenceNode(0x3005, []),
-            AngrSequenceNode(0x3006, []),
+            prefix,
             ladder,
         ],
     )
@@ -522,7 +546,7 @@ def test_loop_break_default_switch_materializer_replaces_only_in_loop_ladder() -
     )
     project = SimpleNamespace(arch=SimpleNamespace(registers={"ax": (0, 2)}))
 
-    result = _materialize_loop_break_default_switch_8616(
+    result = materializer(
         project,
         root,
         (
@@ -562,6 +586,16 @@ def test_loop_break_default_switch_materializer_replaces_only_in_loop_ladder() -
     )
 
     replacement = loop_sequence.nodes[7]
+    if selector_proof != "valid":
+        assert result["changed"] is False
+        assert result["refusal_reasons"] == ("missing_ail_switch_expr",)
+        assert result["selector_binding"] == {
+            "raw_fact_count": 1, "normalized_fact_count": 0, "classified_fact_count": 0,
+            "materialized_count": 0, "failure_count": 1,
+        }
+        assert replacement is ladder
+        assert root.nodes[3] is external_default
+        return
     assert result["changed"] is True
     assert result["replaced_count"] == 1
     assert type(replacement).__name__ == "SwitchCaseNode"
@@ -570,6 +604,12 @@ def test_loop_break_default_switch_materializer_replaces_only_in_loop_ladder() -
     assert replacement.cases[2] is case_b
     assert replacement.default_node is default_break
     assert root.nodes[3] is external_default
+    assert isinstance(replacement.switch_expr, ailment.Expr.VirtualVariable)
+    assert replacement.switch_expr.varid == definition.varid
+    assert replacement.switch_expr.idx == selector.idx
+    assert replacement.switch_expr.reg_offset == 0
+    assert replacement.switch_expr.bits == 16
+    assert prefix.statements[0].dst.varid == definition.varid
 
 
 def test_pre_codegen_typed_switch_materializer_refuses_without_typed_artifacts() -> None:
@@ -597,83 +637,6 @@ def test_pre_codegen_typed_switch_materializer_does_not_require_project_enableme
         "refusal_reasons": ("missing_grouped_switch_artifacts",),
         "replaced_count": 0,
     }
-
-
-def test_pre_codegen_typed_switch_materializer_uses_loop_break_default_evidence() -> None:
-    case_a = AngrSequenceNode(0x2100, [_Block(0x2100)])
-    case_b = AngrSequenceNode(0x2200, [_Block(0x2200)])
-    default_break = BreakNode(0x4451, 0x4523)
-    ladder = AngrSequenceNode(0x4400, [case_a, case_b, default_break])
-    loop_sequence = AngrSequenceNode(
-        0x4107,
-        [
-            AngrSequenceNode(0x3000, []),
-            AngrSequenceNode(0x3001, []),
-            AngrSequenceNode(0x3002, []),
-            AngrSequenceNode(0x3003, []),
-            AngrSequenceNode(0x3004, []),
-            AngrSequenceNode(0x3005, []),
-            AngrSequenceNode(0x3006, []),
-            ladder,
-        ],
-    )
-    loop_node = LoopNode("while", None, loop_sequence, addr=0x4107)
-    root = AngrSequenceNode(
-        0x1000,
-        [
-            AngrSequenceNode(0x1001, []),
-            AngrSequenceNode(0x1002, []),
-            loop_node,
-            AngrSequenceNode(0x4523, [_Block(0x4523)]),
-        ],
-    )
-    project = SimpleNamespace(arch=SimpleNamespace(registers={"ax": (0, 2)}))
-
-    result = _maybe_materialize_pre_codegen_typed_switch_8616(
-        project,
-        root,
-        (
-            {
-                "case_region_ids": [0x2100],
-                "case_values": [1],
-                "decision_tree_summary": {
-                    "expanded_root_normalization_branch_subtrees": [
-                        {
-                            "current_case_region_ids": [0x2100],
-                            "current_case_values": [1],
-                            "subtrees": [
-                                {
-                                    "default_candidate_region_ids": [0x4523],
-                                    "normalized_case_region_ids": [0x2200],
-                                    "normalized_case_values": [2],
-                                }
-                            ],
-                        }
-                    ],
-                    "expanded_root_normalization_readiness": {
-                        "ready": True,
-                        "status": "branch_splits_ready",
-                    },
-                },
-                "default_region_id": 0x4523,
-                "region_id": 0x4400,
-                "status": "partial_ladder",
-                "switch_condition_lhs": {
-                    "name": "ax",
-                    "offset": 0,
-                    "size": 2,
-                    "space": "reg",
-                },
-            },
-        ),
-    )
-
-    replacement = loop_sequence.nodes[7]
-    assert result["changed"] is True
-    assert result["replaced_count"] == 1
-    assert type(replacement).__name__ == "SwitchCaseNode"
-    assert list(replacement.cases) == [1, 2]
-    assert replacement.default_node is default_break
 
 
 class _FakeState:

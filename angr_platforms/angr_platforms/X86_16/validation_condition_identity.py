@@ -102,7 +102,9 @@ def condition_semantic_view_projection_fingerprint_8616(
         if not isinstance(expression, CSemanticCast8616):
             projected.append(condition_fingerprint(expression))
             continue
-        width_bits = int(operand.size) * 8
+        if not isinstance(operand, (IRValue, IRBinaryValue)):
+            return None
+        width_bits = operand.size * 8
         source = cast(_IntegerTypeBoundary8616, expression.src_type)
         destination = cast(_IntegerTypeBoundary8616, expression.dst_type)
         try:

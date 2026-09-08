@@ -166,6 +166,10 @@ from .lowering.real_mode_linear import (
     prune_materialized_call_push_stack_assignments_8616,
     stack_cvar_for_stable_ss_linear_access_8616,
 )
+from .lowering.runtime_call_results import (
+    RuntimeCallResultVerdict8616,
+    materialize_runtime_call_result_read_8616,
+)
 from .lowering.segmented_global_loads import (
     _collect_direct_global_symbol_refs_8616,
     _collect_synthetic_direct_global_symbol_refs_8616,
@@ -6548,17 +6552,15 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         )
 
     def _sanitize_exact_negative_bp_call_arg_cvar_8616(expr: StructuredAstValue, offset: int) -> StructuredAstValue:
+        """Clear a stale display identity only for the already-proven BP slot."""
         if offset >= 0 or not isinstance(expr, structured_c.CVariable):
             return expr
-        variable = getattr(expr, "variable", None)
+        variable = expr.variable
         if not isinstance(variable, SimStackVariable):
             return expr
-            if (
-                variable.base != "bp"
-                or call_argument_stack_variable_offset_8616(codegen, expr) != offset
-            ):
-                return expr
-        unified = getattr(expr, "unified_variable", None)
+        if variable.base != "bp" or call_argument_stack_variable_offset_8616(codegen, expr) != offset:
+            return expr
+        unified = expr.unified_variable
         if unified is None:
             return expr
         # The callsite summary already proves the exact BP local offset.
@@ -11675,6 +11677,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         *,
         call_name: str | None,
     ) -> tuple[StructuredAstValue, int, StructuredAstValue | None] | None:
+        """Consume only the register sources proven to belong to one return value."""
         def _mark_return_register_arg_8616(
             expr: StructuredAstValue, callsite: int, regs: tuple[str, ...]
         ) -> StructuredAstValue:
@@ -11694,6 +11697,15 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         first_callsite, first_reg = first_info
         nearest = _nearest_standalone_return_call_8616(statements, first_callsite)
         if nearest is None:
+            result_read = materialize_runtime_call_result_read_8616(
+                _structured_root_8616(codegen.cfunc), statements, first_callsite, first_reg,
+                codegen=codegen, function_addr=codegen.cfunc.addr,
+            )
+            codegen._inertia_runtime_call_result_read_8616 = result_read
+            if result_read.verdict is RuntimeCallResultVerdict8616.PROVEN:
+                return result_read.expression, 1, None
+            if result_read.verdict is RuntimeCallResultVerdict8616.UNKNOWN_REFUSE:
+                return None
             stored_return_call = _stored_return_call_expr_for_callsite_8616(first_callsite)
             if stored_return_call is None:
                 stored_return_call = _synthesized_return_call_expr_from_summary_8616(first_callsite)
@@ -11723,7 +11735,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                             first_callsite,
                             tuple(sorted({first_reg, second_info[1]})),
                         )
-                return ret_call_expr, 2, None
+                    return ret_call_expr, 2, None
             if (
                 first_reg == "ax"
                 and (stored_return_call := _stored_return_call_expr_for_callsite_8616(first_callsite)) is not None

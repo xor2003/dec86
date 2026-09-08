@@ -16,6 +16,7 @@ from angr_platforms.X86_16.callsite_target_inventory import (
     CallsiteTargetInventory8616,
 )
 from angr_platforms.X86_16.lowering import callee_callsite_census
+from angr_platforms.X86_16.lowering import callee_range_callsite_facts as range_facts
 from angr_platforms.X86_16.lowering import project_callee_callsite_collection as collection
 from angr_platforms.X86_16.lowering.callee_callsite_codec import (
     callee_callsite_census_map_from_record_8616,
@@ -50,6 +51,33 @@ def _summary(callsite_addr: int, target_addr: int) -> CallsiteSummary8616:
         push_arg_sources=(("imm", 7),),
         push_arg_instruction_addrs=(callsite_addr - 2,),
     )
+
+
+@pytest.mark.parametrize("canonical_target", [None, 0x2200])
+def test_range_facts_require_resolved_canonical_target(monkeypatch, canonical_target):
+    from capstone import CS_ARCH_X86, CS_MODE_16, Cs
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(capstone=Cs(CS_ARCH_X86, CS_MODE_16)),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda address, size: bytes.fromhex("e8 fd 10"))),
+    )
+    caller = SimpleNamespace(addr=0x1100, size=3)
+    monkeypatch.setattr(range_facts, "exact_function_range_inventory_8616",
+                        lambda *args: SimpleNamespace(boundaries=(caller,)))
+    monkeypatch.setattr(range_facts, "canonicalize_x86_16_padding_call_target_8616",
+                        lambda *args: canonical_target)
+    monkeypatch.setattr(range_facts, "summarize_x86_16_callsite",
+                        lambda *args: _summary(0x1100, 0x2200))
+    ranges = ((0x1100, 0x1103),)
+    indexed = range_facts._range_direct_calls_by_target_8616(project, ranges)
+    facts = range_facts.collect_range_callsite_facts_8616(project, ranges)
+    if canonical_target is None:
+        assert indexed == {}
+        assert facts == ()
+    else:
+        assert tuple(indexed) == (canonical_target,)
+        assert len(facts) == 1
+        assert facts[0].evidence_target_addr == canonical_target
 
 
 def _census(project: object, target_addr: int = 0x2200) -> CalleeCallsiteCensus8616:

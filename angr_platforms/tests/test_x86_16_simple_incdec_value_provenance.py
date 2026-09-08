@@ -43,6 +43,25 @@ def test_simple_incdec_jnz_executes_new_zero_flag(
     assert result.solver.eval(result.regs.flags) & 1 == incoming_flags & 1
 
 
+@pytest.mark.parametrize("opcode,delta,overflow_input", [(0x40, 1, 0x7FFF), (0x48, -1, 0x8000)])
+@pytest.mark.parametrize("initial", [0, 1, 0x7FFE, 0x7FFF, 0x8000, 0x8001, 0xFFFF])
+@pytest.mark.parametrize("carry", [0, 1])
+def test_simple_incdec_jge_preserves_signed_overflow_semantics(opcode, delta, overflow_input, initial, carry):
+    project = angr.load_shellcode(bytes([opcode, 0x7D, 2, 0x90, 0x90, 0x90]), arch=Arch86_16(), load_address=0x100)
+    state = project.factory.blank_state(
+        addr=0x100, add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS},
+    )
+    state.regs.ax, state.regs.flags = initial, 0x880 | carry
+    successors = project.factory.successors(state, num_inst=2).flat_successors
+    assert len(successors) == 1
+    result = successors[0]
+    expected = (initial + delta) & 0xFFFF
+    sign, overflow = expected >> 15, int(initial == overflow_input)
+    assert result.solver.eval(result.regs.ax) == expected
+    assert result.solver.eval(result.regs.flags) & 0x881 == (sign << 7) | (overflow << 11) | carry
+    assert result.addr == (0x105 if sign == overflow else 0x103)
+
+
 def test_simple_inc_preserves_exact_stack_value_for_following_cmp(monkeypatch) -> None:
     """An optimized INC must expose the incremented value to a later CMP."""
     monkeypatch.delenv("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS", raising=False)

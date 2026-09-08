@@ -2,11 +2,72 @@
 
 ## Current Checkpoint (2026-09-07)
 
-Latest inspected completed CI: `34137913096` on `012c0a71a`, with 4395
-tests passed and 41 failed. Ruff/Lizard passed; Pyright/Vulture failed.
-Subsequent commit `6590e6759` is pushed with verified local typing fixes;
-its remote acceptance is not yet established. The historical counts below
-are checkpoints, not a current full-project typing or test census.
+Fresh local Vulture execution found five diagnostics, not the historical remote
+two. One exposed an unreachable exact-BP identity guard in the legacy call
+argument consumer. Its wrong indentation allowed a different BP offset or an
+SP-based variable to lose its unified identity. The guard now refuses both;
+existing coordinate evidence remains authoritative, with no new recovery rule.
+
+- Reason: a required identity check must execute before clearing an alias.
+- DoD for this repair: exact-match behavior retained; mismatched BP and SP
+  identities preserved; surrounding argument regressions and scoped tools pass.
+- Definition of failure: clearing identity without an exact BP coordinate,
+  inventing new storage evidence, or treating focused tests as corpus acceptance.
+- Evidence: before, two failures/two passes; after, 178 passed in 23.13s.
+  Ruff `check --fix`, scoped MyPy, and scoped Pyright passed. Tests exercise
+  the nested guard directly plus the existing call-argument materializer suite;
+  they do not establish live SORTD equivalence. Logs:
+  `/tmp/inertia-stack-guard-before.log`, `/tmp/inertia-stack-guard-after.log`.
+
+The unreachable trailing returns in `cli_access_trait_rewrite.py` and
+`cli_induction_rewrite.py` are now removed. Their seven existing artifact and
+condition-wrapper regressions pass before (17.30s) and after (18.73s); scoped
+Ruff, MyPy, and Pyright pass. This is dead-code removal only, with no change to
+condition recovery or artifact-backed naming. Useful docstrings were retained
+and added to the touched helpers.
+
+- Reason: eliminate confirmed dead statements without moving recovery into CLI.
+- DoD: reachable behavior and refusal cases unchanged; focused tests and scoped
+  lint/type checks pass; refresh the actual global Vulture findings.
+- Definition of failure: changing condition meaning, dropping a live refusal,
+  hiding diagnostics, or claiming the complete gate passed.
+
+The refreshed global Vulture command still fails, reporting exactly the two
+interface parameters below. Both belong to Protocol declarations; the
+OpenTelemetry timeout keyword is also consumed at the provider call boundary.
+No artificial parameter reads, API-breaking renames, Vulture exclusions, or
+confidence filters were added. Logs: `/tmp/inertia-cli-cleanup-before.log`,
+`/tmp/inertia-cli-cleanup-after.log`, `/tmp/inertia-vulture-refresh.log`.
+Global Vulture and remote CI closure remain open.
+
+Remote refresh during the latest follow-up failed with a GitHub API connection
+timeout. The run below remains the last verified remote result, not a freshly
+confirmed latest run. The current workflow installs Python dependencies but
+does not provision kvikdos or the licensed DOS compiler prerequisites.
+
+The completed local combined `quality-dev test-pipeline` run exited zero:
+2,236 tests passed in the development gate, 2,236 in the default unit lane,
+and all seven MS C tiny compile/run/decompile/recompile/run cases passed.
+These overlapping local selections are neither a full-suite census nor remote
+acceptance. Pending working-tree fixes are not yet verified on GitHub.
+Log: `/tmp/inertia-aggregate-final-gates.log`.
+
+Latest inspected completed CI: `34141065397` on `511b0d3cb`, with **4425
+tests passed and 42 failed in 457.85s**. Ruff/Lizard passed; Pyright/Vulture
+failed. Pyright's second batch reports 49 errors; Vulture reports two unused
+interface parameters. The workflow runs a focused selection, not the full suite.
+
+Thirty-five failure sections mention missing `kvikdos`; this does not prove
+they have no additional defects. Seven other failures require separate semantic
+or test-contract investigation. See "Verified Remote Baseline" below.
+Pending local fixes have not established remote acceptance. CI closure remains
+mandatory before claiming P0 complete; performance Step 10 stays deferred.
+The historical counts below are checkpoints, not a current full-project census.
+
+Latest local follow-up: the recorded-return replay crash repair passes 181
+focused tests, scoped Ruff/MyPy/Pyright, and the architecture check. The fresh
+global `quality-fast` run still fails on 125 MyPy diagnostic lines. This does
+not change the remote result above; the current shared tree is not CI-accepted.
 
 ## Initial Evidence (2026-09-07)
 
@@ -312,3 +373,50 @@ Remote run `34139402208` on `6590e6759` confirmed first-batch Pyright closure
 (zero errors), then stopped at 55 errors in the second batch. Pytest remained
 4395 passed, 41 failed in 466.47s. It predates the INC/DEC execution repair;
 neither this count nor the local scoped fixes establishes current full closure.
+
+### Read-Only Callsite Summary Contract
+
+The validation classifier only reads `helper_calls`, but its Protocol declared
+a writable attribute incompatible with the frozen production summary. It now
+declares a read-only property. No validation acceptance/refusal logic changed.
+The five classifier/structuring-consumer tests now use the real
+`X86_16TailValidationSummary` instead of mutable summary stubs. They pass before
+(9.12s) and after (14.76s); all five are enrolled in regular pipeline/Make gates.
+Scoped Ruff, MyPy, and Pyright pass for the validation owner. The four summary
+compatibility diagnostics disappear from the structuring consumer, which still
+has six separate callback/collection-inference errors. This is not global
+typing closure. `quality-dev` exits zero with 2155 tests in 120.63s and the
+compiled-import, architecture/ownership, and generated-C quality guards. The
+default external pipeline was not repeated for this typing-only change.
+This checkpoint remains local pending the next verified commit batch.
+
+### Verified Remote Baseline: 2026-09-07
+
+Run https://github.com/xor2003/inertia_decompiler/actions/runs/34141065397
+on `511b0d3cb` completed with failure. Pytest: **4425 passed, 42 failed**
+in 457.85s. Pyright: first batch zero errors, second batch 49 errors.
+Vulture reports unused interface parameters `propagator` and `timeout_millis`.
+The failed workflow steps are Pyright, Vulture, and Pytest.
+
+Of the 42 pytest failure sections, 35 contain `kvikdos not found`. This is
+an environment blocker, not evidence that those tests have no other defects.
+The remaining seven concern the DOS LoadProgram wrapper, InitMenu, two
+PercolateDown regressions, InitBars, INC/DEC typed-JCC context, and caller
+cleanup loop stack-pointer preservation. Diagnose them independently.
+
+CI closure requires provisioning the DOS execution/compiler prerequisites
+without publishing proprietary compiler files, correcting remaining code and
+typing defects, and a successful remote run of all required checks. Do not
+skip these tests or weaken validation to obtain a green badge. Local focused
+and shared-tree quality gates are not substitutes for that remote result.
+
+### Indexed Refusal Typing Checkpoint
+
+The latest local `quality-fast` run fails on 129 MyPy diagnostic lines. Four
+come from reusing one loop variable for IR refusals and Alias refusals in
+`lowering/indexed_address_parity_inventory.py`. Distinct typed loop variables
+remove that accidental type conflict without changing diagnostic classification.
+Scoped Ruff `check --fix`, MyPy, and Pyright pass. All six focused inventory
+tests pass (8.40s), including both typed-refusal families. The global gate has
+not been rerun after this change; do not subtract four and report a verified
+new global total. This checkpoint is local and does not close remote CI.

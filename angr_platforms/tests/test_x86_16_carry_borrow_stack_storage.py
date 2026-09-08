@@ -5,6 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
+import pytest
 from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.alias.carry_borrow_destinations import (
@@ -252,6 +253,16 @@ def test_missing_execution_slice_refuses_logical_owner_and_keeps_raw_facts() -> 
     assert len(artifact.logical_accesses) == 1
     assert artifact.logical_refusals[0].failure is LogicalStackMemoryAliasFailure8616.MISSING_EXECUTION_SLICE
     assert artifact.logical_stats.complete and artifact.complete
+
+
+def test_logical_alias_versions_refuse_missing_identity() -> None:
+    _, artifact = _lift_with_stack_alias(_ADJACENT_STORES)
+    access = artifact.logical_accesses[0]
+    assert access.versions == tuple(item.raw_slice.address.version for item in access.slices)
+    first = access.slices[0]
+    damaged = replace(first, raw_slice=replace(first.raw_slice, address=replace(first.raw_slice.address, version=None)))
+    with pytest.raises(ValueError, match="requires an SSA version"):
+        _ = replace(access, slices=(damaged, *access.slices[1:])).versions
 
 
 def test_ambiguous_raw_site_match_refuses_logical_owner_without_dropping_raw() -> None:

@@ -1724,7 +1724,10 @@ def _close_final_structuring_callsites_8616(
         return False
     if not isinstance(inventory, dict) or not inventory:
         return False
-    return _materialize_structuring_callsite_prototypes_8616(project, codegen)
+    from .lowering.consumed_stack_address_setup import prune_consumed_stack_address_setup_8616
+
+    changed = _materialize_structuring_callsite_prototypes_8616(project, codegen)
+    return prune_consumed_stack_address_setup_8616(project, codegen, codegen.cfunc.statements, inventory) or changed
 
 
 def _bind_structuring_callsite_consumers_8616(codegen: AngrCodegenSurface) -> None:

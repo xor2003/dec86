@@ -22,6 +22,7 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
 )
 from angr_platforms.X86_16.lowering.wide_call_return_recombine import (
     DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616,
+    _normalized_call_name_8616,
 )
 
 
@@ -45,6 +46,13 @@ class _DummyCodegen:
 def _register(codegen: _DummyCodegen, name: str) -> CVariable:
     offset, size = codegen.project.arch.registers[name]
     return CVariable(SimRegisterVariable(offset, size, name=name), codegen=codegen)
+
+
+def test_call_return_name_refuses_missing_callee_metadata() -> None:
+    codegen = _DummyCodegen()
+    call = CFunctionCall(0x5100, None, [], codegen=codegen)
+
+    assert _normalized_call_name_8616(call) is None
 
 
 def _memory_word(codegen: _DummyCodegen, offset: int, name: str) -> CVariable:

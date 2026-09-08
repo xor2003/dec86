@@ -144,11 +144,14 @@ def _normalize_group_8616(
 ) -> NormalizedIndexedAddressAccess8616:
     """Normalize one exact machine-site group or retain a typed refusal."""
     first_index, first_instruction, first_address = min(entries, key=lambda item: item[0])
+    instr_addr = first_instruction.addr
+    if instr_addr is None or any(item[1].addr != instr_addr for item in entries):
+        raise ValueError("indexed-address group requires one known machine instruction")
     if len(entries) == 1:
         return NormalizedIndexedAddressAccess8616(
             block_addr,
             first_index,
-            int(first_instruction.addr),
+            instr_addr,
             first_instruction.op,
             first_address,
             first_instruction.size,
@@ -161,7 +164,7 @@ def _normalize_group_8616(
         return NormalizedIndexedAddressAccess8616(
             block_addr,
             low_index,
-            int(low_instruction.addr),
+            instr_addr,
             low_instruction.op,
             replace(low_address, size=2),
             2,
@@ -171,7 +174,7 @@ def _normalize_group_8616(
     return NormalizedIndexedAddressAccess8616(
         block_addr,
         first_index,
-        int(first_instruction.addr),
+        instr_addr,
         first_instruction.op,
         first_address,
         first_instruction.size,

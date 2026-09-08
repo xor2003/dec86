@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Protocol, cast
 
+import pytest
 from angr.ailment.expression import Convert, StackBaseOffset, VirtualVariable, VirtualVariableCategory
 from angr.ailment.manager import Manager
 from angr.analyses.s_propagator import SPropagator
@@ -84,6 +86,23 @@ def test_x86_16_stack_compat_patch_installs_propagator_normalization_once() -> N
 
     assert first.__name__ == "_analyze_8616"
     assert SPropagator._analyze is first
+
+
+@pytest.mark.parametrize("sp_offset,bp_offset", [(None, 20), (16, None)])
+def test_x86_16_stack_compat_refuses_missing_register_offsets(monkeypatch, sp_offset, bp_offset):
+    def original(self):
+        self.model.replacements = {}
+
+    monkeypatch.setattr(SPropagator, "_analyze", original)
+    monkeypatch.setattr(LiveDefinitions, "stack_offset_to_stack_addr", LiveDefinitions.stack_offset_to_stack_addr)
+    apply_x86_16_stack_compatibility()
+    receiver = SimpleNamespace(
+        project=SimpleNamespace(arch=SimpleNamespace(name="86_16", sp_offset=sp_offset, bp_offset=bp_offset)),
+        model=SimpleNamespace(),
+    )
+
+    with pytest.raises(ValueError, match="requires registered SP and BP offsets"):
+        SPropagator._analyze(receiver)
 
 
 def test_x86_16_stack_pointer_replacement_narrows_loader_address_width() -> None:

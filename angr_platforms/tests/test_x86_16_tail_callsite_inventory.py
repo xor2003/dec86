@@ -6,6 +6,7 @@ Responsibility: preserve every frontend-proven callsite in validation inventory.
 
 from types import SimpleNamespace
 
+import pytest
 from angr_platforms.X86_16 import analysis_helpers
 from angr_platforms.X86_16 import decompiler_postprocess_calls as calls
 
@@ -37,7 +38,13 @@ def test_tail_jump_target_requires_sidecar_function_entry_evidence() -> None:
     assert analysis_helpers._tail_jump_target_is_function_entry_8616(project, 0x10E35) is False
 
 
-def test_neighbor_inventory_preserves_tail_kind_after_cfg_patching(monkeypatch) -> None:
+@pytest.mark.parametrize("tail_kind", [
+    analysis_helpers.CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP,
+    analysis_helpers.CallTargetKind8616.DIRECT_FAR_TAIL_JUMP,
+    analysis_helpers.CallTargetKind8616.STORED_NEAR_TAIL_JUMP,
+])
+@pytest.mark.parametrize("proven_entry", [True, False])
+def test_neighbor_inventory_preserves_tail_kind_after_cfg_patching(monkeypatch, tail_kind, proven_entry) -> None:
     """Keep decoded tail origin when CFG exposes the jump as a callsite."""
     project = SimpleNamespace()
     function = SimpleNamespace(addr=0x1000, block_addrs_set=(0x1010,))
@@ -55,26 +62,33 @@ def test_neighbor_inventory_preserves_tail_kind_after_cfg_patching(monkeypatch) 
     monkeypatch.setattr(
         analysis_helpers,
         "resolve_direct_jump_target_from_block",
+        lambda *_args: None if tail_kind is analysis_helpers.CallTargetKind8616.STORED_NEAR_TAIL_JUMP else 0x5000,
+    )
+    monkeypatch.setattr(
+        analysis_helpers,
+        "resolve_stored_near_jump_target_from_function",
         lambda *_args: 0x5000,
     )
     monkeypatch.setattr(
         analysis_helpers,
         "_direct_tail_jump_kind_8616",
-        lambda *_args: analysis_helpers.CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP,
+        lambda *_args: tail_kind,
     )
     monkeypatch.setattr(
         analysis_helpers,
         "_tail_jump_target_is_function_entry_8616",
-        lambda _project, target: target == 0x5000,
+        lambda _project, target: proven_entry and target == 0x5000,
     )
-    monkeypatch.setattr(analysis_helpers, "_analysis_function_call_return_8616", lambda *_args: None)
+    monkeypatch.setattr(analysis_helpers, "_analysis_function_call_return_8616", lambda *_args: 0x1013)
 
     targets = analysis_helpers.collect_neighbor_call_targets(function)
 
     assert len(targets) == 1
     assert targets[0].callsite_addr == 0x1010
     assert targets[0].target_addr == 0x5000
-    assert targets[0].kind is analysis_helpers.CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP
+    expected_kind = tail_kind if proven_entry else analysis_helpers.CallTargetKind8616.CFG_RESOLVED_CALL
+    assert targets[0].kind is expected_kind
+    assert targets[0].return_addr == (None if proven_entry else 0x1013)
 
 
 def test_tail_seed_projects_to_owned_callsite_summary() -> None:

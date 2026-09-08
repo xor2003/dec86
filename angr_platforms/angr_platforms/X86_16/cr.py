@@ -6,6 +6,11 @@ Forbidden: protected-mode recovery shortcuts, decompiler semantics, or rewrite c
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pyvex.lifting.util.syntax_wrapper import VexValue
+
 __all__ = ["CR"]
 
 
@@ -20,8 +25,8 @@ class CR:
         self.cr3: int = 0
         self.cr4: int = 0
 
-    def get_crn(self, n: int) -> int:
-        """Return the selected control-register value."""
+    def get_crn(self, n: int) -> int | VexValue:
+        """Read concrete register state; lifting overrides may return a VEX value."""
         if n == 0:
             return self.cr0
         elif n == 1:
