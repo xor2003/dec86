@@ -95,7 +95,11 @@ def test_push_indexed_word_is_one_typed_machine_load() -> None:
     assert fact.index_source.base == ("bp",)
     assert fact.index_source.offset == -2
     assert fact.index_source.size == 2
+    # The PUSH captures BX before tracing its earlier word-load definition.
+    assert fact.definition_path[0].instr_addr == 0x100E
+    assert all(site.instr_addr == 0x100B for site in fact.definition_path[1:])
     assert tuple(site.op for site in fact.definition_path) == (
+        "MOV",
         "MOV",
         "Iop_Or16",
         "MOV",

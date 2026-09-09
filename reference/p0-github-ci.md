@@ -2,6 +2,24 @@
 
 ## Current Checkpoint (2026-09-09)
 
+Run `34321600834` on `be7f019da` is now verified completed with failure:
+**42 failed, 5,063 passed, 10 warnings in 537.23s**. Pyright's first two
+batches pass; the third reports **24 errors**, not a whole-production total.
+Missing `kvikdos` remains visible in the failed DOS recompilation checks.
+InitMenu also fails portable GCC on pointer/integer `&` operands; do not
+attribute every failure to missing tools. No CI check is disabled or relaxed.
+Log: `/tmp/inertia-ci-34321600834-failed.log`.
+
+The local address-snapshot checkpoint passes hard/fast/default gates with
+2,865 routine unit tests, three executable guards, QuickC, and all seven
+MS C tiny round trips. The subsequent full local audit reports 10,794 passed,
+37 failed and 170 skipped in 792.10s; its two new expectation failures are
+corrected in focused tests, not yet a new full-suite result.
+Neither those local lanes nor the lower first-failing Pyright batch count
+establish CI closure or whole-project typing acceptance.
+
+### Earlier Same-Day Checkpoint
+
 Completed run `34287484156` on `8f5bdd05a` reports **42 failed, 4,846 passed,
 10 warnings in 536.13s** for its selected tests. Remote Pyright reported 32
 errors. After the current validation-contract repair, local CI-mode Pyright

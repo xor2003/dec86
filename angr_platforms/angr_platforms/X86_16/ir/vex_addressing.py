@@ -3,6 +3,8 @@
 Layer: IR.
 Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
 normalization.
+Address decomposition must retain the original register-read temporary; binding
+only its name later can select a register version modified by the same instruction.
 Do not perform alias-state ownership, widening, lowering/materialization,
 structuring, rewrite, postprocess, or CLI/reporting work here.
 """
@@ -10,7 +12,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
 
 from .core import AddressStatus, IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
@@ -85,6 +87,7 @@ class _AddressParts8616:
     segment: str | None = None
     base: tuple[str, ...] = ()
     offset: int = 0
+    base_values: tuple[IRValue, ...] = ()
 
 
 def _vex_tag(expr: object) -> str:
@@ -159,7 +162,9 @@ def _address_from_parts(
     expr: tuple[str, ...] | None = None,
     segment_hints: SegmentHintMap | None = None,
     explicit_segment: str | None = None,
+    base_values: tuple[IRValue, ...] = (),
 ) -> IRAddress:
+    """Retain captured base reads separately from their folded displacement."""
     explicit_spaces = {"ss": MemSpace.SS, "ds": MemSpace.DS, "es": MemSpace.ES}
     if explicit_segment in explicit_spaces:
         space = explicit_spaces[explicit_segment]
@@ -179,7 +184,7 @@ def _address_from_parts(
         status=status,
         segment_origin=segment_origin,
         expr=expr,
-        base_values=tuple(
+        base_values=base_values or tuple(
             IRValue(MemSpace.REG, name=name, size=2) for name in base
         ),
     )
@@ -233,7 +238,10 @@ def expr_to_address(
         right_offset = (
             _wrapped_displacement(right.offset, op) if not right.base and right.segment is None else right.offset
         )
-        return _AddressParts8616(segment=segment, base=base, offset=left_offset + right_offset)
+        return _AddressParts8616(
+            segment=segment, base=base, offset=left_offset + right_offset,
+            base_values=(*left.base_values, *right.base_values),
+        )
 
     def _decompose(current: object, seen_tmps: frozenset[int] = frozenset()) -> _AddressParts8616 | None:
         current_tag = _vex_tag(current)
@@ -244,18 +252,27 @@ def expr_to_address(
                 if defining_expr is not None:
                     decomposed = _decompose(defining_expr, seen_tmps | {tmp_id})
                     if decomposed is not None:
+                        if _vex_tag(defining_expr) == "Iex_Get":
+                            decomposed = replace(decomposed, base_values=tuple(
+                                replace(value, source_tmp=tmp_id) for value in decomposed.base_values
+                            ))
                         return decomposed
             tmp_value = tmps.get(tmp_id)
             if tmp_value is None:
                 return None
             if tmp_value.space == MemSpace.REG and tmp_value.name is not None:
-                return _AddressParts8616(base=(tmp_value.name,), offset=tmp_value.offset)
+                return _AddressParts8616(
+                    base=(tmp_value.name,), offset=tmp_value.offset,
+                    base_values=(IRValue(MemSpace.REG, name=tmp_value.name, size=2),),
+                )
             if tmp_value.space == MemSpace.CONST and tmp_value.const is not None:
                 return _AddressParts8616(offset=int(tmp_value.const))
             return None
         if current_tag == "Iex_Get":
             value = expr_to_value(current, tmps, conditions)
-            return None if value.name is None else _AddressParts8616(base=(value.name,), offset=value.offset)
+            return None if value.name is None else _AddressParts8616(
+                base=(value.name,), offset=value.offset, base_values=(replace(value, offset=0),),
+            )
         if current_tag == "Iex_Const":
             return _AddressParts8616(offset=_vex_const_value(current))
         if current_tag == "Iex_Unop":
@@ -292,6 +309,7 @@ def expr_to_address(
                 segment=left.segment,
                 base=left.base,
                 offset=left.offset - displacement,
+                base_values=left.base_values,
             )
         return None
 
@@ -305,6 +323,7 @@ def expr_to_address(
             expr=expr_parts,
             segment_hints=segment_hints,
             explicit_segment=parts.segment,
+            base_values=parts.base_values,
         )
 
     def _from_rdtmp() -> IRAddress:

@@ -2613,6 +2613,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
+	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_coordinate_replay.py \
@@ -3035,6 +3036,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
+	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py \
 	angr_platforms/tests/test_x86_16_heapsort_widening_regression.py \

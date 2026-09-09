@@ -54,6 +54,9 @@ def test_agents_document_bounded_gate_output() -> None:
     """Agents retain full diagnostics without loading successful broad logs."""
     instructions = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-    assert "### Token-efficient command output" in instructions
-    assert "report only the exit status, pass/fail/skip counts" in instructions
-    assert "Output reduction must never suppress diagnostics" in instructions
+    assert "### Mandatory execution guidance" in instructions
+    assert "[reference/agent-execution.md](reference/agent-execution.md)" in instructions
+    execution = (REPO_ROOT / "reference/agent-execution.md").read_text(encoding="utf-8")
+    assert "### Token-Efficient Command Output" in execution
+    assert "report only the exit status, pass/fail/skip counts" in execution
+    assert "Output reduction must never suppress diagnostics" in execution

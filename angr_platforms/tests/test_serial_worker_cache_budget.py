@@ -85,6 +85,7 @@ def test_clean_worker_cprofile_writes_explicit_pid_path(monkeypatch, tmp_path: P
     """The opt-in worker profiler must write a readable process-specific file."""
     profile_template = tmp_path / "worker-{pid}.prof"
     monkeypatch.setenv("INERTIA_OTEL_CPROFILE_PATH", str(profile_template))
+    monkeypatch.setenv(WORKER_IN_PROCESS_PROFILE_ENV_8616, "0")
     observed_profile_modes: list[str | None] = []
 
     def core_main(_argv: list[str] | None) -> int:

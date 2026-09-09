@@ -14,6 +14,12 @@ diagnostic, and long-running-agent guidance that would make `AGENTS.md` too
 large. If a rule here seems to conflict with `AGENTS.md`, fix this file instead
 of creating a second contract.
 
+## Development Execution Rules
+
+Read and follow [agent-execution.md](agent-execution.md) for mandatory regression,
+performance, selective-delegation, output, and progress-reporting rules. Keep
+that policy in one place; this file retains the glossary and diagnostic guide.
+
 ## Glossary
 
 Execution semantics: low-level instruction meaning during execution. `DS << 4` may exist internally for real-mode execution but must not leak into normal emitted C.

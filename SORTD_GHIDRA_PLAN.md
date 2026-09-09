@@ -30,13 +30,28 @@ frame evidence through Alias and preserve numeric entry-SP definitions across
 SSA Reference projection. Do not retry the rejected origin filter unchanged.
 See the [implicit-stack report](reference/p0-implicit-stack-evidence.md) and
 [preceding frame-register report](reference/p0-frame-runtime-register-view.md).
-Hard/fast/default gates pass after behavioral-oracle admission: 2,849 unit tests,
+IR address decomposition now also retains the exact original register-read
+temporary. PUSH stores use the pre-decrement SP version instead of applying
+their displacement to an already decremented register. Four before/after
+regressions cover PUSH BP, PUSH SP, repeated PUSH and nested ENTER. This is
+address provenance, not yet function-wide Alias storage proof. See the
+[address-snapshot report](reference/p0-address-base-snapshots.md).
+Hard/fast/default gates pass after snapshot and audit regression admission: 2,865 unit tests,
 three executable quality guards, QuickC and all seven MS C tiny round trips.
 Scoped MyPy/Pyright and global Make MyPy/Ruff pass. This closes register-view
 coherence and frontend stack evidence/execution, not numeric-frame C,
 complete-suite or remote-CI acceptance.
 
-The full frozen-source refresh reports **10,773 passed, 45 failed, 170 skipped,
+The latest frozen-source full audit reports **10,794 passed, 37 failed,
+170 skipped, 102 warnings in 792.10s**. Ten preceding failures disappeared;
+two new failures were the relocated-document policy check and an exact indexed
+address trace missing its newly preserved register-read snapshot. Both reproduced
+and are corrected with stronger link/provenance assertions; 66 focused tests pass.
+Their modules are now admitted to routine gates, which pass: 2,865 fast/default
+unit tests, three executable guards, QuickC, and all seven MS C tiny round trips.
+This does not establish a new full-suite count or close the remaining failures.
+
+The preceding full frozen-source refresh reported **10,773 passed, 45 failed, 170 skipped,
 88 warnings in 756.14s**. Compared with the preceding 48-failure audit, 14 cases
 no longer fail and 11 newly fail; this is not a clean regression gate. Seven
 new failures were stale logical-memory/RET expectations or inconsistent
@@ -57,7 +72,10 @@ removed five diagnostics while retaining native widths and DF behavior, with
 273 focused frontend/80386 tests passing. Its separate Vulture check passed;
 the broader production Pyright audit remains red as stated above.
 Numeric-frame semantics, the full pytest suite and remote CI remain open;
-the broad optimization campaign stays deferred, with measured bottleneck fixes
+the latest verified remote run `34321600834` on `be7f019da` reports 5,063
+passed and 42 failed in 537.23s, with 24 Pyright errors in its first failing
+batch. Missing kvikdos and semantic generated-C failures remain distinct.
+The broad optimization campaign stays deferred, with measured bottleneck fixes
 allowed as described below. See the [VEX wrapper report](reference/p0-vex-wrapper-contracts.md).
 
 The next numeric-frame boundary is now verified live: angr SSA rewriting
@@ -287,15 +305,9 @@ and rejected experiments, and measure the current implementation before adding
 machinery. Coverage, diagnostics, types and semantic acceptance cannot be traded
 for speed. Fixing DCE that deletes live code remains correctness work.
 
-Delegation policy (2026-09-09): start agents on demand, not for every step.
-Prefer one bounded independent task at a time; add another only when expected
-wall-time savings justify its token cost. Give each agent current graph/coverage
-evidence, exact file ownership, accepted/rejected experiments, a narrow question
-or deliverable, and a stop condition. Use a lower-cost capable model for bounded
-test/tooling work and stronger reasoning for semantic ownership or root-cause
-analysis when the delegation tool exposes model selection. Avoid duplicated
-profiling, overlapping edits, and concurrent broad gates. No agent is required
-merely to fill a test wait.
+Execution and delegation policy: follow the mandatory
+[agent execution rules](reference/agent-execution.md).
+Use bounded agents on demand only when their benefit justifies the token cost.
 
 The [accepted-payload contract repair](reference/p0-accepted-payload-contract.md)
 makes the verifier consume read-only result fields, matching the frozen worker

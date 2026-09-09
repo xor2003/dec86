@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef long clock_t;
@@ -9,6 +10,10 @@ int rand(void);
 void srand(unsigned int seed);
 time_t time(time_t *out);
 char *strcpy(char *dst, const char *src);
+unsigned short dos_int21_flags(void);
+void inertia_io_out8(uint16_t port, uint8_t value);
+void inertia_io_out16(uint16_t port, uint16_t value);
+void inertia_io_out32(uint16_t port, uint32_t value);
 int32_t aNldiv(int32_t dividend, int32_t divisor);
 
 extern uint8_t inertia_memory[];
@@ -30,694 +35,894 @@ extern uint16_t inertia_ss;
 #define MEM_U8(ptr)          (*(uint8_t  *)(ptr))
 #define MEM_U16(ptr)         (*(uint16_t *)(ptr))
 #define MEM_U32(ptr)         (*(uint32_t *)(ptr))
-typedef struct g_08F0_entry
-{
-  char field_0;
-  char field_1;
+#define PTR_U16(ptr)         ((uint16_t)(uintptr_t)(ptr))
+#define PTR_U32(ptr)         ((uint32_t)(uintptr_t)(ptr))
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
 } g_08F0_entry;
-typedef struct inertia_stack_object_22_14w2_18w2
-{
-  char padding_0[14];
-  unsigned short field_14;
-  char padding_16[2];
-  unsigned short field_18;
-  char padding_20[2];
-} inertia_stack_object_22_14w2_18w2;
-extern unsigned short inertia_ds;
 extern unsigned short g_0BAA;
+extern unsigned long inertia_esi;
 extern g_08F0_entry g_0B4C[];
-extern unsigned short g_0BA4;
-extern unsigned long g_0BA6;
-extern unsigned short g_0BA2;
-extern g_08F0_entry g_08F0[];
-extern unsigned short xff;
-extern unsigned short inertia_ss;
-extern long g_0132;
-extern unsigned short xffff0000;
-extern unsigned long g_0B48;
+
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+
+    extern unsigned short xffff0000;
+void sub_10a88(short arg_4)
+{
+
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    local_2 = 0;
+    while (1)
+    {
+        local_4 = local_2 << 1;
+        if ((short)local_4 <= arg_4)
+        {
+            if ((short)local_4 + 1 <= arg_4)
+            {
+                g_0BAA += 1;
+                inertia_esi = inertia_esi & 0xffff0000 | local_4 << 1 & 0xffff;
+                if (g_0B4C[local_4 + 1].field_0 > g_0B4C[local_4].field_0)
+                    local_4 += 1;
+            }
+            g_0BAA += 1;
+            inertia_esi = inertia_esi & 0xffff0000 | local_4 << 1 & 0xffff;
+            if (g_0B4C[local_2].field_0 >= g_0B4C[local_4].field_0)
+                return;
+            sub_107b8(&g_0B4C[(unsigned short)local_2], &g_0B4C[(unsigned short)local_4]);
+            sub_10768(local_2, local_4);
+            local_2 = local_4;
+        }
+        else
+        {
+            return;
+        }
+    }
+}
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BAA;
+extern unsigned long inertia_esi;
+extern g_08F0_entry g_0B4C[];
+
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+
+    extern unsigned short xffff0000;
+void sub_10ce0(short arg_4, short arg_6)
+{
+
+    short local_6;  // [bp-0x8]
+    unsigned short local_4;  // [bp-0x6]
+    short local_2;  // [bp-0x4]
+    if (arg_4 >= arg_6)
+        return;
+    if ((unsigned short)arg_6 - (unsigned short)arg_4 == 1)
+    {
+        g_0BAA += 1;
+        inertia_esi = inertia_esi & 0xffff0000 | arg_6 << 1 & 0xffff;
+        if (g_0B4C[arg_4].field_0 <= g_0B4C[arg_6].field_0)
+            return;
+        sub_107b8(&g_0B4C[(unsigned short)arg_4], &g_0B4C[(unsigned short)arg_6]);
+        sub_10768((unsigned short)arg_4, arg_6);
+        return;
+    }
+    else
+    {
+        local_4 = g_0B4C[arg_6].field_0;
+        do
+        {
+            local_6 = arg_4;
+            local_2 = arg_6;
+            g_0BAA += 1;
+            while (1)
+            {
+                if ((short)local_2 <= (short)local_6)
+                    break;
+                if (g_0B4C[local_6].field_0 > (short)local_4)
+                    break;
+                local_6 += 1;
+            }
+            g_0BAA += 1;
+            while (1)
+            {
+                if ((short)local_2 <= (short)local_6)
+                    break;
+                if (g_0B4C[local_2].field_0 < (short)local_4)
+                    break;
+                local_2 -= 1;
+            }
+            if ((short)local_2 > (short)local_6)
+            {
+                sub_107b8(&g_0B4C[(unsigned short)local_6], &g_0B4C[(unsigned short)local_2]);
+                sub_10768(local_6, local_2);
+            }
+        } while ((short)local_2 > (short)local_6);
+        sub_107b8(&g_0B4C[(unsigned short)local_6], &g_0B4C[(unsigned short)arg_6]);
+        sub_10768(local_6, arg_6);
+        if ((short)local_6 - arg_4 >= arg_6 - (short)local_6)
+        {
+            sub_10ce0((unsigned short)local_6 + 1, arg_6);
+            sub_10ce0((unsigned short)arg_4, (unsigned short)local_6 - 1);
+            return;
+        }
+        sub_10ce0((unsigned short)arg_4, (unsigned short)local_6 - 1);
+        sub_10ce0((unsigned short)local_6 + 1, arg_6);
+        return;
+    }
+}
+int32_t aNldiv(int32_t dividend, int32_t divisor);
+void sub_101f0(unsigned short a0, unsigned short a1, unsigned short a2, unsigned short a3);
+void sub_1123a(char *a0, void *a1);
+void sub_112ba();
+void sub_12756(char *a0, unsigned short a1);
+void sub_128e4(unsigned short a0, unsigned short a1);
+void sub_12b24(unsigned short a0);
+void sub_12b3e(unsigned short a0, unsigned short a1);
+
 extern unsigned short g_0B46;
-extern unsigned short g_0BAC;
 extern unsigned short g_0160;
-extern unsigned short xffff;
-extern char *g_0136[];
+extern unsigned long inertia_eax;
+extern long g_0132;
+extern char * g_0136[];
+
+    extern unsigned short xffff0000;
+    extern unsigned short inertia_ds;
+    extern unsigned short xffff;
+    extern unsigned short inertia_ss;
+void sub_10060(void)
+{
+
+    char local_12[16];  // [bp-0x14]
+    unsigned short local_2;  // [bp-0x4]
+    unsigned short v21;
+    sub_12b24(15);
+    inertia_eax = inertia_eax & 0xffff0000;
+    sub_12b3e(0, 0);
+    inertia_eax = inertia_eax & 0xffff0000 | SEG_U16(inertia_ds, 352) + 2 & 0xffff;
+    sub_101f0(1, 45, 35, SEG_U16(inertia_ds, 352) + 2);
+    local_2 = 0;
+    for (; (short)local_2 < g_0160; local_2 += 1)
+    {
+        inertia_eax = inertia_eax & 0xffff0000 | local_2 + 2 & 0xffff;
+        sub_128e4((unsigned short)local_2 + 2, 48);
+        sub_12756(g_0136[local_2], inertia_ds);
+    }
+    if (g_0B46)
+        sub_1123a(local_12, SEG_PTR(inertia_ds, 354));
+    else
+        sub_1123a(local_12, SEG_PTR(inertia_ds, 358));
+    inertia_eax = inertia_eax & 0xffff0000 | SEG_U16(inertia_ds, 352) - 7 & 0xffff;
+    sub_128e4(SEG_U16(inertia_ds, 352) - 7, 62);
+    inertia_eax = inertia_eax & 0xffff0000 | -18 + &v21 & 0xffff;
+    sub_12756(local_12, inertia_ss);
+    sub_112ba(local_12, 362, aNldiv(SEG_U32(inertia_ds, 306), 30));
+    inertia_eax = inertia_eax & 0xffff0000 | SEG_U16(inertia_ds, 352) - 5 & 0xffff;
+    sub_128e4(SEG_U16(inertia_ds, 352) - 5, 62);
+    inertia_eax = inertia_eax & 0xffff0000 | -18 + &v21 & 0xffff;
+    sub_12756(local_12, inertia_ss);
+    sub_1123a(local_12, SEG_PTR(inertia_ds, 368));
+    if ((g_0132 & 0xffff) == 900 && !(g_0132 >> 16))
+    {
+        inertia_eax = inertia_eax & 0xffff0000 | SEG_U16(inertia_ds, 352) - 4 & 0xffff;
+        sub_128e4(SEG_U16(inertia_ds, 352) - 4, 48);
+        inertia_eax = inertia_eax & 0xffff0000 | -18 + &v21 & 0xffff;
+        sub_12756(local_12, inertia_ss);
+    }
+    inertia_eax = inertia_eax & 0xffff0000 | g_0132 >> 16 & 0xffff;
+    if (g_0132)
+    {
+        return;
+    }
+    inertia_eax = inertia_eax & 0xffff0000 | SEG_U16(inertia_ds, 352) - 3 & 0xffff;
+    sub_128e4(SEG_U16(inertia_ds, 352) - 3, 48);
+    inertia_eax = inertia_eax & 0xffff0000 | -18 + &v21 & 0xffff;
+    sub_12756(local_12, inertia_ss);
+    return;
+}
+void sub_10060(void);
+void sub_102e0(void);
+void sub_10560(void);
 unsigned short sub_1294f(unsigned short a0);
 unsigned short sub_12a29(unsigned short a0);
 void sub_12b5e(unsigned short a0);
 void sub_12bc0(unsigned short a0);
+
+
+    extern unsigned short inertia_ds;
+unsigned short sub_10010(void)
+{
+
+    unsigned short v14;  // ax
+    v14 = sub_12a29(43);
+    SEG_U16(inertia_ds, 2978) = v14;
+    sub_12b5e(0);
+    sub_12bc0(0);
+    sub_10560();
+    sub_10060();
+    sub_102e0();
+    return sub_1294f(0xffff);
+}
 unsigned long sub_1137e(void);
+
+void sub_10f38(unsigned long arg_4)
+{
+
+    unsigned long local_4;  // [bp-0x6]
+    local_4 = sub_1137e() + arg_4;
+    while (1)
+    {
+        if ((long)sub_1137e() > (long)local_4)
+            break;
+    }
+}
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BAA;
+extern unsigned long inertia_esi;
+extern g_08F0_entry g_0B4C[];
+
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+
+    extern unsigned short xffff0000;
+void sub_109e8(unsigned short arg_4)
+{
+
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    local_4 = arg_4;
+    for (; local_4; )
+    {
+        local_2 = (short)local_4 / 2;
+        g_0BAA += 1;
+        inertia_esi = inertia_esi & 0xffff0000 | local_2 << 1 & 0xffff;
+        if (g_0B4C[local_4].field_0 <= g_0B4C[local_2].field_0)
+        {
+            return;
+        }
+        sub_107b8(&g_0B4C[(unsigned short)local_2], &g_0B4C[(unsigned short)local_4]);
+        sub_10768(local_2, local_4);
+        local_4 = local_2;
+    }
+    return;
+}
+extern unsigned short g_0BA4;
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+
+void sub_107b8(g_08F0_entry *arg_4, g_08F0_entry *arg_6)
+{
+    g_08F0_entry local_2;  // [bp-0x4]
+
+    g_0BA4 += 1;
+    local_2 = arg_4[0];
+    arg_4[0] = arg_6[0];
+    arg_6[0] = local_2;
+    return;
+}
+void sub_10498(unsigned short a0);
+void sub_106c8(unsigned short a0);
+
+void sub_10768(unsigned short arg_4, unsigned short arg_6)
+{
+
+    sub_106c8((unsigned short)arg_4);
+    sub_106c8((unsigned short)arg_6);
+    sub_10498((unsigned short)arg_4);
+    return;
+}
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned long g_0BA6;
+extern unsigned short g_0BA2;
+extern g_08F0_entry g_08F0[];
+extern g_08F0_entry g_0B4C[];
+
+void sub_106c8(unsigned short a0);
+unsigned long sub_1137e(void);
+
+
+void sub_10678(void)
+{
+
+    unsigned short local_2;  // [bp-0x4]
+    g_0BA6 = sub_1137e();
+    local_2 = 0;
+    while (g_0BA2 > (short)local_2)
+    {
+        g_0B4C[local_2] = g_08F0[local_2];
+        sub_106c8((unsigned short)local_2);
+        local_2 += 1;
+    }
+    return;
+}
 int32_t aNldiv(int32_t dividend, int32_t divisor);
+void sub_10f38(unsigned long a0);
 unsigned short sub_11310(unsigned short a0);
 void sub_1131e(unsigned short a0, unsigned short a1);
-void sub_113d4(char *a0, unsigned short a1, unsigned short a2);
+
+void sub_10e70(unsigned short arg_4, short arg_6)
+{
+
+    unsigned short local_2;  // [bp-0x4]
+    if (arg_4)
+    {
+        if (arg_6 < 75)
+            arg_6 = 75;
+        sub_1131e(67, 182);
+        arg_4 = aNldiv(1193180, arg_4);
+        sub_1131e(66, (char)arg_4);
+        sub_1131e(66, arg_4 >> 8);
+        local_2 = sub_11310(97);
+        sub_1131e(97, (unsigned short)local_2 | 3);
+    }
+    sub_10f38(arg_6);
+    if (!arg_4)
+    {
+        return;
+    }
+    sub_1131e(97, local_2);
+    return;
+}
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BA2;
+extern unsigned short g_0BAA;
+extern unsigned long inertia_esi;
+extern g_08F0_entry g_0B4C[];
+
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+
+    extern unsigned short xffff0000;
+void sub_10c18(void)
+{
+
+    unsigned short local_8;  // [bp-0xa]
+    short local_6;  // [bp-0x8]
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    local_2 = (short)g_0BA2 / 2;
+    for (; local_2; )
+    {
+        local_6 = g_0BA2 - local_2;
+        do
+        {
+            local_8 = 0;
+            local_4 = 0;
+            while (1)
+            {
+                if ((short)local_4 > local_6)
+                    break;
+                g_0BAA += 1;
+                inertia_esi = inertia_esi & 0xffff0000 | local_4 << 1 & 0xffff;
+                if (g_0B4C[local_4 + local_2].field_0 < g_0B4C[local_4].field_0)
+                {
+                    sub_107b8(&g_0B4C[(unsigned short)local_4], &g_0B4C[(unsigned short)local_4 + (unsigned short)local_2]);
+                    sub_10768(local_4, (unsigned short)local_4 + (unsigned short)local_2);
+                    local_8 = local_4;
+                }
+                local_4 += 1;
+            }
+            local_6 = (short)local_8 - (short)local_2;
+        } while (local_8);
+        local_2 = (short)local_2 / 2;
+    }
+    return;
+}
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BAA;
+extern unsigned long inertia_esi;
+extern unsigned short g_0BA2;
+extern g_08F0_entry g_0B4C[];
+
+void sub_10498(unsigned short a0);
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+
+    extern unsigned short xffff0000;
+void sub_10b50(void)
+{
+
+    unsigned short local_6;  // [bp-0x8]
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    local_6 = 0;
+    while (g_0BA2 > (short)local_6)
+    {
+        local_4 = local_6;
+        local_2 = local_6;
+        for (; (short)local_2 < g_0BA2; local_2 += 1)
+        {
+            g_0BAA += 1;
+            inertia_esi = inertia_esi & 0xffff0000 | local_4 << 1 & 0xffff;
+            if (g_0B4C[local_2].field_0 < g_0B4C[local_4].field_0)
+            {
+                local_4 = local_2;
+                sub_10498((unsigned short)local_2);
+            }
+        }
+        if ((short)local_4 > (short)local_6)
+        {
+            sub_107b8(&g_0B4C[(unsigned short)local_6], &g_0B4C[(unsigned short)local_4]);
+            sub_10768(local_6, local_4);
+        }
+        local_6 += 1;
+    }
+    return;
+}
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BA2;
+extern g_08F0_entry g_0B4C[];
+
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+void sub_109e8(unsigned short a0);
+void sub_10a88(unsigned short a0);
+
+void sub_10970(void)
+{
+
+    unsigned short local_2;  // [bp-0x4]
+    local_2 = 1;
+    while (g_0BA2 > (short)local_2)
+    {
+        sub_109e8((unsigned short)local_2);
+        local_2 += 1;
+    }
+    local_2 = g_0BA2 - 1;
+    for (; (short)local_2 > 0; local_2 -= 1)
+    {
+        sub_107b8(&g_0B4C[0], &g_0B4C[(unsigned short)local_2]);
+        sub_10768(0, local_2);
+        sub_10a88((unsigned short)local_2 - 1);
+    }
+    return;
+}
+struct g_08F0_entry;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BA2;
+extern unsigned short g_0BAA;
+extern unsigned long inertia_esi;
+extern g_08F0_entry g_0B4C[];
+
+void sub_10768(unsigned short a0, unsigned short a1);
+void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);
+
+    extern unsigned short xffff0000;
+void sub_108d0(void)
+{
+
+    unsigned short local_6;  // [bp-0x8]
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    local_4 = g_0BA2;
+    do
+    {
+        local_6 = 0;
+        local_2 = 0;
+        while (1)
+        {
+            if ((short)local_4 <= (short)local_2)
+                break;
+            g_0BAA += 1;
+            inertia_esi = inertia_esi & 0xffff0000 | local_2 << 1 & 0xffff;
+            if (g_0B4C[local_2 + 1].field_0 < g_0B4C[local_2].field_0)
+            {
+                sub_107b8(&g_0B4C[(unsigned short)local_2], &g_0B4C[(unsigned short)local_2 + 1]);
+                sub_10768(local_2, (unsigned short)local_2 + 1);
+                local_6 = local_2;
+            }
+            local_2 += 1;
+        }
+        local_4 = local_6;
+    } while (local_6);
+    return;
+}
+void sub_10498(unsigned short a0);
+void sub_106c8(unsigned short a0);
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+
+extern unsigned short g_0BAA;
+extern unsigned short g_0BA4;
+extern unsigned short g_0BA2;
+extern g_08F0_entry g_0B4C[];
+
+    extern unsigned short xff;
+void sub_10808(void)
+{
+    unsigned short local_6;  // [bp-0x8]
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    g_08F0_entry local_8;  // [bp-0xa]
+
+    local_2 = 0;
+    while (g_0BA2 > (short)local_2)
+    {
+        local_8 = g_0B4C[local_2];
+        local_6 = (char)local_8.field_0;
+        for (local_4 = local_2; local_4; local_4 -= 1)
+        {
+            g_0BAA += 1;
+            if ((g_0B4C[local_4 - 1].field_0 & 0xff) <= (short)local_6)
+                break;
+            g_0BA4 += 1;
+            g_0B4C[local_4] = g_0B4C[local_4 - 1];
+            sub_106c8((unsigned short)local_4);
+            sub_10498((unsigned short)local_4);
+        }
+        g_0B4C[local_4] = local_8;
+        sub_106c8((unsigned short)local_4);
+        sub_10498((unsigned short)local_4);
+        local_2 += 1;
+    }
+    return;
+}
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BA2;
+extern g_08F0_entry g_0B4C[];
+
+void sub_113d4();
 int sub_12756(char *a0, unsigned short a1);
 void sub_128e4(unsigned short a0, unsigned short a1);
 void sub_12b24(unsigned short a0);
+
+    extern unsigned short inertia_ss;
+void sub_106c8(unsigned short arg_4)
+{
+
+    unsigned short local_2e;  // [bp-0x30]
+    char local_2c[44];  // [bp-0x2e]
+    sub_113d4(local_2c, 223, g_0B4C[arg_4].field_0);
+    local_2e = g_0BA2 - g_0B4C[arg_4].field_0;
+    sub_113d4(local_2c + g_0B4C[arg_4].field_0, 32, local_2e);
+    local_2c[g_0BA2] = 0;
+    sub_12b24(g_0B4C[arg_4].field_1);
+    sub_128e4((unsigned short)arg_4 + 1, 0);
+    sub_12756(local_2c, inertia_ss);
+    return;
+}
+struct inertia_stack_object_22_14w2_18w2;
+
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+extern unsigned short g_0BA2;
+extern unsigned long inertia_eax;
+extern unsigned long inertia_esi;
+extern long g_0132;
+extern g_08F0_entry g_08F0[];
+
+int sub_10678(void);
 unsigned short sub_1132c(void *a0);
 void sub_11402(unsigned short a0);
 unsigned short sub_11414(void);
 void sub_12ac8(struct inertia_stack_object_22_14w2_18w2 *a0, unsigned short a1);
-void sub_112ba();
-unsigned short sub_11278(unsigned short a0);
-unsigned short sub_11292(void);
-void sub_1123a(char *a0, void *a1);
-void sub_12b3e(unsigned short a0, unsigned short a1);
-unsigned short sub_10010(void);
-void sub_10f38(unsigned long arg_4);
-void sub_109e8(unsigned short arg_4);
-void sub_107b8(g_08F0_entry *left, g_08F0_entry *right);
-void sub_10768(unsigned short arg_4, unsigned short arg_6);
-void sub_10678(void);
-void sub_10e70(unsigned short arg_4, short arg_6);
-void sub_10ce0(short arg_4, short arg_6);
-void sub_10c18(void);
-void sub_10b50(void);
-void sub_10a88(short arg_4);
-void sub_10970(void);
-void sub_108d0(void);
-void sub_10808(void);
-void sub_106c8(unsigned short arg_4);
-void sub_10560(void);
-void sub_10498(unsigned short arg_4);
-void sub_102e0(void);
-void sub_101f0(unsigned short arg_4, unsigned short arg_6, unsigned short arg_8, short arg_a);
-void sub_10060(void);
-unsigned short sub_10010(void)
+
+typedef struct inertia_stack_object_22_14w2_18w2 {
+    char padding_0[14];
+    unsigned short field_14;
+    char padding_16[2];
+    unsigned short field_18;
+    char padding_20[2];
+} inertia_stack_object_22_14w2_18w2;
+
+    extern unsigned short inertia_ds;
+    extern unsigned short xffff;
+    extern unsigned short xffff0000;
+    extern unsigned short inertia_ss;
+void sub_10560(void)
 {
-  unsigned short v14;
-  v14 = sub_12a29(43);
-  SEG_U16(inertia_ds, 2978) = v14;
-  sub_12b5e(0);
-  sub_12bc0(0);
-  sub_10560();
-  sub_10060();
-  sub_102e0();
-  return sub_1294f(0xffff);
-}
+    short v24;  // cx
+    short v25;  // dx
+    unsigned short local_76;  // [bp-0x78]
+    unsigned short local_74;  // [bp-0x76]
+    unsigned short local_72;  // [bp-0x74]
+    unsigned short local_5a[43];  // [bp-0x5c]
+    unsigned short local_4;  // [bp-0x6]
+    unsigned short local_2;  // [bp-0x4]
+    inertia_stack_object_22_14w2_18w2 local_56;  // [bp-0x72]
 
-void sub_10f38(unsigned long arg_4)
-{
-  unsigned short local_4;
-  unsigned long arg;
-  local_4 = sub_1137e() + arg_4;
-  while (1)
-  {
-    if (((long) sub_1137e()) > local_4)
-      break;
-  }
-
-}
-
-void sub_109e8(unsigned short arg_4)
-{
-  unsigned short local_4;
-  unsigned short local_2;
-  local_4 = arg_4;
-  for (; local_4;)
-  {
-    local_2 = ((short) local_4) / 2;
-    g_0BAA += 1;
-    if (g_0B4C[local_4].field_0 <= g_0B4C[local_2].field_0)
-      return;
-    sub_107b8(&g_0B4C[local_2], &g_0B4C[local_4]);
-    sub_10768(local_2, local_4);
-    local_4 = local_2;
-  }
-
-  return;
-}
-
-void sub_107b8(g_08F0_entry *left, g_08F0_entry *right)
-{
-  g_08F0_entry local_2;
-  g_08F0_entry *local_5;
-  g_0BA4 += 1;
-  local_2 = left[0];
-  left[0] = right[0];
-  right[0] = local_2;
-  return;
-}
-
-void sub_10768(unsigned short arg_4, unsigned short arg_6)
-{
-  sub_106c8(arg_4);
-  sub_106c8(arg_6);
-  sub_10498(arg_4);
-  return;
-}
-
-void sub_10678(void)
-{
-  unsigned short local_2;
-  g_0BA6 = sub_1137e();
-  local_2 = 0;
-  while (1)
-  {
-    if (g_0BA2 <= local_2)
-      break;
-    g_0B4C[local_2] = g_08F0[local_2];
-    sub_106c8(local_2);
-    local_2 += 1;
-  }
-
-  return;
-}
-
-void sub_10e70(unsigned short arg_4, short arg_6)
-{
-  unsigned short local_2;
-  if (arg_4)
-  {
-    if (arg_6 < 75)
-      arg_6 = 75;
-    sub_1131e(67, 182);
-    arg_4 = aNldiv(1193180, arg_4);
-    sub_1131e(66, arg_4);
-    sub_1131e(66, arg_4 >> 8);
-    local_2 = sub_11310(97);
-    sub_1131e(97, local_2 | 3);
-  }
-  sub_10f38(arg_6);
-  if (!arg_4)
-    return;
-  sub_1131e(97, local_2);
-  return;
-}
-
-void sub_10ce0(short arg_4, short arg_6)
-{
-  short local_6;
-  unsigned short local_4;
-  short local_2;
-  if (arg_4 < arg_6)
-  {
-    if ((((unsigned short) arg_6) - ((unsigned short) arg_4)) == 1)
-    {
-      g_0BAA += 1;
-      if (g_0B4C[arg_4].field_0 > g_0B4C[arg_6].field_0)
-      {
-        sub_107b8(&g_0B4C[arg_4], &g_0B4C[arg_6]);
-        sub_10768(arg_4, arg_6);
-      }
-    }
+    inertia_eax = inertia_eax & 0xffff0000 | sub_1132c(SEG_PTR(inertia_ds, 0)) & 0xffff;
+    sub_11402(inertia_eax & 0xffff);
+    SEG_U16(inertia_ds, 2886) = 1;
+    SEG_U8(inertia_ds, 2887) = 0;
+    g_0132 = g_0132 & 0xffff0000 | 30;
+    g_0132 = g_0132 & 0xffff0000 | 30;
+    g_0132 = g_0132 & 0xffff;
+    g_0132 = g_0132 & 0xffff;
+    sub_12ac8(&local_56, inertia_ss);
+    if (local_56.field_18 == 1 || local_56.field_14 == 2 || !local_56.field_14)
+        local_74 = 1;
     else
-    {
-      local_4 = g_0B4C[arg_6].field_0;
-      do
-      {
-        local_6 = arg_4;
-        local_2 = arg_6;
-        g_0BAA += 1;
-        while (1)
-        {
-          if (local_2 <= local_6)
-            break;
-          if (g_0B4C[local_6].field_0 > local_4)
-            break;
-          local_6 += 1;
-        }
-
-        g_0BAA += 1;
-        while (1)
-        {
-          if (local_2 <= local_6)
-            break;
-          if (g_0B4C[local_2].field_0 < local_4)
-            break;
-          local_2 -= 1;
-        }
-
-        if (local_2 > local_6)
-        {
-          sub_107b8(&g_0B4C[local_6], &g_0B4C[local_2]);
-          sub_10768(local_6, local_2);
-        }
-      }
-      while (local_2 > local_6);
-      sub_107b8(&g_0B4C[local_6], &g_0B4C[arg_6]);
-      sub_10768(local_6, arg_6);
-      if ((local_6 - arg_4) < (arg_6 - local_6))
-      {
-        sub_10ce0(arg_4, local_6 - 1);
-        sub_10ce0(local_6 + 1, arg_6);
-      }
-      else
-      {
-        sub_10ce0(local_6 + 1, arg_6);
-        sub_10ce0(arg_4, local_6 - 1);
-      }
-    }
-  }
-  return;
-}
-
-void sub_10c18(void)
-{
-  unsigned short local_8;
-  short local_6;
-  unsigned short local_4;
-  unsigned short local_2;
-  local_2 = ((short) g_0BA2) / 2;
-  for (; local_2;)
-  {
-    local_6 = g_0BA2 - local_2;
-    local_8 = 0;
-    do
-    {
-      local_4 = 0;
-      while (1)
-      {
-        if (local_4 > local_6)
-          break;
-        g_0BAA += 1;
-        if (g_0B4C[local_4 + local_2].field_0 < g_0B4C[local_4].field_0)
-        {
-          sub_107b8(&g_0B4C[local_4], &g_0B4C[local_4 + local_2]);
-          sub_10768(local_4, local_4 + local_2);
-          local_8 = local_4;
-        }
-        local_4 += 1;
-      }
-
-      local_6 = ((short) local_8) - ((short) local_2);
-    }
-    while (local_8);
-    local_2 = ((short) local_2) / 2;
-  }
-
-  return;
-}
-
-void sub_10b50(void)
-{
-  unsigned short local_6;
-  unsigned short local_4;
-  unsigned short local_2;
-  local_6 = 0;
-  while (1)
-  {
-    if (g_0BA2 <= local_6)
-      break;
-    local_4 = local_6;
-    local_2 = local_6;
-    for (; local_2 < g_0BA2; local_2 = local_2 + 1)
-    {
-      g_0BAA += 1;
-      if (g_0B4C[local_2].field_0 < g_0B4C[local_4].field_0)
-      {
-        local_4 = local_2;
-        sub_10498(local_2);
-      }
-    }
-
-    if (local_4 > local_6)
-    {
-      sub_107b8(&g_0B4C[local_6], &g_0B4C[local_4]);
-      sub_10768(local_6, local_4);
-    }
-    local_6 += 1;
-  }
-
-  return;
-}
-
-void sub_10a88(short arg_4)
-{
-  unsigned short local_4;
-  unsigned short local_2;
-  local_2 = 0;
-  while (1)
-  {
-    local_4 = local_2 << 1;
-    if (local_4 <= arg_4)
-    {
-      if ((local_4 + 1) <= arg_4)
-      {
-        g_0BAA += 1;
-        if (g_0B4C[local_4 + 1].field_0 > g_0B4C[local_4].field_0)
-          local_4 += 1;
-      }
-      g_0BAA += 1;
-      if (g_0B4C[local_2].field_0 >= g_0B4C[local_4].field_0)
-        return;
-      sub_107b8(&g_0B4C[local_2], &g_0B4C[local_4]);
-      sub_10768(local_2, local_4);
-      local_2 = local_4;
-    }
-    else
-    {
-      return;
-    }
-  }
-
-}
-
-void sub_10970(void)
-{
-  unsigned short local_2;
-  local_2 = 1;
-  while (1)
-  {
-    if (g_0BA2 <= local_2)
-      break;
-    sub_109e8(local_2);
-    local_2 += 1;
-  }
-
-  local_2 = g_0BA2 - 1;
-  for (; local_2 > 0; local_2 -= 1)
-  {
-    sub_107b8(&g_0B4C[0], &g_0B4C[local_2]);
-    sub_10768(0, local_2);
-    sub_10a88(local_2 - 1);
-  }
-
-  return;
-}
-
-void sub_108d0(void)
-{
-  unsigned short local_6;
-  unsigned short local_4;
-  unsigned short local_2;
-  local_4 = g_0BA2;
-  do
-  {
-    local_6 = 0;
+        local_74 = 15;
     local_2 = 0;
     while (1)
     {
-      if (local_4 <= local_2)
-        break;
-      g_0BAA += 1;
-      if (g_0B4C[local_2 + 1].field_0 < g_0B4C[local_2].field_0)
-      {
-        sub_107b8(&g_0B4C[local_2], &g_0B4C[local_2 + 1]);
-        sub_10768(local_2, local_2 + 1);
-        local_6 = local_2;
-      }
-      local_2 += 1;
+        inertia_eax = inertia_eax & 0xffff0000 | local_2 & 0xffff;
+        if (g_0BA2 <= (short)local_2)
+            break;
+        inertia_eax = inertia_eax & 0xffff0000 | local_2 + 1 & 0xffff;
+        local_5a[local_2] = local_2 + 1;
+        local_2 += 1;
     }
-
-    local_4 = local_6;
-  }
-  while (local_6);
-  return;
-}
-
-void sub_10808(void)
-{
-  unsigned short local_6;
-  unsigned short local_4;
-  unsigned short local_2;
-  g_08F0_entry local_8;
-  local_2 = 0;
-  while (1)
-  {
-    if (g_0BA2 <= local_2)
-      break;
-    local_8 = g_0B4C[local_2];
-    local_6 = (char) local_8.field_0;
-    local_4 = local_2;
-    for (; local_4; local_4 = local_4 - 1)
+    inertia_eax = inertia_eax & 0xffff0000 | SEG_U16(inertia_ds, 2978) - 1 & 0xffff;
+    local_4 = g_0BA2 - 1;
+    local_2 = 0;
+    while (1)
     {
-      g_0BAA += 1;
-      if ((g_0B4C[local_4 - 1].field_0 & 0xff) <= local_6)
-        break;
-      g_0BA4 += 1;
-      g_0B4C[local_4] = g_0B4C[local_4 - 1];
-      sub_106c8(local_4);
-      sub_10498(local_4);
-    }
-
-    g_0B4C[local_4] = local_8;
-    sub_106c8(local_4);
-    sub_10498(local_4);
-    local_2 += 1;
-  }
-
-  return;
-}
-
-void sub_106c8(unsigned short arg_4)
-{
-  unsigned short local_2e;
-  char local_2c[44];
-  sub_113d4(local_2c, 223, g_0B4C[arg_4].field_0);
-  local_2e = g_0BA2 - g_0B4C[arg_4].field_0;
-  sub_113d4(local_2c + g_0B4C[arg_4].field_0, 32, local_2e);
-  local_2c[g_0BA2] = 0;
-  sub_12b24(g_0B4C[arg_4].field_1);
-  sub_128e4(arg_4 + 1, 0);
-  sub_12756(local_2c, inertia_ss);
-  return;
-}
-
-void sub_10560(void)
-{
-  unsigned short local_76;
-  unsigned short local_74;
-  unsigned short local_72;
-  unsigned short local_5e;
-  unsigned short local_5a[43];
-  unsigned short local_4;
-  unsigned short local_2;
-  inertia_stack_object_22_14w2_18w2 stack_object_70;
-  sub_11402(sub_1132c(SEG_PTR(inertia_ds, 0)));
-  SEG_U16(inertia_ds, 2886) = 1;
-  g_0132 = (g_0132 & 0xffff0000) | 30;
-  g_0132 = g_0132 & 0xffff;
-  sub_12ac8(&stack_object_70, inertia_ss);
-  if (local_5e == 1)
-    local_74 = 1;
-  else
-    local_74 = 15;
-  local_2 = 0;
-  while (1)
-  {
-    if (g_0BA2 <= local_2)
-      break;
-    local_5a[local_2] = local_2 + 1;
-    local_2 += 1;
-  }
-
-  local_4 = g_0BA2 - 1;
-  local_2 = 0;
-  while (1)
-  {
-    if (g_0BA2 <= local_2)
-      break;
-    local_76 = ((short) sub_11414()) % ((short) (local_4 + 1));
-    local_72 = local_5a[local_76];
-    local_5a[local_76] = local_5a[local_4];
-    local_4 -= 1;
-    g_08F0[local_2].field_0 = local_72;
-    if (local_74 == 1)
-      g_08F0[local_2].field_1 = 7;
-    else
-      g_08F0[local_2].field_1 = (((short) local_72) % ((short) local_74)) + 1;
-    local_2 += 1;
-  }
-
-  sub_10678();
-  return;
-}
-
-void sub_10498(unsigned short arg_4)
-{
-  char local_50[80];
-  unsigned char v34;
-  unsigned char v35;
-  sub_12b24(15);
-  g_0B48 = sub_1137e();
-  sub_112ba(local_50, 381, aNldiv(SEG_U32(inertia_ds, 2888) - SEG_U32(inertia_ds, 2982), 1000), g_0BA4, g_0BAA);
-  sub_128e4(g_0BAC + 7, 59);
-  sub_12756(local_50, inertia_ss);
-  if (!g_0B46)
-  {
-    sub_10f38(SEG_U32(inertia_ds, 306));
-    return;
-  }
-  v34 = arg_4;
-  v35 = (arg_4 >> 8) & 0xff;
-  sub_10e70(arg_4 * 60, 75);
-  sub_10f38(SEG_U32(inertia_ds, 306) - 75);
-  return;
-}
-
-void sub_102e0(void)
-{
-  unsigned short ax;
-  unsigned char local_2;
-  while (1)
-  {
-    SEG_U16(inertia_ds, 2986) = 0;
-    SEG_U16(inertia_ds, 2980) = 0;
-    sub_128e4(g_0160 + 1, 75);
-    sub_12bc0(1);
-    local_2 = sub_11292();
-    sub_12bc0(0);
-    ax = sub_11278(local_2);
-    switch (ax)
-    {
-      case 69:
-        SEG_U16(inertia_ds, 2988) = 3;
-        sub_10678();
-        sub_10b50();
-        sub_10498(0);
-        break;
-
-      case 60:
-        if ((g_0132 >> 16) <= 0)
-      {
-        if ((g_0132 >> 16) >= 0)
+        inertia_eax = inertia_eax & 0xffff0000 | local_2 & 0xffff;
+        if (g_0BA2 <= (short)local_2)
+            break;
+        local_76 = (short)sub_11414() % (short)(local_4 + 1);
+        v24 = local_4 + 1;
+        v25 = 0 - (1 & (inertia_eax & 0xffff) >> 15);
+        inertia_eax = inertia_eax & 0xffff0000 | (*((unsigned char *)((unsigned char *)local_5a + 0 + ((inertia_esi & 0xffff) << 1))) | *((unsigned char *)((unsigned char *)local_5a + 0 + ((inertia_esi & 0xffff) << 1) + 1)) << 8) & 0xffff;
+        local_72 = local_5a[local_76];
+        inertia_eax = inertia_eax & 0xffff0000 | (*((unsigned char *)((unsigned char *)local_5a + 0 + ((inertia_esi & 0xffff) << 1))) | *((unsigned char *)((unsigned char *)local_5a + 0 + ((inertia_esi & 0xffff) << 1) + 1)) << 8) & 0xffff;
+        local_5a[local_76] = local_5a[local_4];
+        local_4 -= 1;
+        g_08F0[local_2].field_0 = local_72;
+        if (local_74 == 1)
         {
-          if ((g_0132 & 0xffff) <= 900)
-            goto LABEL_10408;
+            g_08F0[local_2].field_1 = 7;
         }
         else
         {
-          LABEL_10408:
-          g_0132 += 30;
-
+            inertia_eax = inertia_eax & 0xffff0000 | local_72 & 0xffff;
+            g_08F0[local_2].field_1 = (short)local_72 % (short)local_74 + 1;
         }
-      }
-        sub_10060();
-        break;
-
-      case 62:
-        if (g_0132)
-        g_0132 -= 30;
-        sub_10060();
-        break;
-
-      case 66:
-        SEG_U16(inertia_ds, 2988) = 1;
-        sub_10678();
-        sub_108d0();
-        sub_10498(0);
-        break;
-
-      case 72:
-        SEG_U16(inertia_ds, 2988) = 2;
-        sub_10678();
-        sub_10970();
-        sub_10498(0);
-        break;
-
-      case 73:
-        SEG_U16(inertia_ds, 2988) = 0;
-        sub_10678();
-        sub_10808();
-        sub_10498(0);
-        break;
-
-      case 81:
-        SEG_U16(inertia_ds, 2988) = 5;
-        sub_10678();
-        sub_10ce0(0, g_0BA2);
-        sub_10498(0);
-        break;
-
-      case 83:
-        SEG_U16(inertia_ds, 2988) = 4;
-        sub_10678();
-        sub_10c18();
-        sub_10498(0);
-        break;
-
-      case 84:
-        g_0B46 = g_0B46 < 1;
-        sub_10060();
-        break;
-
-      case 27:
-        return;
-
-      default:
-        break;
-
+        local_2 += 1;
     }
-
-  }
-
+    sub_10678();
+    return;
 }
+int32_t aNldiv(int32_t dividend, int32_t divisor);
+void sub_10e70(unsigned short a0, unsigned short a1);
+void sub_10f38(unsigned long a0);
+void sub_112ba();
+unsigned long sub_1137e(void);
+void sub_12756(char *a0, unsigned short a1);
+void sub_128e4(unsigned short a0, unsigned short a1);
+void sub_12b24(unsigned short a0);
 
+
+extern unsigned long g_0B48;
+extern unsigned short g_0B46;
+extern unsigned short g_0BAC;
+extern unsigned short g_0BA4;
+extern unsigned short g_0BAA;
+
+    extern unsigned short inertia_ds;
+    extern unsigned short inertia_ss;
+void sub_10498(unsigned short arg_4)
+{
+
+    char local_50[80];  // [bp-0x52]
+    sub_12b24(15);
+    g_0B48 = sub_1137e();
+    sub_112ba(local_50, 381, aNldiv(SEG_U32(inertia_ds, 2888) - SEG_U32(inertia_ds, 2982), 1000), g_0BA4, g_0BAA);
+    sub_128e4(g_0BAC + 7, 59);
+    sub_12756(local_50, inertia_ss);
+    if (g_0B46)
+    {
+        sub_10e70((unsigned short)arg_4 * 60, 75);
+        sub_10f38(SEG_U32(inertia_ds, 306) - 75);
+        return;
+    }
+    else
+    {
+        sub_10f38(SEG_U32(inertia_ds, 306));
+        return;
+    }
+}
+void sub_10060(void);
+void sub_10498(unsigned short a0);
+void sub_10678(void);
+void sub_10808(void);
+void sub_108d0(void);
+void sub_10970(void);
+void sub_10b50(void);
+void sub_10c18(void);
+void sub_10ce0(unsigned short a0, unsigned short a1);
+unsigned short sub_11278(unsigned short a0);
+unsigned short sub_11292(void);
+void sub_128e4(unsigned short a0, unsigned short a1);
+void sub_12bc0(unsigned short a0);
+
+
+extern unsigned short g_0B46;
+extern unsigned short inertia_flags;
+extern unsigned long inertia_eax;
+extern unsigned short g_0BA2;
+extern unsigned short g_0160;
+extern long g_0132;
+
+    extern unsigned short inertia_ds;
+    extern unsigned short xffff;
+    extern unsigned short xffff0000;
+    extern unsigned short xfffe;
+    extern unsigned short x8000;
+void sub_102e0(void)
+{
+    unsigned short v30;  // flags
+    unsigned short v43;  // flags
+    unsigned short v46;  // 4168
+    unsigned short v47;  // 4171
+    unsigned short v14;  // flags
+    unsigned char v32;  // 4132
+    unsigned char v33;  // 4134
+    unsigned char v41;  // 4107
+    unsigned char v42;  // 4109
+    unsigned char v45;  // 4154
+    unsigned char local_2;  // [bp-0x4]
+
+    v30 = inertia_flags;
+    v43 = inertia_flags;
+    v14 = inertia_flags;
+    while (1)
+    {
+        SEG_U16(inertia_ds, 2986) = 0;
+        SEG_U16(inertia_ds, 2980) = 0;
+        inertia_eax = inertia_eax & 0xffff0000 | g_0160 + 1 & 0xffff;
+        sub_128e4(g_0160 + 1, 75);
+        sub_12bc0(1);
+        local_2 = sub_11292();
+        sub_12bc0(0);
+        inertia_eax = inertia_eax & 0xffff0000 | local_2 & 0xffff;
+        switch (sub_11278(local_2))
+        {
+        case 69:
+            SEG_U16(inertia_ds, 2988) = 3;
+            SEG_U8(inertia_ds, 2989) = 0;
+            sub_10678();
+            sub_10b50();
+            sub_10498(0);
+            break;
+        case 60:
+            if (!(g_0132 >> 16 <= 0 ? 0 : 1) && (g_0132 >> 16 >= 0 ? 0 : 1) || !((g_0132 & 0xffff) <= 900 ? 0 : 1))
+                g_0132 += 30;
+            sub_10060();
+            break;
+        case 62:
+            inertia_eax = inertia_eax & 0xffff0000 | g_0132 >> 16 & 0xffff;
+            v32 = g_0132 & 0xffff & 0xff;
+            v33 = (g_0132 & 0xffff) >> 8 & 0xff;
+            v14 = v30 & 63274 | (!(inertia_eax & 0xffff | v32 | v33 << 8) & 1) << 6 & 64;
+            if (g_0132)
+                g_0132 -= 30;
+            sub_10060();
+            break;
+        case 66:
+            SEG_U16(inertia_ds, 2988) = 1;
+            SEG_U8(inertia_ds, 2989) = 0;
+            sub_10678();
+            sub_108d0();
+            sub_10498(0);
+            break;
+        case 72:
+            SEG_U16(inertia_ds, 2988) = 2;
+            SEG_U8(inertia_ds, 2989) = 0;
+            sub_10678();
+            sub_10970();
+            sub_10498(0);
+            break;
+        case 73:
+            SEG_U16(inertia_ds, 2988) = 0;
+            SEG_U8(inertia_ds, 2989) = 0;
+            sub_10678();
+            sub_10808();
+            sub_10498(0);
+            break;
+        case 81:
+            SEG_U16(inertia_ds, 2988) = 5;
+            SEG_U8(inertia_ds, 2989) = 0;
+            sub_10678();
+            sub_10ce0(0, g_0BA2);
+            sub_10498(0);
+            break;
+        case 83:
+            SEG_U16(inertia_ds, 2988) = 4;
+            SEG_U8(inertia_ds, 2989) = 0;
+            sub_10678();
+            sub_10c18();
+            sub_10498(0);
+            break;
+        case 84:
+            v41 = g_0B46 & 0xff;
+            v42 = g_0B46 >> 8 & 0xff;
+            v43 = v14 & 63274 | (v41 | v42 << 8) < 1 & 1 & 1;
+            inertia_eax = inertia_eax & 0xffff0000 | 0 - (1 & v43 & 1) & 0xffff;
+            v45 = 0 - (inertia_eax & 0xffff) ^ 0 - (inertia_eax & 0xffff) >> 4 ^ (0 - (inertia_eax & 0xffff) ^ 0 - (inertia_eax & 0xffff) >> 4) >> 2 ^ (0 - (inertia_eax & 0xffff) ^ 0 - (inertia_eax & 0xffff) >> 4 ^ (0 - (inertia_eax & 0xffff) ^ 0 - (inertia_eax & 0xffff) >> 4) >> 2) >> 1;
+            v46 = ((v43 & 0xfffe | inertia_eax & 0xffff & 1 & 1) & 0xfffb | (~(v45) & 1 & 1) << 2 & 4) & 0xffef;
+            v47 = ((0 ^ inertia_eax & 0xffff ^ 0 - (inertia_eax & 0xffff)) >> 4 & 1 & 1) << 4 & 16;
+            v14 = (((v46 | v47) & 0xffbf | (!(0 - (inertia_eax & 0xffff)) & 1) << 6 & 64) & 0xff7f | (1 & 0 - (inertia_eax & 0xffff) >> 15 & 1) << 7 & 128) & 0xf7ff | ((inertia_eax & 0xffff) == 0x8000 & 1) << 11 & 0x800;
+            inertia_eax = inertia_eax & 0xffff0000 | (inertia_eax & 0xffff) * -1 & 0xffff;
+            g_0B46 = g_0B46 < 1;
+            sub_10060();
+            break;
+        case 27:
+            return;
+        default:
+            break;
+        }
+    }
+}
+void sub_113d4(char *a0, unsigned short a1, unsigned short a2);
+void sub_12756(char *a0, unsigned short a1);
+void sub_128e4(unsigned short a0, unsigned short a1);
+
+    extern unsigned short inertia_ss;
 void sub_101f0(unsigned short arg_4, unsigned short arg_6, unsigned short arg_8, short arg_a)
 {
-  char local_52[80];
-  unsigned short local_2;
-  sub_113d4(local_52, 205, arg_8);
-  local_52[0] = 201;
-  local_52[arg_8 - 1] = 0xbb;
-  local_52[arg_8] = 0;
-  sub_128e4(arg_4, arg_6);
-  sub_12756(local_52, inertia_ss);
-  sub_113d4(local_52, 32, arg_8);
-  local_52[0] = 186;
-  local_52[arg_8 - 1] = 186;
-  local_2 = arg_4 + 1;
-  while (1)
-  {
-    if (local_2 > arg_a)
-      break;
-    sub_128e4(local_2, arg_6);
+
+    char local_52[80];  // [bp-0x54]
+    unsigned short local_2;  // [bp-0x4]
+    sub_113d4(local_52, 205, (unsigned short)arg_8);
+    local_52[0] = 201;
+    local_52[arg_8 - 1] = 0xbb;
+    local_52[arg_8] = 0;
+    sub_128e4((unsigned short)arg_4, (unsigned short)arg_6);
     sub_12756(local_52, inertia_ss);
-    local_2 += 1;
-  }
-
-  sub_113d4(local_52, 205, arg_8);
-  local_52[0] = 200;
-  local_52[arg_8 - 1] = 188;
-  sub_128e4(arg_a + arg_4, arg_6);
-  sub_12756(local_52, inertia_ss);
-  return;
-}
-
-void sub_10060(void)
-{
-  char local_12[16];
-  unsigned short local_2;
-  sub_12b24(15);
-  sub_12b3e(0, 0);
-  sub_101f0(1, 45, 35, SEG_U16(inertia_ds, 352) + 2);
-  local_2 = 0;
-  while (1)
-  {
-    if (local_2 >= g_0160)
-      break;
-    sub_128e4(local_2 + 2, 48);
-    sub_12756(g_0136[local_2], inertia_ds);
-    local_2 += 1;
-  }
-
-  if (g_0B46)
-  {
-    sub_1123a(local_12, SEG_PTR(inertia_ds, 354));
-  }
-  else
-  {
-    sub_1123a(local_12, SEG_PTR(inertia_ds, 358));
-  }
-  sub_128e4(SEG_U16(inertia_ds, 352) - 7, 62);
-  sub_12756(local_12, inertia_ss);
-  sub_112ba(local_12, 362, aNldiv(SEG_U32(inertia_ds, 306), 30));
-  sub_128e4(SEG_U16(inertia_ds, 352) - 5, 62);
-  sub_12756(local_12, inertia_ss);
-  sub_1123a(local_12, SEG_PTR(inertia_ds, 368));
-  if ((g_0132 & 0xffff) == 900)
-  {
-    if (!(g_0132 >> 16))
+    sub_113d4(local_52, 32, (unsigned short)arg_8);
+    local_52[0] = 186;
+    local_52[arg_8 - 1] = 186;
+    local_2 = arg_4 + 1;
+    while ((short)local_2 <= arg_a)
     {
-      sub_128e4(SEG_U16(inertia_ds, 352) - 4, 48);
-      sub_12756(local_12, inertia_ss);
+        sub_128e4(local_2, (unsigned short)arg_6);
+        sub_12756(local_52, inertia_ss);
+        local_2 += 1;
     }
-  }
-  if (g_0132)
-  {
-    sub_128e4(SEG_U16(inertia_ds, 352) - 3, 48);
-    sub_12756(local_12, inertia_ss);
-  }
-  return;
+    sub_113d4(local_52, 205, (unsigned short)arg_8);
+    local_52[0] = 200;
+    local_52[arg_8 - 1] = 188;
+    sub_128e4((unsigned short)arg_a + (unsigned short)arg_4, (unsigned short)arg_6);
+    sub_12756(local_52, inertia_ss);
+    return;
 }
 /* summary: same_family_retry_stops=0 fallback_family_labels=none */
-/* summary: shown=20 decompiled=20 asm_or_detail_fallback=0 */
+/* summary: shown=20 decompiled=17 asm_or_detail_fallback=3 */

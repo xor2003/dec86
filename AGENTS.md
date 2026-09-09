@@ -112,16 +112,12 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 
 ## Improving code
 
-### Token-efficient command output
+### Mandatory execution guidance
 
-- Keep Make's quiet recipe mode enabled; use `make Q=` only when the expanded command itself is needed for diagnosis.
-- Keep `RUFF_OUTPUT_FLAGS`, `MYPY_OUTPUT_FLAGS`, `PYRIGHT_OUTPUT_FLAGS`, `PYTEST_OUTPUT_FLAGS`, and `LIZARD_OUTPUT_FLAGS` compact by default; override one explicitly only when deeper diagnostics are needed.
-- Prefer tool-native compact modes that preserve findings: Ruff quiet/concise, MyPy plain/no-color/no-summary, Pyright warning-level, pytest short-traceback/no-header, and Lizard warnings-only. Never use Ruff silent, pytest no-summary/warning suppression, Vulture confidence filtering, or similar flags that hide actionable diagnostics.
-- For broad gates, retain complete stdout/stderr in a temporary log and report only the exit status, pass/fail/skip counts, failure tracebacks, and slowest tests.
-- On success, do not load the full log. On failure, search or tail only the relevant failure section before widening the read.
-- Prefer scoped `git diff --stat`, changed-path filters, and narrow file ranges over dumping the shared worktree or large inventories.
-- Output reduction must never suppress diagnostics, skip checks, weaken gates, or replace exact test evidence.
-- For fail-fast batched checks, report which batches actually ran; the first failing batch's count is not a repository total. Use `CI=1 make pyright-all PYRIGHT_WATCH=0` for the configured whole-scope audit, state its scope, and separate static diagnostics from failing pytest counts.
+Read and follow [reference/agent-execution.md](reference/agent-execution.md)
+at startup and after compaction. It owns the detailed regression-test,
+performance, selective-delegation, token-efficient-output, and progress-reporting
+rules. This file remains the canonical architecture and acceptance contract.
 
 Regular local gate: `make quality-fast PYTHON=./.venv/bin/python`.
 `make test-pipeline PYTHON=./.venv/bin/python` before claiming semantic decompiler improvements.
