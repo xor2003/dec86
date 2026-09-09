@@ -4,6 +4,8 @@ Layer: Types/Lowering.
 Responsibility: prove structured entry carriers for decoded ``push bp`` and
 ``mov bp, sp`` before Lowering consumes compiler frame scaffolding.
 Consumes alias, widening, and typed facts plus exact physical register views.
+Owned GP-state projections retain their register identity after lowering;
+matching one is not permission to infer or discard additional frame effects.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 """
 
@@ -16,7 +18,6 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
-    CDirtyExpression,
     CFunctionCall,
     CTypeCast,
     CUnaryOp,
@@ -70,7 +71,16 @@ def _matches_register_8616(
         if register_carriers is not None
         else physical_register_view_8616(_unwrap_casts_8616(value))
     )
-    return view is not None and expected is not None and (view.reg_offset, view.width) == expected
+    if expected is None:
+        return False
+    if view is not None:
+        return (view.reg_offset, view.width) == expected
+    runtime_view = runtime_gp_expression_view_8616(value)
+    return (
+        runtime_view is not None
+        and runtime_view.width == expected[1]
+        and project.arch.registers.get(runtime_view.register_name) == expected
+    )
 
 
 def _statement_addr_8616(statement: CAssignment) -> int | None:
@@ -232,14 +242,13 @@ def is_exact_push_bp_carrier_8616(
     ):
         return False
     rhs = statement.rhs
-    if isinstance(rhs, CDirtyExpression):
-        expected_bp = project.arch.registers.get("bp")
-        if (
-            expected_bp is not None
-            and lhs.variable.size == expected_bp[1]
-            and _matches_register_8616(rhs, project, "bp", register_carriers)
-        ):
-            return True
+    expected_bp = project.arch.registers.get("bp")
+    if (
+        expected_bp is not None
+        and lhs.variable.size == expected_bp[1]
+        and _matches_register_8616(rhs, project, "bp", register_carriers)
+    ):
+        return True
     if not isinstance(rhs, CUnaryOp) or rhs.op not in {"Reference", "AddressOf"}:
         return False
     anchor = rhs.operand

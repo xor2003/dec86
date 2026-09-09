@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -17,13 +18,16 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.gp_register_state import (
     runtime_gp_state_assignment_8616,
+    runtime_gp_state_expr_8616,
 )
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     prune_frame_prologue_stack_assignments_8616,
 )
 from capstone.x86_const import (
     X86_INS_MOV,
+    X86_INS_POP,
     X86_INS_PUSH,
+    X86_INS_RET,
     X86_OP_REG,
     X86_REG_AX,
     X86_REG_BP,
@@ -195,3 +199,41 @@ def test_noncanonical_entry_keeps_lowered_bp_assignment() -> None:
 
     assert changed is False
     assert codegen.cfunc.statements.statements == [setup, body]
+
+
+@pytest.mark.parametrize("register", ["bp", "ebp", "sp"])
+def test_runtime_bp_save_and_restore_are_consumed_together(register):
+    """A lowered save remains entry evidence when setup carriers are absent."""
+    project, codegen, function, _setup, body = _fixture(X86_REG_BP)
+    saved = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="saved_frame"),
+        variable_type=SimTypeShort(False), codegen=codegen,
+    )
+    value = runtime_gp_state_expr_8616(register, codegen=codegen, function_addr=0x1000)
+    assert value is not None
+    save = CAssignment(saved, value, codegen=codegen, tags={"ins_addr": 0x1000})
+    lowered_restore = runtime_gp_state_assignment_8616(
+        "bp", saved, codegen=codegen, function_addr=0x1000,
+    )
+    assert lowered_restore is not None
+    restore = CAssignment(
+        lowered_restore.lhs, lowered_restore.rhs, codegen=codegen, tags={"ins_addr": 0x1022},
+    )
+    root = codegen.cfunc.statements
+    root.statements = [save, body, restore]
+    function.blocks[0].capstone.insns += (
+        _instruction(0x1020, 2, X86_INS_MOV, X86_REG_SP, X86_REG_BP),
+        _instruction(0x1022, 1, X86_INS_POP, X86_REG_BP),
+        _instruction(0x1023, 1, X86_INS_RET),
+    )
+
+    changed = prune_frame_prologue_stack_assignments_8616(project, codegen, function=function)
+
+    assert changed is (register == "bp")
+    assert root.statements == ([body] if register == "bp" else [save, body, restore])
+    stats = codegen._inertia_frame_prologue_carrier_prune_8616
+    count = 2 if register == "bp" else 0
+    assert (
+        stats.raw_fact_count, stats.normalized_fact_count, stats.classified_fact_count,
+        stats.materialized_count, stats.failure_count,
+    ) == (count, count, count, count, 0)

@@ -12,7 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.ir.scalar_definitions import (
@@ -23,8 +23,9 @@ from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.lowering.frame_prologue_carriers import (
     is_exact_push_bp_carrier_8616,
 )
+from angr_platforms.X86_16.lowering.frame_register_carriers import FrameRegisterCarrierResolution8616
+from angr_platforms.X86_16.lowering.gp_register_state import runtime_gp_state_expr_8616
 from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
-from archinfo import ArchX86
 from x86_16_logical_memory_fixtures import lift_ir_artifact
 
 
@@ -124,7 +125,7 @@ class _Codegen:
     def __init__(self) -> None:
         self._next_index = 0
         self.cstyle_null_cmp = False
-        self.project = SimpleNamespace(arch=ArchX86())
+        self.project = SimpleNamespace(arch=Arch86_16())
 
     def next_idx(self, _kind: str) -> int:
         index = self._next_index
@@ -173,3 +174,50 @@ def test_push_bp_carrier_accepts_semantic_cast_storage_view() -> None:
         0x4010,
         canonical_frame_proven=True,
     )
+
+
+@pytest.mark.parametrize("register", ["bp", "sp", "ebp", "ax"])
+@pytest.mark.parametrize("width", [1, 2, 4])
+@pytest.mark.parametrize("use_resolver", [False, True])
+def test_push_bp_carrier_preserves_owned_runtime_register_identity(register, width, use_resolver):
+    """Lowering must recognize the exact BP view, not just its pre-lowered form."""
+    codegen = _Codegen()
+    saved = CVariable(
+        SimStackVariable(-2, width, base="bp", name="saved_frame"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    value = runtime_gp_state_expr_8616(register, codegen=codegen, function_addr=0x4010)
+    assert value is not None
+    statement = CAssignment(saved, value, codegen=codegen, tags={"ins_addr": 0x4010})
+    root = CStatements([statement], codegen=codegen)
+    resolver = FrameRegisterCarrierResolution8616((), 0, 0, 0, 0, 0) if use_resolver else None
+
+    assert is_exact_push_bp_carrier_8616(
+        statement, root, codegen.project, 0x4010,
+        canonical_frame_proven=True, register_carriers=resolver,
+    ) is (register == "bp" and width == 2)
+
+
+def test_push_bp_carrier_refuses_runtime_register_name_without_ownership():
+    """A similarly named external variable is not an architectural register."""
+    codegen = _Codegen()
+    value = runtime_gp_state_expr_8616("bp", codegen=codegen, function_addr=0x4010)
+    assert value is not None
+    value.lhs.variable = SimMemoryVariable(0, 4, name="inertia_ebp")
+    saved = CVariable(
+        SimStackVariable(-2, 2, base="bp"), variable_type=SimTypeShort(False), codegen=codegen,
+    )
+    statement = CAssignment(saved, value, codegen=codegen, tags={"ins_addr": 0x4010})
+
+    assert not is_exact_push_bp_carrier_8616(
+        statement, CStatements([statement], codegen=codegen), codegen.project, 0x4010,
+        canonical_frame_proven=True,
+    )
+
+
+def test_frame_save_restore_consumer_stays_in_routine_pipeline():
+    """Pairwise consumption must be tested in addition to carrier recognition."""
+    from scripts.test_pipeline import FOCUSED_PYTEST_TARGETS
+
+    assert "angr_platforms/tests/test_x86_16_canonical_frame_setup_carriers.py" in FOCUSED_PYTEST_TARGETS

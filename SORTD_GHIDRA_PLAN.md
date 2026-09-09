@@ -20,13 +20,22 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
-A fresh complete production Pyright run now reports **176 errors and 37
-warnings: 148 X86_16 errors, 28 CLI errors**. Checked VEX wrapper boundaries
-remove five earlier diagnostics while retaining native widths and DF behavior.
-All 273 focused frontend/80386 tests pass. The combined `quality-hard`,
-`quality-fast` and default pipeline gates pass, with 2,793 selected unit tests,
+The frame consumer now retains exact BP identity after owned GP-state lowering;
+its paired save/restore and wrong-width refusal regressions pass. The remaining
+byte-carrier blocker is earlier: optimized stack helpers omit logical memory
+records for symbolic SP offsets. Fix that frontend evidence boundary before
+retrying the origin filter or widening frame pruning. See the
+[frame-register report](reference/p0-frame-runtime-register-view.md).
+Final hard/fast/default gates pass after routine admission: 2,825 unit tests,
 three executable quality guards, QuickC and all seven MS C tiny round trips.
-No default lanes skip or time out. Global Make MyPy/Ruff and Vulture pass;
+Scoped MyPy/Pyright and global Make MyPy/Ruff pass. This closes register-view
+coherence, not numeric-frame C, complete-suite or remote-CI acceptance.
+
+The last complete production Pyright snapshot reports **176 errors and 37
+warnings: 148 X86_16 errors, 28 CLI errors**. The scoped results above do not
+refresh that whole-production audit. The preceding VEX-wrapper checkpoint
+removed five diagnostics while retaining native widths and DF behavior, with
+273 focused frontend/80386 tests passing. Its separate Vulture check passed;
 the broader production Pyright audit remains red as stated above.
 Numeric-frame semantics, the full pytest suite and remote CI remain open;
 optimization stays deferred. See the [VEX wrapper report](reference/p0-vex-wrapper-contracts.md).
