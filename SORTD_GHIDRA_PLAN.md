@@ -20,16 +20,32 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
-The frame consumer now retains exact BP identity after owned GP-state lowering;
-its paired save/restore and wrong-width refusal regressions pass. The remaining
-byte-carrier blocker is earlier: optimized stack helpers omit logical memory
-records for symbolic SP offsets. Fix that frontend evidence boundary before
-retrying the origin filter or widening frame pruning. See the
-[frame-register report](reference/p0-frame-runtime-register-view.md).
-Final hard/fast/default gates pass after routine admission: 2,825 unit tests,
+Optimized stack helpers now capture symbolic implicit accesses with exact
+instruction-entry SP/BP coordinates. The full frontend also preserves 16-bit
+stack wrapping under 67h address-size prefixes, including dword operations and
+nested ENTER. The minimal frame has four complete logical accesses instead of
+one, proving its BP word spill/reload through the existing transfer owner.
+Numeric generated C remains unchanged and invalid: next consume the paired
+frame evidence through Alias and preserve numeric entry-SP definitions across
+SSA Reference projection. Do not retry the rejected origin filter unchanged.
+See the [implicit-stack report](reference/p0-implicit-stack-evidence.md) and
+[preceding frame-register report](reference/p0-frame-runtime-register-view.md).
+Hard/fast/default gates pass on the production patch: 2,840 unit tests,
 three executable quality guards, QuickC and all seven MS C tiny round trips.
 Scoped MyPy/Pyright and global Make MyPy/Ruff pass. This closes register-view
-coherence, not numeric-frame C, complete-suite or remote-CI acceptance.
+coherence and frontend stack evidence/execution, not numeric-frame C,
+complete-suite or remote-CI acceptance.
+
+The full frozen-source refresh reports **10,773 passed, 45 failed, 170 skipped,
+88 warnings in 756.14s**. Compared with the preceding 48-failure audit, 14 cases
+no longer fail and 11 newly fail; this is not a clean regression gate. Seven
+new failures were stale logical-memory/RET expectations or inconsistent
+fault-injection ledgers; their corrected modules pass all 21 tests. The four
+remaining cases pass on unchanged HEAD and on the patched checkout with fresh
+cache identities. Existing cached DOSFUNC output still fails two assertions
+because it retains an EAX merge absent from fresh output. Investigate semantic
+cache provenance/replay next; do not weaken the call assertions or claim a green
+full suite. No final-suite total is inferred from these focused reruns.
 
 The last complete production Pyright snapshot reports **176 errors and 37
 warnings: 148 X86_16 errors, 28 CLI errors**. The scoped results above do not
@@ -38,7 +54,8 @@ removed five diagnostics while retaining native widths and DF behavior, with
 273 focused frontend/80386 tests passing. Its separate Vulture check passed;
 the broader production Pyright audit remains red as stated above.
 Numeric-frame semantics, the full pytest suite and remote CI remain open;
-optimization stays deferred. See the [VEX wrapper report](reference/p0-vex-wrapper-contracts.md).
+the broad optimization campaign stays deferred, with measured bottleneck fixes
+allowed as described below. See the [VEX wrapper report](reference/p0-vex-wrapper-contracts.md).
 
 The next numeric-frame boundary is now verified live: angr SSA rewriting
 converts `StackBaseOffset` into a stack-variable `Reference` before C codegen.
@@ -258,13 +275,14 @@ The [compatibility-hook checkpoint](reference/p0-compatibility-hook-contracts.md
 closes the local Vulture findings and scoped hook typing errors with 25 focused
 tests passing. Full-suite, global typing and remote CI closure remain open.
 
-Scheduling decision (2026-09-07): **defer performance optimization, Step 10,
-until the other remaining steps are complete**. Finish correctness, full-suite
-and quality-gate closure, proof-backed readability, and applicable remaining
-mechanisms first. Keep accepted optimizations and required compiled-import
-checks; do not start profiling campaigns or new speed experiments during those
-steps. Fixing DCE that deletes live code remains correctness work, not deferred
-performance work. The revised priority section below overrides older schedules.
+Scheduling decision (updated 2026-09-09): correctness and quality closure remain
+first. The user permits measured performance improvements in either production
+code or tests whenever they materially remove a development or execution
+bottleneck. Do not wait for all correctness steps to close to address such a
+bottleneck. Keep the broad Step 10 campaign secondary, preserve accepted work
+and rejected experiments, and measure the current implementation before adding
+machinery. Coverage, diagnostics, types and semantic acceptance cannot be traded
+for speed. Fixing DCE that deletes live code remains correctness work.
 
 The [accepted-payload contract repair](reference/p0-accepted-payload-contract.md)
 makes the verifier consume read-only result fields, matching the frozen worker
@@ -1411,21 +1429,21 @@ by the easiest percentage gain:
    only where the existing IR/Alias/Types contracts can prove the mechanism;
    unsupported proposals must be explicitly closed with evidence rather than
    implemented speculatively.
-4. **Deferred - Step 10, profile and optimize the serial tail.** Resume only
-   after the other remaining steps close. No opportunistic profiling during
-   P0 test waits, worker-reuse experiments, scheduling rewrites, or new mypyc
-   performance experiments until then. Preserve accepted work and rejected
-   experiment records. On resumption, re-profile the then-current HEAD before
-   selecting any implementation; retain the existing measurement and semantic
-   acceptance requirements, including the aggregate-worker memory budget.
+4. **Conditional - Step 10, measured code or test bottlenecks.** Optimize when
+   measurements show material benefit to execution or the development loop;
+   a broad campaign remains secondary to P0. Re-profile current HEAD before
+   selecting an implementation, preserve accepted/rejected experiment records,
+   and retain semantic acceptance and aggregate-worker memory limits. Use
+   mypyc only for measured residual Python kernels, not speculative compilation.
 
-Reason for deferral: focus engineering effort on the remaining functional and
-quality blockers and avoid optimizing code that correctness work may replace.
-Scheduling DoD: the active work queue contains no standalone Step 10 task;
-the remaining non-performance steps retain their original acceptance gates.
-Definition of Failure: restarting speed work before those steps close, removing
-working optimizations, weakening correctness gates to save time, or postponing
-a live-code preservation fix merely because its owner is an optimization pass.
+Reason: reduce time to functional and quality closure without optimizing code
+that correctness work will replace or repeating rejected experiments.
+Scheduling DoD: each optimization has a measured bottleneck, controlled
+before/after timings, preserved coverage and semantic gates, and a documented
+decision; substantial changes retain the 10% end-to-end acceptance threshold.
+Definition of Failure: speculative complexity, weaker coverage or diagnostics,
+unrepeatable speed claims, or postponing a live-code preservation fix because
+its owner happens to be an optimization pass.
 
 P0 definition of done: every currently failing in-scope repository test is
 either corrected by a generic earliest-layer implementation or retired with

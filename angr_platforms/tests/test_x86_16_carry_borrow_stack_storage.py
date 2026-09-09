@@ -137,7 +137,8 @@ def test_exact_result_stores_widen_to_one_alias_proven_stack_range() -> None:
     raw = stack_alias.stats
     logical = stack_alias.logical_stats
     assert (raw.raw_fact_count, raw.normalized_fact_count, raw.classified_fact_count, raw.materialized_count, raw.failure_count) == (6, 4, 4, 4, 2)
-    assert (logical.raw_fact_count, logical.normalized_fact_count, logical.classified_fact_count, logical.materialized_count, logical.failure_count) == (2, 2, 2, 2, 0)
+    assert (logical.raw_fact_count, logical.normalized_fact_count, logical.classified_fact_count, logical.materialized_count, logical.failure_count) == (3, 2, 2, 2, 1)
+    assert len(stack_alias.logical_refusals) == 1  # RET is not a BP-relative local.
     assert pipeline.destination_aliases.stats.materialized_count == 1
     destination = pipeline.destination_aliases.resolutions[0]
     assert destination.verdict is CarryBorrowDestinationAliasVerdict8616.PROVEN
@@ -241,7 +242,7 @@ def test_missing_execution_slice_refuses_logical_owner_and_keeps_raw_facts() -> 
     missing = replace(low.execution_slices[0], instr_index=999)
     bad_logical = replace(
         logical,
-        accesses=(replace(low, execution_slices=(missing, low.execution_slices[1])), logical.accesses[1]),
+        accesses=(replace(low, execution_slices=(missing, low.execution_slices[1])), *logical.accesses[1:]),
     )
 
     artifact = build_x86_16_stack_memory_ssa_alias_artifact(
@@ -316,7 +317,7 @@ def test_open_and_refused_logical_inputs_close_with_typed_refusals() -> None:
     refused_source = replace(
         logical,
         refusals=(upstream_refusal,),
-        stats=IRLogicalMemoryStats8616(3, 3, 3, 2, 1),
+        stats=IRLogicalMemoryStats8616(4, 4, 4, 3, 1),
     )
     refused_artifact = build_x86_16_stack_memory_ssa_alias_artifact(
         replace(function_ssa, logical_memory=refused_source)
@@ -326,7 +327,10 @@ def test_open_and_refused_logical_inputs_close_with_typed_refusals() -> None:
     assert {item.failure for item in open_artifact.logical_refusals} == {
         LogicalStackMemoryAliasFailure8616.UPSTREAM_LOGICAL_INCOMPLETE
     }
-    assert refused_artifact.logical_refusals[0].failure is LogicalStackMemoryAliasFailure8616.UPSTREAM_LOGICAL_REFUSAL
+    assert {item.failure for item in refused_artifact.logical_refusals} == {
+        LogicalStackMemoryAliasFailure8616.MISSING_EXECUTION_SLICE,
+        LogicalStackMemoryAliasFailure8616.UPSTREAM_LOGICAL_REFUSAL,
+    }
     assert len(refused_artifact.facts) == 4 and refused_artifact.complete
 
 

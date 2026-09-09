@@ -143,16 +143,20 @@ class _StackEmu:
     def set_eflags(self, value):
         self.flags = value
 
-    def write_mem16_seg(self, seg, addr, value):
+    def write_mem16_seg(self, seg, addr, value, *, address_bits=None):
+        assert address_bits == 16
         self.memory[(seg, addr)] = value
 
-    def read_mem16_seg(self, seg, addr):
+    def read_mem16_seg(self, seg, addr, *, address_bits=None):
+        assert address_bits == 16
         return self.memory[(seg, addr)]
 
-    def write_mem32_seg(self, seg, addr, value):
+    def write_mem32_seg(self, seg, addr, value, *, address_bits=None):
+        assert address_bits == 16
         self.memory[(seg, addr)] = value
 
-    def read_mem32_seg(self, seg, addr):
+    def read_mem32_seg(self, seg, addr, *, address_bits=None):
+        assert address_bits == 16
         return self.memory[(seg, addr)]
 
     def constant(self, value, _ty):

@@ -15,6 +15,11 @@ from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.ir.logical_memory_register_transfer import trace_logical_word_register_transfer_8616
+from angr_platforms.X86_16.ir.logical_memory_register_transfer_contracts import (
+    LogicalMemoryRegisterTransfer8616,
+    LogicalMemoryRegisterTransferKind8616,
+)
 from angr_platforms.X86_16.ir.scalar_definitions import (
     build_scalar_definition_index_8616,
     reaching_scalar_definitions_8616,
@@ -68,6 +73,13 @@ def test_frame_lea_ir_keeps_exact_entry_sp_definition_path(entry_sp: int) -> Non
     """Numeric frame recovery must use SSA provenance, not a host object address."""
     code = bytes.fromhex("55 89 e5 83 ec 02 8d 46 fe a3 00 02 89 ec 5d c3")
     artifact = build_x86_16_function_ssa(lift_ir_artifact(code))
+    assert artifact.logical_memory is not None and artifact.logical_memory.stats.materialized_count == 4
+    for address, kind in ((0x1000, LogicalMemoryRegisterTransferKind8616.SPILL),
+                          (0x100E, LogicalMemoryRegisterTransferKind8616.RELOAD)):
+        access = next(access for access in artifact.logical_memory.accesses if access.key.insn_addr == address)
+        transfer = trace_logical_word_register_transfer_8616(artifact, access)
+        assert isinstance(transfer, LogicalMemoryRegisterTransfer8616) and transfer.complete
+        assert transfer.kind is kind and transfer.register.name == "bp"
     block = artifact.blocks[0]
     definitions = build_scalar_definition_index_8616(artifact)
     index, assignment = next(
@@ -221,3 +233,118 @@ def test_frame_save_restore_consumer_stays_in_routine_pipeline():
     from scripts.test_pipeline import FOCUSED_PYTEST_TARGETS
 
     assert "angr_platforms/tests/test_x86_16_canonical_frame_setup_carriers.py" in FOCUSED_PYTEST_TARGETS
+
+
+@pytest.mark.parametrize("code,expected", [
+    ("55 c3", [(0, 1, "sp", -2), (1, 0, "sp", 0)]),
+    ("5d c3", [(0, 0, "sp", 0), (1, 0, "sp", 0)]),
+    ("6a 12 c3", [(0, 1, "sp", -2), (2, 0, "sp", 0)]),
+    ("e8 00 00", [(0, 1, "sp", -2)]),
+    ("ff 56 00", [(0, 0, "ss", 0), (0, 1, "ss", 0)]),
+    ("c8 02 00 00 c9 c3", [(0, 1, "sp", -2), (4, 0, "bp", 0), (5, 0, "sp", 0)]),
+    ("c8 02 00 02 c9 c3", [
+        (0, 1, "sp", -2), (0, 0, "bp", -2), (0, 1, "sp", -4),
+        (0, 1, "sp", -6), (4, 0, "bp", 0), (5, 0, "sp", 0),
+    ]),
+    ("67 55 67 5d c3", [(0, 1, "ss", 0), (2, 0, "ss", 0), (4, 0, "sp", 0)]),
+    ("c2 08 00", [(0, 0, "sp", 0)]),
+])
+def test_implicit_stack_words_have_complete_logical_memory_evidence(monkeypatch, code, expected):
+    """Symbolic implicit addresses must retain both operand and byte-slice facts."""
+    from angr_platforms.X86_16.semantics import evidence_cache
+
+    original_record = evidence_cache.record_access
+    captured = []
+
+    def record(function_addr, mode, addr, **metadata):
+        assert function_addr == 0x1000
+        assert addr.space is MemSpace.SS
+        assert addr.size == 2
+        assert metadata["address_bits"] == 16
+        captured.append((metadata["insn_addr"] - 0x1000, mode, addr.base[0], addr.offset))
+        original_record(function_addr, mode, addr, **metadata)
+
+    monkeypatch.setattr(evidence_cache, "record_access", record)
+    artifact = lift_ir_artifact(bytes.fromhex(code))
+    assert captured == expected
+    logical = artifact.logical_memory
+    assert logical is not None and logical.closed
+    assert logical.refusals == ()
+    stats = logical.stats
+    count = len(expected)
+    assert (
+        stats.raw_fact_count, stats.normalized_fact_count, stats.classified_fact_count,
+        stats.materialized_count, stats.failure_count,
+    ) == (count, count, count, count, 0)
+    consumed = set()
+    for access in logical.accesses:
+        assert access.complete and access.address.size == 2
+        assert access.address.space is MemSpace.SS
+        assert tuple(part.source_byte_offset for part in access.execution_slices) == (0, 1)
+        for part in access.execution_slices:
+            assert part.instr_index not in consumed
+            consumed.add(part.instr_index)
+    assert consumed == {
+        index for index, instruction in enumerate(artifact.blocks[0].instrs)
+        if instruction.op in {"LOAD", "STORE"}
+    }
+
+
+@pytest.mark.parametrize("code,register,width,push", [
+    ("67 55", "bp", 2, True), ("67 5d", "bp", 2, False),
+    ("67 66 50", "eax", 4, True), ("67 66 58", "eax", 4, False),
+])
+def test_address_override_does_not_widen_implicit_stack_offsets(code, register, width, push):
+    """A 67h prefix must not move wrapped stack bytes into the next segment."""
+    project = angr.load_shellcode(bytes.fromhex(code), arch=Arch86_16(), load_address=0x1000)
+    state = project.factory.blank_state(addr=0x1000, add_options={
+        angr.options.ZERO_FILL_UNCONSTRAINED_MEMORY,
+        angr.options.ZERO_FILL_UNCONSTRAINED_REGISTERS,
+    })
+    state.regs.ss = 0x2000
+    state.regs.sp = width - 1 if push else 0xFFFF
+    value = 0x44332211 & ((1 << (width * 8)) - 1)
+    state.registers.store(register, value if push else 0, size=width)
+    state.memory.store(0x30000, b"zzzz")
+    if not push:
+        for index in range(width):
+            state.memory.store(0x20000 + ((0xFFFF + index) & 0xFFFF), bytes([(value >> (8 * index)) & 0xFF]))
+
+    successors = project.factory.successors(state, num_inst=1).flat_successors
+
+    assert len(successors) == 1
+    final = successors[0]
+    assert final.solver.eval(final.regs.sp) == (0xFFFF if push else width - 1)
+    assert final.solver.eval(final.registers.load(register, size=width)) == value
+    assert final.solver.eval(final.memory.load(0x30000, 4), cast_to=bytes) == b"zzzz"
+    for index in range(width):
+        byte = final.memory.load(0x20000 + ((0xFFFF + index) & 0xFFFF), 1)
+        assert final.solver.eval(byte) == (value >> (8 * index)) & 0xFF
+
+
+@pytest.mark.parametrize("prefix,width,register", [("67", 2, "bp"), ("6766", 4, "ebp")])
+def test_nested_enter_address_override_keeps_bp_relative_wrap(prefix, width, register):
+    """ENTER's copied frame word must use the stack address size, not 67h."""
+    code = bytes.fromhex(prefix + "c8000002")
+    project = angr.load_shellcode(code, arch=Arch86_16(), load_address=0x1000)
+    state = project.factory.blank_state(addr=0x1000, add_options={
+        angr.options.ZERO_FILL_UNCONSTRAINED_MEMORY,
+        angr.options.ZERO_FILL_UNCONSTRAINED_REGISTERS,
+    })
+    state.regs.ss = 0x2000
+    state.regs.sp = 0x1000
+    state.registers.store(register, width - 1, size=width)
+    value = 0x44332211 & ((1 << (width * 8)) - 1)
+    state.memory.store(0x30000, b"zzzz")
+    for index in range(width):
+        state.memory.store(0x20000 + ((0xFFFF + index) & 0xFFFF), bytes([(value >> (8 * index)) & 0xFF]))
+
+    successors = project.factory.successors(state, num_inst=1).flat_successors
+
+    assert len(successors) == 1
+    final = successors[0]
+    assert final.solver.eval(final.regs.sp) == 0x1000 - 3 * width
+    assert final.solver.eval(final.registers.load(register, size=width)) == 0x1000 - width
+    copied = final.memory.load(0x20000 + 0x1000 - 2 * width, width, endness="Iend_LE")
+    assert final.solver.eval(copied) == value
+    assert final.solver.eval(final.memory.load(0x30000, 4), cast_to=bytes) == b"zzzz"

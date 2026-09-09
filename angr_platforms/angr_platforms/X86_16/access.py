@@ -188,15 +188,19 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
                 )
 
     def _resolve_memory_operand(
-        self, seg: object, addr: object, width_bits: int, mode: int
+        self, seg: object, addr: object, width_bits: int, mode: int, *, address_bits: int | None = None
     ) -> ResolvedMemoryOperand:
         """Decode an operand and record its semantic segmented address."""
-        operand = self._resolved_segment_operand(seg, addr, width_bits)
+        operand = self._resolved_segment_operand(seg, addr, width_bits, address_bits=address_bits)
         self._record_resolved_operand(operand, mode)
         return operand
 
-    def _resolved_segment_operand(self, seg: object, addr: object, width_bits: int) -> ResolvedMemoryOperand:
-        """Resolve a segment-relative operand without recording side effects."""
+    def _resolved_segment_operand(
+        self, seg: object, addr: object, width_bits: int, *, address_bits: int | None = None
+    ) -> ResolvedMemoryOperand:
+        """Resolve an operand; explicit stack addressing overrides instruction prefixes."""
+        if address_bits is not None:
+            return resolve_memory_operand_8616(self, seg, addr, width_bits, address_bits=address_bits)
         address_bits = 16
         try:
             active_instruction = self.active_instruction
@@ -239,9 +243,9 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
         """Pop a 16-bit value through the stack helper surface."""
         return pop16(cast(StackEmulator, self))
 
-    def read_mem32_seg(self, seg: object, addr: object) -> object:
+    def read_mem32_seg(self, seg: object, addr: object, *, address_bits: int | None = None) -> object:
         """Read 32 bits from segmented memory while recording semantic evidence."""
-        addresses = self._segment_byte_addresses(seg, addr, 32, MODE_READ)
+        addresses = self._segment_byte_addresses(seg, addr, 32, MODE_READ, address_bits=address_bits)
         # PyVEX's vvifyresults decorator returns VexValue, not the wrapped RdTmp.
         result = cast(VexValue, cast(VexValue, self.read_mem8(cast(int | VexValue, addresses[0]))).cast_to(Type.int_32))
         for index, address in enumerate(addresses[1:], start=1):
@@ -249,9 +253,9 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
             result = result | (byte << (index * 8))
         return result
 
-    def read_mem16_seg(self, seg: object, addr: object) -> object:
+    def read_mem16_seg(self, seg: object, addr: object, *, address_bits: int | None = None) -> object:
         """Read one typed word as independently wrapped segmented bytes."""
-        low_address, high_address = self._segment_byte_addresses(seg, addr, 16, MODE_READ)
+        low_address, high_address = self._segment_byte_addresses(seg, addr, 16, MODE_READ, address_bits=address_bits)
         low = cast(VexValue, self.read_mem8(cast(int | VexValue, low_address))).cast_to(Type.int_16)
         high = cast(VexValue, cast(VexValue, self.read_mem8(cast(int | VexValue, high_address))).cast_to(Type.int_16))
         return low | (high << 8)
@@ -261,17 +265,21 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
         operand = self._resolve_memory_operand(seg, addr, 8, MODE_READ)
         return self.read_mem8(cast(int | VexValue, operand.exec_linear))
 
-    def write_mem32_seg(self, seg: object, addr: object, value: object) -> None:
+    def write_mem32_seg(
+        self, seg: object, addr: object, value: object, *, address_bits: int | None = None
+    ) -> None:
         """Write 32 bits to segmented memory while recording semantic evidence."""
-        addresses = self._segment_byte_addresses(seg, addr, 32, MODE_WRITE)
+        addresses = self._segment_byte_addresses(seg, addr, 32, MODE_WRITE, address_bits=address_bits)
         value32 = self.constant(value, Type.int_32) if isinstance(value, int) else cast(VexValue, value)
         for index, address in enumerate(addresses):
             byte = cast(VexValue, cast(VexValue, value32 >> (index * 8)).cast_to(Type.int_8))
             self.write_mem8(cast(int | VexValue, address), byte)
 
-    def write_mem16_seg(self, seg: object, addr: object, value: object) -> None:
+    def write_mem16_seg(
+        self, seg: object, addr: object, value: object, *, address_bits: int | None = None
+    ) -> None:
         """Write one typed word as independently wrapped segmented bytes."""
-        low_address, high_address = self._segment_byte_addresses(seg, addr, 16, MODE_WRITE)
+        low_address, high_address = self._segment_byte_addresses(seg, addr, 16, MODE_WRITE, address_bits=address_bits)
         value16 = cast(VexValue, self.constant(value, Type.int_16) if isinstance(value, int) else value)
         low = cast(VexValue, value16.cast_to(Type.int_8))
         high = cast(VexValue, cast(VexValue, value16 >> 8).cast_to(Type.int_8))
@@ -342,9 +350,11 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
         addr: object,
         width_bits: int,
         mode: int,
+        *,
+        address_bits: int | None = None,
     ) -> tuple[object, ...]:
         """Record one typed operation and independently resolve wrapped bytes."""
-        first = self._resolve_memory_operand(seg, addr, width_bits, mode)
+        first = self._resolve_memory_operand(seg, addr, width_bits, mode, address_bits=address_bits)
         stepped_addr = (
             addr
             if isinstance(addr, int) or first.address_bits == 16
@@ -362,6 +372,7 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
                     self.constant(delta, Type.int_32 if first.address_bits == 32 else Type.int_16),
                 ),
                 8,
+                address_bits=first.address_bits,
             ).exec_linear
             for delta in range(width_bits // 8)
         )

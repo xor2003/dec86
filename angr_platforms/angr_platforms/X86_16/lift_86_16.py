@@ -64,6 +64,7 @@ from .semantics.status_flag_liveness import (
     decoded_status_flag_instruction_8616,
     status_flags_dead_before_use_8616,
 )
+from .vex_value_contract import require_vex_value_8616
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -1020,7 +1021,9 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         size: int = 2,
         segment_origin: SegmentOrigin | None = None,
         status: AddressStatus | None = None,
+        address_bits: int | None = None,
     ) -> None:
+        """Record one operand; implicit stack accesses specify their own address size."""
         from .semantics.evidence_cache import (
             get_current_function_addr,
             record_access,
@@ -1043,7 +1046,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 addr,
                 block_addr=self.emu._inertia_current_block_addr,
                 insn_addr=self.addr,
-                address_bits=self.instr.address_bits or 16,
+                address_bits=(self.instr.address_bits or 16) if address_bits is None else address_bits,
             )
 
     def _load_abs16(self, offset: int) -> Any:
@@ -1104,16 +1107,14 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         high = (value >> self.constant(8, Type.int_8)).cast_to(Type.int_8)
         self.store(high, high_address)
 
-    def _stack_load16(self, off16: Any) -> Any:
-        off_val = getattr(off16, "constant", None)
-        if isinstance(off_val, int):
-            self._record_mem_access("ss", off_val, 0, base=("sp",), size=2)
-        return self._load_real_mode16("ss", off16)
+    def _stack_load16(self, off16: VexValue, *, offset: int, base: str = "sp") -> VexValue:
+        """Read a stack word while retaining its instruction-entry coordinate."""
+        self._record_mem_access("ss", offset, 0, base=(base,), size=2, address_bits=16)
+        return require_vex_value_8616(self._load_real_mode16("ss", off16))
 
-    def _stack_store16(self, off16: Any, value: Any) -> None:
-        off_val = getattr(off16, "constant", None)
-        if isinstance(off_val, int):
-            self._record_mem_access("ss", off_val, 1, base=("sp",), size=2)
+    def _stack_store16(self, off16: VexValue, value: VexValue, *, offset: int) -> None:
+        """Write a stack word while retaining its instruction-entry SP displacement."""
+        self._record_mem_access("ss", offset, 1, base=("sp",), size=2, address_bits=16)
         self._store_real_mode16("ss", off16, value)
 
     def _eflags_value_8616(self, value: Any) -> Any:
@@ -2835,7 +2836,9 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         return True
 
     def _lift_simple(self) -> None:
+        """Emit optimized execution and typed evidence for the decoded operation."""
         def _impl() -> None:
+            """Dispatch one operation without reconstructing symbolic operand constants."""
             self._restore_condition_reg_affine_snapshot_8616()
             self._reset_condition_reg_value_state_at_block_entry_8616()
             semantics = cast(tuple[Any, ...], self.simple_semantics)
@@ -2893,24 +2896,24 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 self.put(sp, "sp")
                 if reg_name == "sp":
                     value = sp + self._const16(2)
-                self._stack_store16(sp, value)
+                self._stack_store16(sp, value, offset=-2)
                 return
             if kind == "push_imm16":
                 _, imm = semantics
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
-                self._stack_store16(sp, self._const16(imm))
+                self._stack_store16(sp, self._const16(imm), offset=-2)
                 return
             if kind == "push_mem16":
                 _, mem_spec = semantics
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
-                self._stack_store16(sp, self._load_mem16(mem_spec))
+                self._stack_store16(sp, self._load_mem16(mem_spec), offset=-2)
                 return
             if kind == "pop_reg16":
                 _, reg_name = semantics
                 sp = self._get_reg16("sp")
-                value = self._stack_load16(sp)
+                value = self._stack_load16(sp, offset=0)
                 next_sp = sp + self._const16(2)
                 if reg_name == "sp":
                     self.put(value, "sp")
@@ -2934,7 +2937,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     return
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
-                self._stack_store16(sp, ret_addr)
+                self._stack_store16(sp, ret_addr, offset=-2)
                 self.jump(None, self._const16(target), JumpKind.Call)
                 return
             if kind == "call_mem16":
@@ -2943,7 +2946,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 ret_addr = self._const16(self.addr + self.cs.size)
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
-                self._stack_store16(sp, ret_addr)
+                self._stack_store16(sp, ret_addr, offset=-2)
                 self.jump(None, target, JumpKind.Call)
                 return
             if kind == "enter":
@@ -2952,23 +2955,25 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 old_bp = self._get_reg16("bp")
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
-                self._stack_store16(sp, old_bp)
+                self._stack_store16(sp, old_bp, offset=-2)
                 frame_temp = sp
                 if nesting:
                     bp_cursor = old_bp
-                    for _ in range(1, nesting):
+                    for level in range(1, nesting):
                         bp_cursor = bp_cursor - self._const16(2)
                         sp = sp - self._const16(2)
-                        self._stack_store16(sp, self._stack_load16(bp_cursor))
+                        self._stack_store16(
+                            sp, self._stack_load16(bp_cursor, offset=-2 * level, base="bp"), offset=-2 * (level + 1)
+                        )
                     sp = sp - self._const16(2)
-                    self._stack_store16(sp, frame_temp)
+                    self._stack_store16(sp, frame_temp, offset=-2 * (nesting + 1))
                 self.put(frame_temp, "bp")
                 self.put(sp - self._const16(frame_size), "sp")
                 return
             if kind == "leave":
                 bp = self._get_reg16("bp")
                 self.put(bp, "sp")
-                self.put(self._stack_load16(bp), "bp")
+                self.put(self._stack_load16(bp, offset=0, base="bp"), "bp")
                 self.put(bp + self._const16(2), "sp")
                 return
             if kind == "mov_reg_imm16":
@@ -3094,14 +3099,14 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 return
             if kind == "ret":
                 sp = self._get_reg16("sp")
-                ret_addr = self._stack_load16(sp)
+                ret_addr = self._stack_load16(sp, offset=0)
                 self.put(sp + self._const16(2), "sp")
                 self.jump(None, ret_addr, JumpKind.Ret)
                 return
             if kind == "ret_imm16":
                 _, imm = semantics
                 sp = self._get_reg16("sp")
-                ret_addr = self._stack_load16(sp)
+                ret_addr = self._stack_load16(sp, offset=0)
                 self.put(sp + self._const16(2 + imm), "sp")
                 self.jump(None, ret_addr, JumpKind.Ret)
                 return

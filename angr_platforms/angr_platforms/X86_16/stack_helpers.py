@@ -86,19 +86,23 @@ class StackEmulator(Protocol):
         """Write a general-purpose register expression."""
         ...
 
-    def read_mem16_seg(self, segment: object, offset: object) -> StackExpr:
+    def read_mem16_seg(self, segment: object, offset: object, *, address_bits: int | None = None) -> StackExpr:
         """Read a 16-bit segmented stack value."""
         ...
 
-    def write_mem16_seg(self, segment: object, offset: object, value: object) -> None:
+    def write_mem16_seg(
+        self, segment: object, offset: object, value: object, *, address_bits: int | None = None
+    ) -> None:
         """Write a 16-bit segmented stack value."""
         ...
 
-    def read_mem32_seg(self, segment: object, offset: object) -> StackExpr:
+    def read_mem32_seg(self, segment: object, offset: object, *, address_bits: int | None = None) -> StackExpr:
         """Read a 32-bit segmented stack value."""
         ...
 
-    def write_mem32_seg(self, segment: object, offset: object, value: object) -> None:
+    def write_mem32_seg(
+        self, segment: object, offset: object, value: object, *, address_bits: int | None = None
+    ) -> None:
         """Write a 32-bit segmented stack value."""
         ...
 
@@ -146,14 +150,6 @@ class StackEmulator(Protocol):
         """Write EIP."""
         ...
 
-    def put_data16(self, segment: object, offset: object, value: object) -> None:
-        """Write a 16-bit segmented data value."""
-        ...
-
-    def get_data16(self, segment: object, offset: object) -> StackExpr:
-        """Read a 16-bit segmented data value."""
-        ...
-
     def callf(self, segment: object, offset: object, *, return_ip: object) -> None:
         """Emit a far call through the emulator."""
         ...
@@ -176,7 +172,7 @@ def push16(emu: StackEmulator, value: object) -> None:
     """Push a 16-bit value through SS:SP without inferring variable identity."""
     emu.update_gpreg(reg16_t.SP, -2)
     sp = emu.get_gpreg(reg16_t.SP)
-    emu.write_mem16_seg(sgreg_t.SS, sp, value)
+    emu.write_mem16_seg(sgreg_t.SS, sp, value, address_bits=16)
 
 
 def push16_register(emu: StackEmulator, reg: reg16_t) -> None:
@@ -206,7 +202,7 @@ def pop32_register(emu: StackEmulator, reg: reg32_t) -> None:
 def pop16(emu: StackEmulator) -> StackExpr:
     """Pop and return a 16-bit value from the segmented SS stack."""
     sp = emu.get_gpreg(reg16_t.SP)
-    value = emu.read_mem16_seg(sgreg_t.SS, sp)
+    value = emu.read_mem16_seg(sgreg_t.SS, sp, address_bits=16)
     emu.update_gpreg(reg16_t.SP, 2)
     return value
 
@@ -304,7 +300,7 @@ def push32(emu: StackEmulator, value: object) -> None:
     sp = sp - emu.constant(4, Type.int_16)
     next_esp = sp & 0xFFFF if isinstance(sp, int) else sp.cast_to(Type.int_32)
     emu.set_gpreg(reg32_t.ESP, next_esp)
-    emu.write_mem32_seg(sgreg_t.SS, sp, value)
+    emu.write_mem32_seg(sgreg_t.SS, sp, value, address_bits=16)
 
 
 def pop32(emu: StackEmulator) -> StackExpr:
@@ -315,7 +311,7 @@ def pop32(emu: StackEmulator) -> StackExpr:
         if isinstance(raw_sp, int)
         else raw_sp.cast_to(Type.int_16)
     )
-    value = emu.read_mem32_seg(sgreg_t.SS, sp)
+    value = emu.read_mem32_seg(sgreg_t.SS, sp, address_bits=16)
     next_sp = sp + emu.constant(4, Type.int_16)
     next_esp = next_sp & 0xFFFF if isinstance(next_sp, int) else next_sp.cast_to(Type.int_32)
     emu.set_gpreg(reg32_t.ESP, next_esp)
@@ -682,7 +678,6 @@ def loop_rel8(emu: StackEmulator, condition: StackExpr, displacement: object) ->
 def enter16(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
     """Execute ENTER for a 16-bit frame without naming locals or arguments."""
     push16(emu, emu.get_gpreg(reg16_t.BP))
-    ss = emu.get_sgreg(sgreg_t.SS)
     frame_temp = emu.get_gpreg(reg16_t.SP)
     sp = frame_temp
     if nesting_level:
@@ -690,9 +685,10 @@ def enter16(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
         for _ in range(1, nesting_level):
             bp -= 2
             sp -= 2
-            emu.put_data16(ss, sp, emu.get_data16(ss, bp))
+            value = emu.read_mem16_seg(sgreg_t.SS, bp, address_bits=16)
+            emu.write_mem16_seg(sgreg_t.SS, sp, value, address_bits=16)
         sp -= 2
-        emu.put_data16(ss, sp, frame_temp)
+        emu.write_mem16_seg(sgreg_t.SS, sp, frame_temp, address_bits=16)
     emu.set_gpreg(reg16_t.BP, frame_temp)
     sp -= frame_size
     emu.set_gpreg(reg16_t.SP, sp)
@@ -714,7 +710,7 @@ def enter32(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
                 frame_pointer = (frame_pointer - 4) & 0xFFFF
             else:
                 frame_pointer -= emu.constant(4, Type.int_16)
-            push32(emu, emu.read_mem32_seg(sgreg_t.SS, frame_pointer))
+            push32(emu, emu.read_mem32_seg(sgreg_t.SS, frame_pointer, address_bits=16))
         push32(emu, frame_temp)
     emu.set_gpreg(reg32_t.EBP, frame_temp)
     raw_sp = emu.get_gpreg(reg32_t.ESP)

@@ -24,15 +24,16 @@ def test_real_vex_import_retains_direct_ds_words_as_two_logical_byte_slices() ->
     assert logical.closed
     assert logical.refusals == ()
     assert logical.stats.to_dict() == {
-        "raw_fact_count": 2,
-        "normalized_fact_count": 2,
-        "classified_fact_count": 2,
-        "materialized_count": 2,
+        "raw_fact_count": 3,
+        "normalized_fact_count": 3,
+        "classified_fact_count": 3,
+        "materialized_count": 3,
         "failure_count": 0,
     }
     assert tuple(item.kind for item in logical.accesses) == (
         IRMemoryAccessKind8616.READ,
         IRMemoryAccessKind8616.WRITE,
+        IRMemoryAccessKind8616.READ,
     )
     assert tuple(
         (item.key.insn_addr, item.address.space, item.address.offset, item.address.size)
@@ -40,6 +41,7 @@ def test_real_vex_import_retains_direct_ds_words_as_two_logical_byte_slices() ->
     ) == (
         (0x1000, MemSpace.DS, 0x1234, 2),
         (0x1004, MemSpace.DS, 0x5678, 2),
+        (0x1008, MemSpace.SS, 0, 2),
     )
     assert tuple(
         tuple(
@@ -55,6 +57,7 @@ def test_real_vex_import_retains_direct_ds_words_as_two_logical_byte_slices() ->
     ) == (
         ((0x1000, 0, 0x1234, 1), (0x1000, 1, 0x1235, 1)),
         ((0x1004, 0, 0x5678, 1), (0x1004, 1, 0x5679, 1)),
+        ((0x1008, 0, 0, 1), (0x1008, 1, 1, 1)),
     )
     for access in logical.accesses:
         expected_op = "LOAD" if access.kind is IRMemoryAccessKind8616.READ else "STORE"
@@ -62,7 +65,7 @@ def test_real_vex_import_retains_direct_ds_words_as_two_logical_byte_slices() ->
             raw_instruction = artifact.blocks[0].instrs[execution_slice.instr_index]
             assert raw_instruction.addr == access.key.insn_addr
             assert raw_instruction.op == expected_op
-    assert all(access.key.insn_addr != 0x1008 for access in logical.accesses)
+    assert logical.accesses[-1].address.base == ("sp",)
 
 
 def test_real_vex_import_recaptures_logical_access_after_cached_prelift() -> None:
@@ -77,7 +80,7 @@ def test_real_vex_import_recaptures_logical_access_after_cached_prelift() -> Non
     assert logical is not None
     assert logical.closed
     assert logical.refusals == ()
-    assert logical.stats.raw_fact_count == logical.stats.materialized_count == 1
+    assert logical.stats.raw_fact_count == logical.stats.materialized_count == 2
     assert logical.accesses[0].address.offset == 0x1234
 
 
@@ -89,13 +92,13 @@ def test_real_vex_import_wraps_direct_ds_ffff_word_without_consuming_ret_bytes()
     assert logical.closed
     assert logical.refusals == ()
     assert logical.stats.to_dict() == {
-        "raw_fact_count": 1,
-        "normalized_fact_count": 1,
-        "classified_fact_count": 1,
-        "materialized_count": 1,
+        "raw_fact_count": 2,
+        "normalized_fact_count": 2,
+        "classified_fact_count": 2,
+        "materialized_count": 2,
         "failure_count": 0,
     }
-    (access,) = logical.accesses
+    access, ret_access = logical.accesses
     assert access.kind is IRMemoryAccessKind8616.READ
     assert access.key.insn_addr == 0x1000
     assert (
@@ -116,6 +119,8 @@ def test_real_vex_import_wraps_direct_ds_ffff_word_without_consuming_ret_bytes()
         if instruction.addr == 0x1004 and instruction.op in {"LOAD", "STORE"}
     }
     assert ret_memory_indexes
+    assert ret_access.address.space is MemSpace.SS
+    assert ret_memory_indexes == {item.instr_index for item in ret_access.execution_slices}
     assert ret_memory_indexes.isdisjoint(
         item.instr_index for item in access.execution_slices
     )
@@ -134,10 +139,10 @@ def test_overlapping_blocks_keep_only_canonical_logical_memory_capture() -> None
     assert logical.refusals == ()
     assert tuple(
         (item.key.block_addr, item.key.insn_addr) for item in logical.accesses
-    ) == ((0x1003, 0x1003),)
-    assert artifact.summary["logical_memory_capture_raw_fact_count"] == 2
-    assert artifact.summary["logical_memory_capture_owned_fact_count"] == 1
-    assert artifact.summary["logical_memory_capture_ownership_discarded_count"] == 1
+    ) == ((0x1003, 0x1003), (0x1007, 0x1007))
+    assert artifact.summary["logical_memory_capture_raw_fact_count"] == 5
+    assert artifact.summary["logical_memory_capture_owned_fact_count"] == 2
+    assert artifact.summary["logical_memory_capture_ownership_discarded_count"] == 3
 
 
 def test_direct_ds_word_read_and_write_each_resolve_to_two_exact_byte_slices() -> None:

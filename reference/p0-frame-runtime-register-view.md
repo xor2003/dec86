@@ -55,6 +55,11 @@ an estimate for the remaining numeric-frame or whole-plan work.
 
 ## Remaining Root Cause
 
+Historical investigation below: the missing frontend capture and prefixed
+stack-wrap boundaries have since been repaired in the
+[implicit-stack checkpoint](p0-implicit-stack-evidence.md). Numeric frame
+materialization remains open; the origin-filter probe was not installed.
+
 A process-local origin-filter probe with the repaired classifier still emits
 a one-byte saved-BP destination in the 16-byte reproducer. Frame pruning
 correctly refuses it: all five carrier counters remain zero. The probe
