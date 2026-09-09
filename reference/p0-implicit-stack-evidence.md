@@ -94,6 +94,11 @@ verification artifacts, not files to commit.
 
 ## Next Boundary
 
+Follow-up: the two DOSFUNC assertions are now backed by compiled behavioral
+checks, which both cached and fresh bodies pass. See the
+[behavioral-oracle report](p0-dosfunc-behavior-oracle.md); the original producer's
+text variation remains unexplained, but no call loss was found in those bodies.
+
 Consume the now-available logical word facts through Alias to prove paired
 frame storage, then preserve numeric entry-SP definitions across SSA's
 stack-variable Reference projection. Do not retry the rejected origin filter

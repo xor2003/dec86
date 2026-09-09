@@ -18,6 +18,7 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from x86_16_dosfunc_behavior import assert_dos_free_behavior
 from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
@@ -1182,7 +1183,7 @@ def test_overlay_cod_sample_wrapper_returns_overlay_segment():
     )
 
 
-def test_dosfunc_cod_sample_deduplicates_stack_local_names():
+def test_dosfunc_cod_sample_deduplicates_stack_local_names(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
@@ -1202,7 +1203,7 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
     text = result.stdout
 
     assert text.count("return err;") == 1
-    assert "intdosx(&rin, &rout, &sreg);" in text
+    assert_dos_free_behavior(text, tmp_path)
     assert 'ERROR("dos_free: error freeing segment 0x%x: error 0x%x", segment, err);' in text
     assert "ERROR();" not in text
     assert "err_2" not in text

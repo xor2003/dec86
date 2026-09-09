@@ -30,7 +30,7 @@ frame evidence through Alias and preserve numeric entry-SP definitions across
 SSA Reference projection. Do not retry the rejected origin filter unchanged.
 See the [implicit-stack report](reference/p0-implicit-stack-evidence.md) and
 [preceding frame-register report](reference/p0-frame-runtime-register-view.md).
-Hard/fast/default gates pass on the production patch: 2,840 unit tests,
+Hard/fast/default gates pass after behavioral-oracle admission: 2,849 unit tests,
 three executable quality guards, QuickC and all seven MS C tiny round trips.
 Scoped MyPy/Pyright and global Make MyPy/Ruff pass. This closes register-view
 coherence and frontend stack evidence/execution, not numeric-frame C,
@@ -42,10 +42,13 @@ no longer fail and 11 newly fail; this is not a clean regression gate. Seven
 new failures were stale logical-memory/RET expectations or inconsistent
 fault-injection ledgers; their corrected modules pass all 21 tests. The four
 remaining cases pass on unchanged HEAD and on the patched checkout with fresh
-cache identities. Existing cached DOSFUNC output still fails two assertions
-because it retains an EAX merge absent from fresh output. Investigate semantic
-cache provenance/replay next; do not weaken the call assertions or claim a green
-full suite. No final-suite total is inferred from these focused reruns.
+cache identities. Existing cached DOSFUNC output retained an EAX merge absent
+from fresh output, but both bodies pass 131,072 compiled call/result cases.
+The two semicolon-specific assertions have been replaced by that stronger
+behavioral oracle; both tests now pass against existing caches. Nine positive
+and adversarial oracle tests pass and are admitted to routine gates. Producer
+context and generated-text determinism remain open; do not infer a new full-suite
+total from focused reruns. See the [DOSFUNC oracle report](reference/p0-dosfunc-behavior-oracle.md).
 
 The last complete production Pyright snapshot reports **176 errors and 37
 warnings: 148 X86_16 errors, 28 CLI errors**. The scoped results above do not
@@ -283,6 +286,16 @@ bottleneck. Keep the broad Step 10 campaign secondary, preserve accepted work
 and rejected experiments, and measure the current implementation before adding
 machinery. Coverage, diagnostics, types and semantic acceptance cannot be traded
 for speed. Fixing DCE that deletes live code remains correctness work.
+
+Delegation policy (2026-09-09): start agents on demand, not for every step.
+Prefer one bounded independent task at a time; add another only when expected
+wall-time savings justify its token cost. Give each agent current graph/coverage
+evidence, exact file ownership, accepted/rejected experiments, a narrow question
+or deliverable, and a stop condition. Use a lower-cost capable model for bounded
+test/tooling work and stronger reasoning for semantic ownership or root-cause
+analysis when the delegation tool exposes model selection. Avoid duplicated
+profiling, overlapping edits, and concurrent broad gates. No agent is required
+merely to fill a test wait.
 
 The [accepted-payload contract repair](reference/p0-accepted-payload-contract.md)
 makes the verifier consume read-only result fields, matching the frozen worker

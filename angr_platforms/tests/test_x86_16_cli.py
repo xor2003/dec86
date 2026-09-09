@@ -50,6 +50,7 @@ from angr_platforms.X86_16.widening.indexed_global_object_program_ranges import 
 from angr_platforms.X86_16.widening.indexed_global_object_ranges import (
     BoundedGlobalObjectRangeStats8616,
 )
+from x86_16_dosfunc_behavior import assert_dos_free_behavior
 from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
@@ -15900,7 +15901,7 @@ def test_format_known_helper_calls_handles_missing_cod_metadata(monkeypatch):
     )
 
 
-def test_decompile_cli_prunes_void_returns_for_multiline_headers():
+def test_decompile_cli_prunes_void_returns_for_multiline_headers(tmp_path):
     result = _run_decompile_proc(DOSFUNC_COD, "_dos_free")
 
     assert result.returncode == 0, result.stderr + result.stdout
@@ -15908,7 +15909,7 @@ def test_decompile_cli_prunes_void_returns_for_multiline_headers():
     assert "/* COD annotations:" not in result.stdout
     assert "rin.h.ah = 73;" in result.stdout
     assert "sreg.es = segment;" in result.stdout
-    assert "intdosx(&rin, &rout, &sreg);" in result.stdout
+    assert_dos_free_behavior(result.stdout, tmp_path)
     assert "if (rout.x.cflag)" in result.stdout
     assert result.stdout.count("typedef union REGS {") == 1
     assert result.stdout.count("typedef struct SREGS {") == 1
