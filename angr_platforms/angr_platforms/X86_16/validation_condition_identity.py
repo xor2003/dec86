@@ -10,13 +10,14 @@ inspection.
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import copy
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp
 
 from .ir.condition_ir import ConditionIR
 from .ir.core import IRBinaryValue, IRValue, MemSpace
-from .lowering.semantic_cast import CSemanticCast8616
+from .lowering.semantic_cast import CSemanticCast8616, is_identity_semantic_variable_cast_8616
 from .structuring.condition_materialization import materialize_condition_ir_expression_8616
 from .tail_validation_fingerprint import _expr_fingerprint
 
@@ -66,6 +67,35 @@ def condition_ir_semantic_fingerprint_8616(
     return f"{expression.op}({lhs},{rhs})"
 
 
+def project_identity_semantic_casts_8616(
+    expression: object,
+    *,
+    required_signedness: bool | None = None,
+) -> object:
+    """Project proven cast identities for comparison without mutating live AST.
+
+    This is a current-declaration comparison view, not a rewrite or historical
+    fingerprint normalization. Non-identity casts and all operators survive.
+    """
+    if isinstance(expression, CSemanticCast8616):
+        if not is_identity_semantic_variable_cast_8616(expression):
+            return expression
+        destination = cast(_IntegerTypeBoundary8616, expression.dst_type)
+        if required_signedness is not None and destination.signed is not required_signedness:
+            return expression
+        return expression.expr
+    if not isinstance(expression, CBinaryOp):
+        return expression
+    lhs = project_identity_semantic_casts_8616(expression.lhs, required_signedness=required_signedness)
+    rhs = project_identity_semantic_casts_8616(expression.rhs, required_signedness=required_signedness)
+    if lhs is expression.lhs and rhs is expression.rhs:
+        return expression
+    projected = copy(expression)
+    projected.lhs = lhs
+    projected.rhs = rhs
+    return projected
+
+
 def condition_semantic_view_projection_fingerprint_8616(
     condition: ConditionIR,
     candidate: object,
@@ -80,11 +110,6 @@ def condition_semantic_view_projection_fingerprint_8616(
     """
     if not isinstance(candidate, CBinaryOp):
         return None
-    if not isinstance(candidate.lhs, CSemanticCast8616) and not isinstance(
-        candidate.rhs,
-        CSemanticCast8616,
-    ):
-        return None
     if condition.op not in {
         "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
     }:
@@ -94,6 +119,16 @@ def condition_semantic_view_projection_fingerprint_8616(
         if condition.op not in {"eq", "ne"}
         else None
     )
+    identity_projection = cast(CBinaryOp, project_identity_semantic_casts_8616(
+        candidate, required_signedness=required_signedness,
+    ))
+    if identity_projection is not candidate:
+        return condition_fingerprint(identity_projection)
+    if not isinstance(candidate.lhs, CSemanticCast8616) and not isinstance(
+        candidate.rhs,
+        CSemanticCast8616,
+    ):
+        return None
     projected: list[str] = []
     for operand, expression in (
         (condition.lhs, candidate.lhs),

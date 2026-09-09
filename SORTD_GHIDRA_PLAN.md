@@ -40,29 +40,20 @@ errors, so they are not equivalent diagnoses of the original failure.
 Evidence: `/tmp/inertia-sortdemo-default-repro.{c,log}`. The user's output is
 preserved. Function names here are diagnostic labels, not recovery rules.
 
-Validation repair checkpoint: additive fingerprint flattening stripped proven
-`CSemanticCast8616` operands. The Validation owner now preserves those views for
-expression fingerprints (schema 39), while storage/address normalization retains
-its existing policy. Four small regressions cover signed Add, unsigned Sub,
-cosmetic casts, and rejection of a semantic cast on the wrong operand; they are
-admitted to routine gates. The delegated PercolateDown executable regression
-passes (one test, 30.14s). Parent QuickSort verification remains red: four unit
-tests pass, one executable test fails in 61.41s (53.35s for QuickSort itself).
-Its original early unsigned-subtraction mismatch is replaced by a later signed
-subtraction predicate mismatch at slice JCC `0x1137` (original `0x10e17`).
-The actual predicate has multiple precision-evidence versions; accepting any
-historical version without proving its relationship to the typed fact is not a
-valid fix. InitMenu's numeric-frame failure remains open. Do not infer 19/20 or
-20/20 acceptance from this checkpoint; the complete command has not been rerun.
-Evidence: `/tmp/inertia-additive-quicksort-review.log`.
-Integrated verification: `quality-hard quality-fast test-pipeline` exits zero;
-fast/default unit lanes each pass 2,878 tests (121.01s / 103.88s), seven
-dependency warnings each. QuickC passes in 38.625s and all seven MS C tiny
-round trips pass in 62.022s. Ruff `check --fix`, Make MyPy, architecture and
-mypyc import checks pass; the new helper also passes scoped MyPy and Pyright
-(zero errors/warnings). Existing complexity warnings remain visible. These
-are routine gates, not a fresh full-suite or complete SORTDEMO acceptance run.
-Evidence: `/tmp/inertia-additive-integrated-gates.log` and the pipeline summary.
+The default executable has now been rerun: **19/20 accepted**, exit 2,
+198.47s wall. PercolateDown and QuickSort pass; only InitMenu remains rejected.
+Additive fingerprints retain semantic casts (schema 39). The final predicate
+validator additionally proves identity casts against exact current declarations,
+without rewriting C or changing historical fingerprints. QuickSort's retained
+unsigned source view had outlived refinement of its signed local declaration.
+The live QuickSort regression and 32 focused validation tests pass; scoped
+MyPy/Pyright and Ruff pass. Hard/fast/default gates pass: 2,888 tests in each
+unit lane, three executable guards, QuickC and seven MS C tiny round trips.
+This is not a new full-suite result. One timeout-in-weakref warning remains
+an open investigation; it was not suppressed. See the
+[condition-view report](reference/p0-sortdemo-condition-views.md) for the root
+cause, refusal tests, rejected experiment, timing evidence, DoD and failure
+contract. The next P0 blocker is InitMenu's numeric-frame C, not optimization.
 
 Optimized stack helpers now capture symbolic implicit accesses with exact
 instruction-entry SP/BP coordinates. The full frontend also preserves 16-bit

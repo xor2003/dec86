@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
@@ -17,17 +18,21 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CTypeCast,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeInt, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
-from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
+from angr_platforms.X86_16.lowering.semantic_cast import (
+    CSemanticCast8616,
+    is_identity_semantic_variable_cast_8616,
+)
 from angr_platforms.X86_16.tail_validation_fingerprint import _expr_fingerprint
 from angr_platforms.X86_16.validation_branch_conditions import (
     BranchConditionIssueKind8616,
     validate_materialized_branch_conditions_8616,
 )
+from angr_platforms.X86_16.validation_condition_identity import project_identity_semantic_casts_8616
 
 
 class _Codegen:
@@ -250,3 +255,67 @@ def test_branch_validation_requires_semantic_cast_on_exact_additive_operand() ->
         misplaced_report.issues[0].kind
         is BranchConditionIssueKind8616.PREDICATE_MISMATCH
     )
+
+
+@pytest.mark.parametrize("current_signed", [False, True])
+@pytest.mark.parametrize("source_is_byte", [False, True])
+def test_additive_cast_identity_uses_current_operand_type(
+    current_signed: bool, source_is_byte: bool,
+) -> None:
+    """Only a proven same-width identity may discard stale cast source metadata."""
+    codegen = _Codegen()
+    local = _stack(codegen, -8, "local_8", signed=current_signed)
+    plain = CBinaryOp("Sub", local, _constant(codegen, 1), codegen=codegen)
+    converted = CBinaryOp(
+        "Sub",
+        CSemanticCast8616(
+            SimTypeChar(False) if source_is_byte else SimTypeShort(False),
+            SimTypeShort(True),
+            local,
+            codegen=codegen,
+        ),
+        _constant(codegen, 1),
+        codegen=codegen,
+    )
+
+    identical = (
+        _expr_fingerprint(project_identity_semantic_casts_8616(converted), codegen.project)
+        == _expr_fingerprint(plain, codegen.project)
+    )
+
+    assert identical is (current_signed and not source_is_byte)
+    assert isinstance(converted.lhs, CSemanticCast8616)
+    assert "SemanticCast(" in _expr_fingerprint(converted, codegen.project)
+
+
+@pytest.mark.parametrize(
+    "current_type", [None, SimTypeBottom(), SimTypePointer(SimTypeShort()), SimTypeInt(True)],
+)
+def test_semantic_cast_identity_refuses_unknown_or_pointer_operand(current_type) -> None:
+    """Missing, non-integer and unbound-width type evidence cannot prove identity."""
+    codegen = _Codegen()
+    local = _stack(codegen, -8, "local_8", signed=True)
+    local.variable_type = current_type
+    expression = CSemanticCast8616(
+        SimTypeShort(False), SimTypeShort(True), local, codegen=codegen,
+    )
+
+    assert not is_identity_semantic_variable_cast_8616(expression)
+
+
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_semantic_cast_identity_requires_unique_exact_declaration(conflicting: bool) -> None:
+    """A stale expression view follows its declaration, but conflicting types refuse."""
+    codegen = _Codegen()
+    local = _stack(codegen, -8, "local_8")
+    entries = {(local, SimTypeShort(True).with_arch(codegen.project.arch))}
+    if conflicting:
+        entries.add((local, SimTypeShort(False).with_arch(codegen.project.arch)))
+    codegen.cfunc = SimpleNamespace(arg_list=[], unified_local_vars={local.variable: entries})
+    expression = _semantic_view(codegen, local, signed=True)
+
+    assert is_identity_semantic_variable_cast_8616(expression) is not conflicting
+    assert local.variable_type.signed is False
+
+    other = _stack(codegen, -10, "local_8")
+    assert not is_identity_semantic_variable_cast_8616(_semantic_view(codegen, other, signed=True))

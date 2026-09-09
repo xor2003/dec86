@@ -12,8 +12,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimType, SimTypeChar, SimTypeInt, SimTypeLong, SimTypeLongLong, SimTypeShort
+from angr.sim_variable import SimVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 
@@ -53,6 +56,70 @@ class RequiredAssignmentCastReconcileStatus8616(StrEnum):
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
     APPLIED = "applied"
+
+
+class _DeclarationTypeSurface8616(Protocol):
+    """Native C-function declaration inventory consumed without name recovery."""
+
+    arg_list: list[structured_c.CVariable]
+    unified_local_vars: dict[SimVariable, set[tuple[structured_c.CVariable, SimType]]]
+
+
+def _declared_variable_type_8616(expression: structured_c.CVariable) -> SimType | None:
+    """Use a unique emitted declaration type for the exact variable identity."""
+    try:
+        cfunc = cast(_DeclarationTypeSurface8616 | None, expression.codegen.cfunc)
+    except AttributeError:
+        return expression.variable_type
+    if cfunc is None:
+        return expression.variable_type
+    identity = expression.unified_variable or expression.variable
+    try:
+        arguments = cfunc.arg_list
+        locals_ = cfunc.unified_local_vars
+    except AttributeError:
+        return expression.variable_type
+    argument_types = {
+        argument.variable_type
+        for argument in arguments
+        if isinstance(argument, structured_c.CVariable)
+        and (argument.unified_variable or argument.variable) == identity
+    }
+    entries = locals_.get(identity, ())
+    types = argument_types or {type_ for _, type_ in entries}
+    return next(iter(types)) if len(types) == 1 else None
+
+
+def is_identity_semantic_variable_cast_8616(node: CSemanticCast8616) -> bool:
+    """Prove a same-width cast is redundant against its current variable type.
+
+    Declaration refinement can leave a cast's source metadata behind. Only
+    explicit integer widths and matching current/destination signedness prove
+    identity; names, historical source signedness and missing types do not.
+    """
+    if not isinstance(node.expr, structured_c.CVariable):
+        return False
+    integer_types = (SimTypeChar, SimTypeShort, SimTypeInt, SimTypeLong, SimTypeLongLong)
+    source = node.src_type
+    destination = node.dst_type
+    current = _declared_variable_type_8616(node.expr)
+    if (
+        not isinstance(source, integer_types)
+        or not isinstance(destination, integer_types)
+        or not isinstance(current, integer_types)
+    ):
+        return False
+    try:
+        source_size = source.size
+        return bool(
+            isinstance(source_size, int)
+            and source_size > 0
+            and source_size == destination.size == current.size
+            and isinstance(current.signed, bool)
+            and current.signed is destination.signed
+        )
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
