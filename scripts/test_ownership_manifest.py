@@ -1183,6 +1183,19 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
     ),
     TestOwnershipRule(
+        owner="symbolic-frontend-value-contract",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/vex_value_contract.py",
+            "angr_platforms/angr_platforms/X86_16/memory.py",
+            "angr_platforms/angr_platforms/X86_16/processor.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_symbolic_value_boundaries.py",
+            "angr_platforms/tests/test_x86_16_direction_flag_execution.py",
+            "angr_platforms/tests/test_x86_16_memory.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="helper-abi-projection",
         paths=("angr_platforms/angr_platforms/X86_16/helper_abi.py",),
         tests=("angr_platforms/tests/test_x86_16_helper_abi.py",),

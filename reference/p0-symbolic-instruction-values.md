@@ -9,7 +9,9 @@ LOOP checks its register value before decrementing or writing the counter.
 JCXZ keeps the existing missing-lifter refusal. No concrete control-flow
 support was added, and the byte-safe segmented memory helpers were untouched.
 
-The check is beside the existing frontend value adapter in `instr_base.py`.
+The check was initially beside the frontend value adapter in `instr_base.py`.
+It is now shared through `vex_value_contract.py`, retaining the instruction
+alias; see [checked wrapper contracts](p0-vex-wrapper-contracts.md).
 It raises a clear TypeError for unsupported values instead of adding unchecked
 Any casts. The shared concrete-or-symbolic Processor contract is unchanged.
 

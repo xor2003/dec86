@@ -650,6 +650,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/io.py \
 	angr_platforms/angr_platforms/X86_16/instruction.py \
 	angr_platforms/angr_platforms/X86_16/instr_base.py \
+	angr_platforms/angr_platforms/X86_16/vex_value_contract.py \
 	angr_platforms/angr_platforms/X86_16/instr16.py \
 	angr_platforms/angr_platforms/X86_16/instr32.py \
 	angr_platforms/angr_platforms/X86_16/parse.py \
@@ -1654,6 +1655,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/io.py \
 	angr_platforms/angr_platforms/X86_16/instruction.py \
 	angr_platforms/angr_platforms/X86_16/instr_base.py \
+	angr_platforms/angr_platforms/X86_16/vex_value_contract.py \
 	angr_platforms/angr_platforms/X86_16/instr16.py \
 	angr_platforms/angr_platforms/X86_16/instr32.py \
 	angr_platforms/angr_platforms/X86_16/parse.py \
@@ -3135,6 +3137,9 @@ QA_PYTEST_TARGETS := \
 
 # Focused owner tests are appended while the legacy QA lists remain curated.
 QA_RUFF_TARGETS += \
+	angr_platforms/tests/test_x86_16_symbolic_value_boundaries.py \
+	angr_platforms/tests/test_x86_16_direction_flag_execution.py \
+	angr_platforms/tests/test_x86_16_stack_helpers.py \
 	angr_platforms/tests/test_x86_16_structuring_pass_validation.py \
 	angr_platforms/tests/test_x86_16_helper_abi.py \
 	angr_platforms/tests/test_x86_16_fixed_stack_probe_frames.py \
@@ -3204,6 +3209,9 @@ QA_RUFF_TARGETS += \
 	angr_platforms/tests/test_x86_16_validation_call_return_storage.py
 
 QA_PYTEST_TARGETS += \
+	angr_platforms/tests/test_x86_16_symbolic_value_boundaries.py \
+	angr_platforms/tests/test_x86_16_direction_flag_execution.py \
+	angr_platforms/tests/test_x86_16_stack_helpers.py \
 	angr_platforms/tests/test_x86_16_structuring_pass_validation.py \
 	angr_platforms/tests/test_x86_16_helper_abi.py \
 	angr_platforms/tests/test_x86_16_fixed_stack_probe_frames.py \

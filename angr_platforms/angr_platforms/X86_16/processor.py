@@ -16,6 +16,7 @@ from pyvex.stmt import Put
 from .cr import CR
 from .eflags import Eflags
 from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, register_name_8616, sgreg_t
+from .vex_value_contract import require_vex_value_8616
 
 # Constants for general-purpose registers
 
@@ -393,14 +394,16 @@ class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic fron
         """Derive the lifted string-index step from authoritative architectural FLAGS."""
         if self.lifter_instruction is None:
             raise RuntimeError("Lifted direction-step recovery requires an active lifter instruction")
-        flags = (
+        flags = require_vex_value_8616(
             self.constant(flags_value, Type.int_16)
             if isinstance(flags_value, int)
-            else cast(VexValue, flags_value).cast_to(Type.int_16)
+            else require_vex_value_8616(flags_value).cast_to(Type.int_16)
         )
-        direction = cast(VexValue, (flags >> 10) & self.constant(1, Type.int_16)).cast_to(Type.int_1)
-        negative = cast(VexValue, self.constant(0xFFFFFFFF, Type.int_32))
-        positive = cast(VexValue, self.constant(1, Type.int_32))
+        shifted = require_vex_value_8616(flags >> 10)
+        direction_bit = require_vex_value_8616(shifted & self.constant(1, Type.int_16))
+        direction = require_vex_value_8616(direction_bit.cast_to(Type.int_1))
+        negative = require_vex_value_8616(self.constant(0xFFFFFFFF, Type.int_32))
+        positive = require_vex_value_8616(self.constant(1, Type.int_32))
         step = self.lifter_instruction.irsb_c.ite(direction.rdt, negative.rdt, positive.rdt)
         return VexValue(self.lifter_instruction, step)
 

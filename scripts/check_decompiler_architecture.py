@@ -1536,6 +1536,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/io.py",
     "angr_platforms/angr_platforms/X86_16/instruction.py",
     "angr_platforms/angr_platforms/X86_16/instr_base.py",
+    "angr_platforms/angr_platforms/X86_16/vex_value_contract.py",
     "angr_platforms/angr_platforms/X86_16/instr16.py",
     "angr_platforms/angr_platforms/X86_16/instr32.py",
     "angr_platforms/angr_platforms/X86_16/parse.py",

@@ -20,7 +20,20 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
-Latest Make global MyPy phase: **0 diagnostics**, down from four; `mypy-dev`
+A fresh complete production Pyright run now reports **176 errors and 37
+warnings: 148 X86_16 errors, 28 CLI errors**. Checked VEX wrapper boundaries
+remove five earlier diagnostics while retaining native widths and DF behavior.
+All 273 focused frontend/80386 tests pass. The combined `quality-hard`,
+`quality-fast` and default pipeline gates pass, with 2,793 selected unit tests,
+three executable quality guards, QuickC and all seven MS C tiny round trips.
+No default lanes skip or time out. Global Make MyPy/Ruff and Vulture pass;
+the broader production Pyright audit remains red as stated above.
+Numeric-frame semantics, the full pytest suite and remote CI remain open;
+optimization stays deferred. See the [VEX wrapper report](reference/p0-vex-wrapper-contracts.md).
+
+### Earlier Checkpoints (Historical)
+
+The preceding Make global MyPy phase reached **0 diagnostics**, down from four; `mypy-dev`
 also passes after preserving two typed provider imports in `pyproject.toml`.
 `quality-fast`, `quality-dev` and `quality-hard` pass; the final hard unit lane
 passes 2,736 tests. Global Vulture also passes.

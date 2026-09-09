@@ -15,7 +15,6 @@ from types import MethodType
 from typing import TYPE_CHECKING, Any, cast
 
 from pyvex.lifting.util import JumpKind
-from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import Type
 
 from .addressing_helpers import load_resolved_operand, store_resolved_operand
@@ -44,6 +43,7 @@ from .parse import ParseInstr
 from .regs import coerce_reg8_t, coerce_reg32_t, reg8_t, reg16_t
 from .stack_helpers import StackEmulator, branch_rel8, return_far16, return_interrupt16
 from .string_helpers import StringEmulator
+from .vex_value_contract import require_vex_value_8616 as _require_vex_value
 
 if TYPE_CHECKING:
     from .emulator import Emulator
@@ -63,13 +63,6 @@ type VexExpr = Any
 def _vex_expr(value: object) -> VexExpr:
     """Expose one concrete-or-PyVEX runtime value at the third-party boundary."""
     return cast(VexExpr, value)
-
-
-def _require_vex_value(value: object) -> VexValue:
-    """Require a symbolic PyVEX value for a lifting-only operation."""
-    if not isinstance(value, VexValue):
-        raise TypeError("symbolic instruction operation requires a VexValue")
-    return value
 
 
 def _unbound_opcode_handler(func: OpcodeRegistrationHandler) -> OpcodeExecHandler:

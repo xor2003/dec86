@@ -13,6 +13,8 @@ from pyvex.expr import Binop, Const, RdTmp
 from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import IRSBCustomizer, Type
 
+from .vex_value_contract import require_vex_value_8616
+
 DEFAULT_MEMORY_SIZE: int = 1024  # 1 KB
 
 __all__ = ("DEFAULT_MEMORY_SIZE", "Memory")
@@ -167,15 +169,15 @@ class Memory:
 
     def write_mem8(self, addr: int | VexValue, value: int | VexValue) -> None:
         """Write an 8-bit value through active VEX frontend memory."""
-        if isinstance(addr, int):
-            addr = self.lifter_instruction.constant(addr, Type.int_32)
-        if isinstance(value, int):
-            value = self.lifter_instruction.constant(value, Type.int_8)
-        else:
-            value = value.cast_to(Type.int_8)
-        if _dirty_input_value(value):
-            value = self.lifter_instruction.constant(0xFF & ((1 << 8) - 1), Type.int_8)
-        self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
+        address = self.lifter_instruction.constant(addr, Type.int_32) if isinstance(addr, int) else addr
+        stored_value = (
+            self.lifter_instruction.constant(value, Type.int_8)
+            if isinstance(value, int)
+            else require_vex_value_8616(value.cast_to(Type.int_8))
+        )
+        if _dirty_input_value(stored_value):
+            stored_value = self.lifter_instruction.constant(0xFF & ((1 << 8) - 1), Type.int_8)
+        self.lifter_instruction._irsb_c.store(address.rdt, stored_value.rdt)
 
     def is_ena_a20gate(self) -> bool:
         """Return whether the A20 gate is enabled in the frontend model."""

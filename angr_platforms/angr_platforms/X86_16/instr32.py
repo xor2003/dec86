@@ -25,7 +25,7 @@ from .debug import ERROR, INFO
 from .emulator import Emulator
 from .exception import EXP_UD
 from .exec import OpcodeExecHandler
-from .instr_base import InstrBase, VexExpr, _require_vex_value, _vex_expr
+from .instr_base import InstrBase, VexExpr, _vex_expr
 from .instruction import CHK_IMM8, CHK_IMM16, CHK_IMM32, CHK_MODRM, CHK_MOFFS, CHK_PTR16, InstrData, InstrFlags
 from .jcc_condition import _consume_last_condition_branch_8616
 from .regs import coerce_reg32_t, reg8_t, reg16_t, reg32_t, sgreg_t
@@ -63,6 +63,7 @@ from .string_helpers import (
     string_source_segment,
     string_store,
 )
+from .vex_value_contract import require_vex_value_8616 as _require_vex_value
 
 
 class Instr32(InstrBase):

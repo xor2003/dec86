@@ -636,7 +636,7 @@ def _branch_rel(
         return emit_jump(emu, target)
     if _dynamic_pyvex_expr_getattr_8616(condition, "rdt", None) is False:
         return None
-    target_expr = target.rdt if hasattr(target, "rdt") else target
+    target_expr = cast(StackExpr, target).rdt if hasattr(target, "rdt") else target
     emu.lifter_instruction.jump(condition, target_expr, JumpKind.Boring)
     return target
 

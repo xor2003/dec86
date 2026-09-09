@@ -217,6 +217,10 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_helper_abi.py",
     "angr_platforms/tests/test_x86_16_fixed_stack_probe_frames.py",
     "angr_platforms/tests/test_x86_16_structuring_pass_validation.py",
+    "angr_platforms/tests/test_x86_16_symbolic_value_boundaries.py",
+    "angr_platforms/tests/test_x86_16_direction_flag_execution.py",
+    "angr_platforms/tests/test_x86_16_stack_helpers.py",
+    "angr_platforms/tests/test_x86_16_memory.py",
 )
 
 MSC6_TINY_CONSTRUCTS: tuple[str, ...] = (

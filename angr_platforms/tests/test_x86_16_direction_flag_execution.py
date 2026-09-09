@@ -8,6 +8,7 @@ from angr import options as o
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
+@pytest.mark.parametrize("direction_flag", (0, 0x0400))
 @pytest.mark.parametrize(
     ("code", "address_bits", "repeated"),
     (
@@ -17,12 +18,13 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
         (bytes.fromhex("f367a4"), 32, True),
     ),
 )
-def test_df_set_movsb_uses_flags_for_single_and_repeated_address_widths(
+def test_movsb_uses_flags_for_single_and_repeated_address_widths(
     code: bytes,
     address_bits: int,
     repeated: bool,
+    direction_flag: int,
 ) -> None:
-    """Decrement the selected indices even when derived ``d`` entry state is stale."""
+    """Follow DF for the selected indices even when derived ``d`` state is stale."""
     project = angr.load_shellcode(
         code,
         arch=Arch86_16(),
@@ -34,8 +36,8 @@ def test_df_set_movsb_uses_flags_for_single_and_repeated_address_widths(
     state = project.factory.blank_state(
         add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
     )
-    state.regs.flags = 0x0400
-    state.regs.d = 1
+    state.regs.flags = direction_flag
+    state.regs.d = 1 if direction_flag else 0xFFFFFFFF
     state.regs.ds = 0x10
     state.regs.es = 0x20
     state.memory.store(0x100, b"Q")
@@ -58,13 +60,15 @@ def test_df_set_movsb_uses_flags_for_single_and_repeated_address_widths(
     result = simgr.active[0]
     assert result.solver.eval(result.memory.load(0x200, 1)) == ord("Q")
     if address_bits == 32:
-        assert result.solver.eval(result.regs.esi) == 0xFFFFFFFF
-        assert result.solver.eval(result.regs.edi) == 0xFFFFFFFF
+        expected = 0xFFFFFFFF if direction_flag else 1
+        assert result.solver.eval(result.regs.esi) == expected
+        assert result.solver.eval(result.regs.edi) == expected
         if repeated:
             assert result.solver.eval(result.regs.ecx) == 1
     else:
-        assert result.solver.eval(result.regs.si) == 0xFFFF
-        assert result.solver.eval(result.regs.di) == 0xFFFF
+        expected = 0xFFFF if direction_flag else 1
+        assert result.solver.eval(result.regs.si) == expected
+        assert result.solver.eval(result.regs.di) == expected
         if repeated:
             assert result.solver.eval(result.regs.cx) == 1
     assert result.addr == (0x100 if repeated else 0x100 + len(code))
