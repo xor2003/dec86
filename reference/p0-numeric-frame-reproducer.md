@@ -158,3 +158,75 @@ or remote CI closure is claimed. The temporary observer script was deleted.
 Temporary evidence: `/tmp/inertia-numeric-frame-minimal.log` and
 `/tmp/inertia-numeric-frame-oracle-tests.log`. No new production behavior or
 full-suite/CI closure is claimed.
+
+## Live SSA-To-Object Boundary (2026-09-09)
+
+Rechecked on `29bc06e26`, without changing dependency or production files.
+The installed angr SSA rewriting engine, not its C stack-offset handler,
+performs the next relevant conversion:
+
+```text
+SPropagator: SP/BP use -> StackBaseOffset
+SimEngineSSARewriting._handle_expr_StackBaseOffset:
+    StackBaseOffset -> UnaryOp("Reference", stack VirtualVariable)
+CStructuredCodeGenerator._handle_Expr_UnaryOp:
+    Reference(stack VirtualVariable) -> CUnaryOp("Reference", local object)
+```
+
+Exact installed sources are under `angr/analyses/decompiler/`:
+`ssailification/rewriting_engine.py:565` and
+`structured_codegen/c.py:4317`. In this reproducer, an unchanged observer on
+`CStructuredCodeGenerator._handle_Expr_StackBaseOffset` saw **zero calls**.
+An observer on `_handle_Expr_UnaryOp` saw **22 Reference expressions**:
+12 at stack offset -4, six at -2, two at -1, and two at zero. These are
+observations from this input, not an exhaustive inventory of other binaries.
+
+The two references originating at the LEA carry
+`ins_addr=0x1006`, `vex_block_addr=0x1006`, `vex_stmt_idx=3`; their operand is
+the same one-byte stack virtual variable at offset -4. The Reference itself
+is **16 bits**, despite its one-byte referent. One reaches Store through
+Convert; the other reaches BinaryOp then Convert for the upper byte.
+The virtual-variable operand has no tags. Consequently:
+
+- Patching only the C StackBaseOffset handler misses this live path.
+- The reference's instruction provenance can link to the already-tested
+  owned SSA definition. Do not infer the numeric value from the local's
+  display name, referent width, or untagged operand.
+- Preserve the original register base as well as displacement: the earlier
+  incoming-BP versus entry-SP ambiguity still requires the paired-frame fix.
+- `PTR_U16(&local)` is not that fix. The current portable-flat runtime macro
+  casts through `uintptr_t` and truncates a host address; it does not supply
+  guest entry SP. A runtime entry-state contract must justify numeric output.
+
+The baseline and both observers emitted byte-identical declarations/body:
+SHA-256 `8755f4259aa5324ff73ec48e58241872d22a7089877e57e84ace9a764cd89acf`.
+The hash scope starts at `extern char g_1;`, excluding diagnostics and observer
+records. Output remains invalid C, including the pointer-valued DS store and
+upper-byte shift; this is not a semantic or compilation acceptance result.
+
+Next implementation requirements, in dependency order:
+
+1. Preserve a typed numeric entry-register definition through the SSA
+   reference conversion, with Alias retaining the separate object identity.
+   Reason: both views are observable. DoD: exact origin/width/provenance for
+   both store bytes and saved/restored BP. Failure: treat offset zero as proof
+   of entry SP, or repair rendered C.
+2. Materialize numeric consumers from that definition and an explicit guest
+   entry-state contract; retain object references for proven pointer consumers.
+   Reason: portable host addresses are not guest stack coordinates. DoD:
+   execute recompiled C for all three oracle inputs and pass the existing
+   `add_sc` round trip. Failure: host-pointer truncation, guessed entry SP,
+   unpaired frame removal, or lost memory/register effects.
+3. Verify InitMenu, strict recompilation and whole-tail validation before
+   calling the production defect fixed. Keep optimization deferred.
+
+Evidence logs: `/tmp/inertia-frame-codegen-observer.log`,
+`/tmp/inertia-frame-reference-observer.log`, and
+`/tmp/inertia-frame-projection-boundary-tests.log`. Observers were scoped to
+their diagnostic processes; no observer hook remains installed.
+Focused frame-carrier, canonical-frame and setup-carrier checks pass:
+**14 passed, seven dependency warnings, 8.69s**, using `pytest -n 7` with
+`PYTHON_JIT=1`. All five reported slowest durations are below the configured
+one-second display threshold. These tests protect existing machine/IR and
+carrier behavior; they do not execute the invalid generated C. No Python
+files changed in this investigation, so no new typing/lint closure is claimed.

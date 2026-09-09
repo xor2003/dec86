@@ -31,6 +31,15 @@ the broader production Pyright audit remains red as stated above.
 Numeric-frame semantics, the full pytest suite and remote CI remain open;
 optimization stays deferred. See the [VEX wrapper report](reference/p0-vex-wrapper-contracts.md).
 
+The next numeric-frame boundary is now verified live: angr SSA rewriting
+converts `StackBaseOffset` into a stack-variable `Reference` before C codegen.
+The C StackBaseOffset handler is not reached by the minimal reproducer.
+Both numeric store bytes retain the LEA source tag, allowing an exact link to
+owned SSA; a host-pointer cast cannot restore guest entry SP. Preserve the
+numeric entry-state definition alongside the Alias object view, then repair
+save/restore coherently. See the [boundary evidence and repair requirements](reference/p0-numeric-frame-reproducer.md#live-ssa-to-object-boundary-2026-09-09).
+This investigation does not close the production defect or any acceptance gate.
+
 ### Earlier Checkpoints (Historical)
 
 The preceding Make global MyPy phase reached **0 diagnostics**, down from four; `mypy-dev`
