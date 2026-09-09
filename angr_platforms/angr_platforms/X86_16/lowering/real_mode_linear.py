@@ -158,6 +158,7 @@ from .direct_stack_segmented_projection import (
     SegmentedStackSourceProjection8616,
     projected_segmented_stack_assignment_present_8616,
 )
+from .frame_carrier_liveness import prove_frame_carrier_uses_8616
 from .frame_instruction_evidence import canonical_frame_instruction_addresses_8616
 from .frame_prologue_carriers import (
     is_exact_bp_frame_setup_carrier_8616,
@@ -11957,8 +11958,8 @@ def prune_frame_prologue_stack_assignments_8616(
     A matching structured carrier for ``push bp`` or ``mov bp, sp`` proves that
     instruction tags and the decoded entry pair agree. Only then are
     assignments owned by the entry pair and contiguous
-    ``mov sp, bp; pop bp; ret`` sequences consumed. These are ABI frame effects
-    represented by the generated C function itself.
+    ``mov sp, bp; pop bp; ret`` sequences consumed, and only if their scalar
+    definitions have no surviving uses outside the complete frame group.
     """
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None)
@@ -12014,6 +12015,9 @@ def prune_frame_prologue_stack_assignments_8616(
             )
             for node in _iter_c_nodes_deep_8616(root)
         )
+    entry_carrier_proven = entry_carrier_proven and prove_frame_carrier_uses_8616(
+        root, frozenset(frame_instruction_addresses),
+    ).complete
     register_carriers = register_carriers.with_frame_proof(entry_carrier_proven)
     if register_carriers.raw_fact_count:
         _record_semantic_lane_8616(

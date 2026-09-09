@@ -863,6 +863,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/fixed_stack_probe_frames.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_probe_callsite_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/frame_carrier_liveness.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_overwrite_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py \
 	angr_platforms/angr_platforms/X86_16/lowering/function_pointer_parameter_evidence.py \
@@ -1870,6 +1871,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/fixed_stack_probe_frames.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_probe_callsite_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/frame_carrier_liveness.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_overwrite_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py \
 	angr_platforms/angr_platforms/X86_16/lowering/function_pointer_parameter_evidence.py \
@@ -2618,6 +2620,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_annotation_argument_identity.py \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
+	angr_platforms/tests/test_x86_16_frame_carrier_liveness.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
 	angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py \
@@ -3044,6 +3047,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_reload_provenance_boundaries.py \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
+	angr_platforms/tests/test_x86_16_frame_carrier_liveness.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
 	angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py \

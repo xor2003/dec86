@@ -194,6 +194,11 @@ full-suite/CI closure is claimed.
 
 ## Memory-SSA And Entry-Register Provenance (2026-09-09)
 
+Follow-up: [live frame-carrier preservation](p0-frame-carrier-liveness.md)
+locates and guards the deletion responsible for the numeric-use probe's
+missing decrement. Its invalid frame restoration remains a separate blocker;
+the propagation experiment is still not production code.
+
 The actual memory-SSA address-versioning operation rebuilt `IRAddress` without
 `base_values`, losing the exact register-read snapshots preserved by the
 frontend. It now changes only `version` through `dataclasses.replace`.

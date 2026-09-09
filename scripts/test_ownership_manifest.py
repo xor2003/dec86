@@ -1685,6 +1685,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/lowering/frame_register_carriers.py",
             "angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py",
             "angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/frame_carrier_liveness.py",
             "angr_platforms/angr_platforms/X86_16/lowering/physical_registers.py",
         ),
         tests=(

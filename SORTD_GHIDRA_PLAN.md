@@ -20,6 +20,21 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
+Latest InitMenu prerequisite: [live frame-carrier preservation](reference/p0-frame-carrier-liveness.md).
+An exact removal observer found that canonical-frame pruning deleted the SP
+definition while retaining an external numeric use. Lowering now refuses the
+whole group when scalar values escape it. Six regressions fail before and pass
+after; 69 focused tests and scoped Ruff/MyPy/Pyright pass. The numeric-use
+diagnostic now retains the missing decrement, but frame restoration and InitMenu
+acceptance remain open. No experimental propagation hook is installed.
+Final hard/fast/default gates pass: 2,923 tests per unit lane, three executable
+quality guards and seven MS C tiny cases. The first broad run exposed three
+stack-storage-versus-scalar classification regressions; those are resolved and
+recorded in the report, not suppressed.
+The complete default executable rerun confirms 19/20 accepted in 200.03s,
+exit 2, with byte-identical generated C versus the preceding checkpoint.
+InitMenu remains open; return construction is the next verified lifetime boundary.
+
 New explicit P0 acceptance case: the user's default
 `./decompile.py ./SORTDEMO.EXE` run reports 20 shown, 17 decompiled and three
 fallback/detail results in `SORTDEMO_.dec`. Reproduce the same invocation with

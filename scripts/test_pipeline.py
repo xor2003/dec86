@@ -209,6 +209,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_annotation_argument_identity.py",
     "angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py",
     "angr_platforms/tests/test_x86_16_frame_prologue_carriers.py",
+    "angr_platforms/tests/test_x86_16_frame_carrier_liveness.py",
     "angr_platforms/tests/test_x86_16_dosfunc_behavior.py",
     "angr_platforms/tests/test_x86_16_address_base_snapshots.py",
     "angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py",
