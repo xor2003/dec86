@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from angr_platforms.X86_16.analysis.stack_frame_ir import (
     FrameCoordinateStatus8616,
@@ -107,6 +109,8 @@ def test_ir_stack_frame_artifact_proves_bp_entry_sp_coordinate() -> None:
     ("89e589c48b46fec3", 0),  # Changing SP alone does not invalidate the saved BP relation.
     ("5589e583ec0289e58b46fec3", -4),  # Only the reaching frame setup applies.
     ("5589e58b46fec3", -2),
+    ("5589e089c58b46fec3", -2),  # SP reaches BP through AX.
+    ("89e083e80289c489e58b46fec3", -2),  # A proven AX expression restores SP's origin.
 ])
 def test_frame_coordinate_uses_reaching_bp_write(code, expected_delta):
     """Overwritten frame candidates cannot prove or conflict with the live BP."""
@@ -121,3 +125,11 @@ def test_frame_coordinate_uses_reaching_bp_write(code, expected_delta):
     assert proof.stats.normalized_fact_count == proof.stats.classified_fact_count == 1
     assert proof.stats.materialized_count == (expected_delta is not None)
     assert proof.stats.failure_count == (expected_delta is None)
+
+
+def test_reentered_setup_does_not_prove_function_entry_sp():
+    artifact = lift_ir_artifact(bytes.fromhex("5589e089c58b46fec3"))
+    entry = replace(artifact.blocks[0], successor_addrs=(artifact.function_addr,))
+    frame = build_x86_16_ir_frame_access_artifact(replace(artifact, blocks=(entry,)))
+    assert frame.bp_coordinate.status is FrameCoordinateStatus8616.UNKNOWN
+    assert frame.bp_coordinate.bp_entry_sp_delta is None

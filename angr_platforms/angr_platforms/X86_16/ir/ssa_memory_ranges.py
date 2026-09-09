@@ -11,7 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .core import AddressStatus, IRAddress, IRInstr, MemSpace
 from .ssa import SSABlock
@@ -94,16 +94,7 @@ def close_refused_stack_ranges_8616(
 
 def versioned_memory_address_8616(address: IRAddress, version: int) -> IRAddress:
     """Preserve all address evidence while assigning one SSA version."""
-    return IRAddress(
-        space=address.space,
-        base=address.base,
-        offset=address.offset,
-        size=address.size,
-        status=address.status,
-        segment_origin=address.segment_origin,
-        expr=address.expr,
-        version=version,
-    )
+    return replace(address, version=version)
 
 
 def stack_memory_access_8616(instruction: IRInstr) -> IRAddress | None:

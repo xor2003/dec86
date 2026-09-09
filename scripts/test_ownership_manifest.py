@@ -1847,6 +1847,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_range_witnesses.py",
             "angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py",
             "angr_platforms/angr_platforms/X86_16/ir/scalar_affine_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/scalar_affine_sources.py",
             "angr_platforms/angr_platforms/X86_16/ir/scalar_affine_trace.py",
             "angr_platforms/angr_platforms/X86_16/ir/ssa.py",
             "angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py",

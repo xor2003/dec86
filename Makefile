@@ -270,6 +270,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/ir/logical_memory_write_value.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_sources.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_trace.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py \
@@ -484,6 +485,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_sources.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_trace.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_binary_cfg.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_cfg_projection.py \
@@ -1490,6 +1492,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_sources.py \
 	angr_platforms/angr_platforms/X86_16/ir/scalar_affine_trace.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_binary_cfg.py \
 	angr_platforms/angr_platforms/X86_16/ir/status_flag_cfg_projection.py \
@@ -2617,6 +2620,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
+	angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py \
 	angr_platforms/tests/test_x86_16_ir_stack_frame.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
@@ -3042,6 +3046,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
+	angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py \
 	angr_platforms/tests/test_x86_16_ir_stack_frame.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py \

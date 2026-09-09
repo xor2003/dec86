@@ -55,6 +55,21 @@ an open investigation; it was not suppressed. See the
 cause, refusal tests, rejected experiment, timing evidence, DoD and failure
 contract. The next P0 blocker is InitMenu's numeric-frame C, not optimization.
 
+InitMenu prerequisite repair: memory-SSA versioning now preserves exact address
+register-read snapshots. The existing IR affine tracer optionally proves entry
+SP/BP roots and frame analysis consumes it for indirect setup through registers.
+The minimal numeric value is proven as entry SP minus four, with wraparound;
+unknown roots and entry backedges refuse. Eighty-nine focused tests and scoped
+Ruff/MyPy/Pyright pass. This is not InitMenu C acceptance or a new executable
+improvement: a subsequent default-command rerun confirms **19/20**, exit 2,
+205.04s wall (480.46s user, 9.32s system, 355,788 KiB peak process RSS).
+PercolateDown and QuickSort still validate; InitMenu still fails portable-flat
+GCC on numeric operations on a host pointer. See the
+[provenance checkpoint and rejected value-context experiment](reference/p0-numeric-frame-reproducer.md#memory-ssa-and-entry-register-provenance-2026-09-09).
+Hard/fast/default gates pass with 2,910 tests in each unit lane, three executable
+quality guards and all seven MS C tiny cases. Existing complexity warnings and
+the broader full-suite/CI debt are not closed by this checkpoint.
+
 Optimized stack helpers now capture symbolic implicit accesses with exact
 instruction-entry SP/BP coordinates. The full frontend also preserves 16-bit
 stack wrapping under 67h address-size prefixes, including dword operations and

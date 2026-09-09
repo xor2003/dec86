@@ -19,6 +19,7 @@ from ..callsite_summary import (
     CallsitePushSourceKind8616,
 )
 from ..ir import ScalarAffineExpression8616, ScalarAffineFailure8616
+from ..ir.core import IRAddress
 from ..ir.scalar_affine_trace import trace_scalar_affine_expression_8616
 from ..ir.ssa_function import SSAFunctionArtifact
 from .interprocedural_storage_contracts import StorageReachingDefinition8616
@@ -183,8 +184,10 @@ def _expected_source_8616(
 
 def _actual_terms_8616(
     expression: ScalarAffineExpression8616,
-) -> tuple[tuple[int, int, int], ...]:
+) -> tuple[tuple[int, int, int], ...] | None:
     """Project exact IR terms to their comparable stack-source identities."""
+    if any(not isinstance(term.source, IRAddress) for term in expression.terms):
+        return None
     return tuple(
         sorted(
             (
@@ -193,6 +196,7 @@ def _actual_terms_8616(
                 term.coefficient,
             )
             for term in expression.terms
+            if isinstance(term.source, IRAddress)
         )
     )
 

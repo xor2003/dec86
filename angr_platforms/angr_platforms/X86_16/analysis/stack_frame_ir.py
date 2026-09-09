@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ..ir.core import IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
+from ..ir.scalar_affine_contracts import ScalarAffineEntryRegister8616
+from ..ir.scalar_affine_trace import trace_scalar_affine_expression_8616
+from ..ir.ssa import build_x86_16_block_local_ssa
+from ..ir.ssa_function import SSAFunctionArtifact, build_x86_16_ir_predecessor_map
 
 __all__ = [
     "BPFrameCoordinateEvidence8616",
@@ -173,24 +177,61 @@ def _build_bp_coordinate_evidence_8616(artifact: IRFunctionArtifact) -> BPFrameC
             stats=stats,
         )
 
+    predecessors = build_x86_16_ir_predecessor_map(artifact)
+    if predecessors.get(entry_block.addr):
+        return BPFrameCoordinateEvidence8616(
+            detail="entry block has incoming CFG edges; entry-register origin is unproven",
+            stats=FrameCoordinateStats8616(1, 1, 1, 0, 1),
+        )
+
     sp_delta = 0
     sp_delta_known = True
     bp_delta: int | None = None
     bp_write_count = 0
-    for instruction in entry_block.instrs:
+    ssa_artifact: SSAFunctionArtifact | None = None
+
+    def traced_delta(index: int) -> int | None:
+        """Resolve indirect setup through exact SSA, keeping compact MOV facts local."""
+        nonlocal ssa_artifact
+        if ssa_artifact is None:
+            ssa_artifact = SSAFunctionArtifact(
+                artifact.function_addr, (build_x86_16_block_local_ssa(entry_block),),
+            )
+        root = ssa_artifact.blocks[0].instrs[index].dst
+        if root is None:
+            return None
+        trace = trace_scalar_affine_expression_8616(
+            ssa_artifact, root, block_addr=entry_block.addr,
+            before_index=index + 1, allow_entry_registers=True,
+        )
+        expression = trace.expression
+        if not trace.complete or expression is None or len(expression.terms) != 1:
+            return None
+        term = expression.terms[0]
+        if not (
+            isinstance(term.source, ScalarAffineEntryRegister8616)
+            and term.source.register_name == "sp" and term.coefficient == 1
+        ):
+            return None
+        return (expression.constant + 0x8000) % 0x10000 - 0x8000
+
+    for index, instruction in enumerate(entry_block.instrs):
         if _bp_access_8616(instruction):
             break
         if _writes_register_8616(instruction, "sp"):
             source = _sp_relative_value_8616(instruction)
             if source is None or not sp_delta_known:
-                sp_delta_known = False
+                recovered = traced_delta(index)
+                sp_delta_known = recovered is not None
+                if recovered is not None:
+                    sp_delta = recovered
             else:
                 sp_delta += source.offset
             continue
         if _writes_register_8616(instruction, "bp"):
             bp_write_count += 1
             source = _sp_relative_value_8616(instruction)
-            bp_delta = sp_delta + source.offset if source is not None and sp_delta_known else None
+            bp_delta = sp_delta + source.offset if source is not None and sp_delta_known else traced_delta(index)
 
     raw_count = max(1, bp_write_count)
     if bp_delta is not None:

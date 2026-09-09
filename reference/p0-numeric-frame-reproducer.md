@@ -192,6 +192,70 @@ Temporary evidence: `/tmp/inertia-numeric-frame-minimal.log` and
 `/tmp/inertia-numeric-frame-oracle-tests.log`. No new production behavior or
 full-suite/CI closure is claimed.
 
+## Memory-SSA And Entry-Register Provenance (2026-09-09)
+
+The actual memory-SSA address-versioning operation rebuilt `IRAddress` without
+`base_values`, losing the exact register-read snapshots preserved by the
+frontend. It now changes only `version` through `dataclasses.replace`.
+Canonical memory-cell geometry is unchanged: a cell identity must not inherit
+the concrete read snapshot of an arbitrary access. Before the repair, five
+focused regressions failed; afterward real lifted BP reads/writes also retain
+their snapshots and register live-ins. These tests are admitted to routine gates.
+
+The existing modular scalar SSA tracer now optionally distinguishes entry SP
+and entry BP from loaded stack terms. It accepts only exact word-sized version-0
+register roots in the entry block without incoming CFG edges. Missing temporary
+definitions, later-block live-ins, modified versions, widths and offsets refuse.
+The default remains stack-load-only, preserving existing call-argument behavior.
+Frame analysis consumes this proof for indirect setup through a register; two
+machine-byte regressions failed before that integration and pass afterward.
+The minimal LEA value traces to entry SP plus `0xfffc`, including wraparound.
+The helper extraction keeps the scalar tracer below 350 lines.
+
+- Reason: preserve numeric origins before Alias/object views or C rendering can
+  conflate them; do not create a second affine engine in Lowering.
+- Local DoD: retain every access snapshot, distinguish entry BP from entry SP,
+  prove indirect setup, retain conservative refusals and unchanged default
+  call-argument tracing, with typed contracts and routine regression coverage.
+- Failure: infer entry SP from a block-local live-in or an incoming BP root,
+  apply a displacement twice, admit raw SP ranges as Alias storage without
+  origin proof, or report this provenance repair as numeric-C acceptance.
+- Focused verification: **89 passed, seven dependency warnings, 10.09s**;
+  scoped Ruff `--fix`, MyPy and Pyright passed. This is not a full-suite result.
+  Exact work-start time was not retained across compaction; no total engineering
+  duration is inferred from test wall time.
+
+Hard/fast/default gates subsequently passed (combined command exit 0):
+2,910 fast unit tests in 129.05s, 2,910 default unit tests in 107.55s,
+three executable quality guards, and all seven MS C tiny cases. The architecture
+gate initially rejected the new helper's incomplete ownership header and
+missing test-ownership entry; both were corrected before the successful rerun.
+Log: `/tmp/inertia-frame-provenance-gates.log`. Global Lizard still reports
+existing complexity warnings; successful gates are not a claim of zero debt.
+
+The subsequent exact default command, with `PYTHON_JIT=1 PYTHONHASHSEED=0`,
+confirms **19/20 accepted**, exit 2, 205.04s wall, 480.46s user CPU, 9.32s system
+CPU, and 355,788 KiB peak process RSS. PercolateDown and QuickSort still pass.
+InitMenu's first retained payload has the same content suffix `e74c9bd83765`
+and still fails portable-flat GCC on a host pointer in a numeric `&` operation;
+its sliced retry additionally reports an `aNldiv` prototype conflict. This is
+not a controlled timing comparison or aggregate-memory measurement.
+Logs: `/tmp/inertia-sortdemo-frame-provenance.{c,log}`. Acceptance remains open.
+
+A process-local SPropagator experiment retained numeric register uses while
+allowing its native stack-object substitution only in address contexts.
+It retained supported AIL shapes and preserved 294 numeric replacements while
+keeping six address replacements, but the minimal DS store became entry SP
+minus **two**, not the required four. Frame restoration also remained invalid.
+This experiment is rejected as a standalone repair and was not installed in
+production or dependencies. Runtime parent-register projection and paired frame
+effects still need coherent entry/current-state lifetimes; retaining numeric
+uses alone is insufficient. Do not repeat this experiment unchanged.
+
+Evidence: `/tmp/inertia-memory-provenance-before.log`,
+`/tmp/inertia-frame-affine-before.log`, `/tmp/inertia-affine-focused.log`, and
+`/tmp/inertia-stack-value-context-probe.log`. **InitMenu remains open.**
+
 ## Live SSA-To-Object Boundary (2026-09-09)
 
 Additional diagnostic after the default SORTDEMO reproduction: retaining raw

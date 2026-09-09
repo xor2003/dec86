@@ -2,7 +2,7 @@
 
 Layer: IR.
 Responsibility: retain one modular scalar expression as a constant plus exact
-stack-derived terms and the SSA definition path proving that expression.
+stack-derived or explicit entry-register terms and their SSA definition path.
 This module does not interpret values as pointers, choose segments, infer
 aliases or types, mutate code generation, or consume callsite summaries.
 Owns typed Value, Address, Condition, instruction facts, and lossless
@@ -32,16 +32,39 @@ class ScalarAffineFailure8616(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ScalarAffineEntryRegister8616:
+    """An exact 16-bit SP/BP value at one function's entry boundary."""
+
+    function_addr: int
+    register_name: str
+    size: int
+
+    @property
+    def complete(self) -> bool:
+        """Refuse non-stack registers, unknown entries and non-word roots."""
+        return self.function_addr >= 0 and self.register_name in {"sp", "bp"} and self.size == 2
+
+
+@dataclass(frozen=True, slots=True)
 class ScalarAffineTerm8616:
-    """One exact stack-loaded value multiplied by a modular coefficient."""
+    """One proven scalar source multiplied by a modular coefficient."""
 
     value: IRValue
-    source: IRAddress
+    source: IRAddress | ScalarAffineEntryRegister8616
     coefficient: int
 
     @property
     def complete(self) -> bool:
         """Return whether this term retains exact value and stack identity."""
+        if isinstance(self.source, ScalarAffineEntryRegister8616):
+            return bool(
+                self.coefficient != 0 and self.source.complete
+                and self.value.space is MemSpace.REG
+                and self.value.name == self.source.register_name
+                and self.value.size == self.source.size
+                and self.value.version == 0 and self.value.source_tmp is None
+                and self.value.offset == 0 and self.value.index is None
+            )
         return bool(
             self.coefficient != 0
             and (
@@ -81,7 +104,9 @@ class ScalarAffineExpression8616:
             and root_exact
             and 0 <= self.constant <= mask
             and all(term.complete for term in self.terms)
-            and (not self.terms or self.definition_path)
+            and (not self.terms or self.definition_path or all(
+                isinstance(term.source, ScalarAffineEntryRegister8616) for term in self.terms
+            ))
             and all(site.complete for site in self.definition_path)
         )
 
@@ -129,6 +154,7 @@ class ScalarAffineTrace8616:
 
 
 __all__ = [
+    "ScalarAffineEntryRegister8616",
     "ScalarAffineExpression8616",
     "ScalarAffineFailure8616",
     "ScalarAffineTerm8616",

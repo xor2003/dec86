@@ -3,8 +3,9 @@
 Layer: IR.
 Responsibility: normalize constants, MOVs, ADD/SUB, constant shifts, direct
 stack loads, and closed byte-composed logical word loads into one typed affine
-expression with exact definition provenance. Unsupported operations, missing
-definitions, cross-block flow, and ambiguous sources refuse atomically.
+expression with exact definition provenance. Explicit opt-in admits word-sized
+entry SP/BP roots only in the entry block without predecessors. Other missing
+definitions, unsupported operations and cross-block flow refuse atomically.
 This module does not choose pointer segments, infer aliases or types, mutate
 code generation, or consume callsite summaries.
 Owns typed Value, Address, Condition, instruction facts, and lossless normalization.
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .core import AddressStatus, IRAddress, IRInstr, IRValue, MemSpace, SegmentOrigin
+from .core import IRValue
 from .indexed_address_contracts import (
     IndexedAddressDefinitionSite8616,
     IndexedAddressFailureKind8616,
@@ -29,6 +30,7 @@ from .scalar_affine_contracts import (
     ScalarAffineTrace8616,
     ScalarAffineTraceStats8616,
 )
+from .scalar_affine_sources import entry_register_affine_term_8616, stack_affine_source_8616
 from .scalar_definitions import (
     ScalarDefinition8616,
     ScalarDefinitionIndex8616,
@@ -115,23 +117,6 @@ def _logical_failure_8616(
     return ScalarAffineFailure8616.SOURCE_UNPROVEN
 
 
-def _stack_source_8616(instruction: IRInstr, width: int) -> IRAddress | None:
-    """Return one exact direct BP-relative scalar LOAD source."""
-    address = instruction.args[0] if instruction.args else None
-    if (
-        instruction.op != "LOAD"
-        or instruction.size != width
-        or not isinstance(address, IRAddress)
-        or address.space is not MemSpace.SS
-        or address.base != ("bp",)
-        or address.size != width
-        or address.status is not AddressStatus.STABLE
-        or address.segment_origin is not SegmentOrigin.PROVEN
-    ):
-        return None
-    return address
-
-
 def _scale_node_8616(
     node: _AffineNode8616,
     factor: int,
@@ -171,6 +156,7 @@ def _trace_value_8616(
     before_index: int,
     width: int,
     mask: int,
+    allow_entry_registers: bool = False,
     seen: frozenset[ScalarDefinitionKey8616] = frozenset(),
 ) -> _NodeTrace8616:
     """Recursively normalize one exact scalar value inside one SSA block."""
@@ -188,12 +174,17 @@ def _trace_value_8616(
         before_index=before_index,
     )
     if failure is not None or definition is None:
+        if (allow_entry_registers and failure is ScalarAffineFailure8616.DEFINITION_MISSING
+                and not artifact.predecessor_map.get(block_addr)):
+            term = entry_register_affine_term_8616(value, function_addr=artifact.function_addr, block_addr=block_addr)
+            if term is not None:
+                return _NodeTrace8616(_AffineNode8616(0, (term,), ()), None)
         return _NodeTrace8616(None, failure or ScalarAffineFailure8616.DEFINITION_MISSING)
     site = _site_8616(definition)
     if site is None:
         return _NodeTrace8616(None, ScalarAffineFailure8616.SOURCE_UNPROVEN)
     instruction = definition.instruction
-    source = _stack_source_8616(instruction, width)
+    source = stack_affine_source_8616(instruction, width)
     if source is not None and instruction.dst is not None:
         term = ScalarAffineTerm8616(instruction.dst, source, 1)
         return _NodeTrace8616(_AffineNode8616(0, (term,), (site,)), None)
@@ -227,6 +218,7 @@ def _trace_value_8616(
             width=width,
             mask=mask,
             seen=next_seen,
+            allow_entry_registers=allow_entry_registers,
         )
         if traced.node is None:
             return traced
@@ -254,6 +246,7 @@ def _trace_value_8616(
             width=width,
             mask=mask,
             seen=next_seen,
+            allow_entry_registers=allow_entry_registers,
         )
         if left_trace.node is None:
             return left_trace
@@ -266,6 +259,7 @@ def _trace_value_8616(
             width=width,
             mask=mask,
             seen=next_seen,
+            allow_entry_registers=allow_entry_registers,
         )
         if right_trace.node is None:
             return right_trace
@@ -297,6 +291,7 @@ def _trace_value_8616(
             width=width,
             mask=mask,
             seen=next_seen,
+            allow_entry_registers=allow_entry_registers,
         )
         if traced.node is None:
             return traced
@@ -314,8 +309,9 @@ def trace_scalar_affine_expression_8616(
     *,
     block_addr: int,
     before_index: int,
+    allow_entry_registers: bool = False,
 ) -> ScalarAffineTrace8616:
-    """Trace one scalar root to exact modular constants and stack terms."""
+    """Trace exact modular terms; entry SP/BP sources require explicit opt-in."""
     width = root.size
     if width not in {1, 2, 4} or before_index < 0:
         return _refusal_8616(ScalarAffineFailure8616.ROOT_UNPROVEN)
@@ -328,6 +324,7 @@ def trace_scalar_affine_expression_8616(
         before_index=before_index,
         width=width,
         mask=mask,
+        allow_entry_registers=allow_entry_registers,
     )
     if traced.node is None or traced.failure is not None:
         return _refusal_8616(traced.failure or ScalarAffineFailure8616.SOURCE_UNPROVEN)
