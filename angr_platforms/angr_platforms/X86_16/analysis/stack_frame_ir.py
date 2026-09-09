@@ -1,6 +1,8 @@
 """Layer: Analysis.
 
 Responsibility: summarize SS frame accesses from typed IR artifacts.
+Entry-frame proof must follow the last BP write before use; overwritten setup
+candidates are neither live evidence nor conflicting alternatives.
 Forbidden: inventing locals/args without segmented SS:BP/SP evidence.
 """
 
@@ -173,7 +175,8 @@ def _build_bp_coordinate_evidence_8616(artifact: IRFunctionArtifact) -> BPFrameC
 
     sp_delta = 0
     sp_delta_known = True
-    candidates: list[int] = []
+    bp_delta: int | None = None
+    bp_write_count = 0
     for instruction in entry_block.instrs:
         if _bp_access_8616(instruction):
             break
@@ -185,33 +188,23 @@ def _build_bp_coordinate_evidence_8616(artifact: IRFunctionArtifact) -> BPFrameC
                 sp_delta += source.offset
             continue
         if _writes_register_8616(instruction, "bp"):
+            bp_write_count += 1
             source = _sp_relative_value_8616(instruction)
-            if source is not None and sp_delta_known:
-                candidates.append(sp_delta + source.offset)
+            bp_delta = sp_delta + source.offset if source is not None and sp_delta_known else None
 
-    unique_candidates = tuple(sorted(set(candidates)))
-    if len(unique_candidates) == 1:
-        stats = FrameCoordinateStats8616(len(candidates), 1, 1, 1, 0)
+    raw_count = max(1, bp_write_count)
+    if bp_delta is not None:
+        stats = FrameCoordinateStats8616(raw_count, 1, 1, 1, 0)
         return BPFrameCoordinateEvidence8616(
             status=FrameCoordinateStatus8616.PROVEN,
-            bp_entry_sp_delta=unique_candidates[0],
-            detail="typed entry effects establish BP from a known entry-SP delta",
+            bp_entry_sp_delta=bp_delta,
+            detail="the reaching typed BP write establishes a known entry-SP delta",
             stats=stats,
         )
-    normalized_count = max(1, len(unique_candidates))
-    stats = FrameCoordinateStats8616(
-        raw_fact_count=max(1, len(candidates)),
-        normalized_fact_count=normalized_count,
-        classified_fact_count=normalized_count,
-        failure_count=normalized_count,
-    )
+    stats = FrameCoordinateStats8616(raw_count, 1, 1, 0, 1)
     return BPFrameCoordinateEvidence8616(
-        status=(FrameCoordinateStatus8616.CONFLICT if len(unique_candidates) > 1 else FrameCoordinateStatus8616.UNKNOWN),
-        detail=(
-            "conflicting typed BP-to-entry-SP relations"
-            if len(unique_candidates) > 1
-            else "BP-relative storage has no proven entry-SP relation"
-        ),
+        status=FrameCoordinateStatus8616.UNKNOWN,
+        detail="the reaching BP value has no proven entry-SP relation",
         stats=stats,
     )
 

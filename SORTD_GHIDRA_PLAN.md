@@ -20,6 +20,50 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
+New explicit P0 acceptance case: the user's default
+`./decompile.py ./SORTDEMO.EXE` run reports 20 shown, 17 decompiled and three
+fallback/detail results in `SORTDEMO_.dec`. Reproduce the same invocation with
+separate stdout/stderr, identify each rejected function by address and typed
+verdict, and repair the responsible decompiler owners. Reason: a passing tiny
+pipeline must not conceal failures in the user's complete executable. DoD:
+all 20 selected non-library functions produce accepted, recompilable C with
+passing validation and preserved calls/effects, and the three failure cases
+have durable regressions. Failure: relabeling rejected output as success,
+skipping functions, increasing timeouts without evidence, weakening validation,
+or using source/sidecar text as replacement semantics. This task is open.
+The default command is now reproduced: exit 2, 17/20 accepted, 280.28s wall
+(658.86s user CPU, 10.21s system CPU). Exact rejected functions:
+PercolateDown `0x10a88` and QuickSort `0x10ce0` have branch-predicate semantic
+cast mismatches; InitMenu `0x10060` fails GCC on a pointer used as a numeric
+frame offset. Retry slices can add uninitialized-local or helper-prototype
+errors, so they are not equivalent diagnoses of the original failure.
+Evidence: `/tmp/inertia-sortdemo-default-repro.{c,log}`. The user's output is
+preserved. Function names here are diagnostic labels, not recovery rules.
+
+Validation repair checkpoint: additive fingerprint flattening stripped proven
+`CSemanticCast8616` operands. The Validation owner now preserves those views for
+expression fingerprints (schema 39), while storage/address normalization retains
+its existing policy. Four small regressions cover signed Add, unsigned Sub,
+cosmetic casts, and rejection of a semantic cast on the wrong operand; they are
+admitted to routine gates. The delegated PercolateDown executable regression
+passes (one test, 30.14s). Parent QuickSort verification remains red: four unit
+tests pass, one executable test fails in 61.41s (53.35s for QuickSort itself).
+Its original early unsigned-subtraction mismatch is replaced by a later signed
+subtraction predicate mismatch at slice JCC `0x1137` (original `0x10e17`).
+The actual predicate has multiple precision-evidence versions; accepting any
+historical version without proving its relationship to the typed fact is not a
+valid fix. InitMenu's numeric-frame failure remains open. Do not infer 19/20 or
+20/20 acceptance from this checkpoint; the complete command has not been rerun.
+Evidence: `/tmp/inertia-additive-quicksort-review.log`.
+Integrated verification: `quality-hard quality-fast test-pipeline` exits zero;
+fast/default unit lanes each pass 2,878 tests (121.01s / 103.88s), seven
+dependency warnings each. QuickC passes in 38.625s and all seven MS C tiny
+round trips pass in 62.022s. Ruff `check --fix`, Make MyPy, architecture and
+mypyc import checks pass; the new helper also passes scoped MyPy and Pyright
+(zero errors/warnings). Existing complexity warnings remain visible. These
+are routine gates, not a fresh full-suite or complete SORTDEMO acceptance run.
+Evidence: `/tmp/inertia-additive-integrated-gates.log` and the pipeline summary.
+
 Optimized stack helpers now capture symbolic implicit accesses with exact
 instruction-entry SP/BP coordinates. The full frontend also preserves 16-bit
 stack wrapping under 67h address-size prefixes, including dword operations and

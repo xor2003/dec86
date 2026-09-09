@@ -702,6 +702,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/validation_predicates.py \
 	angr_platforms/angr_platforms/X86_16/validation_storage.py \
 	angr_platforms/angr_platforms/X86_16/validation_aggregate_storage.py \
+	angr_platforms/angr_platforms/X86_16/validation_additive_terms.py \
 	angr_platforms/angr_platforms/X86_16/validation_required_memory_effects.py \
 	angr_platforms/angr_platforms/X86_16/validation_semantics.py \
 	angr_platforms/angr_platforms/X86_16/verification_80286.py \
@@ -1707,6 +1708,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/validation_predicates.py \
 	angr_platforms/angr_platforms/X86_16/validation_storage.py \
 	angr_platforms/angr_platforms/X86_16/validation_aggregate_storage.py \
+	angr_platforms/angr_platforms/X86_16/validation_additive_terms.py \
 	angr_platforms/angr_platforms/X86_16/validation_required_memory_effects.py \
 	angr_platforms/angr_platforms/X86_16/validation_semantics.py \
 	angr_platforms/angr_platforms/X86_16/verification_80286.py \
@@ -2485,6 +2487,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_validation_canonicalize.py \
 		angr_platforms/tests/test_x86_16_validation_loop_condition_ir.py \
 		angr_platforms/tests/test_x86_16_validation_branch_conditions.py \
+		angr_platforms/tests/test_x86_16_validation_additive_semantic_casts.py \
 		angr_platforms/tests/test_x86_16_validation_control_flow.py \
 		angr_platforms/tests/test_x86_16_validation_dataflow.py \
 		angr_platforms/tests/test_x86_16_validation_call_multiplicity.py \
@@ -2614,6 +2617,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
+	angr_platforms/tests/test_x86_16_ir_stack_frame.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_coordinate_replay.py \
@@ -2966,6 +2970,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_validation_call_multiplicity.py \
 	angr_platforms/tests/test_x86_16_validation_loop_condition_ir.py \
 	angr_platforms/tests/test_x86_16_validation_branch_conditions.py \
+	angr_platforms/tests/test_x86_16_validation_additive_semantic_casts.py \
 	angr_platforms/tests/test_x86_16_materialized_condition_storage.py \
 	angr_platforms/tests/test_x86_16_validation_control_flow.py \
 	angr_platforms/tests/test_x86_16_validation_dataflow.py \
@@ -3037,6 +3042,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
+	angr_platforms/tests/test_x86_16_ir_stack_frame.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py \
 	angr_platforms/tests/test_x86_16_heapsort_widening_regression.py \

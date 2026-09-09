@@ -70,6 +70,7 @@ from .lowering.stack_function_coordinates import (
 from .lowering.stack_variable_binding import StackVariableBinding
 from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from .lowering.structured_intrinsics import lower_structured_insert_call_8616
+from .validation_additive_terms import flatten_additive_terms_8616 as _flatten_additive_terms_8616
 from .validation_aggregate_storage import aggregate_field_storage_8616
 
 __all__ = [
@@ -91,7 +92,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION: int = 38
+TAIL_VALIDATION_FINGERPRINT_VERSION: int = 39
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 500000
@@ -2082,15 +2083,6 @@ def _simplify_expr_for_fingerprint_8616(node: Any) -> Any:
     return _impl()
 
 
-def _flatten_additive_terms_8616(node: object, sign: int = 1) -> tuple[tuple[int, object], ...]:
-    node = _strip_validation_casts(node)
-    if isinstance(node, CBinaryOp) and node.op == "Add":
-        return _flatten_additive_terms_8616(node.lhs, sign) + _flatten_additive_terms_8616(node.rhs, sign)
-    if isinstance(node, CBinaryOp) and node.op == "Sub":
-        return _flatten_additive_terms_8616(node.lhs, sign) + _flatten_additive_terms_8616(node.rhs, -sign)
-    return ((sign, node),)
-
-
 def _is_register_expr_8616(node: Any, project: Any, reg_name: str) -> bool:
     node = _strip_validation_casts(node)
     if not isinstance(node, CVariable):
@@ -2414,7 +2406,10 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
             if node.op in {"Add", "Sub"}:
                 parts: list[str] = []
                 const_total = 0
-                for sign, term in _flatten_additive_terms_8616(node):
+                for sign, term in _flatten_additive_terms_8616(
+                    node,
+                    preserve_semantic_casts=True,
+                ):
                     const_value = _c_constant_int_value(term)
                     if isinstance(const_value, int):
                         const_total += sign * const_value

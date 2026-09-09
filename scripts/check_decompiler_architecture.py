@@ -1584,6 +1584,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/validation_predicates.py",
     "angr_platforms/angr_platforms/X86_16/validation_storage.py",
     "angr_platforms/angr_platforms/X86_16/validation_aggregate_storage.py",
+    "angr_platforms/angr_platforms/X86_16/validation_additive_terms.py",
     "angr_platforms/angr_platforms/X86_16/validation_required_memory_effects.py",
     "angr_platforms/angr_platforms/X86_16/validation_semantics.py",
     "angr_platforms/angr_platforms/X86_16/verification_80286.py",

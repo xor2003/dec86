@@ -29,6 +29,7 @@ DEFAULT_ULTRA_QUICKC_ROOT: Path = REPO_ROOT / "borrow" / "UltraDecompiler" / "Qu
 
 FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_validation_branch_conditions.py",
+    "angr_platforms/tests/test_x86_16_validation_additive_semantic_casts.py",
     "angr_platforms/tests/test_x86_16_ir_memory_call_liveness.py",
     "angr_platforms/tests/test_x86_16_tail_callsite_inventory.py",
     "angr_platforms/tests/test_x86_16_segment_program_layout.py",
@@ -210,6 +211,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_frame_prologue_carriers.py",
     "angr_platforms/tests/test_x86_16_dosfunc_behavior.py",
     "angr_platforms/tests/test_x86_16_address_base_snapshots.py",
+    "angr_platforms/tests/test_x86_16_ir_stack_frame.py",
     "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
     "angr_platforms/tests/test_makefile_quiet_output.py",
     "angr_platforms/tests/test_x86_16_canonical_frame_setup_carriers.py",

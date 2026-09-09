@@ -1,3 +1,4 @@
+import pytest
 from angr_platforms.X86_16.analysis.stack_frame_ir import (
     FrameCoordinateStatus8616,
     build_x86_16_ir_frame_access_artifact,
@@ -11,6 +12,7 @@ from angr_platforms.X86_16.ir.core import (
     IRValue,
     MemSpace,
 )
+from x86_16_logical_memory_fixtures import lift_ir_artifact
 
 
 def test_ir_stack_frame_artifact_classifies_bp_args_and_locals():
@@ -95,3 +97,27 @@ def test_ir_stack_frame_artifact_proves_bp_entry_sp_coordinate() -> None:
         "materialized_count": 1,
         "failure_count": 0,
     }
+
+
+@pytest.mark.parametrize("code,expected_delta", [
+    ("89e589c58b46fec3", None),  # MOV BP,SP; MOV BP,AX; load [BP-2].
+    ("89e5bd34128b46fec3", None),  # A constant BP is not entry-SP-relative.
+    ("89e589c489e58b46fec3", None),  # SP becomes unknown before BP is reset.
+    ("89e589c589e58b46fec3", 0),  # A later proven write replaces the unknown BP.
+    ("89e589c48b46fec3", 0),  # Changing SP alone does not invalidate the saved BP relation.
+    ("5589e583ec0289e58b46fec3", -4),  # Only the reaching frame setup applies.
+    ("5589e58b46fec3", -2),
+])
+def test_frame_coordinate_uses_reaching_bp_write(code, expected_delta):
+    """Overwritten frame candidates cannot prove or conflict with the live BP."""
+    frame = build_x86_16_ir_frame_access_artifact(lift_ir_artifact(bytes.fromhex(code)))
+    proof = frame.bp_coordinate
+
+    assert proof.complete
+    assert proof.bp_entry_sp_delta == expected_delta
+    assert proof.status is (
+        FrameCoordinateStatus8616.UNKNOWN if expected_delta is None else FrameCoordinateStatus8616.PROVEN
+    )
+    assert proof.stats.normalized_fact_count == proof.stats.classified_fact_count == 1
+    assert proof.stats.materialized_count == (expected_delta is not None)
+    assert proof.stats.failure_count == (expected_delta is None)

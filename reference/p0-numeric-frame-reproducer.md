@@ -1,5 +1,38 @@
 # Numeric Frame Offset Reproducer (2026-09-08)
 
+## Reaching Frame Proof Prerequisite (2026-09-09)
+
+Live typed-IR probes found that frame analysis retained every earlier BP setup
+before its first memory use. `MOV BP,SP; MOV BP,AX; MOV AX,[BP-2]` therefore
+incorrectly proved BP equal to entry SP. A constant BP overwrite or an unknown
+SP followed by another BP setup had the same defect. Conversely, a later valid
+BP setup at a different SP delta was reported as a conflict with a dead write.
+
+`analysis/stack_frame_ir.py` now replaces the candidate at every BP write,
+including invalidating it when the new source is unknown. Earlier writes count
+as raw evidence, but only the reaching candidate is normalized/classified.
+This repairs the existing entry-block proof; it does not introduce function-wide
+SP Alias identity, cross-block origin recovery, or numeric C reconstruction.
+
+- Reason: stale frame coordinates must not become storage or lowering evidence.
+- DoD: unknown overwrites refuse; later proven writes replace older candidates;
+  changing SP alone preserves a still-valid BP relation; five evidence counters
+  close; existing frame consumers and default DOS pipeline remain accepted.
+- Definition of failure: use an overwritten BP setup, call sequential writes
+  conflicting alternatives, guess a new origin, or claim numeric-frame C fixed.
+- Before repair: four failed, four passed, seven warnings in 8.10s.
+- After repair: 66 frame/carrier/snapshot tests passed, seven warnings in 9.73s.
+  An additional SP-only overwrite case is admitted with the whole frame module
+  to Make and the routine pipeline. Fast/default unit lanes pass 2,874 tests
+  in 121.93s/104.94s. The combined hard/fast/default command exits zero;
+  all three executable guards, QuickC and seven MS C tiny round trips pass.
+  External lane wall times are 41.479s and 61.226s, not a performance claim.
+- Scoped Ruff `check --fix`, MyPy and Pyright pass, without suppressions.
+
+Evidence: `/tmp/inertia-frame-coordinate-baseline.log` and
+`/tmp/inertia-reaching-frame-*`. The separate default SORTDEMO.EXE 17/20
+acceptance failure reported by the user remains an explicit open P0 task.
+
 ## Minimal Binary
 
 No external calls, source, sidecar, or library recognition is required:
@@ -160,6 +193,19 @@ Temporary evidence: `/tmp/inertia-numeric-frame-minimal.log` and
 full-suite/CI closure is claimed.
 
 ## Live SSA-To-Object Boundary (2026-09-09)
+
+Additional diagnostic after the default SORTDEMO reproduction: retaining raw
+`StackBaseOffset` instead of native SSA's Reference does not expose a usable
+late numeric-codegen hook. The minimal probe stops before code generation;
+angr's condition processor rejects the surviving expression with
+`AttributeError: no 'verbose_op' on this Expression`. A numeric C-handler
+observer receives zero calls. The experiment was process-local only and
+deliberately supplied no entry-state lifetime or original-BP proof; it is not
+a candidate production repair. No installed dependency was modified.
+Do not repeat a bare bypass of Reference conversion. Preserve supported AIL
+shape while transporting authoritative numeric provenance, and require a
+proven entry-state definition before any numeric materialization.
+Evidence: `/tmp/inertia-numeric-stack-boundary-probe.log`.
 
 Rechecked on `29bc06e26`, without changing dependency or production files.
 The installed angr SSA rewriting engine, not its C stack-offset handler,
