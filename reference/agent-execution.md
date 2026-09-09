@@ -19,6 +19,9 @@ They do not relax its architecture or function-fix acceptance contract.
   and docs for touched non-test code. Do not expand into unrelated cleanup.
 - Use `PYTHON_JIT=1` for Python commands. Run pytest with `-n 7`, short tracebacks,
   and duration reporting so the slowest tests are visible on every run.
+- Pass the selected project interpreter to Pyright, for example
+  `.venv/bin/pyright --pythonpath .venv/bin/python`; the executable's location
+  alone does not ensure it resolves dependencies from that environment.
 - Prefer the existing parallel Make linter targets. Avoid overlapping broad test
   gates or concurrent tools writing the same mutable cache.
 - Avoid adding to files already over 350 lines where practical. Extract a focused

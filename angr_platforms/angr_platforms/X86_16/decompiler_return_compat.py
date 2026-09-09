@@ -5,6 +5,9 @@ Forbidden: source/COD/text-backed return recovery or whole-body rewrite repair.
 Dynamic boundary: this module patches and reads third-party angr ReturnMaker,
 AIL, codegen, C AST, Function, and SimType compatibility objects. Owned
 Inertia contracts must use typed fields and dot access.
+Producer evidence decides whether a scalar return exists, not when its inputs
+are read. ReturnMaker must capture the architectural return register at RET;
+only SSA may propagate earlier definitions across intervening state changes.
 """
 
 from __future__ import annotations
@@ -304,20 +307,20 @@ def describe_x86_16_decompiler_return_compatibility() -> tuple[str, ...]:
 
 
 def _make_return_register_expr_8616(self: object, stmt: object, reg_arg: SimRegArg) -> object:
+    """Capture return-time state; SSA, not producer substitution, binds its value."""
     self_dynamic = cast(Any, self)
     stmt_dynamic = cast(Any, stmt)
     reg = self_dynamic.arch.registers[reg_arg.reg_name]
     reg_name = self_dynamic.arch.translate_register_name(reg[0], reg_arg.size)
     if reg_name is None:
         reg_name = reg_arg.reg_name
-    reg_expr = ailment.Expr.Register(
+    return ailment.Expr.Register(
         self_dynamic._next_atom(),
         reg[0],
         reg_arg.size * self_dynamic.arch.byte_width,
         reg_name=reg_name,
         ins_addr=stmt_dynamic.tags["ins_addr"],
     )
-    return reg_expr
 
 
 def _resolve_same_block_tmp_source_8616(
@@ -564,6 +567,7 @@ def _find_terminal_register_source_8616(
     reg_size: int,
     max_insn_distance: int = 32,
 ) -> object | None:
+    """Find a nearby producer without crossing a branch or unmodeled call effect."""
     graph = getattr(self, "graph", None)
     if graph is None:
         return None
@@ -587,7 +591,11 @@ def _find_terminal_register_source_8616(
             src = _register_assignment_source_8616(graph_stmt, reg_offset=reg_offset, reg_size=reg_size)
             if src is None:
                 continue
-            if any(isinstance(next_stmt, ailment.Stmt.ConditionalJump) for next_stmt in statements[idx + 1 :]):
+            if any(
+                isinstance(next_stmt, (ailment.Stmt.ConditionalJump, ailment.Stmt.SideEffectStatement, ailment.Expr.Call))
+                or (isinstance(next_stmt, ailment.Stmt.Assignment) and isinstance(cast(Any, next_stmt).src, ailment.Expr.Call))
+                for next_stmt in statements[idx + 1 :]
+            ):
                 continue
             src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
             src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
@@ -980,6 +988,7 @@ def _return_compat_unknown_caller_terminal_expr_8616(
 def _return_compat_unknown_caller_unconditional_predecessor_expr_8616(
     self: object, block: object | None, ret_val: object
 ) -> object | None:
+    """Find predecessor producer evidence without crossing its side effects."""
     if not isinstance(ret_val, SimRegArg) or ret_val.reg_name.lower() != "ax":
         return None
     self_dynamic = cast(Any, self)
@@ -1006,7 +1015,11 @@ def _return_compat_unknown_caller_unconditional_predecessor_expr_8616(
         if src is None:
             continue
         following = statements[idx + 1 :]
-        if any(isinstance(stmt, ailment.Stmt.ConditionalJump) for stmt in following):
+        if any(
+            isinstance(stmt, (ailment.Stmt.ConditionalJump, ailment.Stmt.SideEffectStatement, ailment.Expr.Call))
+            or (isinstance(stmt, ailment.Stmt.Assignment) and isinstance(cast(Any, stmt).src, ailment.Expr.Call))
+            for stmt in following
+        ):
             return None
         src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
         src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
@@ -2039,6 +2052,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                         "_inertia_return_compat_unused_caller_proven_return_materialized_count",
                     )
                     new_stmt = cast(Any, stmt.copy())
+                    ret_expr = _make_return_register_expr_8616(self, stmt, ret_val)
                     new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                     return cast(object, new_stmt)
                 return cast(object, stmt.copy())
@@ -2053,6 +2067,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     ret_expr = _return_compat_unknown_caller_unconditional_predecessor_expr_8616(self, block, ret_val)
                 if ret_expr is not None:
                     new_stmt = cast(Any, stmt.copy())
+                    ret_expr = _make_return_register_expr_8616(self, stmt, ret_val)
                     new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                     return cast(object, new_stmt)
                 if _return_compat_unknown_caller_reaching_register_proven_8616(self, block, ret_val):
@@ -2080,6 +2095,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                 ret_expr = _infer_x86_16_ax_return_expr_8616(self, stmt, block)
                 if ret_expr is not None:
                     new_stmt = cast(Any, stmt.copy())
+                    ret_expr = _make_return_register_expr_8616(self, stmt, SimRegArg("ax", 2))
                     new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                     if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                         print(
@@ -2192,6 +2208,8 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     raise
 
             new_stmt = cast(Any, stmt.copy())
+            if isinstance(ret_val, SimRegArg):
+                ret_expr = _make_return_register_expr_8616(self, stmt, ret_val)
             new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
             if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                 print(
@@ -2200,8 +2218,6 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     file=sys.stderr,
                     flush=True,
                 )
-            new_statements = block_dynamic.statements[::]
-            new_statements[stmt_idx] = new_stmt
             return cast(object, new_stmt)
 
         try:

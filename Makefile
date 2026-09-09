@@ -2621,6 +2621,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_frame_carrier_liveness.py \
+	angr_platforms/tests/test_x86_16_unobserved_return_maker.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
 	angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py \
@@ -3048,6 +3049,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_assignment_lvalue_casts.py \
 	angr_platforms/tests/test_x86_16_frame_prologue_carriers.py \
 	angr_platforms/tests/test_x86_16_frame_carrier_liveness.py \
+	angr_platforms/tests/test_x86_16_unobserved_return_maker.py \
 	angr_platforms/tests/test_x86_16_dosfunc_behavior.py \
 	angr_platforms/tests/test_x86_16_address_base_snapshots.py \
 	angr_platforms/tests/test_x86_16_memory_ssa_address_provenance.py \

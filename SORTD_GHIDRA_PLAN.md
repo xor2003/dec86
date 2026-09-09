@@ -20,6 +20,24 @@ they must not become recovery evidence.
 
 ## Current Checkpoint (2026-09-09)
 
+Latest scalar-return repair: [return-time value capture](reference/p0-return-value-capture.md).
+Verified checkpoint: the default executable run accepts 19/20 (191.08s, exit 2),
+with generated C byte-identical to `c7fe4e0c0`. InitMenu remains rejected.
+An intermediate 18/20 regression exposed stale AX producer evidence crossing a
+call; refusing that evidence restores DrawBar without weakening validation.
+Thirteen return-maker unit cases and the focused DrawBar executable regression
+pass, along with scoped Ruff/MyPy/Pyright. See the report for failed experiments
+and remaining call-shape/lifetime audit boundaries.
+The frontend ReturnMaker hook now captures the actual scalar return register
+instead of moving an earlier producer expression past BP restoration, partial
+register writes or memory changes. The focused regressions are now
+in the routine pipeline. This repairs the numeric-frame diagnostic's stale
+return; the experimental propagation filter and full frame ABI remain open.
+Hard/dev/fast/default gates pass: 2,936 tests in each unit lane, three executable
+quality guards and seven MS C tiny round trips. The report also records an open
+width-aware lowering requirement: simplify proven 16-bit-only register uses
+without discarding wraparound or mixed-width/call-boundary state.
+
 Latest InitMenu prerequisite: [live frame-carrier preservation](reference/p0-frame-carrier-liveness.md).
 An exact removal observer found that canonical-frame pruning deleted the SP
 definition while retaining an external numeric use. Lowering now refuses the
